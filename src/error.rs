@@ -4,4 +4,6 @@ use crate::types::PeerId;
 pub enum Error {
     #[error("Peer `{0}` does not exist")]
     PeerDoesntExist(PeerId),
+    #[error("Unknown error occurred")]
+    Unknown,
 }

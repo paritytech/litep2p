@@ -1,14 +1,27 @@
-use crate::types::{ConnectionId, PeerId, ProtocolId, RequestId};
+use crate::{
+    error::Error,
+    types::{ConnectionId, PeerId, ProtocolId, RequestId},
+};
 
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::mpsc,
+};
 
-use std::collections::HashMap;
+use std::{collections::HashMap, net::SocketAddr};
 
 pub mod error;
 pub mod types;
 
 /// Public result type used by the crate.
 pub type Result<T> = std::result::Result<T, error::Error>;
+
+/// Logging target for the file.
+const LOG_TARGET: &str = "litep2p";
+
+/// Default channel size.
+const DEFAULT_CHANNEL_SIZE: usize = 64usize;
 
 /// Interface defining the behavior expected from a transport.
 ///
@@ -21,17 +34,14 @@ pub trait Transport {
     ///
     type EventStream: Send + Unpin;
 
-    /// Create new [`Transport`] object.
-    fn new() -> (Self::Handle, Self::EventStream);
+    /// Create new [`Transport`] object and start listening on the specified address.
+    async fn new(addres: Multiaddr) -> (Self::Handle, Self::EventStream);
 
     /// Open connection for remote peer at `address`.
     async fn open_connection(&self, address: Multiaddr) -> crate::Result<ConnectionId>;
 
     /// Open connection for remote peer at `address`.
     async fn close_connection(&self, connection: ConnectionId) -> crate::Result<ConnectionId>;
-
-    /// Send `data` to remote peer.
-    fn send(&mut self, data: Vec<u8>) -> crate::Result<()>;
 }
 
 struct Tcp {}
@@ -40,28 +50,93 @@ struct TcpHandle {}
 
 struct TcpEventStream {}
 
+#[derive(Debug)]
+enum ConnectionEvent {
+    ConnectionAccepted(TcpStream),
+}
+
+#[async_trait::async_trait]
+pub trait TransportService {
+    /// Open connection for remote peer at `address`.
+    async fn open_connection(&self, address: SocketAddr) -> crate::Result<TcpStream>;
+}
+
+#[async_trait::async_trait]
+impl TransportService for TcpHandle {
+    async fn open_connection(&self, address: SocketAddr) -> crate::Result<TcpStream> {
+        TcpStream::connect(address)
+            .await
+            .map_err(|_| Error::Unknown)
+    }
+}
+
 #[async_trait::async_trait]
 impl Transport for Tcp {
     type Handle = TcpHandle;
     type EventStream = TcpEventStream;
 
     /// Create [`Transport`] implementation for [`Tcp`].
-    fn new() -> (Self::Handle, Self::EventStream) {
-        todo!();
-    }
+    async fn new(address: Multiaddr) -> (Self::Handle, Self::EventStream) {
+        // TODO: this should not be parsed here
+        let address = match address
+            .iter()
+            .next()
+            .expect("network layer protocol to exist")
+        {
+            Protocol::Ip4(ip4_address) => {
+                let port = match address
+                    .iter()
+                    .next()
+                    .expect("transport layer protocol to exist")
+                {
+                    Protocol::Tcp(port) => port,
+                    _ => todo!("other protocols not supported yet"),
+                };
 
-    /// Open connection for remote peer at `address`.
-    async fn open_connection(&self, _address: Multiaddr) -> crate::Result<ConnectionId> {
+                SocketAddr::from((ip4_address, port))
+            }
+            Protocol::Ip6(ip6_address) => {
+                let port = match address
+                    .iter()
+                    .next()
+                    .expect("transport layer protocol to exist")
+                {
+                    Protocol::Tcp(port) => port,
+                    _ => todo!("other protocols not supported yet"),
+                };
+
+                SocketAddr::from((ip6_address, port))
+            }
+            _ => todo!("other network layer protocols are not supported"),
+        };
+
+        match TcpListener::bind(address).await {
+            Ok(listener) => {
+                let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
+
+                tokio::spawn(async move {
+                    while let Ok((stream, _)) = listener.accept().await {
+                        tx.send(ConnectionEvent::ConnectionAccepted(stream))
+                            .await
+                            .expect("channel to stay open");
+                    }
+                });
+            }
+            Err(err) => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?err,
+                    ?address,
+                    "failed to bind to address",
+                );
+            }
+        }
+
         todo!();
     }
 
     /// Open connection for remote peer at `address`.
     async fn close_connection(&self, _connection: ConnectionId) -> crate::Result<ConnectionId> {
-        todo!();
-    }
-
-    /// Send `data` to remote peer.
-    fn send(&mut self, _data: Vec<u8>) -> crate::Result<()> {
         todo!();
     }
 }
@@ -94,6 +169,9 @@ impl<T: Transport> Litep2p<T> {
     // TODO: this can't block, make it async?
     // TODO: how to implement rate-limiting for a connection
     pub async fn open_connection(&mut self, _address: Multiaddr) -> crate::Result<PeerId> {
+        // TODO: create new connection for selected transport (TcpStream)?
+        // TODO: make it noise-encrypted
+        // TODO: use yamux
         todo!();
     }
 
