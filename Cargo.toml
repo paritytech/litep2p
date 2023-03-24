@@ -3,14 +3,23 @@ name = "litep2p"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[build-dependencies]
+prost-build = "0.11"
 
 [dependencies]
 async-trait = "0.1.66"
+bs58 = "0.4.0"
+ed25519-dalek = "1.0.1"
 multiaddr = "0.17.0"
+multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
+prost = "0.11.8"
+protoc = "2.28.0"
+rand = { version = "0.7.0", features = ["getrandom"] }
+serde = "1.0.158"
 thiserror = "1.0.39"
 tokio = { version = "1.26.0", features = ["full"] }
 tokio-stream = "0.1.12"
 tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 yamux = "0.11.0"
+zeroize = "1.5.7"

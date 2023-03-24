@@ -11,8 +11,10 @@ use tokio::{
 
 use std::{collections::HashMap, net::SocketAddr};
 
-pub mod error;
-pub mod types;
+mod crypto;
+mod error;
+mod peer_id;
+mod types;
 
 /// Public result type used by the crate.
 pub type Result<T> = std::result::Result<T, error::Error>;
@@ -112,7 +114,7 @@ impl Transport for Tcp {
 
         match TcpListener::bind(address).await {
             Ok(listener) => {
-                let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
+                let (tx, _rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
 
                 tokio::spawn(async move {
                     while let Ok((stream, _)) = listener.accept().await {
@@ -132,6 +134,11 @@ impl Transport for Tcp {
             }
         }
 
+        todo!();
+    }
+
+    /// Open connection for remote peer at `address`.
+    async fn open_connection(&self, _address: Multiaddr) -> crate::Result<ConnectionId> {
         todo!();
     }
 
