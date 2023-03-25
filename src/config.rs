@@ -32,6 +32,15 @@ pub enum Role {
     Listener,
 }
 
+impl Into<yamux::Mode> for Role {
+    fn into(self) -> yamux::Mode {
+        match self {
+            Role::Dialer => yamux::Mode::Client,
+            Role::Listener => yamux::Mode::Server,
+        }
+    }
+}
+
 pub struct LiteP2pConfiguration {
     /// Listening addresses.
     listen_addresses: Vec<Multiaddr>,

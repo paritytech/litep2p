@@ -39,7 +39,7 @@ use futures::{
     FutureExt, Stream, StreamExt,
 };
 use multiaddr::{Multiaddr, Protocol};
-use multistream_select::{dialer_select_proto, Version};
+use multistream_select::{dialer_select_proto, listener_select_proto, Version};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc,
@@ -187,6 +187,7 @@ impl TcpTransport {
     /// Negotiate protocol.
     async fn negotiate_protocol(
         io: Box<dyn Connection>,
+        role: &Role,
         protocols: Vec<&str>,
     ) -> crate::Result<Box<dyn Connection>> {
         tracing::span!(target: LOG_TARGET, Level::TRACE, "negotiate protocol").enter();
@@ -197,7 +198,10 @@ impl TcpTransport {
             "negotiating protocols",
         );
 
-        let (protocol, mut io) = dialer_select_proto(io, protocols, Version::V1).await?;
+        let (protocol, mut io) = match role {
+            Role::Dialer => dialer_select_proto(io, protocols, Version::V1).await?,
+            Role::Listener => listener_select_proto(io, protocols).await?,
+        };
 
         tracing::event!(
             target: LOG_TARGET,
@@ -222,11 +226,11 @@ impl TcpTransport {
             target: LOG_TARGET,
             Level::DEBUG,
             ?role,
-            "negotiat connection",
+            "negotiate connection",
         );
 
         // negotiate `noise`
-        let io = Self::negotiate_protocol(io, vec!["/noise"]).await?;
+        let io = Self::negotiate_protocol(io, &role, vec!["/noise"]).await?;
         tracing::event!(
             target: LOG_TARGET,
             Level::TRACE,
