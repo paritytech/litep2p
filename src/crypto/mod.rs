@@ -21,8 +21,9 @@
 
 use crate::{error::*, peer_id::*};
 
-mod ed25519;
-mod keys_proto {
+pub mod ed25519;
+pub mod noise;
+pub mod keys_proto {
     include!(concat!(env!("OUT_DIR"), "/keys_proto.rs"));
 }
 

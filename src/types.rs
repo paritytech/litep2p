@@ -30,8 +30,31 @@ impl Display for RequestId {
     }
 }
 
+/// Unique identifier for a substream.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct SubstreamId(usize);
+
+impl Display for SubstreamId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+// TODO: move this to `src/protocol/mod.rs`?
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ProtocolId {
     /// Kademlia DHT.
     Kademlia,
 }
+
+// TODO: move this to `src/protocol/mod.rs`?
+pub enum ProtocolType {
+    /// Notification protocol.
+    Notification(ProtocolName),
+
+    /// Request-response protocol.
+    RequestResponse(ProtocolName),
+}
+
+// TODO: move this to `src/protocol/mod.rs`?
+pub enum ProtocolName {}

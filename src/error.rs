@@ -23,14 +23,72 @@
 
 use crate::types::PeerId;
 
-use std::{error, fmt};
+use multiaddr::Protocol;
+use multihash::{Multihash, MultihashGeneric};
+
+use std::{
+    error, fmt,
+    io::{self, ErrorKind},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Peer `{0}` does not exist")]
     PeerDoesntExist(PeerId),
+    #[error("Address error: `{0}`")]
+    AddressError(AddressError),
+    #[error("Parse error: `{0}`")]
+    ParseError(ParseError),
+    #[error("I/O error: `{0}`")]
+    IoError(ErrorKind),
+    #[error("Negotiation error: `{0}`")]
+    NegotiationError(NegotiationError),
     #[error("Unknown error occurred")]
     Unknown,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AddressError {
+    #[error("Invalid protocol")]
+    InvalidProtocol,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("Invalid multihash: `{0:?}`")]
+    InvalidMultihash(Multihash),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum NegotiationError {
+    #[error("multistream-select error: `{0:?}`")]
+    MultistreamSelectError(multistream_select::NegotiationError),
+    #[error("multistream-select error: `{0:?}`")]
+    SnowError(snow::Error),
+}
+
+impl From<MultihashGeneric<64>> for Error {
+    fn from(hash: MultihashGeneric<64>) -> Self {
+        Error::ParseError(ParseError::InvalidMultihash(hash))
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(error: io::Error) -> Error {
+        Error::IoError(error.kind())
+    }
+}
+
+impl From<multistream_select::NegotiationError> for Error {
+    fn from(error: multistream_select::NegotiationError) -> Error {
+        Error::NegotiationError(NegotiationError::MultistreamSelectError(error))
+    }
+}
+
+impl From<snow::Error> for Error {
+    fn from(error: snow::Error) -> Self {
+        Error::NegotiationError(NegotiationError::SnowError(error))
+    }
 }
 
 /// An error during decoding of key material.

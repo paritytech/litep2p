@@ -10,15 +10,21 @@ prost-build = "0.11"
 async-trait = "0.1.66"
 bs58 = "0.4.0"
 ed25519-dalek = "1.0.1"
+futures = "0.3.27"
+lazy_static = "1.4.0"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
+multistream-select = { path = "/home/altonen/code/rust/rust-libp2p/misc/multistream-select"}
+# multistream-select = "0.12.1"
 prost = "0.11.8"
 protoc = "2.28.0"
 rand = { version = "0.7.0", features = ["getrandom"] }
 serde = "1.0.158"
+snow = "0.9.2"
 thiserror = "1.0.39"
 tokio = { version = "1.26.0", features = ["full"] }
 tokio-stream = "0.1.12"
+tokio-util = { version = "0.7.7", features = ["compat"] }
 tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 yamux = "0.11.0"
