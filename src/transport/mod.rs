@@ -42,9 +42,9 @@ pub enum TransportType {
 
 // TODO: can these be removed all together?
 // TODO: these have to be moved elsewhere
-pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send {}
+pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
 
-impl<T: AsyncRead + AsyncWrite + Unpin + Send> Connection for T {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Connection for T {}
 
 pub struct ConnectionContext {
     /// Underlying socket.

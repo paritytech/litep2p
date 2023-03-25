@@ -71,12 +71,7 @@ type PendingConnections =
 
 /// Type representing pending negotiations.
 type PendingNegotiations = FuturesUnordered<
-    Pin<
-        Box<
-            dyn Future<Output = crate::Result<(yamux::Connection<Box<dyn Connection>>, PeerId)>>
-                + Send,
-        >,
-    >,
+    Pin<Box<dyn Future<Output = crate::Result<(mpsc::Receiver<yamux::Stream>, PeerId)>> + Send>>,
 >;
 
 /// TCP transport events.
@@ -216,10 +211,10 @@ impl TcpTransport {
 
     /// Negotiate protocol.
     async fn negotiate_protocol(
-        io: Box<dyn Connection>,
+        io: impl Connection,
         role: &Role,
         protocols: Vec<&str>,
-    ) -> crate::Result<Box<dyn Connection>> {
+    ) -> crate::Result<impl Connection> {
         tracing::span!(target: LOG_TARGET, Level::TRACE, "negotiate protocol").enter();
         tracing::event!(
             target: LOG_TARGET,
@@ -241,17 +236,17 @@ impl TcpTransport {
         );
 
         // TODO: return selected protocol?
-        Ok(Box::new(io))
+        Ok(io)
     }
 
     /// Initialize connection.
     ///
     /// Negotiate and handshake Noise and Yamux.
     async fn initialize_connection(
-        io: Box<dyn Connection>,
+        io: impl Connection,
         role: Role,
         noise_config: NoiseConfiguration,
-    ) -> crate::Result<(yamux::Connection<Box<dyn Connection>>, PeerId)> {
+    ) -> crate::Result<(mpsc::Receiver<yamux::Stream>, PeerId)> {
         tracing::span!(target: LOG_TARGET, Level::DEBUG, "negotiate connection").enter();
         tracing::event!(
             target: LOG_TARGET,
@@ -276,39 +271,38 @@ impl TcpTransport {
         let io = Self::negotiate_protocol(io, &role, vec!["/yamux/1.0.0"]).await?;
         tracing::event!(target: LOG_TARGET, Level::TRACE, "`yamux` negotiated");
 
-        Ok((
-            yamux::Connection::new(io, yamux::Config::default(), role.into()),
-            peer,
-        ))
+        let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
+        // TODO: create channel which allows reading events from yamux::Connection
+        // TODO: spawn tas
+        let connection = yamux::Connection::new(io, yamux::Config::default(), role.into());
+        let (mut control, mut connection) = yamux::Control::new(connection);
 
-        // todo!();
-        // while let Some(event) = connection.next().await {
-        //     match event {
-        //         Ok(mut substream) => {
-        //             tokio::spawn(async move {
-        //                 // TODO: add all supported protocols.
-        //                 let protos = Vec::from(["/ipfs/ping/1.0.0"]);
-        //                 let (protocol, mut socket) =
-        //                     listener_select_proto(substream, protos).await.unwrap();
+        tokio::spawn(async move {
+            while let Some(event) = connection.next().await {
+                match event {
+                    Ok(mut substream) => {
+                        tokio::spawn(async move {
+                            // TODO: add all supported protocols.
+                            let protos = Vec::from(["/ipfs/ping/1.0.0"]);
+                            let (protocol, mut socket) =
+                                listener_select_proto(substream, protos).await.unwrap();
 
-        //                 // TODO: start correct protocol handler based on the value of `protocol`
-        //                 println!("selected protocol {protocol:?}");
+                            // TODO: start correct protocol handler based on the value of `protocol`
+                            println!("selected protocol {protocol:?}");
 
-        //                 // TODO: answer to pings
-        //                 tokio::time::sleep(std::time::Duration::from_secs(20)).await;
-        //             });
-        //         }
-        //         Err(err) => {
-        //             println!("failed to receive inbound substream: {err:?}");
-        //         }
-        //     }
-        // }
+                            // TODO: answer to pings
+                            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                        });
+                    }
+                    Err(err) => {
+                        println!("failed to receive inbound substream: {err:?}");
+                    }
+                }
+                let _ = control.open_stream();
+            }
+        });
 
-        // // TODO: maybe don't return connection context but save it to `TransportService`?
-        // Ok(ConnectionContext {
-        //     io: Box::new(io),
-        //     peer,
-        // })
+        Ok((rx, peer))
     }
 
     /// Schedule connection negotiation.
@@ -330,7 +324,7 @@ impl TcpTransport {
     /// TODO: do something
     fn on_negotiation_finished(
         &mut self,
-        result: crate::Result<(yamux::Connection<Box<dyn Connection>>, PeerId)>,
+        result: crate::Result<(mpsc::Receiver<yamux::Stream>, PeerId)>,
     ) {
         tracing::trace!(
             target: LOG_TARGET,
@@ -340,8 +334,9 @@ impl TcpTransport {
 
         match result {
             Ok((connection, peer)) => {
-                let (mut control, mut connection) = yamux::Control::new(connection);
-                self.connections.insert(peer, connection);
+                // todo!();
+                // let (mut control, mut connection) = yamux::Control::new(connection);
+                // self.connections.insert(peer, connection);
             }
             Err(error) => {
                 tracing::error!(target: LOG_TARGET, ?error, "failed to negotiate connection")
@@ -369,19 +364,9 @@ impl TcpTransport {
             }
         };
 
-        self.pending_connections.push(Box::pin(async move {
-            println!("connect to remote peer");
-            match TcpStream::connect(socket_address).await {
-                Ok(res) => {
-                    println!("succeeded");
-                    Ok(res)
-                }
-                Err(err) => {
-                    println!("failed");
-                    Err(err)
-                }
-            }
-        }));
+        self.pending_connections.push(Box::pin(
+            async move { TcpStream::connect(socket_address).await },
+        ));
     }
 
     /// Run the [`TcpTransport`] event loop.
@@ -389,8 +374,6 @@ impl TcpTransport {
         tracing::info!(target: LOG_TARGET, "starting `TcpTransport` event loop");
 
         loop {
-            println!("connections {}\n\n\n", self.connections.len());
-
             tokio::select! {
                 event = self.listener.accept() => match event {
                     Err(error) => {
@@ -418,7 +401,6 @@ impl TcpTransport {
                 }
                 event = self.connections.next(), if !self.connections.is_empty() => match event {
                     Some((peer, Ok(stream))) => {
-                        println!("HEEEEEEEEEEEEEEEEEEEEEEEEEEEEEe");
                         todo!();
                     }
                     Some((peer, Err(error))) => {

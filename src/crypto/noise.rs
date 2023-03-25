@@ -437,9 +437,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
 
 /// Perform Noise handshake.
 pub async fn handshake(
-    io: Box<dyn Connection>,
+    io: impl Connection,
     config: NoiseConfiguration,
-) -> crate::Result<(Box<dyn Connection>, PeerId)> {
+) -> crate::Result<(impl Connection, PeerId)> {
     let mut socket = NoiseSocket::new(io, NoiseHandshakeState(config.noise));
     let mut buf = vec![0u8; 2048];
 
@@ -456,5 +456,5 @@ pub async fn handshake(
         NoiseTransportState(socket.noise.into_transport_mode()?),
     );
 
-    Ok((Box::new(io), peer))
+    Ok((io, peer))
 }
