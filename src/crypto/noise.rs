@@ -24,6 +24,7 @@ use crate::{
     config::Role,
     crypto::{ed25519::Keypair, PublicKey},
     peer_id::PeerId,
+    transport::Connection,
 };
 
 use futures::{
@@ -435,10 +436,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
 }
 
 /// Perform Noise handshake.
-pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
-    io: S,
+pub async fn handshake(
+    io: Box<dyn Connection>,
     config: NoiseConfiguration,
-) -> crate::Result<(impl AsyncRead + AsyncWrite + Unpin, PeerId)> {
+) -> crate::Result<(Box<dyn Connection>, PeerId)> {
     let mut socket = NoiseSocket::new(io, NoiseHandshakeState(config.noise));
     let mut buf = vec![0u8; 2048];
 
@@ -455,5 +456,5 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
         NoiseTransportState(socket.noise.into_transport_mode()?),
     );
 
-    Ok((io, peer))
+    Ok((Box::new(io), peer))
 }

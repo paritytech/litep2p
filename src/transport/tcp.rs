@@ -29,7 +29,7 @@ use crate::{
     },
     error::{AddressError, Error},
     peer_id::PeerId,
-    transport::{ConnectionContext, Transport, TransportEvent, TransportService},
+    transport::{Connection, ConnectionContext, Transport, TransportEvent, TransportService},
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
 };
 
@@ -62,8 +62,9 @@ type PendingConnections =
     FuturesUnordered<Pin<Box<dyn Future<Output = Result<TcpStream, std::io::Error>> + Send>>>;
 
 /// Type representing pending negotiations.
-type PendingNegotiatios =
-    FuturesUnordered<Pin<Box<dyn Future<Output = crate::Result<ConnectionContext>> + Send>>>;
+type PendingNegotiations = FuturesUnordered<
+    Pin<Box<dyn Future<Output = crate::Result<yamux::Connection<Box<dyn Connection>>>> + Send>>,
+>;
 
 /// TCP transport events.
 enum TcpTransportEvent {
@@ -113,7 +114,7 @@ pub struct TcpTransport {
     pending_connections: PendingConnections,
 
     /// Pending outbound negotiations.
-    pending_negotiations: PendingNegotiatios,
+    pending_negotiations: PendingNegotiations,
 }
 
 impl TcpTransport {
@@ -185,9 +186,9 @@ impl TcpTransport {
 
     /// Negotiate protocol.
     async fn negotiate_protocol(
-        io: impl AsyncRead + AsyncWrite + Unpin,
+        io: Box<dyn Connection>,
         protocols: Vec<&str>,
-    ) -> crate::Result<impl AsyncRead + AsyncWrite + Unpin> {
+    ) -> crate::Result<Box<dyn Connection>> {
         tracing::span!(target: LOG_TARGET, Level::TRACE, "negotiate protocol").enter();
         tracing::event!(
             target: LOG_TARGET,
@@ -205,17 +206,17 @@ impl TcpTransport {
             "protocol negotiated",
         );
 
-        Ok(io)
+        Ok(Box::new(io))
     }
 
     /// Initialize connection.
     ///
     /// Negotiate and handshake Noise and Yamux.
-    async fn initialize_connection<S: AsyncRead + AsyncWrite + Unpin>(
-        io: S,
+    async fn initialize_connection(
+        io: Box<dyn Connection>,
         role: Role,
         noise_config: NoiseConfiguration,
-    ) -> crate::Result<yamux::Connection<S>> {
+    ) -> crate::Result<yamux::Connection<Box<dyn Connection>>> {
         tracing::span!(target: LOG_TARGET, Level::DEBUG, "negotiate connection").enter();
         tracing::event!(
             target: LOG_TARGET,
@@ -290,7 +291,7 @@ impl TcpTransport {
 
         self.pending_negotiations.push(Box::pin(async move {
             let io = TokioAsyncReadCompatExt::compat(io).into_inner();
-            let io = TokioAsyncWriteCompatExt::compat_write(io);
+            let io = Box::new(TokioAsyncWriteCompatExt::compat_write(io));
             Self::initialize_connection(io, role, noise_config).await
         }));
     }
@@ -298,7 +299,10 @@ impl TcpTransport {
     /// Finalize the negotiated connection.
     ///
     /// TODO: do something
-    fn on_negotiation_finished(&mut self, negotiated: crate::Result<ConnectionContext>) {
+    fn on_negotiation_finished(
+        &mut self,
+        negotiated: crate::Result<yamux::Connection<Box<dyn Connection>>>,
+    ) {
         todo!();
     }
 
