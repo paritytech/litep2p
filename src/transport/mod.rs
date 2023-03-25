@@ -68,10 +68,10 @@ pub trait TransportService {
     /// Open connection to remote peer.
     ///
     /// Negotiate `noise`, perform the Noise handshake, negotiate `yamux` and return TODO
-    async fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()>;
+    async fn open_connection(&mut self, address: Multiaddr);
 
     /// Close connection to remote peer.
-    fn close_connection(&mut self, peer: PeerId) -> crate::Result<()>;
+    async fn close_connection(&mut self, peer: PeerId);
 }
 
 #[async_trait::async_trait]
@@ -79,5 +79,5 @@ pub trait Transport {
     type Handle: TransportService;
     /// Start the underlying transport listener and return a handle which allows `litep2p` to
     // interact with the transport.
-    fn start(config: TransportConfig) -> Self::Handle;
+    async fn start(config: TransportConfig) -> crate::Result<Self::Handle>;
 }

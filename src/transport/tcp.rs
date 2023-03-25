@@ -20,6 +20,12 @@
 
 //! TCP transport implementation.
 
+// TODO: remove excess boxing
+// TODO: support two connections per peer
+// TODO: move code to `transport/tcp/types.rs`
+// TODO: bechmark `StreamMap` performance under high load
+// TODO: find a better way to
+
 use crate::{
     config::{Role, TransportConfig},
     crypto::{
@@ -31,6 +37,7 @@ use crate::{
     peer_id::PeerId,
     transport::{Connection, ConnectionContext, Transport, TransportEvent, TransportService},
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
+    DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{
@@ -44,6 +51,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc,
 };
+use tokio_stream::StreamMap;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::Level;
 
@@ -63,10 +71,16 @@ type PendingConnections =
 
 /// Type representing pending negotiations.
 type PendingNegotiations = FuturesUnordered<
-    Pin<Box<dyn Future<Output = crate::Result<yamux::Connection<Box<dyn Connection>>>> + Send>>,
+    Pin<
+        Box<
+            dyn Future<Output = crate::Result<(yamux::Connection<Box<dyn Connection>>, PeerId)>>
+                + Send,
+        >,
+    >,
 >;
 
 /// TCP transport events.
+#[derive(Debug)]
 enum TcpTransportEvent {
     /// Open connection to remote peer.
     OpenConnection(Multiaddr),
@@ -91,15 +105,19 @@ impl TcpTransportService {
 #[async_trait::async_trait]
 impl TransportService for TcpTransportService {
     /// Open connection to remote peer.
-    async fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()> {
-        todo!();
-        // self.tx.send(TcpTransportEvent::OpenConnection(address))
+    async fn open_connection(&mut self, address: Multiaddr) {
+        self.tx
+            .send(TcpTransportEvent::OpenConnection(address))
+            .await
+            .expect("channel to `TcpTransport` to stay open")
     }
 
     /// Instruct [`TcpTransport`] to close connection to remote peer.
-    fn close_connection(&mut self, peer: PeerId) -> crate::Result<()> {
-        todo!();
-        // self.tx.send(TcpTransportEvent::CloseConnection(peer))
+    async fn close_connection(&mut self, peer: PeerId) {
+        self.tx
+            .send(TcpTransportEvent::CloseConnection(peer))
+            .await
+            .expect("channel to `TcpTransport` to stay open")
     }
 }
 
@@ -115,14 +133,20 @@ pub struct TcpTransport {
 
     /// Pending outbound negotiations.
     pending_negotiations: PendingNegotiations,
+
+    /// Open connections.
+    connections: StreamMap<PeerId, yamux::ControlledConnection<Box<dyn Connection>>>,
 }
 
 impl TcpTransport {
     async fn new(
-        listen_address: SocketAddr,
+        config: TransportConfig,
     ) -> crate::Result<(Self, mpsc::Sender<TcpTransportEvent>)> {
-        let listener = TcpListener::bind(listen_address).await?;
-        let (tx, rx) = mpsc::channel(64); // TODO: don't use constant
+        tracing::info!(target: LOG_TARGET, ?config, "create new `TcpTransport`");
+
+        let (socket_address, _) = Self::get_socket_address(config.listen_address())?;
+        let listener = TcpListener::bind(socket_address).await?;
+        let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
 
         Ok((
             Self {
@@ -130,12 +154,13 @@ impl TcpTransport {
                 rx,
                 pending_connections: FuturesUnordered::new(),
                 pending_negotiations: FuturesUnordered::new(),
+                connections: StreamMap::new(),
             },
             tx,
         ))
     }
     /// Extract socket address and `PeerId`, if found, from `address`.
-    fn get_socket_address(address: Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
+    fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
         tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
         let mut iter = address.iter();
@@ -210,6 +235,7 @@ impl TcpTransport {
             "protocol negotiated",
         );
 
+        // TODO: return selected protocol?
         Ok(Box::new(io))
     }
 
@@ -220,7 +246,7 @@ impl TcpTransport {
         io: Box<dyn Connection>,
         role: Role,
         noise_config: NoiseConfiguration,
-    ) -> crate::Result<yamux::Connection<Box<dyn Connection>>> {
+    ) -> crate::Result<(yamux::Connection<Box<dyn Connection>>, PeerId)> {
         tracing::span!(target: LOG_TARGET, Level::DEBUG, "negotiate connection").enter();
         tracing::event!(
             target: LOG_TARGET,
@@ -242,20 +268,13 @@ impl TcpTransport {
         tracing::event!(target: LOG_TARGET, Level::TRACE, "noise handshake done");
 
         // negotiate `yamux`
-        let io = Self::negotiate_protocol(io, vec!["/yamux/1.0.0"]).await?;
+        let io = Self::negotiate_protocol(io, &role, vec!["/yamux/1.0.0"]).await?;
         tracing::event!(target: LOG_TARGET, Level::TRACE, "`yamux` negotiated");
 
-        // Ok(io)
-        let mut connection =
-            yamux::Connection::new(io, yamux::Config::default(), yamux::Mode::Client);
-        Ok(connection)
-        // let (mut control, mut connection) = yamux::Control::new(connection);
-
-        // let mut stream = tokio_stream::StreamMap::new();
-        // stream.insert(peer, connection);
-
-        // TODO: save `connection` as stream to `TransportService` and poll it in a loop with other streams
-        // TODO: return `PeerId` and `control` to caller
+        Ok((
+            yamux::Connection::new(io, yamux::Config::default(), role.into()),
+            peer,
+        ))
 
         // todo!();
         // while let Some(event) = connection.next().await {
@@ -305,9 +324,17 @@ impl TcpTransport {
     /// TODO: do something
     fn on_negotiation_finished(
         &mut self,
-        negotiated: crate::Result<yamux::Connection<Box<dyn Connection>>>,
+        result: crate::Result<(yamux::Connection<Box<dyn Connection>>, PeerId)>,
     ) {
-        todo!();
+        match result {
+            Ok((connection, peer)) => {
+                let (mut control, mut connection) = yamux::Control::new(connection);
+                self.connections.insert(peer, connection);
+            }
+            Err(error) => {
+                tracing::error!(target: LOG_TARGET, ?error, "failed to negotiate connection");
+            }
+        }
     }
 
     /// Handle `TcpTransportEvent::OpenConnection`.
@@ -322,7 +349,7 @@ impl TcpTransport {
             "attempt to establish outbound connections",
         );
 
-        let (socket_address, peer) = match Self::get_socket_address(address) {
+        let (socket_address, peer) = match Self::get_socket_address(&address) {
             Ok((address, peer)) => (address, peer),
             Err(error) => {
                 tracing::error!(target: LOG_TARGET, ?error, "failed to parse `Multiaddr`");
@@ -337,6 +364,8 @@ impl TcpTransport {
 
     /// Run the [`TcpTransport`] event loop.
     async fn run(mut self) {
+        tracing::info!(target: LOG_TARGET, "starting `TcpTransport` event loop");
+
         loop {
             tokio::select! {
                 event = self.listener.accept() => match event {
@@ -361,11 +390,29 @@ impl TcpTransport {
                 negotiated = self.pending_negotiations.select_next_some() => {
                     self.on_negotiation_finished(negotiated);
                 }
+                event = self.connections.next() => match event {
+                    Some((peer, Ok(stream))) => {
+                        todo!();
+                    }
+                    Some((peer, Err(error))) => {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?error,
+                            "failed to poll yamux connection"
+                        );
+                        self.connections.remove(&peer);
+                    }
+                    None => {
+                        todo!();
+                    }
+                },
                 event = self.rx.recv() => match event {
                     Some(TcpTransportEvent::OpenConnection(address)) => {
                         self.on_open_connection(address);
                     },
-                    Some(TcpTransportEvent::CloseConnection(_peer)) => {
+                    Some(TcpTransportEvent::CloseConnection(peer)) => {
+                        self.connections.remove(&peer);
                     }
                     None => {
                         tracing::error!(
@@ -386,11 +433,11 @@ impl Transport for TcpTransport {
 
     /// Start the underlying transport listener and return a handle which allows `litep2p` to
     // interact with the transport.
-    fn start(config: TransportConfig) -> Self::Handle {
-        // TODO: spawn TCP listener and an event loop for it.
-        // TODO: this event loop is responsible for only listening to inocming connections.
-        // TODO: how to keep the listener apprised of the number of connections? It has to do more?
-        todo!();
+    async fn start(config: TransportConfig) -> crate::Result<Self::Handle> {
+        let (transport, tx) = TcpTransport::new(config).await?;
+
+        tokio::spawn(transport.run());
+        Ok(TcpTransportService::new(tx))
     }
 }
 
@@ -398,62 +445,77 @@ impl Transport for TcpTransport {
 mod tests {
     use super::*;
 
-    // #[tokio::test]
-    // async fn establish_outbound_connection() {
-    //     // TODO: create listener as well
-    //     tracing_subscriber::fmt()
-    //         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-    //         .try_init()
-    //         .expect("to succeed");
-
-    //     let mut transport = TcpTransportService::new();
-    //     let keypair = ed25519::Keypair::generate();
-    //     let config = NoiseConfiguration::new(&keypair, crate::config::Role::Dialer);
-
-    //     transport
-    //         .open_connection(
-    //             "/ip6/::1/tcp/8888".parse().expect("valid multiaddress"),
-    //             config,
-    //         )
-    //         .await
-    //         .unwrap();
-    // }
-
     #[test]
     fn parse_multiaddresses() {
         assert!(TcpTransport::get_socket_address(
-            "/ip6/::1/tcp/8888".parse().expect("valid multiaddress")
+            &"/ip6/::1/tcp/8888".parse().expect("valid multiaddress")
         )
         .is_ok());
         assert!(TcpTransport::get_socket_address(
-            "/ip4/127.0.0.1/tcp/8888"
+            &"/ip4/127.0.0.1/tcp/8888"
                 .parse()
                 .expect("valid multiaddress")
         )
         .is_ok());
         assert!(TcpTransport::get_socket_address(
-            "/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+            &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress")
         )
         .is_ok());
         assert!(TcpTransport::get_socket_address(
-            "/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+            &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress")
         )
         .is_ok());
         assert!(TcpTransport::get_socket_address(
-            "/ip6/::1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+            &"/ip6/::1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress")
         )
         .is_err());
         assert!(TcpTransport::get_socket_address(
-            "/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+            &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress")
         )
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn establish_outbound_connection() {
+        // TODO: create listener as well
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init()
+            .expect("to succeed");
+
+        let mut handle = TcpTransport::start(TransportConfig::new(
+            "/ip6/::1/tcp/7777".parse().expect("valid multiaddress"),
+            vec![],
+            40_000,
+        ))
+        .await
+        .unwrap();
+
+        // attempt to open connection to remote peer
+        handle
+            .open_connection("/ip6/::1/tcp/8888".parse().expect("valid multiaddress"))
+            .await;
+
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+        // let mut transport = TcpTransportService::new();
+        // let keypair = ed25519::Keypair::generate();
+        // let config = NoiseConfiguration::new(&keypair, crate::config::Role::Dialer);
+
+        // transport
+        //     .open_connection(
+        //         "/ip6/::1/tcp/8888".parse().expect("valid multiaddress"),
+        //         config,
+        //     )
+        //     .await
+        //     .unwrap();
     }
 }

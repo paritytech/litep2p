@@ -47,6 +47,7 @@ pub struct LiteP2pConfiguration {
 }
 
 // Transport configuration.
+#[derive(Debug)]
 pub struct TransportConfig {
     /// Listening address for the transport.
     listen_address: Multiaddr,
@@ -56,4 +57,34 @@ pub struct TransportConfig {
 
     /// Maximum number of allowed connections:
     max_connections: usize,
+}
+
+impl TransportConfig {
+    /// Create new [`TransportConfig`].
+    pub fn new(
+        listen_address: Multiaddr,
+        supported_protocols: Vec<ProtocolType>,
+        max_connections: usize,
+    ) -> Self {
+        Self {
+            listen_address,
+            supported_protocols,
+            max_connections,
+        }
+    }
+
+    /// Get listen address.
+    pub fn listen_address(&self) -> &Multiaddr {
+        &self.listen_address
+    }
+
+    /// Get listen address.
+    pub fn supported_protocols(&self) -> impl Iterator<Item = &ProtocolType> {
+        self.supported_protocols.iter()
+    }
+
+    /// Get listen address.
+    pub fn max_connections(&self) -> usize {
+        self.max_connections
+    }
 }

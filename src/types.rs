@@ -48,6 +48,7 @@ pub enum ProtocolId {
 }
 
 // TODO: move this to `src/protocol/mod.rs`?
+#[derive(Debug)]
 pub enum ProtocolType {
     /// Notification protocol.
     Notification(ProtocolName),
@@ -57,4 +58,5 @@ pub enum ProtocolType {
 }
 
 // TODO: move this to `src/protocol/mod.rs`?
+#[derive(Debug)]
 pub enum ProtocolName {}
