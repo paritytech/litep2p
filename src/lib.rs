@@ -80,7 +80,17 @@ impl Litep2p {
     /// Open connection to remote peer at `address`.
     // TODO: this can't block, make it async?
     // TODO: how to implement rate-limiting for a connection
-    pub async fn open_connection(&mut self, _address: Multiaddr) -> crate::Result<PeerId> {
+    pub async fn open_connection(&mut self, address: Multiaddr) -> crate::Result<PeerId> {
+        let context = match address.iter().skip(1).next() {
+            Some(Protocol::Tcp(_)) => {
+                todo!();
+            }
+            protocol => {
+                tracing::error!(target: LOG_TARGET, ?protocol, "unsupported protocol");
+                return Err(Error::AddressError(error::AddressError::InvalidProtocol));
+            }
+        };
+
         // TODO: verify that transport layer protocol is either ip6 or ip4
         // TODO: verify that application-layer protocol is one of supported
         // TODO: how to verify that there is no connection open to peer yet?

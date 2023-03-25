@@ -23,6 +23,7 @@ use crate::types::ProtocolType;
 use multiaddr::Multiaddr;
 
 /// Connection role.
+#[derive(Debug)]
 pub enum Role {
     /// Dialer.
     Dialer,
@@ -36,10 +37,14 @@ pub struct LiteP2pConfiguration {
     listen_addresses: Vec<Multiaddr>,
 }
 
+// Transport configuration.
 pub struct TransportConfig {
     /// Listening address for the transport.
     listen_address: Multiaddr,
 
     /// Supported protocols.
     supported_protocols: Vec<ProtocolType>,
+
+    /// Maximum number of allowed connections:
+    max_connections: usize,
 }

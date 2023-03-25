@@ -26,7 +26,10 @@ use crate::{
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
 };
 
-use futures::io::{AsyncRead, AsyncWrite};
+use futures::{
+    io::{AsyncRead, AsyncWrite},
+    Stream,
+};
 use multiaddr::Multiaddr;
 
 pub mod tcp;
@@ -37,6 +40,7 @@ pub enum TransportType {
     Tcp(Multiaddr),
 }
 
+// TODO: can these be removed all together?
 // TODO: these have to be moved elsewhere
 pub trait Connection: AsyncRead + AsyncWrite + Unpin {}
 
@@ -50,43 +54,24 @@ pub struct ConnectionContext {
     pub peer: PeerId,
 }
 
+/// Events emitted by the underlying transport.
+pub enum TransportEvent {
+    /// Establish new outbound connected to remote peer.
+    ConnectionEstablished(Multiaddr),
+
+    /// Close the connection to remote peer.
+    ConnectionClosed(PeerId),
+}
+
 #[async_trait::async_trait]
 pub trait TransportService {
     /// Open connection to remote peer.
     ///
-    /// Negotiate `noise`, perform the Noise handshake, negotiate `yamux` and return [`ConnectionContext`].
-    async fn open_connection(
-        &mut self,
-        address: Multiaddr,
-        noise_config: NoiseConfiguration,
-    ) -> crate::Result<ConnectionContext>;
+    /// Negotiate `noise`, perform the Noise handshake, negotiate `yamux` and return TODO
+    async fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()>;
 
     /// Close connection to remote peer.
     fn close_connection(&mut self, peer: PeerId) -> crate::Result<()>;
-
-    /// Open new `protocol` to `peer` and send optional handshake.
-    ///
-    /// If `peer` accepts the substream, return TODO
-    fn open_substream(
-        &mut self,
-        peer: PeerId,
-        protocol: ProtocolId,
-        handshake: Option<Vec<u8>>,
-    ) -> crate::Result<SubstreamId>;
-
-    /// Close substream to remote peer.
-    fn close_substream(&mut self, substream: SubstreamId) -> crate::Result<()>;
-
-    /// Send `request `to `peer` over `protocol`.
-    fn send_request(
-        &mut self,
-        peer: PeerId,
-        protocol: ProtocolType,
-        request: Vec<u8>,
-    ) -> crate::Result<RequestId>;
-
-    /// Send `response` to received `request`.
-    fn send_response(&mut self, request: RequestId, response: Vec<u8>) -> crate::Result<RequestId>;
 }
 
 #[async_trait::async_trait]
