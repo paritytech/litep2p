@@ -69,7 +69,7 @@ pub struct NoiseConfiguration {
 
 impl NoiseConfiguration {
     /// Create new Noise configuration.
-    pub fn new(keypair: &Keypair, role: Role) -> Self {
+    pub fn new(keypair: &Keypair, role: &Role) -> Self {
         let builder: Builder<'_> =
             Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise pattern"));
         let dh_keypair = builder

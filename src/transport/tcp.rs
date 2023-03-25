@@ -29,7 +29,7 @@
 use crate::{
     config::{Role, TransportConfig},
     crypto::{
-        ed25519,
+        ed25519::Keypair,
         noise::{self, NoiseConfiguration},
         PublicKey,
     },
@@ -125,6 +125,9 @@ pub struct TcpTransport {
     /// TCP listener.
     listener: TcpListener,
 
+    /// Keypair.
+    keypair: Keypair,
+
     /// RX channel for receiving events from `litep2p`.
     rx: mpsc::Receiver<TcpTransportEvent>,
 
@@ -140,6 +143,7 @@ pub struct TcpTransport {
 
 impl TcpTransport {
     async fn new(
+        keypair: &Keypair,
         config: TransportConfig,
     ) -> crate::Result<(Self, mpsc::Sender<TcpTransportEvent>)> {
         tracing::info!(target: LOG_TARGET, ?config, "create new `TcpTransport`");
@@ -152,6 +156,7 @@ impl TcpTransport {
             Self {
                 listener,
                 rx,
+                keypair: keypair.clone(),
                 pending_connections: FuturesUnordered::new(),
                 pending_negotiations: FuturesUnordered::new(),
                 connections: StreamMap::new(),
@@ -310,7 +315,8 @@ impl TcpTransport {
     fn schedule_negotiation(&mut self, io: TcpStream, role: Role) {
         tracing::trace!(target: LOG_TARGET, ?role, "schedule negotiation");
 
-        let noise_config = todo!();
+        // create new Noise configuration and push a future which negotiates the connection
+        let noise_config = NoiseConfiguration::new(&self.keypair, &role);
 
         self.pending_negotiations.push(Box::pin(async move {
             let io = TokioAsyncReadCompatExt::compat(io).into_inner();
@@ -326,13 +332,19 @@ impl TcpTransport {
         &mut self,
         result: crate::Result<(yamux::Connection<Box<dyn Connection>>, PeerId)>,
     ) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            succeeded = result.is_ok(),
+            "negotiation finished"
+        );
+
         match result {
             Ok((connection, peer)) => {
                 let (mut control, mut connection) = yamux::Control::new(connection);
                 self.connections.insert(peer, connection);
             }
             Err(error) => {
-                tracing::error!(target: LOG_TARGET, ?error, "failed to negotiate connection");
+                tracing::error!(target: LOG_TARGET, ?error, "failed to negotiate connection")
             }
         }
     }
@@ -357,9 +369,19 @@ impl TcpTransport {
             }
         };
 
-        self.pending_connections.push(Box::pin(
-            async move { TcpStream::connect(socket_address).await },
-        ));
+        self.pending_connections.push(Box::pin(async move {
+            println!("connect to remote peer");
+            match TcpStream::connect(socket_address).await {
+                Ok(res) => {
+                    println!("succeeded");
+                    Ok(res)
+                }
+                Err(err) => {
+                    println!("failed");
+                    Err(err)
+                }
+            }
+        }));
     }
 
     /// Run the [`TcpTransport`] event loop.
@@ -367,6 +389,8 @@ impl TcpTransport {
         tracing::info!(target: LOG_TARGET, "starting `TcpTransport` event loop");
 
         loop {
+            println!("connections {}\n\n\n", self.connections.len());
+
             tokio::select! {
                 event = self.listener.accept() => match event {
                     Err(error) => {
@@ -379,19 +403,22 @@ impl TcpTransport {
                     }
                     Ok((io, _address)) => self.schedule_negotiation(io, Role::Listener),
                 },
-                connection = self.pending_connections.select_next_some() => match connection {
-                    Ok(io) => self.schedule_negotiation(io, Role::Dialer),
-                    Err(error) => tracing::info!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "failed to establish outbound connection",
-                    ),
+                connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
+                    match connection {
+                        Ok(io) => self.schedule_negotiation(io, Role::Dialer),
+                        Err(error) => tracing::info!(
+                            target: LOG_TARGET,
+                            ?error,
+                            "failed to establish outbound connection",
+                        ),
+                    }
                 },
-                negotiated = self.pending_negotiations.select_next_some() => {
+                negotiated = self.pending_negotiations.select_next_some(), if !self.pending_negotiations.is_empty() => {
                     self.on_negotiation_finished(negotiated);
                 }
-                event = self.connections.next() => match event {
+                event = self.connections.next(), if !self.connections.is_empty() => match event {
                     Some((peer, Ok(stream))) => {
+                        println!("HEEEEEEEEEEEEEEEEEEEEEEEEEEEEEe");
                         todo!();
                     }
                     Some((peer, Err(error))) => {
@@ -403,9 +430,7 @@ impl TcpTransport {
                         );
                         self.connections.remove(&peer);
                     }
-                    None => {
-                        todo!();
-                    }
+                    None => return,
                 },
                 event = self.rx.recv() => match event {
                     Some(TcpTransportEvent::OpenConnection(address)) => {
@@ -433,8 +458,8 @@ impl Transport for TcpTransport {
 
     /// Start the underlying transport listener and return a handle which allows `litep2p` to
     // interact with the transport.
-    async fn start(config: TransportConfig) -> crate::Result<Self::Handle> {
-        let (transport, tx) = TcpTransport::new(config).await?;
+    async fn start(keypair: &Keypair, config: TransportConfig) -> crate::Result<Self::Handle> {
+        let (transport, tx) = TcpTransport::new(keypair, config).await?;
 
         tokio::spawn(transport.run());
         Ok(TcpTransportService::new(tx))
@@ -491,11 +516,15 @@ mod tests {
             .try_init()
             .expect("to succeed");
 
-        let mut handle = TcpTransport::start(TransportConfig::new(
-            "/ip6/::1/tcp/7777".parse().expect("valid multiaddress"),
-            vec![],
-            40_000,
-        ))
+        let keypair = Keypair::generate();
+        let mut handle = TcpTransport::start(
+            &keypair,
+            TransportConfig::new(
+                "/ip6/::1/tcp/7777".parse().expect("valid multiaddress"),
+                vec![],
+                40_000,
+            ),
+        )
         .await
         .unwrap();
 
@@ -504,18 +533,8 @@ mod tests {
             .open_connection("/ip6/::1/tcp/8888".parse().expect("valid multiaddress"))
             .await;
 
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
-        // let mut transport = TcpTransportService::new();
-        // let keypair = ed25519::Keypair::generate();
-        // let config = NoiseConfiguration::new(&keypair, crate::config::Role::Dialer);
-
-        // transport
-        //     .open_connection(
-        //         "/ip6/::1/tcp/8888".parse().expect("valid multiaddress"),
-        //         config,
-        //     )
-        //     .await
-        //     .unwrap();
+        println!("exiting...");
     }
 }

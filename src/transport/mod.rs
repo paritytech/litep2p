@@ -20,7 +20,7 @@
 
 use crate::{
     config::TransportConfig,
-    crypto::noise::NoiseConfiguration,
+    crypto::{ed25519::Keypair, noise::NoiseConfiguration},
     error::Error,
     peer_id::PeerId,
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
@@ -79,5 +79,5 @@ pub trait Transport {
     type Handle: TransportService;
     /// Start the underlying transport listener and return a handle which allows `litep2p` to
     // interact with the transport.
-    async fn start(config: TransportConfig) -> crate::Result<Self::Handle>;
+    async fn start(keypair: &Keypair, config: TransportConfig) -> crate::Result<Self::Handle>;
 }
