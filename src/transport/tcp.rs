@@ -29,7 +29,7 @@ use crate::{
     },
     error::{AddressError, Error},
     peer_id::PeerId,
-    transport::{Transport, TransportService},
+    transport::{ConnectionContext, Transport, TransportService},
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
 };
 
@@ -134,7 +134,7 @@ impl TransportService for TcpTransportService {
         &mut self,
         address: Multiaddr,
         noise_config: NoiseConfiguration,
-    ) -> crate::Result<PeerId> {
+    ) -> crate::Result<ConnectionContext> {
         tracing::span!(target: LOG_TARGET, Level::DEBUG, "open connection").enter();
         tracing::event!(
             target: LOG_TARGET,
@@ -166,15 +166,17 @@ impl TransportService for TcpTransportService {
         );
 
         // perform noise handshake
-        let io = noise::handshake(io, noise_config).await?;
+        let (io, peer) = noise::handshake(io, noise_config).await?;
         tracing::event!(target: LOG_TARGET, Level::TRACE, "noise handshake done");
 
         // negotiate `yamux`
         let io = Self::negotiate_protocol(io, vec!["/yamux/1.0.0"]).await?;
         tracing::event!(target: LOG_TARGET, Level::TRACE, "`yamux` negotiated");
 
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        todo!();
+        Ok(ConnectionContext {
+            io: Box::new(io),
+            peer,
+        })
     }
 
     fn close_connection(&mut self, peer: PeerId) -> crate::Result<()> {
@@ -213,9 +215,11 @@ pub struct TcpTransport;
 
 #[async_trait::async_trait]
 impl Transport for TcpTransport {
+    type Handle = TcpTransportService;
+
     /// Start the underlying transport listener and return a handle which allows `litep2p` to
     // interact with the transport.
-    fn start(config: TransportConfig) -> Box<dyn TransportService> {
+    fn start(config: TransportConfig) -> Self::Handle {
         todo!();
     }
 }
@@ -226,6 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn establish_outbound_connection() {
+        // TODO: create listener as well
         tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init()

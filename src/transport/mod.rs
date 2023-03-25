@@ -26,6 +26,7 @@ use crate::{
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
 };
 
+use futures::io::{AsyncRead, AsyncWrite};
 use multiaddr::Multiaddr;
 
 pub mod tcp;
@@ -36,34 +37,62 @@ pub enum TransportType {
     Tcp(Multiaddr),
 }
 
+// TODO: these have to be moved elsewhere
+pub trait Connection: AsyncRead + AsyncWrite + Unpin {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin> Connection for T {}
+
+pub struct ConnectionContext {
+    /// Underlying socket.
+    pub io: Box<dyn Connection>,
+
+    /// Remote peer ID.
+    pub peer: PeerId,
+}
+
 #[async_trait::async_trait]
 pub trait TransportService {
+    /// Open connection to remote peer.
+    ///
+    /// Negotiate `noise`, perform the Noise handshake, negotiate `yamux` and return [`ConnectionContext`].
     async fn open_connection(
         &mut self,
         address: Multiaddr,
         noise_config: NoiseConfiguration,
-    ) -> crate::Result<PeerId>;
+    ) -> crate::Result<ConnectionContext>;
+
+    /// Close connection to remote peer.
     fn close_connection(&mut self, peer: PeerId) -> crate::Result<()>;
-    // TODO: return handle + sink for sending/receiving notifications.
+
+    /// Open new `protocol` to `peer` and send optional handshake.
+    ///
+    /// If `peer` accepts the substream, return TODO
     fn open_substream(
         &mut self,
         peer: PeerId,
         protocol: ProtocolId,
         handshake: Option<Vec<u8>>,
     ) -> crate::Result<SubstreamId>;
+
+    /// Close substream to remote peer.
     fn close_substream(&mut self, substream: SubstreamId) -> crate::Result<()>;
+
+    /// Send `request `to `peer` over `protocol`.
     fn send_request(
         &mut self,
         peer: PeerId,
         protocol: ProtocolType,
         request: Vec<u8>,
     ) -> crate::Result<RequestId>;
+
+    /// Send `response` to received `request`.
     fn send_response(&mut self, request: RequestId, response: Vec<u8>) -> crate::Result<RequestId>;
 }
 
 #[async_trait::async_trait]
 pub trait Transport {
+    type Handle: TransportService;
     /// Start the underlying transport listener and return a handle which allows `litep2p` to
     // interact with the transport.
-    fn start(config: TransportConfig) -> Box<dyn TransportService>;
+    fn start(config: TransportConfig) -> Self::Handle;
 }
