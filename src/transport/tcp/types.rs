@@ -27,16 +27,15 @@ use multiaddr::Multiaddr;
 use tokio::{net::TcpStream, sync::mpsc::Receiver};
 use yamux::{Control, Stream};
 
-use std::io::Error;
+use std::{future::Future, io::Error, pin::Pin};
 
 /// Type representing pending outbound connections.
 pub type PendingConnections =
     FuturesUnordered<Pin<Box<dyn Future<Output = Result<TcpStream, Error>> + Send>>>;
 
 /// Type representing pending negotiations.
-pub type PendingNegotiations = FuturesUnordered<
-    Pin<Box<dyn Future<Output = crate::Result<(Receiver<Stream>, PeerId)>> + Send>>,
->;
+pub type PendingNegotiations =
+    FuturesUnordered<Pin<Box<dyn Future<Output = crate::Result<ConnectionContext>> + Send>>>;
 
 /// TCP transport events.
 #[derive(Debug)]
@@ -59,4 +58,11 @@ pub struct ConnectionContext {
 
     /// RX channel for receiving `yamux` substreams.
     rx: Receiver<Stream>,
+}
+
+impl ConnectionContext {
+    /// Create new [`ConnectionContext`].
+    pub fn new(peer: PeerId, control: Control, rx: Receiver<Stream>) -> Self {
+        Self { peer, control, rx }
+    }
 }

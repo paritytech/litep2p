@@ -46,14 +46,6 @@ pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
 
 impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Connection for T {}
 
-pub struct ConnectionContext {
-    /// Underlying socket.
-    pub io: Box<dyn Connection>,
-
-    /// Remote peer ID.
-    pub peer: PeerId,
-}
-
 /// Events emitted by the underlying transport.
 pub enum TransportEvent {
     /// Establish new outbound connected to remote peer.

@@ -25,6 +25,7 @@
 // TODO: move code to `transport/tcp/types.rs`
 // TODO: bechmark `StreamMap` performance under high load
 // TODO: find a better way to
+// TODO: stop using println
 
 use crate::{
     config::{Role, TransportConfig},
@@ -35,7 +36,7 @@ use crate::{
     },
     error::{AddressError, Error},
     peer_id::PeerId,
-    transport::{Connection, ConnectionContext, Transport, TransportEvent, TransportService},
+    transport::{tcp::types::*, Connection, Transport, TransportEvent, TransportService},
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
@@ -62,27 +63,10 @@ use std::{
     pin::Pin,
 };
 
+mod types;
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "transport::tcp";
-
-/// Type representing pending outbound connections.
-type PendingConnections =
-    FuturesUnordered<Pin<Box<dyn Future<Output = Result<TcpStream, std::io::Error>> + Send>>>;
-
-/// Type representing pending negotiations.
-type PendingNegotiations = FuturesUnordered<
-    Pin<Box<dyn Future<Output = crate::Result<(mpsc::Receiver<yamux::Stream>, PeerId)>> + Send>>,
->;
-
-/// TCP transport events.
-#[derive(Debug)]
-enum TcpTransportEvent {
-    /// Open connection to remote peer.
-    OpenConnection(Multiaddr),
-
-    /// Close connection to remote peer.
-    CloseConnection(PeerId),
-}
 
 /// TCP transport service.
 pub struct TcpTransportService {
@@ -246,7 +230,7 @@ impl TcpTransport {
         io: impl Connection,
         role: Role,
         noise_config: NoiseConfiguration,
-    ) -> crate::Result<(mpsc::Receiver<yamux::Stream>, PeerId)> {
+    ) -> crate::Result<ConnectionContext> {
         tracing::span!(target: LOG_TARGET, Level::DEBUG, "negotiate connection").enter();
         tracing::event!(
             target: LOG_TARGET,
@@ -271,11 +255,12 @@ impl TcpTransport {
         let io = Self::negotiate_protocol(io, &role, vec!["/yamux/1.0.0"]).await?;
         tracing::event!(target: LOG_TARGET, Level::TRACE, "`yamux` negotiated");
 
+        // prepare connection context components returned to `TcpTransport`
+        // and start the `yamux` event loop
         let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
-        // TODO: create channel which allows reading events from yamux::Connection
-        // TODO: spawn tas
         let connection = yamux::Connection::new(io, yamux::Config::default(), role.into());
-        let (mut control, mut connection) = yamux::Control::new(connection);
+        let (control, mut connection) = yamux::Control::new(connection);
+        let context = ConnectionContext::new(peer, control, rx);
 
         tokio::spawn(async move {
             while let Some(event) = connection.next().await {
@@ -298,11 +283,10 @@ impl TcpTransport {
                         println!("failed to receive inbound substream: {err:?}");
                     }
                 }
-                let _ = control.open_stream();
             }
         });
 
-        Ok((rx, peer))
+        Ok(context)
     }
 
     /// Schedule connection negotiation.
@@ -322,10 +306,7 @@ impl TcpTransport {
     /// Finalize the negotiated connection.
     ///
     /// TODO: do something
-    fn on_negotiation_finished(
-        &mut self,
-        result: crate::Result<(mpsc::Receiver<yamux::Stream>, PeerId)>,
-    ) {
+    fn on_negotiation_finished(&mut self, result: crate::Result<ConnectionContext>) {
         tracing::trace!(
             target: LOG_TARGET,
             succeeded = result.is_ok(),
@@ -333,7 +314,7 @@ impl TcpTransport {
         );
 
         match result {
-            Ok((connection, peer)) => {
+            Ok(_context) => {
                 // todo!();
                 // let (mut control, mut connection) = yamux::Control::new(connection);
                 // self.connections.insert(peer, connection);
