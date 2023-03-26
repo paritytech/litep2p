@@ -378,7 +378,15 @@ impl TcpTransport {
                         );
                         return
                     }
-                    Ok((io, _address)) => self.schedule_negotiation(io, Role::Listener),
+                    Ok((io, address)) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?address,
+                            "inbound connection received",
+                        );
+
+                        self.schedule_negotiation(io, Role::Listener)
+                    }
                 },
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
                     match connection {
@@ -402,9 +410,22 @@ impl TcpTransport {
                 },
                 event = self.rx.recv() => match event {
                     Some(TcpTransportEvent::OpenConnection(address)) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?address,
+                            "establish outbound connection",
+                        );
+
+                        // TODO: verify that the number of connections is less than the specified limit
                         self.on_open_connection(address);
                     },
                     Some(TcpTransportEvent::CloseConnection(peer)) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            "close connection",
+                        );
+
                         self.connections.remove(&peer);
                     }
                     None => {

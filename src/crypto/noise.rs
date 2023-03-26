@@ -20,6 +20,9 @@
 
 //! Noise handshake and transport implementations.
 
+// TODO: benchmark reads and writes
+// TODO: optimize read and writes
+
 use crate::{
     config::Role,
     crypto::{ed25519::Keypair, PublicKey},
@@ -57,7 +60,7 @@ const NOISE_DECRYPT_EXTRA_ALLOC: usize = 1024;
 const LOG_TARGET: &str = "crypto::noise";
 
 /// Logging target for the messages.
-const LOG_TARGET_MESSAGE: &str = "crypto::noise::message";
+const LOG_TARGET_MSG: &str = "crypto::noise::message";
 
 pub struct NoiseConfiguration {
     /// Noise handshake state.
@@ -109,7 +112,7 @@ struct NoiseTransportState(TransportState);
 impl Noise for NoiseHandshakeState {
     fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
         tracing::trace!(
-            target: LOG_TARGET_MESSAGE,
+            target: LOG_TARGET_MSG,
             payload_length = payload.len(),
             "handshake: write noise message",
         );
@@ -119,7 +122,7 @@ impl Noise for NoiseHandshakeState {
 
     fn read_message(&mut self, message: &[u8], payload: &mut [u8]) -> Result<usize, Error> {
         tracing::trace!(
-            target: LOG_TARGET_MESSAGE,
+            target: LOG_TARGET_MSG,
             message_length = message.len(),
             "handshake: read noise message",
         );
@@ -135,7 +138,7 @@ impl Noise for NoiseHandshakeState {
 impl Noise for NoiseTransportState {
     fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
         tracing::trace!(
-            target: LOG_TARGET_MESSAGE,
+            target: LOG_TARGET_MSG,
             payload_length = payload.len(),
             "transport: write noise message",
         );
@@ -145,7 +148,7 @@ impl Noise for NoiseTransportState {
 
     fn read_message(&mut self, message: &[u8], payload: &mut [u8]) -> Result<usize, Error> {
         tracing::trace!(
-            target: LOG_TARGET_MESSAGE,
+            target: LOG_TARGET_MSG,
             message_length = message.len(),
             "transport: read noise message",
         );
@@ -273,7 +276,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
                 }
                 ReadState::ReadLen { mut buf, mut off } => {
                     let n = match read_frame_len(&mut this.io, cx, &mut buf, &mut off) {
-                        Poll::Ready(Ok(Some(n))) => dbg!(n),
+                        Poll::Ready(Ok(Some(n))) => n,
                         Poll::Ready(Ok(None)) => {
                             this.read_state = ReadState::Eof(Ok(()));
                             todo!();
@@ -306,21 +309,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
                             Err(e) => return Poll::Ready(Err(e)),
                         }
                     };
-                    println!("read: {}/{} bytes", *off + n, len);
+                    tracing::trace!(target: LOG_TARGET, "read: {}/{} bytes", *off + n, len);
                     if n == 0 {
-                        println!("read: eof");
+                        tracing::trace!(target: LOG_TARGET, "read: eof");
                         this.read_state = ReadState::Eof(Err(()));
                         return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
                     }
                     *off += n;
                     if len == *off {
-                        println!(
-                            "read: decrypting {} bytes, buffer size {}, {} {}",
-                            len,
-                            buf.len(),
-                            this.read_buffer.len(),
-                            this.decrypt_buffer.len(),
-                        );
+                        tracing::trace!(target: LOG_TARGET, "read: decrypting {} bytes", len,);
                         this.decrypt_buffer.resize(len, 0u8);
 
                         match this
@@ -336,14 +333,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
                                 if amount >= nread {
                                     this.read_state = ReadState::Ready
                                 } else {
-                                    println!("buffer read");
                                     this.read_state = ReadState::ReadBuffered { unread: new };
                                 }
 
                                 return Poll::Ready(Ok(amount));
                             }
-                            Err(err) => {
-                                println!("read: decryption error: {err:?}");
+                            Err(error) => {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    ?error,
+                                    "read: decryption error",
+                                );
                                 this.read_state = ReadState::DecErr;
                                 return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                             }
@@ -351,37 +351,30 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
                     }
                 }
                 ReadState::ReadBuffered { ref mut unread } => {
-                    println!(
-                        "read buffered data, unread {}, buffer {}",
-                        unread.len(),
-                        buf.len()
-                    );
                     let amount = std::cmp::min(buf.len(), unread.len());
                     let new = unread.split_off(amount);
                     buf[..amount].copy_from_slice(&unread);
 
                     if new.is_empty() {
-                        println!("read done");
                         this.read_state = ReadState::Ready
                     } else {
-                        println!("buffer read");
-                        println!("{:?}", std::str::from_utf8(&new));
                         this.read_state = ReadState::ReadBuffered { unread: new };
                     }
 
                     return Poll::Ready(Ok(amount));
                 }
-                ReadState::Eof(res) => {
-                    println!("read: eof");
+                ReadState::Eof(_res) => {
+                    tracing::trace!(target: LOG_TARGET, "read: eof");
                     todo!();
                     // return Poll::Ready(None);
                 }
                 ReadState::Eof(Err(())) => {
-                    println!("read: eof (unexpected)");
+                    tracing::trace!(target: LOG_TARGET, "read: eof (unexpected)");
                     todo!();
                     // return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())));
                 }
                 ReadState::DecErr => {
+                    tracing::trace!(target: LOG_TARGET, "read: decryption error");
                     todo!();
                     // return Poll::Ready(Some(Err(io::ErrorKind::InvalidData.into())))
                 }
@@ -402,19 +395,31 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
 
         match this.noise.write_message(&buf, &mut this.write_buffer) {
             Ok(nwritten) => {
-                let size = u16::to_be_bytes(nwritten as u16);
-                Pin::new(&mut this.io).poll_write(cx, &size);
-                Pin::new(&mut this.io).poll_write(cx, &this.write_buffer[..nwritten]);
-                tracing::trace!(
-                    target: LOG_TARGET_MESSAGE,
-                    ?size,
-                    buffer =? this.write_buffer[..nwritten],
-                    "write noise message",
+                tracing::span!(
+                    target: LOG_TARGET,
+                    tracing::Level::TRACE,
+                    "write: send data"
+                )
+                .enter();
+                tracing::event!(
+                    target: LOG_TARGET,
+                    tracing::Level::TRACE,
+                    size = ?nwritten,
+                    "write: send message",
                 );
+                tracing::event!(
+                    target: LOG_TARGET_MSG,
+                    tracing::Level::TRACE,
+                    buffer =? this.write_buffer[..nwritten],
+                );
+
+                Pin::new(&mut this.io).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
+                Pin::new(&mut this.io).poll_write(cx, &this.write_buffer[..nwritten]);
+
                 return Poll::Ready(Ok(buf.len()));
             }
-            Err(err) => {
-                println!("failed to encrypt buffer: {err:?}");
+            Err(error) => {
+                tracing::error!(target: LOG_TARGET, ?error, "write: encryption error");
                 return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
             }
         }
