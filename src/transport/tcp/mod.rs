@@ -25,7 +25,6 @@
 // TODO: move code to `transport/tcp/types.rs`
 // TODO: bechmark `StreamMap` performance under high load
 // TODO: find a better way to
-// TODO: stop using println
 
 use crate::{
     config::{Role, TransportConfig},
@@ -36,9 +35,7 @@ use crate::{
     },
     error::{AddressError, Error},
     peer_id::PeerId,
-    transport::{
-        tcp::types::*, Connection, ConnectionContext, Transport, TransportEvent, TransportService,
-    },
+    transport::{Connection, ConnectionContext, Transport, TransportEvent, TransportService},
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
@@ -65,10 +62,27 @@ use std::{
     pin::Pin,
 };
 
-mod types;
-
 /// Logging target for the file.
 const LOG_TARGET: &str = "transport::tcp";
+
+/// Type representing pending outbound connections.
+type PendingConnections =
+    FuturesUnordered<Pin<Box<dyn Future<Output = Result<TcpStream, std::io::Error>> + Send>>>;
+
+/// Type representing pending negotiations.
+type PendingNegotiations = FuturesUnordered<
+    Pin<Box<dyn Future<Output = crate::Result<(mpsc::Receiver<yamux::Stream>, PeerId)>> + Send>>,
+>;
+
+/// TCP transport events.
+#[derive(Debug)]
+enum TcpTransportEvent {
+    /// Open connection to remote peer.
+    OpenConnection(Multiaddr),
+
+    /// Close connection to remote peer.
+    CloseConnection(PeerId),
+}
 
 /// TCP transport service.
 pub struct TcpTransportService {
