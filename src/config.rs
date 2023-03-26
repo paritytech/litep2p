@@ -18,12 +18,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::types::ProtocolType;
+use crate::protocol::{Libp2pProtocol, NotificationProtocol, RequestResponseProtocol};
 
 use multiaddr::Multiaddr;
 
 /// Connection role.
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Role {
     /// Dialer.
     Dialer,
@@ -52,8 +52,15 @@ pub struct TransportConfig {
     /// Listening address for the transport.
     listen_address: Multiaddr,
 
-    /// Supported protocols.
-    supported_protocols: Vec<ProtocolType>,
+    // /// Supported request-response protocols.
+    // libp2p_protocols: Vec<Libp2pProtocol>,
+    libp2p_protocols: Vec<String>,
+
+    /// Supported notification protocols.
+    notification_protocols: Vec<NotificationProtocol>,
+
+    /// Supported request-response protocols.
+    request_response_protocols: Vec<RequestResponseProtocol>,
 
     /// Maximum number of allowed connections:
     max_connections: usize,
@@ -63,12 +70,16 @@ impl TransportConfig {
     /// Create new [`TransportConfig`].
     pub fn new(
         listen_address: Multiaddr,
-        supported_protocols: Vec<ProtocolType>,
+        libp2p_protocols: Vec<String>,
+        notification_protocols: Vec<NotificationProtocol>,
+        request_response_protocols: Vec<RequestResponseProtocol>,
         max_connections: usize,
     ) -> Self {
         Self {
             listen_address,
-            supported_protocols,
+            libp2p_protocols,
+            notification_protocols,
+            request_response_protocols,
             max_connections,
         }
     }
@@ -78,12 +89,24 @@ impl TransportConfig {
         &self.listen_address
     }
 
-    /// Get listen address.
-    pub fn supported_protocols(&self) -> impl Iterator<Item = &ProtocolType> {
-        self.supported_protocols.iter()
+    /// Get libp2p address.
+    // pub fn libp2p_protocols(&self) -> impl Iterator<Item = &Libp2pProtocol> {
+    pub fn libp2p_protocols(&self) -> impl Iterator<Item = &String> {
+        println!("get iterator of libp2p protocols");
+        self.libp2p_protocols.iter()
     }
 
-    /// Get listen address.
+    /// Get notification address.
+    pub fn notification_protocols(&self) -> impl Iterator<Item = &NotificationProtocol> {
+        self.notification_protocols.iter()
+    }
+
+    /// Request-response protocol.
+    pub fn request_response_protocols(&self) -> impl Iterator<Item = &RequestResponseProtocol> {
+        self.request_response_protocols.iter()
+    }
+
+    /// Get the number of maximum open connections.
     pub fn max_connections(&self) -> usize {
         self.max_connections
     }

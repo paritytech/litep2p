@@ -65,6 +65,8 @@ pub enum NegotiationError {
     MultistreamSelectError(multistream_select::NegotiationError),
     #[error("multistream-select error: `{0:?}`")]
     SnowError(snow::Error),
+    #[error("Connection closed while negotiating")]
+    ConnectionClosed,
 }
 
 impl From<MultihashGeneric<64>> for Error {

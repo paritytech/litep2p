@@ -50,7 +50,7 @@ use multiaddr::{Multiaddr, Protocol};
 use multistream_select::{dialer_select_proto, listener_select_proto, Version};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::mpsc,
+    sync::mpsc::{channel, Receiver, Sender},
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -72,12 +72,12 @@ const LOG_TARGET: &str = "transport::tcp";
 /// TCP transport service.
 pub struct TcpTransportService {
     /// TX channel for sending events to [`TcpTransport`].
-    tx: mpsc::Sender<TcpTransportEvent>,
+    tx: Sender<TcpTransportEvent>,
 }
 
 impl TcpTransportService {
     /// Create new [`TcpTransportService`].
-    fn new(tx: mpsc::Sender<TcpTransportEvent>) -> Self {
+    fn new(tx: Sender<TcpTransportEvent>) -> Self {
         Self { tx }
     }
 }
@@ -101,6 +101,110 @@ impl TransportService for TcpTransportService {
     }
 }
 
+struct MultiplexedConnection<S: Connection> {
+    /// Peer ID of remote.
+    peer: PeerId,
+
+    /// Role of the node.
+    role: Role,
+
+    /// Yamux connection.
+    connection: yamux::ControlledConnection<S>,
+
+    /// TX channel for sending negotiated substreams to [`TcpTransport`].
+    tx: Sender<()>,
+
+    /// Supported protocols.
+    protocols: Vec<String>,
+}
+
+impl<S: Connection> MultiplexedConnection<S> {
+    /// Create new [`MultiplexedConnection`] and return a [`ConnectionContext`]
+    /// that's linked to the connection.
+    pub fn start(
+        io: S,
+        tx: Sender<()>,
+        peer: PeerId,
+        role: Role,
+        protocols: Vec<String>,
+    ) -> ConnectionContext {
+        let connection = yamux::Connection::new(io, yamux::Config::default(), role.into());
+        let (control, mut connection) = yamux::Control::new(connection);
+        let context = ConnectionContext::new(peer, control);
+
+        let connection = Self {
+            tx,
+            peer,
+            connection,
+            protocols,
+            role,
+        };
+
+        tokio::spawn(connection.run());
+        context
+    }
+
+    /// Negotiate protocol.
+    // TODO: move to some common place
+    async fn negotiate_protocol(
+        &mut self,
+        io: impl Connection,
+    ) -> crate::Result<(impl Connection, String)> {
+        tracing::span!(target: LOG_TARGET, Level::TRACE, "negotiate protocol").enter();
+        tracing::event!(
+            target: LOG_TARGET,
+            Level::TRACE,
+            protocols = ?self.protocols,
+            "negotiating protocols",
+        );
+
+        let (protocol, mut io) = match self.role {
+            Role::Dialer => dialer_select_proto(io, &self.protocols, Version::V1).await?,
+            Role::Listener => listener_select_proto(io, &self.protocols).await?,
+        };
+
+        tracing::event!(
+            target: LOG_TARGET,
+            Level::TRACE,
+            ?protocol,
+            "protocol negotiated",
+        );
+
+        Ok((io, protocol.to_owned()))
+    }
+
+    /// Run the [`MultiplexedConnection`] event loop.
+    async fn run(mut self) {
+        loop {
+            while let Some(Ok(substream)) = self.connection.next().await {
+                tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "substream opened");
+
+                let io = match self.negotiate_protocol(substream).await {
+                    Ok((io, protocol)) => {
+                        todo!();
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?error,
+                            "failed to negotiate protocol for substream",
+                        );
+                        continue;
+                    }
+                };
+                // if self.tx.send((self.peer, substream)).await.is_err() {
+                //     tracing::error!(
+                //         target: LOG_TARGET,
+                //         peer = ?self.peer,
+                //         "rx channel to `TcpTransport` closed, closing `yamux` substream event loop",
+                //     );
+                //     return;
+                // }
+            }
+        }
+    }
+}
+
 pub struct TcpTransport {
     /// TCP listener.
     listener: TcpListener,
@@ -109,7 +213,17 @@ pub struct TcpTransport {
     keypair: Keypair,
 
     /// RX channel for receiving events from `litep2p`.
-    rx: mpsc::Receiver<TcpTransportEvent>,
+    // TODO: rename
+    rx: Receiver<TcpTransportEvent>,
+
+    /// RX channel for receiving negotiated substreams.
+    substream_rx: Receiver<()>,
+
+    /// TX channel for sending negotiated substreams.
+    ///
+    /// This channel is not used by [`TcpTransport`] directly but
+    /// only copied and handed to new Yamux connections.
+    substream_tx: Sender<()>,
 
     /// Pending outbound connections.
     pending_connections: PendingConnections,
@@ -122,24 +236,36 @@ pub struct TcpTransport {
 
     /// Open connections.
     connections: HashMap<PeerId, yamux::Control>,
+
+    /// Supported protocols.
+    protocols: Vec<String>,
 }
 
 impl TcpTransport {
     async fn new(
         keypair: &Keypair,
         config: TransportConfig,
-    ) -> crate::Result<(Self, mpsc::Sender<TcpTransportEvent>)> {
+    ) -> crate::Result<(Self, Sender<TcpTransportEvent>)> {
         tracing::info!(target: LOG_TARGET, ?config, "create new `TcpTransport`");
 
         let (socket_address, _) = Self::get_socket_address(config.listen_address())?;
         let listener = TcpListener::bind(socket_address).await?;
-        let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (substream_tx, substream_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let protocols = config.libp2p_protocols().cloned().collect();
+        // let protocols = config
+        //     .libp2p_protocols()
+        //     .map(|protocol| protocol.to_string())
+        //     .collect();
 
         Ok((
             Self {
                 listener,
                 rx,
+                substream_rx,
+                substream_tx,
                 keypair: keypair.clone(),
+                protocols,
                 pending_connections: FuturesUnordered::new(),
                 pending_negotiations: FuturesUnordered::new(),
                 incoming_substreams: FuturesUnordered::new(),
@@ -230,11 +356,15 @@ impl TcpTransport {
 
     /// Initialize connection.
     ///
-    /// Negotiate and handshake Noise and Yamux.
+    /// Negotiate and handshake Noise, negotiate Yamux and start a [`MultiplexedConnection`]
+    /// event loop which listens to substream events, negotiates protocols for those substreams
+    /// and returns the negotiated stream object back to [`TcpTransport`].
     async fn initialize_connection(
         io: impl Connection,
+        tx: Sender<()>,
         role: Role,
         noise_config: NoiseConfiguration,
+        protocols: Vec<String>,
     ) -> crate::Result<ConnectionContext> {
         tracing::span!(target: LOG_TARGET, Level::DEBUG, "negotiate connection").enter();
         tracing::event!(
@@ -260,45 +390,7 @@ impl TcpTransport {
         let io = Self::negotiate_protocol(io, &role, vec!["/yamux/1.0.0"]).await?;
         tracing::event!(target: LOG_TARGET, Level::TRACE, "`yamux` negotiated");
 
-        // prepare connection context components returned to `TcpTransport`
-        // and start the `yamux` event loop
-        let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
-        let connection = yamux::Connection::new(io, yamux::Config::default(), role.into());
-        let (control, mut connection) = yamux::Control::new(connection);
-        let context = ConnectionContext::new(peer, control, rx);
-
-        tokio::spawn(async move {
-            while let Some(Ok(substream)) = connection.next().await {
-                tracing::debug!(target: LOG_TARGET, ?peer, "substream opened");
-                if tx.send((peer, substream)).await.is_err() {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        "rx channel to `TcpTransport` closed, closing `yamux` substream event loop",
-                    );
-                    return;
-                }
-                // match event {
-                //     Ok(mut substream) => {
-                //         // tokio::spawn(async move {
-                //         //     // TODO: add all supported protocols.
-                //         //     let protos = Vec::from(["/ipfs/ping/1.0.0"]);
-                //         //     let (protocol, mut socket) =
-                //         //         listener_select_proto(substream, protos).await.unwrap();
-                //         //     // TODO: start correct protocol handler based on the value of `protocol`
-                //         //     println!("selected protocol {protocol:?}");
-                //         //     // TODO: answer to pings
-                //         //     tokio::time::sleep(std::time::Duration::from_secs(20)).await;
-                //         // });
-                //     }
-                //     Err(err) => {
-                //         println!("failed to receive inbound substream: {err:?}");
-                //     }
-                // }
-            }
-        });
-
-        Ok(context)
+        Ok(MultiplexedConnection::start(io, tx, peer, role, protocols))
     }
 
     /// Schedule connection negotiation.
@@ -307,36 +399,21 @@ impl TcpTransport {
 
         // create new Noise configuration and push a future which negotiates the connection
         let noise_config = NoiseConfiguration::new(&self.keypair, &role);
+        let protocols = self.protocols.iter().cloned().collect();
+        let tx = self.substream_tx.clone();
 
         self.pending_negotiations.push(Box::pin(async move {
             let io = TokioAsyncReadCompatExt::compat(io).into_inner();
             let io = Box::new(TokioAsyncWriteCompatExt::compat_write(io));
-            Self::initialize_connection(io, role, noise_config).await
+            Self::initialize_connection(io, tx, role, noise_config, protocols).await
         }));
     }
 
     /// Finalize the negotiated connection.
     ///
-    /// TODO: do something
-    fn on_negotiation_finished(&mut self, result: crate::Result<ConnectionContext>) {
-        tracing::trace!(
-            target: LOG_TARGET,
-            succeeded = result.is_ok(),
-            "negotiation finished"
-        );
-
-        match result {
-            Ok(context) => {
-                let (peer, control, mut rx) = context.into_parts();
-                self.connections.insert(peer, control);
-                self.incoming_substreams
-                    .push(Box::pin(async move { rx.recv().await }));
-            }
-            Err(error) => {
-                tracing::error!(target: LOG_TARGET, ?error, "failed to negotiate connection")
-            }
-        }
-    }
+    // TODO: do something
+    // TODO: pass connection context and not result
+    fn on_negotiation_finished(&mut self, result: crate::Result<ConnectionContext>) {}
 
     /// Handle `TcpTransportEvent::OpenConnection`.
     ///
@@ -399,14 +476,28 @@ impl TcpTransport {
                     }
                 },
                 negotiated = self.pending_negotiations.select_next_some(), if !self.pending_negotiations.is_empty() => {
-                    self.on_negotiation_finished(negotiated);
+                    match negotiated {
+                        Ok(context) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                "negotiation finished"
+                            );
+                            self.connections.insert(context.peer, context.control);
+                        }
+                        Err(error) => {
+                            tracing::error!(target: LOG_TARGET, ?error, "failed to negotiate connection")
+                        }
+                    }
                 }
-                substream = self.incoming_substreams.select_next_some(), if !self.incoming_substreams.is_empty() => {
-                    todo!();
-                    // TODO: negotiate protocol for the substream and
-                    // match substream {
-                    //     _ => todo!(),
-                    // }
+                substream = self.substream_rx.recv() => match substream {
+                    Some(()) => {
+                        // TODO: report this to `litep2p` front-end?
+                        todo!("send substream to front-end");
+                    }
+                    None => {
+                        tracing::error!(target: LOG_TARGET, "substream channe closed, exiting");
+                        return
+                    }
                 },
                 event = self.rx.recv() => match event {
                     Some(TcpTransportEvent::OpenConnection(address)) => {
@@ -458,6 +549,7 @@ impl Transport for TcpTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{Libp2pProtocol, ProtocolName};
 
     #[test]
     fn parse_multiaddresses() {
@@ -510,6 +602,8 @@ mod tests {
             &keypair,
             TransportConfig::new(
                 "/ip6/::1/tcp/7777".parse().expect("valid multiaddress"),
+                vec!["/ipfs/ping/1.0.0".to_owned()],
+                vec![],
                 vec![],
                 40_000,
             ),

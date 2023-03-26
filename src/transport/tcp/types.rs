@@ -59,19 +59,11 @@ pub struct ConnectionContext {
 
     /// `yamux` controller.
     pub control: Control,
-
-    /// RX channel for receiving `yamux` substreams.
-    pub rx: Receiver<(PeerId, Stream)>,
 }
 
 impl ConnectionContext {
     /// Create new [`ConnectionContext`].
-    pub fn new(peer: PeerId, control: Control, rx: Receiver<(PeerId, Stream)>) -> Self {
-        Self { peer, control, rx }
-    }
-
-    /// Deconstruct [`ConnectionContext`] into its parts.
-    pub fn into_parts(self) -> (PeerId, Control, Receiver<(PeerId, Stream)>) {
-        (self.peer, self.control, self.rx)
+    pub fn new(peer: PeerId, control: Control) -> Self {
+        Self { peer, control }
     }
 }

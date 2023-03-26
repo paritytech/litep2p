@@ -39,6 +39,7 @@ mod config;
 mod crypto;
 mod error;
 mod peer_id;
+mod protocol;
 mod transport;
 mod types;
 
