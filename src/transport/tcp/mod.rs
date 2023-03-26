@@ -52,11 +52,12 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc,
 };
-use tokio_stream::StreamMap;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::Level;
 
 use std::{
+    collections::HashMap,
     future::Future,
     io,
     net::{IpAddr, SocketAddr},
@@ -116,8 +117,11 @@ pub struct TcpTransport {
     /// Pending outbound negotiations.
     pending_negotiations: PendingNegotiations,
 
+    /// Incoming substreams.
+    incoming_substreams: IncomingSubstreams,
+
     /// Open connections.
-    connections: StreamMap<PeerId, yamux::ControlledConnection<Box<dyn Connection>>>,
+    connections: HashMap<PeerId, yamux::Control>,
 }
 
 impl TcpTransport {
@@ -138,7 +142,8 @@ impl TcpTransport {
                 keypair: keypair.clone(),
                 pending_connections: FuturesUnordered::new(),
                 pending_negotiations: FuturesUnordered::new(),
-                connections: StreamMap::new(),
+                incoming_substreams: FuturesUnordered::new(),
+                connections: HashMap::new(),
             },
             tx,
         ))
@@ -263,26 +268,33 @@ impl TcpTransport {
         let context = ConnectionContext::new(peer, control, rx);
 
         tokio::spawn(async move {
-            while let Some(event) = connection.next().await {
-                match event {
-                    Ok(mut substream) => {
-                        tokio::spawn(async move {
-                            // TODO: add all supported protocols.
-                            let protos = Vec::from(["/ipfs/ping/1.0.0"]);
-                            let (protocol, mut socket) =
-                                listener_select_proto(substream, protos).await.unwrap();
-
-                            // TODO: start correct protocol handler based on the value of `protocol`
-                            println!("selected protocol {protocol:?}");
-
-                            // TODO: answer to pings
-                            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
-                        });
-                    }
-                    Err(err) => {
-                        println!("failed to receive inbound substream: {err:?}");
-                    }
+            while let Some(Ok(substream)) = connection.next().await {
+                tracing::debug!(target: LOG_TARGET, ?peer, "substream opened");
+                if tx.send((peer, substream)).await.is_err() {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        "rx channel to `TcpTransport` closed, closing `yamux` substream event loop",
+                    );
+                    return;
                 }
+                // match event {
+                //     Ok(mut substream) => {
+                //         // tokio::spawn(async move {
+                //         //     // TODO: add all supported protocols.
+                //         //     let protos = Vec::from(["/ipfs/ping/1.0.0"]);
+                //         //     let (protocol, mut socket) =
+                //         //         listener_select_proto(substream, protos).await.unwrap();
+                //         //     // TODO: start correct protocol handler based on the value of `protocol`
+                //         //     println!("selected protocol {protocol:?}");
+                //         //     // TODO: answer to pings
+                //         //     tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                //         // });
+                //     }
+                //     Err(err) => {
+                //         println!("failed to receive inbound substream: {err:?}");
+                //     }
+                // }
             }
         });
 
@@ -314,10 +326,11 @@ impl TcpTransport {
         );
 
         match result {
-            Ok(_context) => {
-                // todo!();
-                // let (mut control, mut connection) = yamux::Control::new(connection);
-                // self.connections.insert(peer, connection);
+            Ok(context) => {
+                let (peer, control, mut rx) = context.into_parts();
+                self.connections.insert(peer, control);
+                self.incoming_substreams
+                    .push(Box::pin(async move { rx.recv().await }));
             }
             Err(error) => {
                 tracing::error!(target: LOG_TARGET, ?error, "failed to negotiate connection")
@@ -380,20 +393,12 @@ impl TcpTransport {
                 negotiated = self.pending_negotiations.select_next_some(), if !self.pending_negotiations.is_empty() => {
                     self.on_negotiation_finished(negotiated);
                 }
-                event = self.connections.next(), if !self.connections.is_empty() => match event {
-                    Some((peer, Ok(stream))) => {
-                        todo!();
-                    }
-                    Some((peer, Err(error))) => {
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?error,
-                            "failed to poll yamux connection"
-                        );
-                        self.connections.remove(&peer);
-                    }
-                    None => return,
+                substream = self.incoming_substreams.select_next_some(), if !self.incoming_substreams.is_empty() => {
+                    todo!();
+                    // TODO: negotiate protocol for the substream and
+                    // match substream {
+                    //     _ => todo!(),
+                    // }
                 },
                 event = self.rx.recv() => match event {
                     Some(TcpTransportEvent::OpenConnection(address)) => {

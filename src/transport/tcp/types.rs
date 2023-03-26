@@ -22,7 +22,7 @@
 
 use crate::peer_id::PeerId;
 
-use futures::stream::FuturesUnordered;
+use futures::{stream::FuturesUnordered, Stream as FuturesStream};
 use multiaddr::Multiaddr;
 use tokio::{net::TcpStream, sync::mpsc::Receiver};
 use yamux::{Control, Stream};
@@ -36,6 +36,10 @@ pub type PendingConnections =
 /// Type representing pending negotiations.
 pub type PendingNegotiations =
     FuturesUnordered<Pin<Box<dyn Future<Output = crate::Result<ConnectionContext>> + Send>>>;
+
+/// Type representing incoming substreams.
+pub type IncomingSubstreams =
+    FuturesUnordered<Pin<Box<dyn Future<Output = Option<(PeerId, Stream)>> + Send>>>;
 
 /// TCP transport events.
 #[derive(Debug)]
@@ -51,18 +55,23 @@ pub enum TcpTransportEvent {
 /// have finished.
 pub struct ConnectionContext {
     /// Peer ID of remote.
-    peer: PeerId,
+    pub peer: PeerId,
 
     /// `yamux` controller.
-    control: Control,
+    pub control: Control,
 
     /// RX channel for receiving `yamux` substreams.
-    rx: Receiver<Stream>,
+    pub rx: Receiver<(PeerId, Stream)>,
 }
 
 impl ConnectionContext {
     /// Create new [`ConnectionContext`].
-    pub fn new(peer: PeerId, control: Control, rx: Receiver<Stream>) -> Self {
+    pub fn new(peer: PeerId, control: Control, rx: Receiver<(PeerId, Stream)>) -> Self {
         Self { peer, control, rx }
+    }
+
+    /// Deconstruct [`ConnectionContext`] into its parts.
+    pub fn into_parts(self) -> (PeerId, Control, Receiver<(PeerId, Stream)>) {
+        (self.peer, self.control, self.rx)
     }
 }
