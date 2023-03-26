@@ -181,7 +181,7 @@ impl<S: Connection> MultiplexedConnection<S> {
 
                 let io = match self.negotiate_protocol(substream).await {
                     Ok((io, protocol)) => {
-                        todo!();
+                        // TODO: send directly to `litep2p`???
                     }
                     Err(error) => {
                         tracing::warn!(
@@ -192,14 +192,6 @@ impl<S: Connection> MultiplexedConnection<S> {
                         continue;
                     }
                 };
-                // if self.tx.send((self.peer, substream)).await.is_err() {
-                //     tracing::error!(
-                //         target: LOG_TARGET,
-                //         peer = ?self.peer,
-                //         "rx channel to `TcpTransport` closed, closing `yamux` substream event loop",
-                //     );
-                //     return;
-                // }
             }
         }
     }
@@ -253,10 +245,6 @@ impl TcpTransport {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (substream_tx, substream_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let protocols = config.libp2p_protocols().cloned().collect();
-        // let protocols = config
-        //     .libp2p_protocols()
-        //     .map(|protocol| protocol.to_string())
-        //     .collect();
 
         Ok((
             Self {

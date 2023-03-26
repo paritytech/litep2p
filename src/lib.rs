@@ -27,21 +27,24 @@ use crate::{
     types::{ConnectionId, PeerId, ProtocolId, RequestId},
 };
 
+use futures::Stream;
 use multiaddr::{Multiaddr, Protocol};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::mpsc,
+    sync::mpsc::{channel, Receiver, Sender},
 };
 
 use std::{collections::HashMap, net::SocketAddr};
 
-mod config;
+pub mod config;
 mod crypto;
 mod error;
 mod peer_id;
 mod protocol;
 mod transport;
 mod types;
+
+// TODO: move code from `TcpTransport` to here
 
 /// Public result type used by the crate.
 pub type Result<T> = std::result::Result<T, error::Error>;
@@ -65,17 +68,30 @@ pub struct Litep2p {
     _pending_requests: HashMap<RequestId, RequestContext>,
 }
 
+// TODO: protocols for substream events
+pub enum Litep2pEvent {
+    SubstreamOpened(PeerId, ()),
+    SubstreamClosed(PeerId),
+    ConnectionEstablished(PeerId),
+    ConnectionClosed(PeerId),
+}
+
 // TODO: how to support multiple transports?
 // TODO:  - specify all listening endpoints (by address)
 // TODO:  - map events from these endpoints to global events?
 // TODO: how to support bittorrent?
 impl Litep2p {
     /// Create new [`Litep2p`] object.
-    pub fn new(_config: LiteP2pConfiguration) -> Self {
-        Self {
-            _connections: HashMap::new(),
-            _pending_requests: HashMap::new(),
-        }
+    pub fn new(_config: LiteP2pConfiguration) -> (Litep2p, Box<dyn Stream<Item = Litep2pEvent>>) {
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+        // TODO: create new transports and give them an RX channel for listening to events from `Litep2pHandle`
+        // TODO: create another channel pair and pass the TX channel to transport
+        // TODO:
+        // Self {
+        //     _connections: HashMap::new(),
+        //     _pending_requests: HashMap::new(),
+        // }
+        todo!();
     }
 
     /// Open connection to remote peer at `address`.

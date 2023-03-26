@@ -46,6 +46,12 @@ pub struct LiteP2pConfiguration {
     listen_addresses: Vec<Multiaddr>,
 }
 
+impl LiteP2pConfiguration {
+    pub fn new(listen_addresses: Vec<Multiaddr>) -> Self {
+        Self { listen_addresses }
+    }
+}
+
 // Transport configuration.
 #[derive(Debug)]
 pub struct TransportConfig {
