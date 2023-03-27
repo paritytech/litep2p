@@ -26,7 +26,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::Error,
     peer_id::PeerId,
-    transport::{tcp::TcpTransport, Transport},
+    transport::{tcp::TcpTransport, Connection, Transport, TransportEvent},
     types::{ConnectionId, ProtocolId, RequestId},
 };
 
@@ -68,29 +68,30 @@ struct RequestContext {
     _peer: PeerId,
 }
 
-// TODO: protocols for substream events
 #[derive(Debug)]
 pub enum Litep2pEvent {
-    SubstreamOpened(PeerId, String, Box<dyn transport::Connection>),
-    SubstreamClosed(PeerId),
+    /// Connection established.
     ConnectionEstablished(PeerId),
+
+    /// Connection closed.
     ConnectionClosed(PeerId),
+
+    /// Dial failure for outbound connection.
+    DialFailure(Multiaddr),
 }
 
+/// [`Litep2p`] object.
 pub struct Litep2p {
+    /// Enable transports.
     tranports: HashMap<&'static str, Box<dyn TransportService>>,
+
+    /// Receiver for events received from enabled transports.
+    rx: Receiver<TransportEvent>,
 }
 
-// TODO: how to support multiple transports?
-// TODO:  - specify all listening endpoints (by address)
-// TODO:  - map events from these endpoints to global events?
-// TODO: how to support bittorrent?
-// TODO: this `new()` implementation is totally incorrect
 impl Litep2p {
-    /// Create new [`Litep2p`] object.
-    pub async fn new(
-        config: LiteP2pConfiguration,
-    ) -> crate::Result<(Litep2p, Box<dyn Stream<Item = Litep2pEvent> + Unpin>)> {
+    /// Create new [`Litep2p`].
+    pub async fn new(config: LiteP2pConfiguration) -> crate::Result<Litep2p> {
         assert!(config.listen_addresses().count() == 1);
         let keypair = Keypair::generate();
 
@@ -108,12 +109,10 @@ impl Litep2p {
         )
         .await?;
 
-        Ok((
-            Self {
-                tranports: HashMap::from([("tcp", handle)]),
-            },
-            Box::new(ReceiverStream::new(rx)),
-        ))
+        Ok(Self {
+            tranports: HashMap::from([("tcp", handle)]),
+            rx,
+        })
     }
 
     /// Open connection to remote peer at `address`.
@@ -135,43 +134,66 @@ impl Litep2p {
     }
 
     /// Close connection to remote `peer`.
-    pub fn close_connection(&mut self, _peer: PeerId) -> crate::Result<()> {
-        todo!();
+    pub async fn close_connection(&mut self, peer: PeerId) {
+        tracing::debug!(target: LOG_TARGET, ?peer, "close connection");
+
+        self.tranports
+            .get_mut("tcp")
+            .unwrap()
+            .close_connection(peer)
+            .await;
     }
 
-    /// Open notification substream with `peer` for `protocol`.
-    // TODO: return (handle, sink) pair that allows sending and receiving notifications from the substream?
-    // TODO: how to implement rate-limiting for substream?
-    pub fn open_substream(&mut self, _peer: PeerId, _protocol: ProtocolId) -> crate::Result<()> {
-        todo!();
+    /// Handle open substreamed.
+    fn on_substream_opened(&mut self, protocol: String, peer: PeerId, io: Box<dyn Connection>) {
+        // TODO: match on `protocol`
+        // TODO: if `protocol` is a libp2p protocol, handle internally
+        // TODO: if `protocol` is a user-installed notification protocol,
+        //       dispatch the substream to protocol handler
+        // TODO: if `protocol` is a user-isntalled request-response protocol,
+        //       read request from substream and send it request handler
+        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
     }
 
-    /// Send request to `peer` over `protocol`
-    // TODO: timeouts
-    // TODO: rate-limiting?
-    pub fn send_request(
-        &mut self,
-        _peer: PeerId,
-        _protocol: ProtocolId,
-        _request: Vec<u8>,
-    ) -> crate::Result<()> {
-        // TODO: open substream and send request
-        todo!();
+    /// Handle closed substream.
+    fn on_substream_closed(&mut self, protocol: String, peer: PeerId) {
+        // TODO: match on `protocol`
+        // TODO: if `protocol` is a libp2p protocol, handle internally
+        // TODO: if `protocol` is a user-installed notification protocol,
+        //       send the closing information to protocol handler
+        // TODO: if `protocol` is a user-isntalled request-response protocol,
+        //       send the information (what exactly??) to request handler
+        //         - if waiting for response, request is refused
+        //         - if waiting request to be sent, request was cancelled
+        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream closed");
     }
 
-    /// Send response to `request`.
-    pub fn send_response(&mut self, _request: RequestId, _response: Vec<u8>) -> crate::Result<()> {
-        // TODO: verify that substream for `request` exists
-        // TODO: get sink for that substream and send request
-        // TODO: close substream
-        todo!();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn two_transport_supported() {
-        assert_eq!(1 + 1, 2);
+    /// Event loop for [`Litep2p`].
+    pub async fn next_event(&mut self) -> crate::Result<Litep2pEvent> {
+        loop {
+            tokio::select! {
+                event = self.rx.recv() => match event {
+                    Some(TransportEvent::SubstreamOpened(protocol, peer, io)) => {
+                        self.on_substream_opened(protocol, peer, io);
+                    }
+                    Some(TransportEvent::SubstreamClosed(protocol, peer)) => {
+                        self.on_substream_closed(protocol, peer);
+                    }
+                    Some(TransportEvent::ConnectionEstablished(peer)) => {
+                        return Ok(Litep2pEvent::ConnectionEstablished(peer));
+                    }
+                    Some(TransportEvent::ConnectionClosed(peer)) => {
+                        return Ok(Litep2pEvent::ConnectionClosed(peer));
+                    }
+                    Some(TransportEvent::DialFailure(address)) => {
+                        return Ok(Litep2pEvent::DialFailure(address));
+                    }
+                    None => {
+                        tracing::error!(target: LOG_TARGET, "channel to transports shut down");
+                        return Err(Error::EssentialTaskClosed);
+                    }
+                }
+            }
+        }
     }
 }

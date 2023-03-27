@@ -1,7 +1,5 @@
 use litep2p::{config::LiteP2pConfiguration, Litep2p};
 
-use futures::StreamExt;
-
 #[tokio::test]
 async fn libp2p() {
     tracing_subscriber::fmt()
@@ -9,53 +7,24 @@ async fn libp2p() {
         .try_init()
         .expect("to succeed");
 
-    let (mut handle, mut event_stream) =
-        Litep2p::new(LiteP2pConfiguration::new(vec!["/ip6/::1/tcp/7777"
-            .parse()
-            .expect("valid multiaddress")]))
-        .await
-        .unwrap();
+    let mut litep2p = Litep2p::new(LiteP2pConfiguration::new(vec!["/ip6/::1/tcp/7777"
+        .parse()
+        .expect("valid multiaddress")]))
+    .await
+    .unwrap();
 
-    handle
+    litep2p
         .open_connection("/ip6/::1/tcp/8888".parse().expect("valid multiaddress"))
         .await;
 
-    if let Some(event) = event_stream.next().await {
-        tracing::info!("{event:?}");
-    } else {
-        panic!("failed");
+    loop {
+        tokio::select! {
+            event = litep2p.next_event() => {
+                tracing::info!("{event:?}");
+            },
+            _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {
+                break
+            }
+        }
     }
-
-    if let Some(event) = event_stream.next().await {
-        tracing::info!("{event:?}");
-    } else {
-        panic!("failed");
-    }
-
-    // let litep2p = Litep2p::new(LiteP2pConfiguration::new(vec!["/ip6/::1/tcp/7777"
-    //         .parse()
-    //         .expect("valid multiaddress")]))
-    //     .await
-    //     .unwrap();
-
-    // ProtocolConfig {
-    //     tx: (), // for sending substream information to litep2p
-    //     rx: (), // for receiving substream information from litep2p
-    // }
-
-    // let handle = litep2p.handle();
-
-    // while let Some(event) = litep2p.next_event().await {
-    //     todo!();
-    // }
-
-    // handle.open_connection(address);
-    // handle.open_substream(protocol, )
-
-    // let (_handle2, _event_stream2) =
-    //     Litep2p::new(LiteP2pConfiguration::new(vec!["/ip6/::1/tcp/8889"
-    //         .parse()
-    //         .expect("valid multiaddress")]))
-    //     .await
-    //     .unwrap();
 }

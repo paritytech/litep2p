@@ -39,7 +39,7 @@ use crate::{
     peer_id::PeerId,
     transport::{tcp::types::*, Connection, Transport, TransportEvent, TransportService},
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
-    Litep2pEvent, DEFAULT_CHANNEL_SIZE,
+    DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{
@@ -114,7 +114,7 @@ struct MultiplexedConnection<S: Connection> {
     connection: yamux::ControlledConnection<S>,
 
     /// TX channel for sending negotiated substreams to [`TcpTransport`].
-    tx: Sender<Litep2pEvent>,
+    tx: Sender<TransportEvent>,
 
     /// Supported protocols.
     protocols: Vec<String>,
@@ -125,7 +125,7 @@ impl<S: Connection> MultiplexedConnection<S> {
     /// that's linked to the connection.
     pub fn start(
         io: S,
-        tx: Sender<Litep2pEvent>,
+        tx: Sender<TransportEvent>,
         peer: PeerId,
         role: Role,
         protocols: Vec<String>,
@@ -185,9 +185,9 @@ impl<S: Connection> MultiplexedConnection<S> {
                     Ok((io, protocol)) => {
                         if let Err(_) = self
                             .tx
-                            .send(Litep2pEvent::SubstreamOpened(
-                                self.peer,
+                            .send(TransportEvent::SubstreamOpened(
                                 protocol,
+                                self.peer,
                                 Box::new(io),
                             ))
                             .await
@@ -225,7 +225,7 @@ pub struct TcpTransport {
     rx: Receiver<TcpTransportEvent>,
 
     /// TX channel for sending events to `litep2p`.
-    tx: Sender<Litep2pEvent>,
+    tx: Sender<TransportEvent>,
 
     /// Pending outbound connections.
     pending_connections: PendingConnections,
@@ -247,7 +247,7 @@ impl TcpTransport {
     async fn new(
         keypair: &Keypair,
         config: TransportConfig,
-        event_tx: Sender<Litep2pEvent>,
+        event_tx: Sender<TransportEvent>,
     ) -> crate::Result<(Self, Sender<TcpTransportEvent>)> {
         tracing::info!(target: LOG_TARGET, ?config, "create new `TcpTransport`");
 
@@ -358,7 +358,7 @@ impl TcpTransport {
     /// and returns the negotiated stream object back to [`TcpTransport`].
     async fn initialize_connection(
         io: impl Connection,
-        tx: Sender<Litep2pEvent>,
+        tx: Sender<TransportEvent>,
         role: Role,
         noise_config: NoiseConfiguration,
         protocols: Vec<String>,
@@ -481,7 +481,7 @@ impl TcpTransport {
                             );
                             self.connections.insert(context.peer, context.control);
                             // TODO: handle error
-                            let _ = self.tx.send(Litep2pEvent::ConnectionEstablished(context.peer)).await;
+                            let _ = self.tx.send(TransportEvent::ConnectionEstablished(context.peer)).await;
                         }
                         Err(error) => {
                             tracing::error!(target: LOG_TARGET, ?error, "failed to negotiate connection")
@@ -529,7 +529,7 @@ impl Transport for TcpTransport {
     async fn start(
         keypair: &Keypair,
         config: TransportConfig,
-        tx: Sender<Litep2pEvent>,
+        tx: Sender<TransportEvent>,
     ) -> crate::Result<Box<dyn TransportService>> {
         let (transport, tx) = TcpTransport::new(keypair, config, tx).await?;
 

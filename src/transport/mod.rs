@@ -24,7 +24,6 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
-    Litep2pEvent,
 };
 
 use futures::{
@@ -38,6 +37,7 @@ use std::fmt::Debug;
 
 pub mod tcp;
 
+// TODO: protocols for substream events
 /// Supported transport types.
 pub enum TransportType {
     /// TCP.
@@ -51,12 +51,13 @@ pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static> Connection for T {}
 
 /// Events emitted by the underlying transport.
+#[derive(Debug)]
 pub enum TransportEvent {
-    /// Establish new outbound connected to remote peer.
-    ConnectionEstablished(Multiaddr),
-
-    /// Close the connection to remote peer.
+    SubstreamOpened(String, PeerId, Box<dyn Connection>),
+    SubstreamClosed(String, PeerId),
+    ConnectionEstablished(PeerId),
     ConnectionClosed(PeerId),
+    DialFailure(Multiaddr),
 }
 
 #[async_trait::async_trait]
@@ -77,6 +78,6 @@ pub trait Transport {
     async fn start(
         keypair: &Keypair,
         config: TransportConfig,
-        tx: Sender<Litep2pEvent>,
+        tx: Sender<TransportEvent>,
     ) -> crate::Result<Box<dyn TransportService>>;
 }

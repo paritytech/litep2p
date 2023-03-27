@@ -43,6 +43,8 @@ pub enum Error {
     IoError(ErrorKind),
     #[error("Negotiation error: `{0}`")]
     NegotiationError(NegotiationError),
+    #[error("Essential task closed")]
+    EssentialTaskClosed,
     #[error("Unknown error occurred")]
     Unknown,
 }
