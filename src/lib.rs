@@ -22,9 +22,12 @@
 #![allow(unused)]
 
 use crate::{
-    config::LiteP2pConfiguration,
+    config::{LiteP2pConfiguration, TransportConfig},
+    crypto::ed25519::Keypair,
     error::Error,
-    types::{ConnectionId, PeerId, ProtocolId, RequestId},
+    peer_id::PeerId,
+    transport::{tcp::TcpTransport, Transport},
+    types::{ConnectionId, ProtocolId, RequestId},
 };
 
 use futures::Stream;
@@ -33,6 +36,8 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc::{channel, Receiver, Sender},
 };
+use tokio_stream::wrappers::ReceiverStream;
+use transport::TransportService;
 
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -63,58 +68,70 @@ struct RequestContext {
     _peer: PeerId,
 }
 
-pub struct Litep2p {
-    _connections: HashMap<ConnectionId, ConnectionContext>,
-    _pending_requests: HashMap<RequestId, RequestContext>,
-}
-
 // TODO: protocols for substream events
+#[derive(Debug)]
 pub enum Litep2pEvent {
-    SubstreamOpened(PeerId, ()),
+    SubstreamOpened(PeerId, String, Box<dyn transport::Connection>),
     SubstreamClosed(PeerId),
     ConnectionEstablished(PeerId),
     ConnectionClosed(PeerId),
+}
+
+pub struct Litep2p {
+    tranports: HashMap<&'static str, Box<dyn TransportService>>,
 }
 
 // TODO: how to support multiple transports?
 // TODO:  - specify all listening endpoints (by address)
 // TODO:  - map events from these endpoints to global events?
 // TODO: how to support bittorrent?
+// TODO: this `new()` implementation is totally incorrect
 impl Litep2p {
     /// Create new [`Litep2p`] object.
-    pub fn new(_config: LiteP2pConfiguration) -> (Litep2p, Box<dyn Stream<Item = Litep2pEvent>>) {
+    pub async fn new(
+        config: LiteP2pConfiguration,
+    ) -> crate::Result<(Litep2p, Box<dyn Stream<Item = Litep2pEvent> + Unpin>)> {
+        assert!(config.listen_addresses().count() == 1);
+        let keypair = Keypair::generate();
+
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
-        // TODO: create new transports and give them an RX channel for listening to events from `Litep2pHandle`
-        // TODO: create another channel pair and pass the TX channel to transport
-        // TODO:
-        // Self {
-        //     _connections: HashMap::new(),
-        //     _pending_requests: HashMap::new(),
-        // }
-        todo!();
+        let handle = TcpTransport::start(
+            &keypair,
+            TransportConfig::new(
+                config.listen_addresses().next().unwrap().clone(),
+                vec!["/ipfs/ping/1.0.0".to_owned()],
+                vec![],
+                vec![],
+                40_000,
+            ),
+            tx,
+        )
+        .await?;
+
+        Ok((
+            Self {
+                tranports: HashMap::from([("tcp", handle)]),
+            },
+            Box::new(ReceiverStream::new(rx)),
+        ))
     }
 
     /// Open connection to remote peer at `address`.
-    // TODO: this can't block, make it async?
-    // TODO: how to implement rate-limiting for a connection
-    pub async fn open_connection(&mut self, address: Multiaddr) -> crate::Result<PeerId> {
-        let context = match address.iter().skip(1).next() {
-            Some(Protocol::Tcp(_)) => {
-                todo!();
-            }
-            protocol => {
-                tracing::error!(target: LOG_TARGET, ?protocol, "unsupported protocol");
-                return Err(Error::AddressError(error::AddressError::InvalidProtocol));
-            }
-        };
+    ///
+    /// Connection is opened and negotiated in the background and the result is
+    /// indicated to the caller through [`Litep2pEvent::ConnectionEstablished`]/[`Litep2pEvent::DialFailure`]
+    pub async fn open_connection(&mut self, address: Multiaddr) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?address,
+            "establish outbound connection"
+        );
 
-        // TODO: verify that transport layer protocol is either ip6 or ip4
-        // TODO: verify that application-layer protocol is one of supported
-        // TODO: how to verify that there is no connection open to peer yet?
-        // TODO: create new connection for selected transport (TcpStream)?
-        // TODO: make it noise-encrypted
-        // TODO: use yamux
-        todo!();
+        self.tranports
+            .get_mut("tcp")
+            .unwrap()
+            .open_connection(address)
+            .await;
     }
 
     /// Close connection to remote `peer`.

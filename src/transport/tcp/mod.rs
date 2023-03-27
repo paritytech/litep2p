@@ -26,6 +26,7 @@
 // TODO: bechmark `StreamMap` performance under high load
 // TODO: find a better way to
 // TODO: stop using println
+// TODO: how to detect when substream is closed?
 
 use crate::{
     config::{Role, TransportConfig},
@@ -38,7 +39,7 @@ use crate::{
     peer_id::PeerId,
     transport::{tcp::types::*, Connection, Transport, TransportEvent, TransportService},
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
-    DEFAULT_CHANNEL_SIZE,
+    Litep2pEvent, DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{
@@ -101,6 +102,7 @@ impl TransportService for TcpTransportService {
     }
 }
 
+// TODO: documentation
 struct MultiplexedConnection<S: Connection> {
     /// Peer ID of remote.
     peer: PeerId,
@@ -112,7 +114,7 @@ struct MultiplexedConnection<S: Connection> {
     connection: yamux::ControlledConnection<S>,
 
     /// TX channel for sending negotiated substreams to [`TcpTransport`].
-    tx: Sender<()>,
+    tx: Sender<Litep2pEvent>,
 
     /// Supported protocols.
     protocols: Vec<String>,
@@ -123,7 +125,7 @@ impl<S: Connection> MultiplexedConnection<S> {
     /// that's linked to the connection.
     pub fn start(
         io: S,
-        tx: Sender<()>,
+        tx: Sender<Litep2pEvent>,
         peer: PeerId,
         role: Role,
         protocols: Vec<String>,
@@ -181,7 +183,21 @@ impl<S: Connection> MultiplexedConnection<S> {
 
                 let io = match self.negotiate_protocol(substream).await {
                     Ok((io, protocol)) => {
-                        // TODO: send directly to `litep2p`???
+                        if let Err(_) = self
+                            .tx
+                            .send(Litep2pEvent::SubstreamOpened(
+                                self.peer,
+                                protocol,
+                                Box::new(io),
+                            ))
+                            .await
+                        {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                "channel to `litep2p` closed, closing yamux connection"
+                            );
+                            return;
+                        }
                     }
                     Err(error) => {
                         tracing::warn!(
@@ -208,14 +224,8 @@ pub struct TcpTransport {
     // TODO: rename
     rx: Receiver<TcpTransportEvent>,
 
-    /// RX channel for receiving negotiated substreams.
-    substream_rx: Receiver<()>,
-
-    /// TX channel for sending negotiated substreams.
-    ///
-    /// This channel is not used by [`TcpTransport`] directly but
-    /// only copied and handed to new Yamux connections.
-    substream_tx: Sender<()>,
+    /// TX channel for sending events to `litep2p`.
+    tx: Sender<Litep2pEvent>,
 
     /// Pending outbound connections.
     pending_connections: PendingConnections,
@@ -237,21 +247,20 @@ impl TcpTransport {
     async fn new(
         keypair: &Keypair,
         config: TransportConfig,
+        event_tx: Sender<Litep2pEvent>,
     ) -> crate::Result<(Self, Sender<TcpTransportEvent>)> {
         tracing::info!(target: LOG_TARGET, ?config, "create new `TcpTransport`");
 
         let (socket_address, _) = Self::get_socket_address(config.listen_address())?;
         let listener = TcpListener::bind(socket_address).await?;
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let (substream_tx, substream_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let protocols = config.libp2p_protocols().cloned().collect();
 
         Ok((
             Self {
                 listener,
                 rx,
-                substream_rx,
-                substream_tx,
+                tx: event_tx,
                 keypair: keypair.clone(),
                 protocols,
                 pending_connections: FuturesUnordered::new(),
@@ -349,7 +358,7 @@ impl TcpTransport {
     /// and returns the negotiated stream object back to [`TcpTransport`].
     async fn initialize_connection(
         io: impl Connection,
-        tx: Sender<()>,
+        tx: Sender<Litep2pEvent>,
         role: Role,
         noise_config: NoiseConfiguration,
         protocols: Vec<String>,
@@ -388,7 +397,7 @@ impl TcpTransport {
         // create new Noise configuration and push a future which negotiates the connection
         let noise_config = NoiseConfiguration::new(&self.keypair, &role);
         let protocols = self.protocols.iter().cloned().collect();
-        let tx = self.substream_tx.clone();
+        let tx = self.tx.clone();
 
         self.pending_negotiations.push(Box::pin(async move {
             let io = TokioAsyncReadCompatExt::compat(io).into_inner();
@@ -471,22 +480,14 @@ impl TcpTransport {
                                 "negotiation finished"
                             );
                             self.connections.insert(context.peer, context.control);
+                            // TODO: handle error
+                            let _ = self.tx.send(Litep2pEvent::ConnectionEstablished(context.peer)).await;
                         }
                         Err(error) => {
                             tracing::error!(target: LOG_TARGET, ?error, "failed to negotiate connection")
                         }
                     }
                 }
-                substream = self.substream_rx.recv() => match substream {
-                    Some(()) => {
-                        // TODO: report this to `litep2p` front-end?
-                        todo!("send substream to front-end");
-                    }
-                    None => {
-                        tracing::error!(target: LOG_TARGET, "substream channe closed, exiting");
-                        return
-                    }
-                },
                 event = self.rx.recv() => match event {
                     Some(TcpTransportEvent::OpenConnection(address)) => {
                         tracing::debug!(
@@ -522,15 +523,18 @@ impl TcpTransport {
 
 #[async_trait::async_trait]
 impl Transport for TcpTransport {
-    type Handle = TcpTransportService;
-
     /// Start the underlying transport listener and return a handle which allows `litep2p` to
     // interact with the transport.
-    async fn start(keypair: &Keypair, config: TransportConfig) -> crate::Result<Self::Handle> {
-        let (transport, tx) = TcpTransport::new(keypair, config).await?;
+    // TODO: think about the design of `tx` some more
+    async fn start(
+        keypair: &Keypair,
+        config: TransportConfig,
+        tx: Sender<Litep2pEvent>,
+    ) -> crate::Result<Box<dyn TransportService>> {
+        let (transport, tx) = TcpTransport::new(keypair, config, tx).await?;
 
         tokio::spawn(transport.run());
-        Ok(TcpTransportService::new(tx))
+        Ok(Box::new(TcpTransportService::new(tx)))
     }
 }
 
@@ -586,6 +590,7 @@ mod tests {
             .expect("to succeed");
 
         let keypair = Keypair::generate();
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
         let mut handle = TcpTransport::start(
             &keypair,
             TransportConfig::new(
@@ -595,6 +600,7 @@ mod tests {
                 vec![],
                 40_000,
             ),
+            tx,
         )
         .await
         .unwrap();

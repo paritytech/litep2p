@@ -106,7 +106,10 @@ trait Noise {
     fn into_transport_mode(self) -> Result<TransportState, Error>;
 }
 
+#[derive(Debug)]
 struct NoiseHandshakeState(HandshakeState);
+
+#[derive(Debug)]
 struct NoiseTransportState(TransportState);
 
 impl Noise for NoiseHandshakeState {
@@ -161,6 +164,7 @@ impl Noise for NoiseTransportState {
     }
 }
 
+#[derive(Debug)]
 enum ReadState {
     Ready,
     ReadLen {
@@ -182,6 +186,7 @@ enum ReadState {
     DecErr,
 }
 
+#[derive(Debug)]
 enum WriteState {
     Ready,
     WriteLen { buf: [u8; 2], off: usize },
@@ -189,6 +194,7 @@ enum WriteState {
 }
 
 // TODO: documentation
+#[derive(Debug)]
 struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin, T: Unpin> {
     io: S,
 

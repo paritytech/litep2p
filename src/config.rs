@@ -50,6 +50,11 @@ impl LiteP2pConfiguration {
     pub fn new(listen_addresses: Vec<Multiaddr>) -> Self {
         Self { listen_addresses }
     }
+
+    /// Get an iterator of listen addresses.
+    pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
+        self.listen_addresses.iter()
+    }
 }
 
 // Transport configuration.

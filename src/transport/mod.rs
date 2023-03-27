@@ -24,6 +24,7 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
+    Litep2pEvent,
 };
 
 use futures::{
@@ -31,6 +32,9 @@ use futures::{
     Stream,
 };
 use multiaddr::Multiaddr;
+use tokio::sync::mpsc::Sender;
+
+use std::fmt::Debug;
 
 pub mod tcp;
 
@@ -42,9 +46,9 @@ pub enum TransportType {
 
 // TODO: can these be removed all together?
 // TODO: these have to be moved elsewhere
-pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
+pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static {}
 
-impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Connection for T {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static> Connection for T {}
 
 /// Events emitted by the underlying transport.
 pub enum TransportEvent {
@@ -68,8 +72,11 @@ pub trait TransportService {
 
 #[async_trait::async_trait]
 pub trait Transport {
-    type Handle: TransportService;
     /// Start the underlying transport listener and return a handle which allows `litep2p` to
     // interact with the transport.
-    async fn start(keypair: &Keypair, config: TransportConfig) -> crate::Result<Self::Handle>;
+    async fn start(
+        keypair: &Keypair,
+        config: TransportConfig,
+        tx: Sender<Litep2pEvent>,
+    ) -> crate::Result<Box<dyn TransportService>>;
 }
