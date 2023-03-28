@@ -63,13 +63,16 @@ impl IpfsPing {
                 TransportEvent::SubstreamOpened(protocol, peer, substream) => {
                     tracing::trace!(target: LOG_TARGET, ?peer, "ipfs ping substream opened");
                 }
-                _ => {}
+                event => {
+                    tracing::info!(target: LOG_TARGET, ?event, "ignoring `TransportEvent`");
+                }
             }
         }
     }
 }
 
 impl Libp2pProtocol for IpfsPing {
+    // Initialize [`IpfsPing`] and starts its event loop.
     fn start(transport_rx: Receiver<TransportEvent>) -> Receiver<Libp2pProtocolEvent> {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
 

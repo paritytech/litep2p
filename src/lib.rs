@@ -26,6 +26,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::Error,
     peer_id::PeerId,
+    protocol::libp2p::{IpfsPing, Libp2pProtocol, Libp2pProtocolEvent},
     transport::{tcp::TcpTransport, Connection, Transport, TransportEvent},
     types::{ConnectionId, ProtocolId, RequestId},
 };
@@ -86,7 +87,13 @@ pub struct Litep2p {
     tranports: HashMap<&'static str, Box<dyn TransportService>>,
 
     /// Receiver for events received from enabled transports.
-    rx: Receiver<TransportEvent>,
+    transport_rx: Receiver<TransportEvent>,
+
+    /// RX channel for receiving events from libp2p standard protocols.
+    libp2p_rx: Receiver<Libp2pProtocolEvent>,
+
+    /// TX channels for communicating with libp2p standard protocols.
+    libp2p_tx: HashMap<String, Sender<TransportEvent>>,
 }
 
 impl Litep2p {
@@ -95,7 +102,8 @@ impl Litep2p {
         assert!(config.listen_addresses().count() == 1);
         let keypair = Keypair::generate();
 
-        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (transport_tx, transport_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (libp2p_tx, libp2p_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let handle = TcpTransport::start(
             &keypair,
             TransportConfig::new(
@@ -105,13 +113,20 @@ impl Litep2p {
                 vec![],
                 40_000,
             ),
-            tx,
+            transport_tx,
         )
         .await?;
 
+        // initialize libp2p standard protocols
+        // TODO: this will be ugly
+        let (ping_tx, ping_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let ping = IpfsPing::start(ping_rx);
+
         Ok(Self {
             tranports: HashMap::from([("tcp", handle)]),
-            rx,
+            transport_rx,
+            libp2p_rx,
+            libp2p_tx: HashMap::from([(String::from("/ipfs/ping/1.0.0"), ping_tx)]),
         })
     }
 
@@ -145,39 +160,81 @@ impl Litep2p {
     }
 
     /// Handle open substreamed.
-    fn on_substream_opened(&mut self, protocol: String, peer: PeerId, io: Box<dyn Connection>) {
+    async fn on_substream_opened(
+        &mut self,
+        protocol: &String,
+        peer: PeerId,
+        substream: Box<dyn Connection>,
+    ) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
+
+        if let Some(tx) = self.libp2p_tx.get_mut(protocol) {
+            return tx
+                .send(TransportEvent::SubstreamOpened(
+                    protocol.clone(),
+                    peer,
+                    substream,
+                ))
+                .await
+                .map_err(From::from);
+        }
+
         // TODO: match on `protocol`
         // TODO: if `protocol` is a libp2p protocol, handle internally
         // TODO: if `protocol` is a user-installed notification protocol,
         //       dispatch the substream to protocol handler
         // TODO: if `protocol` is a user-isntalled request-response protocol,
         //       read request from substream and send it request handler
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
+        Ok(())
     }
 
     /// Handle closed substream.
-    fn on_substream_closed(&mut self, protocol: String, peer: PeerId) {
-        // TODO: match on `protocol`
-        // TODO: if `protocol` is a libp2p protocol, handle internally
+    async fn on_substream_closed(&mut self, protocol: &String, peer: PeerId) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream closed");
+
+        if let Some(tx) = self.libp2p_tx.get_mut(protocol) {
+            return tx
+                .send(TransportEvent::SubstreamClosed(protocol.clone(), peer))
+                .await
+                .map_err(From::from);
+        }
+
         // TODO: if `protocol` is a user-installed notification protocol,
         //       send the closing information to protocol handler
         // TODO: if `protocol` is a user-isntalled request-response protocol,
         //       send the information (what exactly??) to request handler
         //         - if waiting for response, request is refused
         //         - if waiting request to be sent, request was cancelled
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream closed");
+
+        Ok(())
     }
 
     /// Event loop for [`Litep2p`].
     pub async fn next_event(&mut self) -> crate::Result<Litep2pEvent> {
         loop {
             tokio::select! {
-                event = self.rx.recv() => match event {
-                    Some(TransportEvent::SubstreamOpened(protocol, peer, io)) => {
-                        self.on_substream_opened(protocol, peer, io);
+                event = self.transport_rx.recv() => match event {
+                    Some(TransportEvent::SubstreamOpened(protocol, peer, substream)) => {
+                        if let Err(err) = self.on_substream_opened(&protocol, peer, substream).await {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?protocol,
+                                ?peer,
+                                "failed to notify protocol that a substream was opened",
+                            );
+                            return Err(err);
+                        }
                     }
                     Some(TransportEvent::SubstreamClosed(protocol, peer)) => {
-                        self.on_substream_closed(protocol, peer);
+                        if let Err(err) = self.on_substream_closed(&protocol, peer).await {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?protocol,
+                                ?peer,
+                                "failed to notify protocol that a substream was closed",
+                            );
+                            return Err(err);
+                        }
                     }
                     Some(TransportEvent::ConnectionEstablished(peer)) => {
                         return Ok(Litep2pEvent::ConnectionEstablished(peer));
@@ -192,6 +249,9 @@ impl Litep2p {
                         tracing::error!(target: LOG_TARGET, "channel to transports shut down");
                         return Err(Error::EssentialTaskClosed);
                     }
+                },
+                event = self.libp2p_rx.recv() => match event {
+                    _ => {},
                 }
             }
         }

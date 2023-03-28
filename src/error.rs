@@ -95,6 +95,12 @@ impl From<snow::Error> for Error {
     }
 }
 
+impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
+    fn from(value: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        Error::EssentialTaskClosed
+    }
+}
+
 /// An error during decoding of key material.
 #[derive(Debug)]
 pub struct DecodingError {
