@@ -26,7 +26,7 @@ pub use crate::protocol::libp2p::{
 };
 use crate::transport::TransportEvent;
 
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 pub mod bitswap;
 pub mod identify;
@@ -51,5 +51,5 @@ pub enum Libp2pProtocolEvent {
 // Trait defining what libp2p standard protocol must implement.
 pub trait Libp2pProtocol {
     /// Create new [`Libp2pProtocol`].
-    fn start(transport_rx: Receiver<TransportEvent>) -> Receiver<Libp2pProtocolEvent>;
+    fn start(event_tx: Sender<Libp2pProtocolEvent>) -> Sender<TransportEvent>;
 }

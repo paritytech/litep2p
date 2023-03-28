@@ -107,10 +107,10 @@ impl IpfsPing {
 
 impl Libp2pProtocol for IpfsPing {
     // Initialize [`IpfsPing`] and starts its event loop.
-    fn start(transport_rx: Receiver<TransportEvent>) -> Receiver<Libp2pProtocolEvent> {
-        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+    fn start(event_tx: Sender<Libp2pProtocolEvent>) -> Sender<TransportEvent> {
+        let (transport_tx, transport_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
         tokio::spawn(IpfsPing::new(event_tx, transport_rx).run());
-        event_rx
+        transport_tx
     }
 }

@@ -117,16 +117,13 @@ impl Litep2p {
         )
         .await?;
 
-        // initialize libp2p standard protocols
-        // TODO: this will be ugly
-        let (ping_tx, ping_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let ping = IpfsPing::start(ping_rx);
+        let ping = IpfsPing::start(libp2p_tx.clone());
 
         Ok(Self {
             tranports: HashMap::from([("tcp", handle)]),
             transport_rx,
             libp2p_rx,
-            libp2p_tx: HashMap::from([(String::from("/ipfs/ping/1.0.0"), ping_tx)]),
+            libp2p_tx: HashMap::from([(String::from("/ipfs/ping/1.0.0"), ping)]),
         })
     }
 
