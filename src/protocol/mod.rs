@@ -20,9 +20,13 @@
 
 //! Protocol-related defines.
 
-use tokio::sync::mpsc::Sender;
+use crate::transport::TransportEvent;
+
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::fmt::Display;
+
+mod libp2p;
 
 #[derive(Debug, Clone)]
 pub enum ProtocolName {
