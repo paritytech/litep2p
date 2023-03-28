@@ -21,14 +21,18 @@
 
 use crate::{
     protocol::libp2p::{Libp2pProtocol, Libp2pProtocolEvent},
-    transport::TransportEvent,
+    transport::{Connection, TransportEvent},
     DEFAULT_CHANNEL_SIZE,
 };
 
+use futures::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::ping";
+
+/// Size for `/ipfs/ping/1.0.0` payloads.
+const PING_PAYLOAD_SIZE: usize = 32;
 
 /// Events emitted by [`IpfsPing`].
 pub enum PingEvent {}
@@ -40,6 +44,9 @@ pub struct IpfsPing {
 
     /// RX channel for receiving `TransportEvent`s.
     transport_rx: Receiver<TransportEvent>,
+
+    /// Read buffer for incoming messages.
+    read_buffer: Vec<u8>,
 }
 
 impl IpfsPing {
@@ -51,6 +58,7 @@ impl IpfsPing {
         Self {
             event_tx,
             transport_rx,
+            read_buffer: vec![0u8; PING_PAYLOAD_SIZE],
         }
     }
 
@@ -60,8 +68,34 @@ impl IpfsPing {
 
         while let Some(event) = self.transport_rx.recv().await {
             match event {
-                TransportEvent::SubstreamOpened(protocol, peer, substream) => {
+                TransportEvent::SubstreamOpened(protocol, peer, mut substream) => {
                     tracing::trace!(target: LOG_TARGET, ?peer, "ipfs ping substream opened");
+
+                    match substream.read_exact(&mut self.read_buffer[..]).await {
+                        Ok(_) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                data = ?&self.read_buffer[..],
+                                "ping payload read from substream"
+                            );
+
+                            if let Err(err) = substream.write(&self.read_buffer).await {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    "failed to write data to substream"
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                "failed to read data from substream"
+                            );
+                        }
+                    }
                 }
                 event => {
                     tracing::info!(target: LOG_TARGET, ?event, "ignoring `TransportEvent`");
