@@ -20,7 +20,7 @@
 
 //! TCP transport types.
 
-use crate::peer_id::PeerId;
+use crate::{peer_id::PeerId, transport::Connection};
 
 use futures::{stream::FuturesUnordered, Stream as FuturesStream};
 use multiaddr::Multiaddr;
@@ -41,6 +41,11 @@ pub type PendingNegotiations =
 pub type IncomingSubstreams =
     FuturesUnordered<Pin<Box<dyn Future<Output = Option<(PeerId, Stream)>> + Send>>>;
 
+/// Type representing incoming substreams.
+pub type PendingOutboundSubstreams = FuturesUnordered<
+    Pin<Box<dyn Future<Output = (String, PeerId, crate::Result<Box<dyn Connection>>)> + Send>>,
+>;
+
 /// TCP transport events.
 #[derive(Debug)]
 pub enum TcpTransportEvent {
@@ -49,6 +54,9 @@ pub enum TcpTransportEvent {
 
     /// Close connection to remote peer.
     CloseConnection(PeerId),
+
+    /// Open substream to remote peer.
+    OpenSubstream(String, PeerId, Vec<u8>),
 }
 
 /// Context returned to [`crate::transport::tcp::TcpTransport`] after the negotation of protocols

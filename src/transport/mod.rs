@@ -58,6 +58,7 @@ pub enum TransportEvent {
     ConnectionEstablished(PeerId),
     ConnectionClosed(PeerId),
     DialFailure(Multiaddr),
+    SubstreamOpenFailure(String, PeerId, Error),
 }
 
 #[async_trait::async_trait]
@@ -69,6 +70,11 @@ pub trait TransportService {
 
     /// Close connection to remote peer.
     async fn close_connection(&mut self, peer: PeerId);
+
+    /// Open substream to remote `peer` for `protocol`.
+    ///
+    /// The substream is closed by dropping the sink received in [`Litep2p::SubstreamOpened`] message.
+    async fn open_substream(&mut self, protocol: String, peer: PeerId, handshake: Vec<u8>);
 }
 
 #[async_trait::async_trait]

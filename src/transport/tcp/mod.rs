@@ -27,6 +27,7 @@
 // TODO: find a better way to
 // TODO: stop using println
 // TODO: how to detect when substream is closed?
+// TODO: think some more about all this boxing and `impl` madness
 
 use crate::{
     config::{Role, TransportConfig},
@@ -35,7 +36,7 @@ use crate::{
         noise::{self, NoiseConfiguration},
         PublicKey,
     },
-    error::{AddressError, Error},
+    error::{AddressError, Error, SubstreamError},
     peer_id::PeerId,
     transport::{tcp::types::*, Connection, Transport, TransportEvent, TransportService},
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
@@ -100,6 +101,14 @@ impl TransportService for TcpTransportService {
             .await
             .expect("channel to `TcpTransport` to stay open")
     }
+
+    /// Open substream to remote peer.
+    async fn open_substream(&mut self, protocol: String, peer: PeerId, handshake: Vec<u8>) {
+        self.tx
+            .send(TcpTransportEvent::OpenSubstream(protocol, peer, handshake))
+            .await
+            .expect("channel to `TcpTransport` to stay open")
+    }
 }
 
 // TODO: documentation
@@ -148,6 +157,7 @@ impl<S: Connection> MultiplexedConnection<S> {
 
     /// Negotiate protocol.
     // TODO: move to some common place
+    // TODO: this can't return impl connection, must be boxed?
     async fn negotiate_protocol(
         &mut self,
         io: impl Connection,
@@ -236,6 +246,9 @@ pub struct TcpTransport {
     /// Incoming substreams.
     incoming_substreams: IncomingSubstreams,
 
+    /// Pending outbound substreams.
+    pending_outbound: PendingOutboundSubstreams,
+
     /// Open connections.
     connections: HashMap<PeerId, yamux::Control>,
 
@@ -266,6 +279,7 @@ impl TcpTransport {
                 pending_connections: FuturesUnordered::new(),
                 pending_negotiations: FuturesUnordered::new(),
                 incoming_substreams: FuturesUnordered::new(),
+                pending_outbound: FuturesUnordered::new(),
                 connections: HashMap::new(),
             },
             tx,
@@ -437,6 +451,36 @@ impl TcpTransport {
         ));
     }
 
+    /// Attempt to open substream over `protocol` to remote `peer`.
+    // TODO: this code is so hideous
+    // TODO: what to do what with handshake? Should it even be here?
+    async fn on_open_substream(
+        &mut self,
+        protocol: String,
+        peer: PeerId,
+        handshake: Vec<u8>,
+    ) -> crate::Result<()> {
+        let mut yamux = self
+            .connections
+            .get_mut(&peer)
+            .ok_or(Error::SubstreamError(SubstreamError::ConnectionClosed))?
+            .clone();
+
+        self.pending_outbound.push(Box::pin(async move {
+            let substream_result = match yamux.open_stream().await {
+                Ok(substream) => {
+                    Self::negotiate_protocol(substream, &Role::Dialer, vec![&protocol])
+                        .await
+                        .map(|io| -> Box<dyn Connection> { Box::new(io) })
+                }
+                Err(err) => Err(Error::SubstreamError(SubstreamError::YamuxError(err))),
+            };
+            (protocol, peer, substream_result)
+        }));
+
+        Ok(())
+    }
+
     /// Run the [`TcpTransport`] event loop.
     async fn run(mut self) {
         tracing::info!(target: LOG_TARGET, "starting `TcpTransport` event loop");
@@ -488,6 +532,20 @@ impl TcpTransport {
                         }
                     }
                 }
+                outbound = self.pending_outbound.select_next_some(), if !self.pending_outbound.is_empty() => {
+                    let _ = self.tx.send(match outbound.2 {
+                        Ok(substream) => TransportEvent::SubstreamOpened(
+                            outbound.0,
+                            outbound.1,
+                            substream,
+                        ),
+                        Err(err) => TransportEvent::SubstreamOpenFailure(
+                            outbound.0,
+                            outbound.1,
+                            err,
+                        ),
+                    }).await;
+                }
                 event = self.rx.recv() => match event {
                     Some(TcpTransportEvent::OpenConnection(address)) => {
                         tracing::debug!(
@@ -506,7 +564,16 @@ impl TcpTransport {
                             "close connection",
                         );
 
+                        // TODO: emit connectionclosed?
                         self.connections.remove(&peer);
+                    }
+                    Some(TcpTransportEvent::OpenSubstream(protocol, peer, handshake)) => {
+                        if let Err(err) = self.on_open_substream(protocol.clone(), peer, handshake).await {
+                            let _ = self
+                                .tx
+                                .send(TransportEvent::SubstreamOpenFailure(protocol, peer, err))
+                                .await;
+                        }
                     }
                     None => {
                         tracing::error!(
