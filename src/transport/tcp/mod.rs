@@ -117,9 +117,6 @@ struct MultiplexedConnection<S: Connection> {
     /// Peer ID of remote.
     peer: PeerId,
 
-    /// Role of the node.
-    role: Role,
-
     /// Yamux connection.
     connection: yamux::ControlledConnection<S>,
 
@@ -149,7 +146,6 @@ impl<S: Connection> MultiplexedConnection<S> {
             peer,
             connection,
             protocols,
-            role,
         };
 
         tokio::spawn(connection.run());
@@ -171,10 +167,7 @@ impl<S: Connection> MultiplexedConnection<S> {
             "negotiating protocols",
         );
 
-        let (protocol, mut io) = match self.role {
-            Role::Dialer => dialer_select_proto(io, &self.protocols, Version::V1).await?,
-            Role::Listener => listener_select_proto(io, &self.protocols).await?,
-        };
+        let (protocol, mut io) = listener_select_proto(io, &self.protocols).await?;
 
         tracing::event!(
             target: LOG_TARGET,

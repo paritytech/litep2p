@@ -145,7 +145,7 @@ impl Litep2p {
             TransportConfig::new(
                 config.listen_addresses().next().unwrap().clone(),
                 vec![
-                    // ping::PROTOCOL_NAME.to_owned(),
+                    ping::PROTOCOL_NAME.to_owned(),
                     identify::PROTOCOL_NAME.to_owned(),
                 ],
                 vec![],
