@@ -409,7 +409,7 @@ impl TcpTransport {
         tracing::trace!(target: LOG_TARGET, ?role, "schedule negotiation");
 
         // create new Noise configuration and push a future which negotiates the connection
-        let noise_config = NoiseConfiguration::new(&self.keypair, &role);
+        let noise_config = NoiseConfiguration::new(&self.keypair, role);
         let protocols = self.protocols.iter().cloned().collect();
         let tx = self.tx.clone();
 

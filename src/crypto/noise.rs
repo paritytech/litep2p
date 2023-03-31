@@ -62,9 +62,13 @@ const LOG_TARGET: &str = "crypto::noise";
 /// Logging target for the messages.
 const LOG_TARGET_MSG: &str = "crypto::noise::message";
 
+#[derive(Debug)]
 pub struct NoiseConfiguration {
     /// Noise handshake state.
     noise: HandshakeState,
+
+    /// Role of the node.
+    role: Role,
 
     /// Payload that's sent as part of the libp2p Noise handshake.
     payload: Vec<u8>,
@@ -72,17 +76,26 @@ pub struct NoiseConfiguration {
 
 impl NoiseConfiguration {
     /// Create new Noise configuration.
-    pub fn new(keypair: &Keypair, role: &Role) -> Self {
+    pub fn new(keypair: &Keypair, role: Role) -> Self {
+        tracing::trace!(target: LOG_TARGET, ?role, "create new noise configuration");
+
         let builder: Builder<'_> =
             Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise pattern"));
         let dh_keypair = builder
             .generate_keypair()
             .expect("keypair generation to succeed");
         let static_key = dh_keypair.private;
-        let mut noise = builder
-            .local_private_key(&static_key)
-            .build_initiator()
-            .expect("initialization to succeed");
+
+        let mut noise = match role {
+            Role::Dialer => builder
+                .local_private_key(&static_key)
+                .build_initiator()
+                .expect("initialization to succeed"),
+            Role::Listener => builder
+                .local_private_key(&static_key)
+                .build_responder()
+                .expect("initialization to succeed"),
+        };
 
         let noise_payload = handshake_schema::NoiseHandshakePayload {
             identity_key: Some(PublicKey::Ed25519(keypair.public()).to_protobuf_encoding()),
@@ -96,7 +109,11 @@ impl NoiseConfiguration {
             .encode(&mut payload)
             .expect("Vec<u8> provides capacity as needed");
 
-        Self { payload, noise }
+        Self {
+            payload,
+            noise,
+            role,
+        }
     }
 }
 
@@ -451,16 +468,28 @@ pub async fn handshake(
     io: impl Connection,
     config: NoiseConfiguration,
 ) -> crate::Result<(impl Connection, PeerId)> {
+    tracing::trace!(target: LOG_TARGET, ?config, "start noise handshake");
+
+    let role = config.role;
     let mut socket = NoiseSocket::new(io, NoiseHandshakeState(config.noise));
     let mut buf = vec![0u8; 2048];
 
-    socket.write(&[]).await?;
-    socket.read(&mut buf).await?;
+    let peer = match role {
+        Role::Dialer => {
+            socket.write(&[]).await?;
+            socket.read(&mut buf).await?;
+            socket.write(&config.payload).await?;
 
-    // TODO: peer id from buffer
-    let peer = PeerId::random();
+            PeerId::random()
+        }
+        Role::Listener => {
+            socket.read(&mut buf).await?;
+            socket.write(&config.payload).await?;
+            socket.read(&mut buf).await?;
 
-    socket.write(&config.payload).await?;
+            PeerId::random()
+        }
+    };
 
     let io = NoiseSocket::new(
         socket.io,
@@ -468,4 +497,53 @@ pub async fn handshake(
     );
 
     Ok((io, peer))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    #[tokio::test]
+    async fn noise_handshake() {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init()
+            .expect("to succeed");
+
+        let keypair1 = Keypair::generate();
+        let keypair2 = Keypair::generate();
+
+        let listener = TcpListener::bind("[::1]:0".parse::<SocketAddr>().unwrap())
+            .await
+            .unwrap();
+
+        let (stream1, stream2) = tokio::join!(
+            TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let (io1, io2) = {
+            let io1 = TokioAsyncReadCompatExt::compat(stream1.unwrap()).into_inner();
+            let io1 = Box::new(TokioAsyncWriteCompatExt::compat_write(io1));
+            let io2 = TokioAsyncReadCompatExt::compat(stream2.unwrap().0).into_inner();
+            let io2 = Box::new(TokioAsyncWriteCompatExt::compat_write(io2));
+
+            (io1, io2)
+        };
+
+        let config1 = NoiseConfiguration::new(&keypair1, Role::Dialer);
+        let config2 = NoiseConfiguration::new(&keypair1, Role::Listener);
+
+        let (res1, res2) = tokio::join!(handshake(io1, config1), handshake(io2, config2));
+        let (mut res1, mut res2) = (res1.unwrap(), res2.unwrap());
+
+        // verify the connection works by reading a string
+        let mut buf = vec![0u8; 512];
+        let sent = res1.0.write(b"hello, world").await.unwrap();
+        let read = res2.0.read_exact(&mut buf[..sent]).await.unwrap();
+
+        assert_eq!(std::str::from_utf8(&buf[..sent]), Ok("hello, world"),);
+    }
 }
