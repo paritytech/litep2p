@@ -8,7 +8,9 @@ prost-build = "0.11"
 
 [dependencies]
 async-trait = "0.1.66"
+asynchronous-codec = "0.6.1"
 bs58 = "0.4.0"
+bytes = "1.4.0"
 ed25519-dalek = "1.0.1"
 futures = "0.3.27"
 lazy_static = "1.4.0"
@@ -27,5 +29,6 @@ tokio-stream = "0.1.12"
 tokio-util = { version = "0.7.7", features = ["compat"] }
 tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+unsigned-varint = { version = "0.7.1", features = ["codec", "asynchronous_codec"] }
 yamux = "0.11.0"
 zeroize = "1.5.7"

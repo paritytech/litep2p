@@ -21,30 +21,27 @@
 use litep2p::{config::LiteP2pConfiguration, Litep2p};
 
 #[tokio::test]
-async fn libp2p() {
+async fn identify() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init()
         .expect("to succeed");
 
-    let mut litep2p = Litep2p::new(LiteP2pConfiguration::new(vec!["/ip6/::1/tcp/7777"
-        .parse()
-        .expect("valid multiaddress")]))
-    .await
-    .unwrap();
+    let addr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
+    let mut litep2p = Litep2p::new(LiteP2pConfiguration::new(vec![addr]))
+        .await
+        .unwrap();
 
     litep2p
-        .open_connection("/ip6/::1/tcp/8888".parse().expect("valid multiaddress"))
+        .open_connection("/ip6/::1/tcp/9999".parse().expect("valid multiaddress"))
         .await;
 
     loop {
-        tokio::select! {
-            event = litep2p.next_event() => {
-                tracing::info!("{event:?}");
-            },
-            _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {
-                break
-            }
-        }
+        let _ = litep2p.next_event().await;
     }
+    // let _litep2p2 = Litep2p::new(LiteP2pConfiguration::new(vec!["/ip6/::1/tcp/8889"
+    //     .parse()
+    //     .expect("valid multiaddress")]))
+    // .await
+    // .unwrap();
 }

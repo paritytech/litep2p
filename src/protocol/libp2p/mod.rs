@@ -19,10 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 pub use crate::protocol::libp2p::{
-    bitswap::BitswapEvent,
-    identify::IdentifyEvent,
-    kad::KademliaEvent,
-    ping::{IpfsPing, PingEvent},
+    bitswap::BitswapEvent, identify::IdentifyEvent, kad::KademliaEvent, ping::PingEvent,
 };
 use crate::transport::TransportEvent;
 

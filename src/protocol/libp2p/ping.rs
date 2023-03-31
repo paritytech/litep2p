@@ -31,6 +31,9 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::ping";
 
+/// IPFS Identify protocol name
+pub const PROTOCOL_NAME: &str = "/ipfs/ping/1.0.0";
+
 /// Size for `/ipfs/ping/1.0.0` payloads.
 const PING_PAYLOAD_SIZE: usize = 32;
 

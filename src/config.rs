@@ -103,7 +103,6 @@ impl TransportConfig {
     /// Get libp2p address.
     // pub fn libp2p_protocols(&self) -> impl Iterator<Item = &Libp2pProtocol> {
     pub fn libp2p_protocols(&self) -> impl Iterator<Item = &String> {
-        println!("get iterator of libp2p protocols");
         self.libp2p_protocols.iter()
     }
 

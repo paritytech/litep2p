@@ -26,7 +26,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::Error,
     peer_id::PeerId,
-    protocol::libp2p::{IpfsPing, Libp2pProtocol, Libp2pProtocolEvent},
+    protocol::libp2p::{identify, ping, Libp2pProtocol, Libp2pProtocolEvent},
     transport::{tcp::TcpTransport, Connection, Transport, TransportEvent},
     types::{ConnectionId, ProtocolId, RequestId},
 };
