@@ -39,9 +39,8 @@ use snow::{params::NoiseParams, Builder, Error, HandshakeState, TransportState};
 
 use std::{io, pin::Pin, task::Poll};
 
-// TODO: fix path
 mod handshake_schema {
-    include!(concat!(env!("OUT_DIR"), "/_.rs"));
+    include!(concat!(env!("OUT_DIR"), "/noise.rs"));
 }
 
 /// Noise parameters.
