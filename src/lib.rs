@@ -35,12 +35,15 @@ use futures::Stream;
 use multiaddr::{Multiaddr, Protocol};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::{mpsc, oneshot},
 };
 use tokio_stream::wrappers::ReceiverStream;
 use transport::TransportService;
 
-use std::{collections::HashMap, net::SocketAddr};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+};
 
 pub mod config;
 mod crypto;
@@ -69,6 +72,16 @@ struct RequestContext {
     _peer: PeerId,
 }
 
+/// Validation result for inbound substream.
+#[derive(Debug)]
+pub enum ValidationResult {
+    /// Accept the inbound substream.
+    Accept,
+
+    /// Reject the inbound substream.
+    Reject,
+}
+
 #[derive(Debug)]
 pub enum Litep2pEvent {
     /// Connection established.
@@ -79,6 +92,25 @@ pub enum Litep2pEvent {
 
     /// Dial failure for outbound connection.
     DialFailure(Multiaddr),
+
+    /// Inbound and unvalidated substream received.
+    InboundSubstream(String, PeerId, Vec<u8>, oneshot::Sender<ValidationResult>),
+
+    /// Substream opened
+    SubstreamOpened(String, PeerId, ()),
+}
+
+struct PeerContext {
+    /// Protocols supported by the remote peer.
+    protocols: HashSet<String>,
+}
+
+impl Default for PeerContext {
+    fn default() -> Self {
+        PeerContext {
+            protocols: Default::default(),
+        }
+    }
 }
 
 /// [`Litep2p`] object.
@@ -86,14 +118,17 @@ pub struct Litep2p {
     /// Enable transports.
     tranports: HashMap<&'static str, Box<dyn TransportService>>,
 
-    /// Receiver for events received from enabled transports.
-    transport_rx: Receiver<TransportEvent>,
+    /// RX channel for events received from enabled transports.
+    transport_rx: mpsc::Receiver<TransportEvent>,
 
     /// RX channel for receiving events from libp2p standard protocols.
-    libp2p_rx: Receiver<Libp2pProtocolEvent>,
+    libp2p_rx: mpsc::Receiver<Libp2pProtocolEvent>,
 
     /// TX channels for communicating with libp2p standard protocols.
-    libp2p_tx: HashMap<String, Sender<TransportEvent>>,
+    libp2p_tx: HashMap<String, mpsc::Sender<TransportEvent>>,
+
+    /// Connected peers.
+    peers: HashMap<PeerId, PeerContext>,
 }
 
 impl Litep2p {
@@ -102,13 +137,17 @@ impl Litep2p {
         assert!(config.listen_addresses().count() == 1);
         let keypair = Keypair::generate();
 
-        let (transport_tx, transport_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let (libp2p_tx, libp2p_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        // initialize transports
+        let (transport_tx, transport_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
+
         let handle = TcpTransport::start(
             &keypair,
             TransportConfig::new(
                 config.listen_addresses().next().unwrap().clone(),
-                vec!["/ipfs/ping/1.0.0".to_owned()],
+                vec![
+                    // ping::PROTOCOL_NAME.to_owned(),
+                    identify::PROTOCOL_NAME.to_owned(),
+                ],
                 vec![],
                 vec![],
                 40_000,
@@ -117,13 +156,21 @@ impl Litep2p {
         )
         .await?;
 
-        let ping = IpfsPing::start(libp2p_tx.clone());
+        // initialize libp2p standard protocols
+        let (libp2p_tx, libp2p_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
+
+        let ping = ping::IpfsPing::start(libp2p_tx.clone());
+        let identify = identify::IpfsIdentify::start(libp2p_tx.clone());
 
         Ok(Self {
             tranports: HashMap::from([("tcp", handle)]),
             transport_rx,
             libp2p_rx,
-            libp2p_tx: HashMap::from([(String::from("/ipfs/ping/1.0.0"), ping)]),
+            libp2p_tx: HashMap::from([
+                // (String::from(ping::PROTOCOL_NAME), ping),
+                (String::from(identify::PROTOCOL_NAME), identify),
+            ]),
+            peers: HashMap::new(),
         })
     }
 
@@ -154,6 +201,71 @@ impl Litep2p {
             .unwrap()
             .close_connection(peer)
             .await;
+    }
+
+    /// Open notification substream to remote `peer` for `protocol`.
+    ///
+    /// This function doesn't block but starts the substream opening procedure.
+    /// The result of the operation is polled through [`Litep2p::next_event()`] which returns
+    /// [`Litep2p::SubstreamOpened`] on success and [`Litep2pEvent::SubstreamOpenFailure`] on failure.
+    ///
+    /// The substream is closed by dropping the sink received in [`Litep2p::SubstreamOpened`] message.
+    pub async fn open_notification_substream(
+        &mut self,
+        protocol: String,
+        peer: PeerId,
+        handshake: Vec<u8>,
+    ) -> crate::Result<()> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?protocol,
+            ?peer,
+            ?handshake,
+            "open notification substream"
+        );
+
+        // verify that peer exists and supports the protocol
+        if !self
+            .peers
+            .get(&peer)
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .protocols
+            .contains(&protocol)
+        {
+            return Err(Error::ProtocolNotSupported(protocol));
+        }
+
+        Ok(())
+    }
+
+    /// Send request over `protocol` to remote peer and return `oneshot::mpsc::Receiver` which can be
+    /// polled for the response.
+    pub async fn send_request(
+        &mut self,
+        protocol: String,
+        peer: PeerId,
+        request: Vec<u8>,
+    ) -> crate::Result<()> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?protocol,
+            ?peer,
+            ?request,
+            "send request"
+        );
+
+        // verify that peer exists and supports the protocol
+        if !self
+            .peers
+            .get(&peer)
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .protocols
+            .contains(&protocol)
+        {
+            return Err(Error::ProtocolNotSupported(protocol));
+        }
+
+        Ok(())
     }
 
     /// Handle open substreamed.
@@ -234,6 +346,8 @@ impl Litep2p {
                         }
                     }
                     Some(TransportEvent::ConnectionEstablished(peer)) => {
+                        // TODO: this needs some more thought lol
+                        self.peers.insert(peer, Default::default());
                         return Ok(Litep2pEvent::ConnectionEstablished(peer));
                     }
                     Some(TransportEvent::ConnectionClosed(peer)) => {
@@ -241,6 +355,10 @@ impl Litep2p {
                     }
                     Some(TransportEvent::DialFailure(address)) => {
                         return Ok(Litep2pEvent::DialFailure(address));
+                    }
+                    Some(TransportEvent::SubstreamOpenFailure(protocol, peer, error)) => {
+                        // return Ok(Litep2pEvent::SubstreamOpenFailure(protocol, peer, error));
+                        todo!();
                     }
                     None => {
                         tracing::error!(target: LOG_TARGET, "channel to transports shut down");

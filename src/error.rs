@@ -21,7 +21,10 @@
 
 //! Errors during identity key operations.
 
-use crate::types::PeerId;
+// TODO: clean up all these errors into something coherent
+// TODO: move `NegotiationError` under `SubstreamError`
+
+use crate::peer_id::PeerId;
 
 use multiaddr::Protocol;
 use multihash::{Multihash, MultihashGeneric};
@@ -35,6 +38,8 @@ use std::{
 pub enum Error {
     #[error("Peer `{0}` does not exist")]
     PeerDoesntExist(PeerId),
+    #[error("Protocol `{0}` not supported")]
+    ProtocolNotSupported(String),
     #[error("Address error: `{0}`")]
     AddressError(AddressError),
     #[error("Parse error: `{0}`")]
@@ -43,6 +48,8 @@ pub enum Error {
     IoError(ErrorKind),
     #[error("Negotiation error: `{0}`")]
     NegotiationError(NegotiationError),
+    #[error("Substream error")]
+    SubstreamError(SubstreamError),
     #[error("Essential task closed")]
     EssentialTaskClosed,
     #[error("Unknown error occurred")]
@@ -59,6 +66,14 @@ pub enum AddressError {
 pub enum ParseError {
     #[error("Invalid multihash: `{0:?}`")]
     InvalidMultihash(Multihash),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SubstreamError {
+    #[error("Connection closed")]
+    ConnectionClosed,
+    #[error("yamux error: `{0}`")]
+    YamuxError(yamux::ConnectionError),
 }
 
 #[derive(Debug, thiserror::Error)]

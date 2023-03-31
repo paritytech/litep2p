@@ -28,6 +28,7 @@
 // TODO: stop using println
 // TODO: how to detect when substream is closed?
 // TODO: think some more about all this boxing and `impl` madness
+// TODO: ultimately transport would only yield connections and everything else would happen on upper layers
 
 use crate::{
     config::{Role, TransportConfig},
@@ -460,6 +461,7 @@ impl TcpTransport {
         peer: PeerId,
         handshake: Vec<u8>,
     ) -> crate::Result<()> {
+        // TODO: clone only if necessary (optimally don't clone at all?)
         let mut yamux = self
             .connections
             .get_mut(&peer)
@@ -469,6 +471,7 @@ impl TcpTransport {
         self.pending_outbound.push(Box::pin(async move {
             let substream_result = match yamux.open_stream().await {
                 Ok(substream) => {
+                    // TODO: send handshake here???
                     Self::negotiate_protocol(substream, &Role::Dialer, vec![&protocol])
                         .await
                         .map(|io| -> Box<dyn Connection> { Box::new(io) })
