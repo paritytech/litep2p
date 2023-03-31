@@ -19,8 +19,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::ed25519::Keypair,
-    protocol::libp2p::{Libp2pProtocol, Libp2pProtocolEvent},
+    crypto::{ed25519::Keypair, PublicKey},
+    protocol::libp2p::Libp2pProtocolEvent,
     transport::{Connection, TransportEvent},
     DEFAULT_CHANNEL_SIZE,
 };
@@ -28,6 +28,7 @@ use crate::{
 use asynchronous_codec::{Framed, FramedParts};
 use bytes::BytesMut;
 use futures::{AsyncReadExt, AsyncWriteExt, SinkExt};
+use multiaddr::Multiaddr;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use unsigned_varint::{
@@ -64,18 +65,37 @@ pub struct IpfsIdentify {
 
     /// Read buffer for incoming messages.
     read_buffer: Vec<u8>,
+
+    /// Public key of the local node.
+    public: PublicKey,
+
+    /// Listen addresses of the local node.
+    listen_addresses: Vec<Multiaddr>,
+
+    /// Protocols supported by the local node.
+    protocols: Vec<String>,
 }
 
 impl IpfsIdentify {
-    pub fn new(
+    /// Create new [`IpfsPing`] object and start its event loop.
+    pub fn start(
+        public: PublicKey,
+        listen_addresses: Vec<Multiaddr>,
+        protocols: Vec<String>,
         event_tx: Sender<Libp2pProtocolEvent>,
-        transport_rx: Receiver<TransportEvent>,
-    ) -> Self {
-        Self {
+    ) -> Sender<TransportEvent> {
+        let (transport_tx, transport_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let identify = Self {
+            public,
+            listen_addresses,
+            protocols,
             event_tx,
             transport_rx,
             read_buffer: vec![0u8; IDENTIFY_PAYLOAD_SIZE],
-        }
+        };
+
+        tokio::spawn(identify.run());
+        transport_tx
     }
 
     /// [`IpfsIdentify`] event loop.
@@ -93,15 +113,14 @@ impl IpfsIdentify {
                     let identify = identify_schema::Identify {
                         protocol_version: None,
                         agent_version: None,
-                        public_key: Some(
-                            crate::crypto::PublicKey::Ed25519(keypair).to_protobuf_encoding(),
-                        ),
-                        listen_addrs: vec!["/ip6/::1/tcp/8888"
-                            .parse::<multiaddr::Multiaddr>()
-                            .expect("valid multiaddress")
-                            .to_vec()],
-                        observed_addr: None,
-                        protocols: vec![],
+                        public_key: Some(self.public.to_protobuf_encoding()),
+                        listen_addrs: self
+                            .listen_addresses
+                            .iter()
+                            .map(|address| address.to_vec())
+                            .collect::<Vec<_>>(),
+                        observed_addr: None, // TODO: fill this at some point
+                        protocols: self.protocols.clone(),
                     };
                     let mut msg = Vec::with_capacity(identify.encoded_len());
                     identify
@@ -117,15 +136,5 @@ impl IpfsIdentify {
                 }
             }
         }
-    }
-}
-
-impl Libp2pProtocol for IpfsIdentify {
-    // Initialize [`IpfsIdentify`] and starts its event loop.
-    fn start(event_tx: Sender<Libp2pProtocolEvent>) -> Sender<TransportEvent> {
-        let (transport_tx, transport_rx) = channel(DEFAULT_CHANNEL_SIZE);
-
-        tokio::spawn(IpfsIdentify::new(event_tx, transport_rx).run());
-        transport_tx
     }
 }

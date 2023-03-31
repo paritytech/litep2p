@@ -20,7 +20,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::{Libp2pProtocol, Libp2pProtocolEvent},
+    protocol::libp2p::Libp2pProtocolEvent,
     transport::{Connection, TransportEvent},
     DEFAULT_CHANNEL_SIZE,
 };
@@ -53,16 +53,17 @@ pub struct IpfsPing {
 }
 
 impl IpfsPing {
-    /// Create new [`IpfsPing`] object.
-    pub fn new(
-        event_tx: Sender<Libp2pProtocolEvent>,
-        transport_rx: Receiver<TransportEvent>,
-    ) -> Self {
-        Self {
+    /// Create new [`IpfsPing`] object and start its event loop.
+    pub fn start(event_tx: Sender<Libp2pProtocolEvent>) -> Sender<TransportEvent> {
+        let (transport_tx, transport_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let ping = Self {
             event_tx,
             transport_rx,
             read_buffer: vec![0u8; PING_PAYLOAD_SIZE],
-        }
+        };
+
+        tokio::spawn(ping.run());
+        transport_tx
     }
 
     /// [`IpfsPing`] event loop.
@@ -84,7 +85,7 @@ impl IpfsPing {
                             );
 
                             if let Err(err) = substream.write(&self.read_buffer).await {
-                                tracing::debug!(
+                                tracing::trace!(
                                     target: LOG_TARGET,
                                     ?peer,
                                     "failed to write data to substream"
@@ -92,7 +93,7 @@ impl IpfsPing {
                             }
                         }
                         Err(err) => {
-                            tracing::debug!(
+                            tracing::trace!(
                                 target: LOG_TARGET,
                                 ?peer,
                                 "failed to read data from substream"
@@ -105,15 +106,5 @@ impl IpfsPing {
                 }
             }
         }
-    }
-}
-
-impl Libp2pProtocol for IpfsPing {
-    // Initialize [`IpfsPing`] and starts its event loop.
-    fn start(event_tx: Sender<Libp2pProtocolEvent>) -> Sender<TransportEvent> {
-        let (transport_tx, transport_rx) = channel(DEFAULT_CHANNEL_SIZE);
-
-        tokio::spawn(IpfsPing::new(event_tx, transport_rx).run());
-        transport_tx
     }
 }

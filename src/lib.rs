@@ -23,10 +23,10 @@
 
 use crate::{
     config::{LiteP2pConfiguration, TransportConfig},
-    crypto::ed25519::Keypair,
+    crypto::{ed25519::Keypair, PublicKey},
     error::Error,
     peer_id::PeerId,
-    protocol::libp2p::{identify, ping, Libp2pProtocol, Libp2pProtocolEvent},
+    protocol::libp2p::{identify, ping, Libp2pProtocolEvent},
     transport::{tcp::TcpTransport, Connection, Transport, TransportEvent},
     types::{ConnectionId, ProtocolId, RequestId},
 };
@@ -160,14 +160,22 @@ impl Litep2p {
         let (libp2p_tx, libp2p_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
 
         let ping = ping::IpfsPing::start(libp2p_tx.clone());
-        let identify = identify::IpfsIdentify::start(libp2p_tx.clone());
+        let identify = identify::IpfsIdentify::start(
+            PublicKey::Ed25519(keypair.public()),
+            config.listen_addresses().cloned().collect(),
+            vec![
+                ping::PROTOCOL_NAME.to_owned(),
+                identify::PROTOCOL_NAME.to_owned(),
+            ],
+            libp2p_tx.clone(),
+        );
 
         Ok(Self {
             tranports: HashMap::from([("tcp", handle)]),
             transport_rx,
             libp2p_rx,
             libp2p_tx: HashMap::from([
-                // (String::from(ping::PROTOCOL_NAME), ping),
+                (String::from(ping::PROTOCOL_NAME), ping),
                 (String::from(identify::PROTOCOL_NAME), identify),
             ]),
             peers: HashMap::new(),
