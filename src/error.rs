@@ -66,6 +66,10 @@ pub enum AddressError {
 pub enum ParseError {
     #[error("Invalid multihash: `{0:?}`")]
     InvalidMultihash(Multihash),
+    #[error("Failed to decode protobuf message: `{0:?}`")]
+    ProstDecodeError(prost::DecodeError),
+    #[error("Decoding error: `{0:?}`")]
+    DecodingError(DecodingError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -84,6 +88,8 @@ pub enum NegotiationError {
     SnowError(snow::Error),
     #[error("Connection closed while negotiating")]
     ConnectionClosed,
+    #[error("`PeerId` missing from Noise handshake")]
+    PeerIdMissing,
 }
 
 impl From<MultihashGeneric<64>> for Error {
@@ -111,8 +117,20 @@ impl From<snow::Error> for Error {
 }
 
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
-    fn from(value: tokio::sync::mpsc::error::SendError<T>) -> Self {
+    fn from(_: tokio::sync::mpsc::error::SendError<T>) -> Self {
         Error::EssentialTaskClosed
+    }
+}
+
+impl From<prost::DecodeError> for Error {
+    fn from(error: prost::DecodeError) -> Self {
+        Error::ParseError(ParseError::ProstDecodeError(error))
+    }
+}
+
+impl From<DecodingError> for Error {
+    fn from(error: DecodingError) -> Self {
+        Error::ParseError(ParseError::DecodingError(error))
     }
 }
 

@@ -22,10 +22,12 @@
 
 // TODO: benchmark reads and writes
 // TODO: optimize read and writes
+// TODO: this is really ugly code
 
 use crate::{
     config::Role,
     crypto::{ed25519::Keypair, PublicKey},
+    error,
     peer_id::PeerId,
     transport::Connection,
 };
@@ -462,6 +464,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
     }
 }
 
+/// Try to parse `PeerId` from received `NoiseHandshakePayload`
+fn parse_peer_id(buf: &[u8]) -> crate::Result<PeerId> {
+    tracing::warn!("{}", buf.len());
+
+    match handshake_schema::NoiseHandshakePayload::decode(buf) {
+        Ok(payload) => {
+            let public_key = PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
+                error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
+            )?)?;
+            Ok(PeerId::from_public_key(&public_key))
+        }
+        Err(err) => Err(From::from(err)),
+    }
+}
+
 /// Perform Noise handshake.
 pub async fn handshake(
     io: impl Connection,
@@ -476,17 +493,15 @@ pub async fn handshake(
     let peer = match role {
         Role::Dialer => {
             socket.write(&[]).await?;
-            socket.read(&mut buf).await?;
+            let read = socket.read(&mut buf).await?;
             socket.write(&config.payload).await?;
-
-            PeerId::random()
+            parse_peer_id(&buf[..read])?
         }
         Role::Listener => {
             socket.read(&mut buf).await?;
             socket.write(&config.payload).await?;
-            socket.read(&mut buf).await?;
-
-            PeerId::random()
+            let read = socket.read(&mut buf).await?;
+            parse_peer_id(&buf[..read])?
         }
     };
 

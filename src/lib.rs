@@ -129,6 +129,9 @@ pub struct Litep2p {
 
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
+
+    /// Local peer ID.
+    local_peer_id: PeerId,
 }
 
 impl Litep2p {
@@ -136,6 +139,9 @@ impl Litep2p {
     pub async fn new(config: LiteP2pConfiguration) -> crate::Result<Litep2p> {
         assert!(config.listen_addresses().count() == 1);
         let keypair = Keypair::generate();
+        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+
+        tracing::debug!(target: LOG_TARGET, "local peer id: {local_peer_id}");
 
         // initialize transports
         let (transport_tx, transport_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
@@ -171,6 +177,7 @@ impl Litep2p {
         );
 
         Ok(Self {
+            local_peer_id,
             tranports: HashMap::from([("tcp", handle)]),
             transport_rx,
             libp2p_rx,
@@ -180,6 +187,11 @@ impl Litep2p {
             ]),
             peers: HashMap::new(),
         })
+    }
+
+    /// Get local peer ID.
+    pub fn local_peer_id(&self) -> &PeerId {
+        &self.local_peer_id
     }
 
     /// Open connection to remote peer at `address`.

@@ -46,7 +46,8 @@ async fn notification_substream() {
             Ok(Litep2pEvent::ConnectionEstablished(peer2)),
             Ok(Litep2pEvent::ConnectionEstablished(peer1)),
         ) => {
-            // TODO: verify they match
+            assert_eq!(peer2, *litep2p2.local_peer_id());
+            assert_eq!(peer1, *litep2p1.local_peer_id());
             (peer1, peer2)
         }
         _ => panic!("invalid event"),
