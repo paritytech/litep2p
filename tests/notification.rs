@@ -53,8 +53,6 @@ async fn notification_substream() {
         _ => panic!("invalid event"),
     };
 
-    // let event = litep2p1.next_event().await.unwrap();
-
     // verify that both peers are identified by each other
     match tokio::join!(litep2p1.next_event(), litep2p2.next_event()) {
         (

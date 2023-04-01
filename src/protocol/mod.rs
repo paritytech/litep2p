@@ -27,6 +27,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use std::fmt::Display;
 
 pub mod libp2p;
+pub mod request_response;
 
 #[derive(Debug, Clone)]
 pub enum ProtocolName {
