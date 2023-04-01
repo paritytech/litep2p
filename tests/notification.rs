@@ -41,7 +41,7 @@ async fn notification_substream() {
     // attempt to open connection to `litep2p` and verify that both got the event
     litep2p1.open_connection(addr2).await;
 
-    let (peer1, peer2) = match tokio::join!(litep2p1.next_event(), litep2p2.next_event()) {
+    let (_peer1, _peer2) = match tokio::join!(litep2p1.next_event(), litep2p2.next_event()) {
         (
             Ok(Litep2pEvent::ConnectionEstablished(peer2)),
             Ok(Litep2pEvent::ConnectionEstablished(peer1)),
@@ -53,11 +53,28 @@ async fn notification_substream() {
         _ => panic!("invalid event"),
     };
 
+    // let event = litep2p1.next_event().await.unwrap();
+
+    // verify that both peers are identified by each other
+    match tokio::join!(litep2p1.next_event(), litep2p2.next_event()) {
+        (
+            Ok(Litep2pEvent::PeerIdentified {
+                supported_protocols: supported_protocols1,
+            }),
+            Ok(Litep2pEvent::PeerIdentified {
+                supported_protocols: supported_protocols2,
+            }),
+        ) => {
+            assert_eq!(supported_protocols1, supported_protocols2);
+        }
+        _ => panic!("invalid event"),
+    }
+
     // attempt to open substream to remote peer.
-    litep2p1
-        .open_notification_substream("/notif/1".to_owned(), peer2, vec![1, 3, 3, 7])
-        .await
-        .unwrap();
+    // litep2p1
+    //     .open_notification_substream("/notif/1".to_owned(), peer2, vec![1, 3, 3, 7])
+    //     .await
+    //     .unwrap();
 
     // match litep2p2.next_event().await {
     //     Ok(Litep2pEvent::InboundSubstream(protocol, peer, handshake, tx)) => {

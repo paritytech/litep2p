@@ -466,8 +466,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
 
 /// Try to parse `PeerId` from received `NoiseHandshakePayload`
 fn parse_peer_id(buf: &[u8]) -> crate::Result<PeerId> {
-    tracing::warn!("{}", buf.len());
-
     match handshake_schema::NoiseHandshakePayload::decode(buf) {
         Ok(payload) => {
             let public_key = PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(

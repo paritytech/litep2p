@@ -32,13 +32,14 @@ use crate::{
 };
 
 use futures::Stream;
+use identify::IdentifyEvent;
 use multiaddr::{Multiaddr, Protocol};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{mpsc, oneshot},
 };
 use tokio_stream::wrappers::ReceiverStream;
-use transport::TransportService;
+use transport::{Direction, TransportService};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -89,6 +90,12 @@ pub enum Litep2pEvent {
 
     /// Connection closed.
     ConnectionClosed(PeerId),
+
+    /// Peer identified.
+    PeerIdentified {
+        /// Supported protocols.
+        supported_protocols: HashSet<String>,
+    },
 
     /// Dial failure for outbound connection.
     DialFailure(Multiaddr),
@@ -293,6 +300,7 @@ impl Litep2p {
         &mut self,
         protocol: &String,
         peer: PeerId,
+        direction: Direction,
         substream: Box<dyn Connection>,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
@@ -302,6 +310,7 @@ impl Litep2p {
                 .send(TransportEvent::SubstreamOpened(
                     protocol.clone(),
                     peer,
+                    direction,
                     substream,
                 ))
                 .await
@@ -338,13 +347,29 @@ impl Litep2p {
         Ok(())
     }
 
+    async fn on_identify_event(&mut self, event: IdentifyEvent) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, ?event, "handle identify event");
+
+        match event {
+            IdentifyEvent::OpenSubstream { peer } => {
+                self.tranports
+                    .get_mut("tcp")
+                    .unwrap()
+                    .open_substream(identify::PROTOCOL_NAME.to_owned(), peer, vec![])
+                    .await;
+                Ok(())
+            }
+            _ => todo!(),
+        }
+    }
+
     /// Event loop for [`Litep2p`].
     pub async fn next_event(&mut self) -> crate::Result<Litep2pEvent> {
         loop {
             tokio::select! {
                 event = self.transport_rx.recv() => match event {
-                    Some(TransportEvent::SubstreamOpened(protocol, peer, substream)) => {
-                        if let Err(err) = self.on_substream_opened(&protocol, peer, substream).await {
+                    Some(TransportEvent::SubstreamOpened(protocol, peer, direction, substream)) => {
+                        if let Err(err) = self.on_substream_opened(&protocol, peer, direction, substream).await {
                             tracing::error!(
                                 target: LOG_TARGET,
                                 ?protocol,
@@ -368,6 +393,12 @@ impl Litep2p {
                     Some(TransportEvent::ConnectionEstablished(peer)) => {
                         // TODO: this needs some more thought lol
                         self.peers.insert(peer, Default::default());
+                        let _ = self
+                            .libp2p_tx
+                            .get_mut(&identify::PROTOCOL_NAME.to_owned())
+                            .unwrap()
+                            .send(TransportEvent::ConnectionEstablished(peer))
+                            .await;
                         return Ok(Litep2pEvent::ConnectionEstablished(peer));
                     }
                     Some(TransportEvent::ConnectionClosed(peer)) => {
@@ -386,7 +417,10 @@ impl Litep2p {
                     }
                 },
                 event = self.libp2p_rx.recv() => match event {
-                    _ => {},
+                    Some(Libp2pProtocolEvent::Identify(event)) => if let Err(err) = self.on_identify_event(event).await {
+                        tracing::error!(target: LOG_TARGET, "failed to handle `IdentifyEvent`");
+                    }
+                    event => tracing::warn!("ignore event {event:?}"),
                 }
             }
         }

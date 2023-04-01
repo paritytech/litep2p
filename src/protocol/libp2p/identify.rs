@@ -20,14 +20,15 @@
 
 use crate::{
     crypto::{ed25519::Keypair, PublicKey},
+    peer_id::PeerId,
     protocol::libp2p::Libp2pProtocolEvent,
-    transport::{Connection, TransportEvent},
+    transport::{Connection, Direction, TransportEvent},
     DEFAULT_CHANNEL_SIZE,
 };
 
 use asynchronous_codec::{Framed, FramedParts};
 use bytes::BytesMut;
-use futures::{AsyncReadExt, AsyncWriteExt, SinkExt};
+use futures::{AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
 use multiaddr::Multiaddr;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -36,6 +37,8 @@ use unsigned_varint::{
     decode::{self, Error},
     encode,
 };
+
+use std::collections::HashSet;
 
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::identify";
@@ -48,13 +51,25 @@ pub const PUSH_PROTOCOL_NAME: &str = "/ipfs/id/push/1.0.0";
 
 /// Size for `/ipfs/ping/1.0.0` payloads.
 // TODO: what is the max size?
-const IDENTIFY_PAYLOAD_SIZE: usize = 8192;
+const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
 
 mod identify_schema {
     include!(concat!(env!("OUT_DIR"), "/identify.rs"));
 }
 
-pub enum IdentifyEvent {}
+/// Events emitted by `IpfsIdentify`.
+#[derive(Debug)]
+pub enum IdentifyEvent {
+    /// Peer identified.
+    PeerIdentified {
+        /// Supported protocols.
+        supported_protocols: HashSet<String>,
+    },
+
+    /// Open substream to remote peer.
+    // TODO: this is the wrong way to do it
+    OpenSubstream { peer: PeerId },
+}
 
 pub struct IpfsIdentify {
     /// TX channel for sending `Libp2pProtocolEvent`s.
@@ -98,38 +113,83 @@ impl IpfsIdentify {
         transport_tx
     }
 
+    /// Handle inbound query by answering to it with local node's information.
+    async fn handle_inbound_query(&mut self, substream: Box<dyn Connection>) {
+        tracing::trace!(target: LOG_TARGET, "handle inbound stream");
+
+        // TODO: fill with proper info
+        let identify = identify_schema::Identify {
+            protocol_version: None,
+            agent_version: None,
+            public_key: Some(self.public.to_protobuf_encoding()),
+            listen_addrs: self
+                .listen_addresses
+                .iter()
+                .map(|address| address.to_vec())
+                .collect::<Vec<_>>(),
+            observed_addr: None, // TODO: fill this at some point
+            protocols: self.protocols.clone(),
+        };
+        let mut msg = Vec::with_capacity(identify.encoded_len());
+        identify
+            .encode(&mut msg)
+            .expect("`msg` to have enough capacity");
+
+        // why is this using unsigned-varint?
+        let mut decoder = Framed::new(substream, UviBytes::<bytes::Bytes>::default());
+        decoder.send(BytesMut::from(&msg[..]).into()).await.unwrap();
+    }
+
+    /// Handle outbound query by reading the remote node's information.
+    async fn handle_outbound_query(&mut self, substream: Box<dyn Connection>) {
+        tracing::trace!(target: LOG_TARGET, "handle outbound stream");
+
+        // why is this using unsigned-varint?
+        let mut decoder = Framed::new(substream, UviBytes::<bytes::Bytes>::default());
+        let payload = decoder.next().await.unwrap().unwrap().freeze();
+
+        match identify_schema::Identify::decode(payload.to_vec().as_slice()) {
+            Ok(identify) => {
+                tracing::warn!("{identify:?}");
+            }
+            Err(err) => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    "failed to parse `Identify` from response"
+                );
+            }
+        }
+    }
+
     /// [`IpfsIdentify`] event loop.
     async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "start ipfs ping event loop");
 
         while let Some(event) = self.transport_rx.recv().await {
             match event {
-                TransportEvent::SubstreamOpened(protocol, peer, mut substream) => {
+                TransportEvent::SubstreamOpened(protocol, peer, direction, mut substream) => {
                     tracing::trace!(target: LOG_TARGET, ?peer, "ipfs identify substream opened");
 
-                    let keypair = Keypair::generate().public();
-
-                    // TODO: fill with proper info
-                    let identify = identify_schema::Identify {
-                        protocol_version: None,
-                        agent_version: None,
-                        public_key: Some(self.public.to_protobuf_encoding()),
-                        listen_addrs: self
-                            .listen_addresses
-                            .iter()
-                            .map(|address| address.to_vec())
-                            .collect::<Vec<_>>(),
-                        observed_addr: None, // TODO: fill this at some point
-                        protocols: self.protocols.clone(),
-                    };
-                    let mut msg = Vec::with_capacity(identify.encoded_len());
-                    identify
-                        .encode(&mut msg)
-                        .expect("`msg` to have enough capacity");
-
-                    // why is this using unsigned-varint?
-                    let mut decoder = Framed::new(substream, UviBytes::<bytes::Bytes>::default());
-                    decoder.send(BytesMut::from(&msg[..]).into()).await.unwrap();
+                    match direction {
+                        Direction::Outbound => self.handle_outbound_query(substream).await,
+                        Direction::Inbound => self.handle_inbound_query(substream).await,
+                    }
+                }
+                TransportEvent::ConnectionEstablished(peer) => {
+                    tracing::trace!(target: LOG_TARGET, target = ?peer, "initiate identify query");
+                    if let Err(err) = self
+                        .event_tx
+                        .send(Libp2pProtocolEvent::Identify(
+                            IdentifyEvent::OpenSubstream { peer },
+                        ))
+                        .await
+                    {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            "channel to `litep2p` closed, closing identify"
+                        );
+                        return;
+                    }
                 }
                 event => {
                     tracing::info!(target: LOG_TARGET, ?event, "ignoring `TransportEvent`");

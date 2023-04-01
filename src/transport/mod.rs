@@ -50,10 +50,18 @@ pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static {}
 
 impl<T: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static> Connection for T {}
 
+#[derive(Debug)]
+pub enum Direction {
+    /// Substream is inbound
+    Inbound,
+    /// Substream is outbound
+    Outbound,
+}
+
 /// Events emitted by the underlying transport.
 #[derive(Debug)]
 pub enum TransportEvent {
-    SubstreamOpened(String, PeerId, Box<dyn Connection>),
+    SubstreamOpened(String, PeerId, Direction, Box<dyn Connection>),
     SubstreamClosed(String, PeerId),
     ConnectionEstablished(PeerId),
     ConnectionClosed(PeerId),

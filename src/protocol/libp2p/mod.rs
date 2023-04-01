@@ -28,6 +28,7 @@ pub mod kad;
 pub mod ping;
 
 /// Events emitted by libp2p standard protocols.
+#[derive(Debug)]
 pub enum Libp2pProtocolEvent {
     /// Ping events.
     Bitswap(BitswapEvent),

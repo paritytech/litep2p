@@ -39,7 +39,9 @@ use crate::{
     },
     error::{AddressError, Error, SubstreamError},
     peer_id::PeerId,
-    transport::{tcp::types::*, Connection, Transport, TransportEvent, TransportService},
+    transport::{
+        tcp::types::*, Connection, Direction, Transport, TransportEvent, TransportService,
+    },
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
@@ -192,6 +194,7 @@ impl<S: Connection> MultiplexedConnection<S> {
                             .send(TransportEvent::SubstreamOpened(
                                 protocol,
                                 self.peer,
+                                Direction::Inbound,
                                 Box::new(io),
                             ))
                             .await
@@ -533,6 +536,7 @@ impl TcpTransport {
                         Ok(substream) => TransportEvent::SubstreamOpened(
                             outbound.0,
                             outbound.1,
+                            Direction::Outbound,
                             substream,
                         ),
                         Err(err) => TransportEvent::SubstreamOpenFailure(

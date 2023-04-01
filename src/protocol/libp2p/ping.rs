@@ -37,6 +37,7 @@ pub const PROTOCOL_NAME: &str = "/ipfs/ping/1.0.0";
 const PING_PAYLOAD_SIZE: usize = 32;
 
 /// Events emitted by [`IpfsPing`].
+#[derive(Debug)]
 pub enum PingEvent {}
 
 /// IPFS Ping protocol handler.
@@ -71,8 +72,13 @@ impl IpfsPing {
 
         while let Some(event) = self.transport_rx.recv().await {
             match event {
-                TransportEvent::SubstreamOpened(protocol, peer, mut substream) => {
-                    tracing::trace!(target: LOG_TARGET, ?peer, "ipfs ping substream opened");
+                TransportEvent::SubstreamOpened(protocol, peer, direction, mut substream) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?direction,
+                        "ipfs ping substream opened"
+                    );
 
                     match substream.read_exact(&mut self.read_buffer[..]).await {
                         Ok(_) => {
