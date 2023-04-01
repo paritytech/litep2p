@@ -41,7 +41,7 @@ async fn notification_substream() {
     // attempt to open connection to `litep2p` and verify that both got the event
     litep2p1.open_connection(addr2).await;
 
-    let (_peer1, _peer2) = match tokio::join!(litep2p1.next_event(), litep2p2.next_event()) {
+    let (peer1, peer2) = match tokio::join!(litep2p1.next_event(), litep2p2.next_event()) {
         (
             Ok(Litep2pEvent::ConnectionEstablished(peer2)),
             Ok(Litep2pEvent::ConnectionEstablished(peer1)),
@@ -59,12 +59,16 @@ async fn notification_substream() {
     match tokio::join!(litep2p1.next_event(), litep2p2.next_event()) {
         (
             Ok(Litep2pEvent::PeerIdentified {
+                peer: identified_peer2,
                 supported_protocols: supported_protocols1,
             }),
             Ok(Litep2pEvent::PeerIdentified {
+                peer: identified_peer1,
                 supported_protocols: supported_protocols2,
             }),
         ) => {
+            assert_eq!(peer1, identified_peer1);
+            assert_eq!(peer2, identified_peer2);
             assert_eq!(supported_protocols1, supported_protocols2);
         }
         _ => panic!("invalid event"),

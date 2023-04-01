@@ -93,6 +93,9 @@ pub enum Litep2pEvent {
 
     /// Peer identified.
     PeerIdentified {
+        /// Remote peer ID.
+        peer: PeerId,
+
         /// Supported protocols.
         supported_protocols: HashSet<String>,
     },
@@ -347,7 +350,7 @@ impl Litep2p {
         Ok(())
     }
 
-    async fn on_identify_event(&mut self, event: IdentifyEvent) -> crate::Result<()> {
+    async fn on_identify_event(&mut self, event: IdentifyEvent) -> Option<Litep2pEvent> {
         tracing::trace!(target: LOG_TARGET, ?event, "handle identify event");
 
         match event {
@@ -357,8 +360,29 @@ impl Litep2p {
                     .unwrap()
                     .open_substream(identify::PROTOCOL_NAME.to_owned(), peer, vec![])
                     .await;
-                Ok(())
+                None
             }
+            IdentifyEvent::PeerIdentified {
+                peer,
+                supported_protocols,
+            } => match self.peers.get_mut(&peer) {
+                Some(context) => {
+                    context.protocols.union(&supported_protocols);
+                    Some(Litep2pEvent::PeerIdentified {
+                        peer,
+                        supported_protocols,
+                    })
+                }
+                None => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?supported_protocols,
+                        "peer information received from non-existent peer"
+                    );
+                    None
+                }
+            },
             _ => todo!(),
         }
     }
@@ -417,8 +441,8 @@ impl Litep2p {
                     }
                 },
                 event = self.libp2p_rx.recv() => match event {
-                    Some(Libp2pProtocolEvent::Identify(event)) => if let Err(err) = self.on_identify_event(event).await {
-                        tracing::error!(target: LOG_TARGET, "failed to handle `IdentifyEvent`");
+                    Some(Libp2pProtocolEvent::Identify(event)) => if let Some(event) = self.on_identify_event(event).await {
+                        return Ok(event)
                     }
                     event => tracing::warn!("ignore event {event:?}"),
                 }

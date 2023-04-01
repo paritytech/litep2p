@@ -62,6 +62,9 @@ mod identify_schema {
 pub enum IdentifyEvent {
     /// Peer identified.
     PeerIdentified {
+        /// Remote peer ID.
+        peer: PeerId,
+
         /// Supported protocols.
         supported_protocols: HashSet<String>,
     },
@@ -141,7 +144,7 @@ impl IpfsIdentify {
     }
 
     /// Handle outbound query by reading the remote node's information.
-    async fn handle_outbound_query(&mut self, substream: Box<dyn Connection>) {
+    async fn handle_outbound_query(&mut self, peer: PeerId, substream: Box<dyn Connection>) {
         tracing::trace!(target: LOG_TARGET, "handle outbound stream");
 
         // why is this using unsigned-varint?
@@ -150,7 +153,15 @@ impl IpfsIdentify {
 
         match identify_schema::Identify::decode(payload.to_vec().as_slice()) {
             Ok(identify) => {
-                tracing::warn!("{identify:?}");
+                let _ = self
+                    .event_tx
+                    .send(Libp2pProtocolEvent::Identify(
+                        IdentifyEvent::PeerIdentified {
+                            peer,
+                            supported_protocols: HashSet::from_iter(identify.protocols),
+                        },
+                    ))
+                    .await;
             }
             Err(err) => {
                 tracing::error!(
@@ -171,7 +182,7 @@ impl IpfsIdentify {
                     tracing::trace!(target: LOG_TARGET, ?peer, "ipfs identify substream opened");
 
                     match direction {
-                        Direction::Outbound => self.handle_outbound_query(substream).await,
+                        Direction::Outbound => self.handle_outbound_query(peer, substream).await,
                         Direction::Inbound => self.handle_inbound_query(substream).await,
                     }
                 }
