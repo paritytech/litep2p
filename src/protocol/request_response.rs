@@ -18,7 +18,17 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{peer_id::PeerId, transport::TransportEvent, DEFAULT_CHANNEL_SIZE};
+// TODO: what is needed:
+//      - way to receive inbound substream (Receiver<TransportEvent>) (how to give this?)
+//      - way to poll substreams (FuturesUnorderd)
+//      - way to open substreams (Sender<TransportCommand>) (how to give this) (when initialized)
+//      - way send requests on opened substreams (substream.write())
+//      - way to send responses on opened substreams (substream.write())
+//      - way to send requests/responses to user (Sender<RequestResponseEvent>)
+
+use crate::{
+    peer_id::PeerId, protocol::TransportCommand, transport::TransportEvent, DEFAULT_CHANNEL_SIZE,
+};
 
 use tokio::sync::{mpsc, oneshot};
 
@@ -33,36 +43,70 @@ pub enum RequestResponseEvent {
         /// `oneshot::Sender` for sending the response.
         tx: oneshot::Sender<Vec<u8>>,
     },
+
+    /// Response received from remote peer.
+    ResponseReceived {
+        /// ID for the request this is a response to.
+        request_id: RequestId,
+
+        /// Response.
+        response: Vec<u8>,
+    },
 }
 
-pub struct RequestResponseService {}
+/// Unique ID for a request.
+pub type RequestId = usize;
 
-impl RequestResponseService {
-    fn new() -> Self {
-        Self {}
-    }
+pub struct RequestResponseProtocolConfig {}
 
-    /// Poll next event from the stream.
-    pub fn next_event(&mut self) -> Option<RequestResponseEvent> {
+impl RequestResponseProtocolConfig {
+    /// Create new [`RequestResponseProtocolConfig`] and return [`RequestResponseService`]
+    /// which can be used by the protocol to interact with this request-response protocol.
+    pub fn new(
+        protocol: String,
+        channel_size: Option<usize>,
+    ) -> (RequestResponseProtocolConfig, RequestResponseService) {
         todo!();
     }
 }
 
-/// Generic request-response protocol.
-pub struct RequestResponseProtocol {
-    /// Name of the request-response protocol.
-    protocol: String,
+pub struct RequestResponseService {
+    /// Next available request ID.
+    next_request_id: RequestId,
+
+    /// TX channel for sending commands to `Litep2p`.
+    tx: mpsc::Sender<TransportCommand>,
 }
 
-impl RequestResponseProtocol {
-    /// Create new [`RequestResponseProtocol`].
-    pub fn new(protocol: String, channel_size: Option<usize>) -> Self {
-        // let (tx, rx) = mpsc::channel(channel_size.unwrap_or(DEFAULT_CHANNEL_SIZE));
-        Self { protocol }
+impl RequestResponseService {
+    fn new() -> Self {
+        Self { next_request_id: 0 }
     }
 
-    /// Start event loop for a [`RequestResponseProtocol`].
-    pub(crate) async fn start(self) {
+    /// Get the next request ID.
+    fn next_request_id(&mut self) -> RequestId {
+        let request_id = self.next_request_id;
+        self.next_request_id += 1;
+        request_id
+    }
+
+    /// Attempt to send request to remote peer.
+    ///
+    /// This function only initiates the request and it is completed in the background.
+    /// The returned [`RequestId`] can be used to associate incoming responses to sent requests
+    pub fn send_request(&mut self, peer: PeerId, request: Vec<u8>) -> crate::Result<RequestId> {
+        let request_id = self.next_request_id();
+
+        Ok(request_id)
+    }
+
+    /// Send response.
+    pub fn send_response(&mut self, request: RequestId, response: Vec<u8>) -> crate::Result<()> {
+        Ok(())
+    }
+
+    /// Poll next event from the stream.
+    pub fn next_event(&mut self) -> Option<RequestResponseEvent> {
         todo!();
     }
 }

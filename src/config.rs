@@ -18,7 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::protocol::{Libp2pProtocol, NotificationProtocol, RequestResponseProtocol};
+use crate::protocol::{
+    request_response::RequestResponseProtocolConfig, Libp2pProtocol, NotificationProtocol,
+};
 
 use multiaddr::Multiaddr;
 
@@ -44,11 +46,20 @@ impl Into<yamux::Mode> for Role {
 pub struct LiteP2pConfiguration {
     /// Listening addresses.
     listen_addresses: Vec<Multiaddr>,
+
+    /// Request-response protocols.
+    request_response_protocols: Vec<RequestResponseProtocolConfig>,
 }
 
 impl LiteP2pConfiguration {
-    pub fn new(listen_addresses: Vec<Multiaddr>) -> Self {
-        Self { listen_addresses }
+    pub fn new(
+        listen_addresses: Vec<Multiaddr>,
+        request_response_protocols: Vec<RequestResponseProtocolConfig>,
+    ) -> Self {
+        Self {
+            listen_addresses,
+            request_response_protocols,
+        }
     }
 
     /// Get an iterator of listen addresses.
@@ -70,9 +81,6 @@ pub struct TransportConfig {
     /// Supported notification protocols.
     notification_protocols: Vec<NotificationProtocol>,
 
-    /// Supported request-response protocols.
-    request_response_protocols: Vec<RequestResponseProtocol>,
-
     /// Maximum number of allowed connections:
     max_connections: usize,
 }
@@ -83,14 +91,12 @@ impl TransportConfig {
         listen_address: Multiaddr,
         libp2p_protocols: Vec<String>,
         notification_protocols: Vec<NotificationProtocol>,
-        request_response_protocols: Vec<RequestResponseProtocol>,
         max_connections: usize,
     ) -> Self {
         Self {
             listen_address,
             libp2p_protocols,
             notification_protocols,
-            request_response_protocols,
             max_connections,
         }
     }
@@ -109,11 +115,6 @@ impl TransportConfig {
     /// Get notification address.
     pub fn notification_protocols(&self) -> impl Iterator<Item = &NotificationProtocol> {
         self.notification_protocols.iter()
-    }
-
-    /// Request-response protocol.
-    pub fn request_response_protocols(&self) -> impl Iterator<Item = &RequestResponseProtocol> {
-        self.request_response_protocols.iter()
     }
 
     /// Get the number of maximum open connections.

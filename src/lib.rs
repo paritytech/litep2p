@@ -47,10 +47,11 @@ use std::{
 };
 
 pub mod config;
+pub mod protocol;
+
 mod crypto;
 mod error;
 mod peer_id;
-mod protocol;
 mod transport;
 mod types;
 
@@ -144,6 +145,14 @@ pub struct Litep2p {
     local_peer_id: PeerId,
 }
 
+struct Litep2pBuilder {}
+
+impl Litep2pBuilder {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
 impl Litep2p {
     /// Create new [`Litep2p`].
     pub async fn new(config: LiteP2pConfiguration) -> crate::Result<Litep2p> {
@@ -164,7 +173,6 @@ impl Litep2p {
                     ping::PROTOCOL_NAME.to_owned(),
                     identify::PROTOCOL_NAME.to_owned(),
                 ],
-                vec![],
                 vec![],
                 40_000,
             ),

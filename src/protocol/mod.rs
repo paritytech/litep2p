@@ -20,7 +20,7 @@
 
 //! Protocol-related defines.
 
-use crate::transport::TransportEvent;
+use crate::{peer_id::PeerId, transport::TransportEvent};
 
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -28,6 +28,19 @@ use std::fmt::Display;
 
 pub mod libp2p;
 pub mod request_response;
+
+/// Commands sent by different protocols to `Litep2p`.
+#[derive(Debug, Clone)]
+pub enum TransportCommand {
+    /// Open substream to remote peer.
+    OpenSubstream {
+        /// Remote peer ID.
+        peer: PeerId,
+
+        /// Protocol.
+        protocol: String,
+    },
+}
 
 #[derive(Debug, Clone)]
 pub enum ProtocolName {
@@ -85,28 +98,6 @@ impl NotificationProtocol {
         Self { name }
     }
 
-    /// Get the name of the protocol.
-    pub fn name(&self) -> &ProtocolName {
-        &self.name
-    }
-
-    /// Get the name as `String`.
-    pub fn to_string(&self) -> String {
-        self.name.to_string()
-    }
-}
-
-/// Request-response protocol configuration.
-#[derive(Debug)]
-pub struct RequestResponseProtocol {
-    /// Protocol name.
-    name: ProtocolName,
-
-    /// TX channel for sending incoming requests listener.
-    rx: Sender<Vec<u8>>,
-}
-
-impl RequestResponseProtocol {
     /// Get the name of the protocol.
     pub fn name(&self) -> &ProtocolName {
         &self.name

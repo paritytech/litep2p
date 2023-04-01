@@ -664,7 +664,6 @@ mod tests {
                 "/ip6/::1/tcp/7777".parse().expect("valid multiaddress"),
                 vec!["/ipfs/ping/1.0.0".to_owned()],
                 vec![],
-                vec![],
                 40_000,
             ),
             tx,
