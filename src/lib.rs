@@ -510,14 +510,16 @@ impl Litep2p {
                     }
                     event => tracing::warn!("ignore event {event:?}"),
                 },
-                command = self.request_response_commands.next() => match command {
-                    Some((_, command)) => self.on_request_response_command(command).await,
-                    None => {
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            "handles to request-response protocols dropped"
-                        );
-                        return Err(Error::EssentialTaskClosed);
+                command = self.request_response_commands.next(), if !self.request_response_commands.is_empty() => {
+                    match command {
+                        Some((_, command)) => self.on_request_response_command(command).await,
+                        None => {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                "handles to request-response protocols dropped"
+                            );
+                            return Err(Error::EssentialTaskClosed);
+                        }
                     }
                 }
             }
