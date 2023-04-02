@@ -20,9 +20,12 @@
 
 //! Protocol-related defines.
 
-use crate::{peer_id::PeerId, transport::TransportEvent};
+use crate::{
+    peer_id::PeerId,
+    transport::{Connection, TransportEvent},
+};
 
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{mpsc, oneshot};
 
 use std::fmt::Display;
 
@@ -30,15 +33,15 @@ pub mod libp2p;
 pub mod request_response;
 
 /// Commands sent by different protocols to `Litep2p`.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum TransportCommand {
     /// Open substream to remote peer.
     OpenSubstream {
-        /// Remote peer ID.
-        peer: PeerId,
-
         /// Protocol.
         protocol: String,
+
+        /// Remote peer ID.
+        peer: PeerId,
     },
 }
 

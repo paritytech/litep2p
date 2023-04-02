@@ -28,7 +28,7 @@ async fn identify() {
         .expect("to succeed");
 
     let addr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
-    let mut litep2p = Litep2p::new(LiteP2pConfiguration::new(vec![addr]))
+    let mut litep2p = Litep2p::new(LiteP2pConfiguration::new(vec![addr], vec![]))
         .await
         .unwrap();
 

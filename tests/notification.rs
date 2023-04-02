@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use litep2p::{config::LiteP2pConfiguration, Litep2p, Litep2pEvent, ValidationResult};
+use litep2p::{config::LiteP2pConfiguration, Litep2p, Litep2pEvent};
 use multiaddr::Multiaddr;
 
 #[tokio::test]
@@ -29,12 +29,12 @@ async fn notification_substream() {
         .expect("to succeed");
 
     let addr1: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
-    let mut litep2p1 = Litep2p::new(LiteP2pConfiguration::new(vec![addr1.clone()]))
+    let mut litep2p1 = Litep2p::new(LiteP2pConfiguration::new(vec![addr1.clone()], vec![]))
         .await
         .unwrap();
 
     let addr2: Multiaddr = "/ip6/::1/tcp/8889".parse().expect("valid multiaddress");
-    let mut litep2p2 = Litep2p::new(LiteP2pConfiguration::new(vec![addr2.clone()]))
+    let mut litep2p2 = Litep2p::new(LiteP2pConfiguration::new(vec![addr2.clone()], vec![]))
         .await
         .unwrap();
 

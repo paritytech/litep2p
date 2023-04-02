@@ -92,6 +92,11 @@ pub enum NegotiationError {
     PeerIdMissing,
 }
 
+// TODO: ???
+pub enum RequestResponseError {
+    Canceled,
+}
+
 impl From<MultihashGeneric<64>> for Error {
     fn from(hash: MultihashGeneric<64>) -> Self {
         Error::ParseError(ParseError::InvalidMultihash(hash))

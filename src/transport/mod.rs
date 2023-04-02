@@ -70,7 +70,7 @@ pub enum TransportEvent {
 }
 
 #[async_trait::async_trait]
-pub trait TransportService {
+pub trait TransportService: Send {
     /// Open connection to remote peer.
     ///
     /// Negotiate `noise`, perform the Noise handshake, negotiate `yamux` and return TODO

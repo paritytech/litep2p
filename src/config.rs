@@ -45,10 +45,10 @@ impl Into<yamux::Mode> for Role {
 
 pub struct LiteP2pConfiguration {
     /// Listening addresses.
-    listen_addresses: Vec<Multiaddr>,
+    pub listen_addresses: Vec<Multiaddr>,
 
     /// Request-response protocols.
-    request_response_protocols: Vec<RequestResponseProtocolConfig>,
+    pub request_response_protocols: Vec<RequestResponseProtocolConfig>,
 }
 
 impl LiteP2pConfiguration {
@@ -60,11 +60,6 @@ impl LiteP2pConfiguration {
             listen_addresses,
             request_response_protocols,
         }
-    }
-
-    /// Get an iterator of listen addresses.
-    pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
-        self.listen_addresses.iter()
     }
 }
 

@@ -27,9 +27,10 @@ async fn libp2p() {
         .try_init()
         .expect("to succeed");
 
-    let mut litep2p = Litep2p::new(LiteP2pConfiguration::new(vec!["/ip6/::1/tcp/7777"
-        .parse()
-        .expect("valid multiaddress")]))
+    let mut litep2p = Litep2p::new(LiteP2pConfiguration::new(
+        vec!["/ip6/::1/tcp/7777".parse().expect("valid multiaddress")],
+        vec![],
+    ))
     .await
     .unwrap();
 
