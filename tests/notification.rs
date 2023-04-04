@@ -101,6 +101,9 @@ async fn notification_substream() {
         }
     });
 
+    let peer1_received = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let peer1_signal = std::sync::Arc::clone(&peer1_received);
+
     tokio::spawn(async move {
         // attempt to open substream to remote peer.
         service1.open_substream(peer2).await.unwrap();
@@ -116,6 +119,15 @@ async fn notification_substream() {
                 }
                 NotificationEvent::SubstreamOpened { .. } => {
                     tracing::info!("service1: notification stream opened");
+                    service1
+                        .send_sync_notification(peer2, vec![11, 22, 33, 44])
+                        .unwrap();
+                }
+                NotificationEvent::NotificationReceived { peer, notification } => {
+                    tracing::info!("NOTIFICARTOIN RECEIVED 1111");
+                    assert_eq!(peer, peer2);
+                    assert_eq!(notification, vec![55, 66, 77, 88]);
+                    peer1_signal.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
                 event => panic!("service1: unhandled event {event:?}"),
             }
@@ -136,7 +148,21 @@ async fn notification_substream() {
             NotificationEvent::SubstreamOpened { .. } => {
                 tracing::info!("service2: notification stream opened");
             }
+            NotificationEvent::NotificationReceived { peer, notification } => {
+                assert_eq!(peer, peer1);
+                assert_eq!(notification, vec![11, 22, 33, 44]);
+                tracing::info!("NOTIFICARTOIN RECEIVED 2222");
+                service2
+                    .send_async_notification(peer1, vec![55, 66, 77, 88])
+                    .await
+                    .unwrap();
+                break;
+            }
             event => panic!("service2: unhandled event {event:?}"),
         }
+    }
+
+    while !peer1_received.load(std::sync::atomic::Ordering::SeqCst) {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }

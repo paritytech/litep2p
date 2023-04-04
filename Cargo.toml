@@ -25,7 +25,7 @@ snow = "0.9.2"
 thiserror = "1.0.39"
 tokio = { version = "1.26.0", features = ["full"] }
 tokio-stream = "0.1.12"
-tokio-util = { version = "0.7.7", features = ["compat"] }
+tokio-util = { version = "0.7.7", features = ["compat", "io"] }
 tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 unsigned-varint = { version = "0.7.1", features = ["codec", "asynchronous_codec"] }

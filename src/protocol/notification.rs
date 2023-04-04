@@ -18,6 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+// TODO: return `SubstreamOpen` only when both substreams are open? woud allow simplifying the logic a bit
+// TODO: fix spans to work correctly
+// TODO: start using `StreamMap` for receiving inbound notifications
+
 use crate::{
     error::{Error, NotificationError},
     peer_id::PeerId,
@@ -26,7 +30,7 @@ use crate::{
     DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{stream::FuturesUnordered, AsyncReadExt, AsyncWriteExt, StreamExt};
+use futures::{stream::FuturesUnordered, AsyncReadExt, AsyncWriteExt, Stream, StreamExt};
 use tokio::sync::mpsc;
 
 use std::{
@@ -40,6 +44,12 @@ const LOG_TARGET: &str = "notification";
 
 /// Logging target for the file for logging binary messages.
 const LOG_TARGET_MSG: &str = "notification::msg";
+
+/// Channel size for synchronous notification sender.
+const SYNC_CHANNEL_SIZE: usize = 8192;
+
+/// Channel size for asynchronous notification sender.
+const ASYNC_CHANNEL_SIZE: usize = 256;
 
 /// Unique ID for a request.
 pub type SubstreamId = usize;
@@ -62,6 +72,25 @@ pub enum ValidationResult {
     Reject,
 }
 
+/// Events received from inbound substream listeners
+#[derive(Debug)]
+pub enum InboundNotificationEvent {
+    /// Inbound substream was closed.
+    SubstreamClosed {
+        /// Remote peer ID.
+        peer: PeerId,
+    },
+
+    /// Notification received
+    Notification {
+        /// Remote peer ID.
+        peer: PeerId,
+
+        /// Notification.
+        notification: Vec<u8>,
+    },
+}
+
 #[derive(Debug)]
 enum PeerState {
     /// Outbound substream initiated
@@ -78,8 +107,11 @@ enum PeerState {
 
     /// Substream open to peer.
     SubstreamOpen {
-        /// Outbound substream.
-        outbound: Box<dyn Connection>,
+        /// TX channel for sending synchronous events.
+        sync_tx: mpsc::Sender<Vec<u8>>,
+
+        /// TX channel for sending asynchronous events.
+        async_tx: mpsc::Sender<Vec<u8>>,
     },
 }
 
@@ -126,6 +158,15 @@ pub enum NotificationEvent {
         /// Substream error.
         error: (),
     },
+
+    /// Notification received from remote peer.
+    NotificationReceived {
+        /// Remote peer ID.
+        peer: PeerId,
+
+        /// Received notification.
+        notification: Vec<u8>,
+    },
 }
 
 /// Configuration for a notification protocol.
@@ -164,9 +205,8 @@ impl NotificationProtocolConfig {
     }
 }
 
-struct PeerContext {}
-
 /// Service allowing the notification protocol to interact with `Litep2p`.
+#[derive(Debug)]
 pub struct NotificationService {
     /// Protocol.
     protocol: String,
@@ -179,6 +219,12 @@ pub struct NotificationService {
 
     /// RX channel for receiving `TransportEvent`s from `Litep2p`.
     rx: mpsc::Receiver<TransportEvent>,
+
+    /// TX channel for sending notifications to [`NotificationService`].
+    notification_tx: mpsc::Sender<InboundNotificationEvent>,
+
+    /// RX channel for receiving notifications from peers
+    notification_rx: mpsc::Receiver<InboundNotificationEvent>,
 
     /// Peers.
     peers: HashMap<PeerId, PeerState>,
@@ -198,6 +244,8 @@ impl NotificationService {
         tx: mpsc::Sender<TransportCommand>,
         rx: mpsc::Receiver<TransportEvent>,
     ) -> Self {
+        let (notification_tx, notification_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE); // TODO: the size has to be larger
+
         Self {
             protocol,
             handshake,
@@ -206,12 +254,60 @@ impl NotificationService {
             peers: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
             pending_outbound: FuturesUnordered::new(),
+            notification_tx,
+            notification_rx,
         }
     }
 
     /// Set handshake for the notification protocol.
     pub fn set_handshake(&mut self, handshake: Vec<u8>) {
         self.handshake = handshake;
+    }
+
+    /// Send `notification` synchronously to `peer`.
+    ///
+    /// This function doesn't block and if the notification sink of the peer is full,
+    /// the notification is silently dropped,substreams to peer are closed and this is
+    /// indicated by returning `NotificationEvent::SubstreamClosed`
+    pub fn send_sync_notification(
+        &mut self,
+        peer: PeerId,
+        notification: Vec<u8>,
+    ) -> crate::Result<()> {
+        match self.peers.get_mut(&peer) {
+            None => return Err(Error::PeerDoesntExist(peer)),
+            Some(PeerState::SubstreamOpen {
+                ref mut sync_tx, ..
+            }) => sync_tx.try_send(notification).map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => {
+                    Error::NotificationError(NotificationError::NotificationsClogged)
+                }
+                mpsc::error::TrySendError::Closed(_) => {
+                    Error::NotificationError(NotificationError::NotificationStreamClosed)
+                }
+            }),
+            _ => return Err(Error::NotificationError(NotificationError::InvalidState)),
+        }
+    }
+
+    /// Send `notification` asynchronously to `peer`.
+    ///
+    /// This function blocks until the notification sink has enough space for the notification.
+    pub async fn send_async_notification(
+        &mut self,
+        peer: PeerId,
+        notification: Vec<u8>,
+    ) -> crate::Result<()> {
+        match self.peers.get_mut(&peer) {
+            None => return Err(Error::PeerDoesntExist(peer)),
+            Some(PeerState::SubstreamOpen {
+                ref mut async_tx, ..
+            }) => async_tx
+                .send(notification)
+                .await
+                .map_err(|_| Error::NotificationError(NotificationError::NotificationStreamClosed)),
+            _ => return Err(Error::NotificationError(NotificationError::InvalidState)),
+        }
     }
 
     /// Report validation result for an inbound substream.
@@ -301,6 +397,84 @@ impl NotificationService {
             .map_err(From::from)
     }
 
+    /// Start event loop for receiving inbound notifications from remote peer.
+    // TODO make this into an object?
+    // TODO: start using streammap in the future maybe
+    fn start_inbound_notification_receiver(
+        &mut self,
+        peer: PeerId,
+        mut inbound: Box<dyn Connection>,
+    ) {
+        let tx = self.notification_tx.clone();
+        tokio::spawn(async move {
+            let mut notification = vec![0u8; 2048];
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                "inbound notification receiver started"
+            );
+
+            loop {
+                match inbound.read(&mut notification).await {
+                    Ok(nread) => {
+                        tracing::trace!(
+                            target: LOG_TARGET_MSG,
+                            ?peer,
+                            notification = ?&notification[..nread],
+                            "notification received"
+                        );
+
+                        let _ = tx
+                            .send(InboundNotificationEvent::Notification {
+                                peer,
+                                notification: notification[..nread].to_vec(),
+                            })
+                            .await;
+                    }
+                    Err(err) => {
+                        tracing::trace!(target: LOG_TARGET, ?peer, "inbound substream closed");
+                        let _ = tx
+                            .send(InboundNotificationEvent::SubstreamClosed { peer })
+                            .await;
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Start outbound notification sender.
+    fn start_outbound_notification_sender(
+        &mut self,
+        peer: PeerId,
+        mut outbound: Box<dyn Connection>,
+    ) {
+        let (sync_tx, mut sync_rx) = mpsc::channel(SYNC_CHANNEL_SIZE);
+        let (async_tx, mut async_rx) = mpsc::channel(ASYNC_CHANNEL_SIZE);
+
+        self.peers
+            .insert(peer, PeerState::SubstreamOpen { sync_tx, async_tx });
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    notification = async_rx.recv() => match notification {
+                        Some(notification) => if let Err(_) = outbound.write(&notification).await {
+                            return
+                        }
+                        None => return,
+                    },
+                    notification = sync_rx.recv() => match notification {
+                        Some(notification) => if let Err(_) = outbound.write(&notification).await {
+                            return
+                        }
+                        None => return,
+                    },
+                }
+            }
+        });
+    }
+
     /// Handle inbound substream.
     async fn on_inbound_substream(
         &mut self,
@@ -334,9 +508,8 @@ impl NotificationService {
                 })
             }
             Some(PeerState::OutboundInitiated { inbound: None }) => {
-                todo!("is this a valid state?");
-            }
-            Some(PeerState::SubstreamOpen { outbound }) => {
+                // accept the stream by writing our handshake
+                // TODO: do this asynchronously?
                 let mut handshake = vec![0u8; 512];
                 let nread = inbound.read(&mut handshake).await.unwrap();
                 inbound.write(&self.handshake).await.unwrap();
@@ -344,22 +517,37 @@ impl NotificationService {
                 tracing::event!(
                     target: LOG_TARGET,
                     tracing::Level::DEBUG,
-                    protocol = ?self.protocol,
-                    ?peer,
+                    "inbound substream opened successfully, waiting for outbound substream to finish"
+                );
+
+                self.peers.insert(
+                    peer,
+                    PeerState::OutboundInitiated {
+                        inbound: Some(inbound),
+                    },
+                );
+
+                None
+            }
+            Some(PeerState::SubstreamOpen { .. }) => {
+                // TODO: don't read handshake here?
+                let mut handshake = vec![0u8; 512];
+                let nread = inbound.read(&mut handshake).await.unwrap();
+                inbound.write(&self.handshake).await.unwrap();
+
+                tracing::event!(
+                    target: LOG_TARGET,
+                    tracing::Level::DEBUG,
                     "start listening to notifications"
                 );
 
-                return Some(NotificationEvent::SubstreamOpened {
-                    peer,
-                    handshake: handshake[..nread].to_vec(),
-                });
+                self.start_inbound_notification_receiver(peer, inbound);
+                None
             }
             state => {
                 tracing::event!(
                     target: LOG_TARGET,
                     tracing::Level::DEBUG,
-                    protocol = ?self.protocol,
-                    ?peer,
                     ?state,
                     "invalid state for an inbound substream"
                 );
@@ -436,9 +624,7 @@ impl NotificationService {
             "handle negotiated outbound substream"
         );
 
-        // validate peer state
-        //
-        // there are two valid peer states.
+        // TODO: explain this code
         match self.peers.remove(&peer) {
             Some(PeerState::OutboundInitiated { inbound }) => {
                 if let Some(inbound) = inbound {
@@ -447,6 +633,7 @@ impl NotificationService {
                         tracing::Level::TRACE,
                         "spawn event loop for receiving notifications from inbound substream"
                     );
+                    self.start_inbound_notification_receiver(peer, inbound);
                 }
                 tracing::event!(
                     target: LOG_TARGET,
@@ -454,8 +641,7 @@ impl NotificationService {
                     "notification substream open to peer",
                 );
 
-                self.peers
-                    .insert(peer, PeerState::SubstreamOpen { outbound });
+                self.start_outbound_notification_sender(peer, outbound);
                 return Some(NotificationEvent::SubstreamOpened { peer, handshake });
             }
             state => {
@@ -500,6 +686,14 @@ impl NotificationService {
                     },
                     // TODO: handle outbound substream open failure
                     event => tracing::debug!(target: LOG_TARGET, ?event, "ignoring `TransportEvent`"),
+                },
+                notification = self.notification_rx.recv() => match notification.expect("notification channel to stay open") {
+                    InboundNotificationEvent::Notification { peer, notification } => {
+                        return Some(NotificationEvent::NotificationReceived { peer, notification });
+                    },
+                    InboundNotificationEvent::SubstreamClosed { peer } => {
+                        return Some(NotificationEvent::SubstreamClosed { peer, error: () });
+                    }
                 },
                 result = self.pending_outbound.select_next_some(), if !self.pending_outbound.is_empty() => {
                     match result {

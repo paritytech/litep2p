@@ -102,6 +102,10 @@ pub enum NotificationError {
     PeerAlreadyExists,
     #[error("Peer is in invalid state")]
     InvalidState,
+    #[error("Notifications clogged")]
+    NotificationsClogged,
+    #[error("Notification stream closed")]
+    NotificationStreamClosed,
 }
 
 // TODO: ???
