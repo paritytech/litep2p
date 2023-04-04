@@ -219,7 +219,7 @@ impl RequestResponseService {
     ) -> crate::Result<RequestId> {
         let request_id = self.next_request_id();
 
-        tracing::trace!(target: LOG_TARGET, ?peer, ?request_id, "send request");
+        tracing::trace!(target: LOG_TARGET, protocol = ?self.protocol, ?peer, ?request_id, "send request");
 
         // initiate request by opening a substream.
         //

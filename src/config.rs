@@ -19,7 +19,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::protocol::{
-    request_response::RequestResponseProtocolConfig, Libp2pProtocol, NotificationProtocol,
+    notification::NotificationProtocolConfig, request_response::RequestResponseProtocolConfig,
+    Libp2pProtocol, NotificationProtocol,
 };
 
 use multiaddr::Multiaddr;
@@ -45,19 +46,24 @@ impl Into<yamux::Mode> for Role {
 
 pub struct LiteP2pConfiguration {
     /// Listening addresses.
-    pub listen_addresses: Vec<Multiaddr>,
+    pub(crate) listen_addresses: Vec<Multiaddr>,
+
+    /// Notification protocols.
+    pub(crate) notification_protocols: Vec<NotificationProtocolConfig>,
 
     /// Request-response protocols.
-    pub request_response_protocols: Vec<RequestResponseProtocolConfig>,
+    pub(crate) request_response_protocols: Vec<RequestResponseProtocolConfig>,
 }
 
 impl LiteP2pConfiguration {
     pub fn new(
         listen_addresses: Vec<Multiaddr>,
+        notification_protocols: Vec<NotificationProtocolConfig>,
         request_response_protocols: Vec<RequestResponseProtocolConfig>,
     ) -> Self {
         Self {
             listen_addresses,
+            notification_protocols,
             request_response_protocols,
         }
     }

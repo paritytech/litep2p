@@ -38,6 +38,8 @@ use std::{
 pub enum Error {
     #[error("Peer `{0}` does not exist")]
     PeerDoesntExist(PeerId),
+    #[error("Peer `{0}` already exists")]
+    PeerAlreadyExists(PeerId),
     #[error("Protocol `{0}` not supported")]
     ProtocolNotSupported(String),
     #[error("Address error: `{0}`")]

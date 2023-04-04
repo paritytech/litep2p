@@ -18,7 +18,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use litep2p::{config::LiteP2pConfiguration, Litep2p, Litep2pEvent};
+use litep2p::{
+    config::LiteP2pConfiguration,
+    protocol::notification::{NotificationEvent, NotificationProtocolConfig, ValidationResult},
+    Litep2p, Litep2pEvent,
+};
 use multiaddr::Multiaddr;
 
 #[tokio::test]
@@ -28,15 +32,28 @@ async fn notification_substream() {
         .try_init()
         .expect("to succeed");
 
+    let (config1, mut service1) =
+        NotificationProtocolConfig::new("/notification/1".to_owned(), vec![1, 3, 3, 7]);
+    let (config2, mut service2) =
+        NotificationProtocolConfig::new("/notification/1".to_owned(), vec![1, 3, 3, 7]);
+
     let addr1: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
-    let mut litep2p1 = Litep2p::new(LiteP2pConfiguration::new(vec![addr1.clone()], vec![]))
-        .await
-        .unwrap();
+    let mut litep2p1 = Litep2p::new(LiteP2pConfiguration::new(
+        vec![addr1.clone()],
+        vec![config1],
+        vec![],
+    ))
+    .await
+    .unwrap();
 
     let addr2: Multiaddr = "/ip6/::1/tcp/8889".parse().expect("valid multiaddress");
-    let mut litep2p2 = Litep2p::new(LiteP2pConfiguration::new(vec![addr2.clone()], vec![]))
-        .await
-        .unwrap();
+    let mut litep2p2 = Litep2p::new(LiteP2pConfiguration::new(
+        vec![addr2.clone()],
+        vec![config2],
+        vec![],
+    ))
+    .await
+    .unwrap();
 
     // attempt to open connection to `litep2p` and verify that both got the event
     litep2p1.open_connection(addr2).await;
@@ -50,7 +67,7 @@ async fn notification_substream() {
             assert_eq!(peer1, *litep2p1.local_peer_id());
             (peer1, peer2)
         }
-        _ => panic!("invalid event"),
+        event => panic!("invalid event {event:?}"),
     };
 
     // verify that both peers are identified by each other
@@ -69,36 +86,61 @@ async fn notification_substream() {
             assert_eq!(peer2, identified_peer2);
             assert_eq!(supported_protocols1, supported_protocols2);
         }
-        _ => panic!("invalid event"),
+        event => {
+            tracing::error!("invalid event {event:?}");
+            panic!("invalid event {event:?}");
+        }
     }
 
-    // attempt to open substream to remote peer.
-    // litep2p1
-    //     .open_notification_substream("/notif/1".to_owned(), peer2, vec![1, 3, 3, 7])
-    //     .await
-    //     .unwrap();
+    tracing::info!("\n\n");
 
-    // match litep2p2.next_event().await {
-    //     Ok(Litep2pEvent::InboundSubstream(protocol, peer, handshake, tx)) => {
-    //         assert_eq!(&protocol, "/notif/1");
-    //         assert_eq!(peer, peer1);
-    //         assert_eq!(handshake, vec![1, 3, 3, 7]);
-    //         tx.send(ValidationResult::Accept).unwrap();
-    //     }
-    //     event => panic!("invalid event received {event:?}"),
-    // }
+    // poll both `Litep2p` instances in the background
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
 
-    // // verify that both get the "substream opened" event
-    // let (_sink2, _sink1) = match tokio::join!(litep2p1.next_event(), litep2p2.next_event()) {
-    //     (
-    //         Ok(Litep2pEvent::SubstreamOpened(protocol2, sub_peer2, sink2)),
-    //         Ok(Litep2pEvent::SubstreamOpened(protocol1, sub_peer1, sink1)),
-    //     ) => {
-    //         assert!(protocol1 == protocol2 && &protocol1 == "/notif/1");
-    //         assert_eq!(sub_peer1, peer1);
-    //         assert_eq!(sub_peer2, peer2);
-    //         (sink2, sink1)
-    //     }
-    //     _ => panic!("invalid event"),
-    // };
+    tokio::spawn(async move {
+        // attempt to open substream to remote peer.
+        service1.open_substream(peer2).await.unwrap();
+
+        while let Some(event) = service1.next_event().await {
+            match event {
+                NotificationEvent::SubstreamReceived { peer, handshake: _ } => {
+                    tracing::error!("service1: substream received");
+                    let result = service1
+                        .report_validation_result(peer, ValidationResult::Accept)
+                        .await;
+                    tracing::info!("result: {result:?}");
+                }
+                NotificationEvent::SubstreamOpened { peer: _ } => {
+                    tracing::info!("notification stream opened");
+                }
+                event => panic!("unhandled event {event:?}"),
+            }
+        }
+
+        tracing::error!("here1");
+    });
+
+    while let Some(event) = service2.next_event().await {
+        match event {
+            NotificationEvent::SubstreamReceived { peer, handshake: _ } => {
+                tracing::error!("service2: substream received");
+                let result = service2
+                    .report_validation_result(peer, ValidationResult::Accept)
+                    .await;
+                tracing::info!("result: {result:?}");
+            }
+            NotificationEvent::SubstreamOpened { peer: _ } => {
+                tracing::info!("notification stream opened");
+            }
+            event => panic!("unhandled event {event:?}"),
+        }
+    }
+    tracing::error!("here2");
 }

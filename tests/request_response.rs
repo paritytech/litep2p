@@ -42,6 +42,7 @@ async fn request_response() {
     let addr1: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
     let mut litep2p1 = Litep2p::new(LiteP2pConfiguration::new(
         vec![addr1.clone()],
+        vec![],
         vec![config1],
     ))
     .await
@@ -50,6 +51,7 @@ async fn request_response() {
     let addr2: Multiaddr = "/ip6/::1/tcp/8889".parse().expect("valid multiaddress");
     let mut litep2p2 = Litep2p::new(LiteP2pConfiguration::new(
         vec![addr2.clone()],
+        vec![],
         vec![config2],
     ))
     .await

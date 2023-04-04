@@ -28,6 +28,7 @@ use crate::{
     peer_id::PeerId,
     protocol::{
         libp2p::{identify, ping, Libp2pProtocolEvent},
+        notification::NotificationProtocolConfig,
         request_response::RequestResponseProtocolConfig,
     },
     transport::{tcp::TcpTransport, Connection, Transport, TransportEvent},
@@ -128,6 +129,7 @@ impl Default for PeerContext {
     }
 }
 
+// TODO: the storing of these handles can be greatly simplified
 /// [`Litep2p`] object.
 pub struct Litep2p {
     /// Enable transports.
@@ -147,6 +149,12 @@ pub struct Litep2p {
 
     /// Request-response handles.
     request_response_handles: HashMap<String, mpsc::Sender<TransportEvent>>,
+
+    /// Channels for receiving commands from request-response protocols.
+    notification_commands: StreamMap<String, ReceiverStream<TransportCommand>>,
+
+    /// Request-response handles.
+    notification_handles: HashMap<String, mpsc::Sender<TransportEvent>>,
 
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
@@ -169,6 +177,7 @@ impl Litep2p {
     pub async fn new(config: LiteP2pConfiguration) -> crate::Result<Litep2p> {
         let LiteP2pConfiguration {
             listen_addresses,
+            notification_protocols,
             request_response_protocols,
         } = config;
 
@@ -183,6 +192,18 @@ impl Litep2p {
             ping::PROTOCOL_NAME.to_owned(),
             identify::PROTOCOL_NAME.to_owned(),
         ];
+
+        // initialize notification protocols
+        let (notification_command_receivers, notification_handles): (Vec<_>, HashMap<_, _>) =
+            notification_protocols
+                .into_iter()
+                .map(|config| {
+                    let NotificationProtocolConfig { protocol, tx, rx } = config;
+                    protocols.push(protocol.clone());
+
+                    ((protocol.clone(), ReceiverStream::new(rx)), (protocol, tx))
+                })
+                .unzip();
 
         // initialize request-response protocols
         let (command_receivers, request_response_handles): (Vec<_>, HashMap<_, _>) =
@@ -235,6 +256,8 @@ impl Litep2p {
             peers: HashMap::new(),
             request_response_commands: StreamMap::from_iter(command_receivers),
             request_response_handles,
+            notification_commands: StreamMap::from_iter(notification_command_receivers),
+            notification_handles,
         })
     }
 
@@ -371,12 +394,18 @@ impl Litep2p {
                 .map_err(From::from);
         }
 
-        // TODO: match on `protocol`
-        // TODO: if `protocol` is a libp2p protocol, handle internally
-        // TODO: if `protocol` is a user-installed notification protocol,
-        //       dispatch the substream to protocol handler
-        // TODO: if `protocol` is a user-isntalled request-response protocol,
-        //       read request from substream and send it request handler
+        if let Some(tx) = self.notification_handles.get_mut(protocol) {
+            return tx
+                .send(TransportEvent::SubstreamOpened(
+                    protocol.clone(),
+                    peer,
+                    direction,
+                    substream,
+                ))
+                .await
+                .map_err(From::from);
+        }
+
         Ok(())
     }
 
@@ -440,6 +469,19 @@ impl Litep2p {
 
     // Handle command received from one of the `RequestResponseService`s.
     async fn on_request_response_command(&mut self, command: TransportCommand) {
+        match command {
+            TransportCommand::OpenSubstream { peer, protocol } => {
+                self.tranports
+                    .get_mut("tcp")
+                    .unwrap()
+                    .open_substream(protocol, peer, vec![])
+                    .await;
+            }
+        }
+    }
+
+    // Handle command received from one of the `NotificationService`s.
+    async fn on_notification_command(&mut self, command: TransportCommand) {
         match command {
             TransportCommand::OpenSubstream { peer, protocol } => {
                 self.tranports
@@ -517,6 +559,18 @@ impl Litep2p {
                             tracing::error!(
                                 target: LOG_TARGET,
                                 "handles to request-response protocols dropped"
+                            );
+                            return Err(Error::EssentialTaskClosed);
+                        }
+                    }
+                }
+                command = self.notification_commands.next(), if !self.notification_commands.is_empty() => {
+                    match command {
+                        Some((_, command)) => self.on_notification_command(command).await,
+                        None => {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                "handles to notification protocols dropped"
                             );
                             return Err(Error::EssentialTaskClosed);
                         }

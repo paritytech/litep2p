@@ -30,6 +30,7 @@ use tokio::sync::{mpsc, oneshot};
 use std::fmt::Display;
 
 pub mod libp2p;
+pub mod notification;
 pub mod request_response;
 
 /// Commands sent by different protocols to `Litep2p`.
