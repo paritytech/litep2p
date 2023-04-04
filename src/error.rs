@@ -50,8 +50,10 @@ pub enum Error {
     IoError(ErrorKind),
     #[error("Negotiation error: `{0}`")]
     NegotiationError(NegotiationError),
-    #[error("Substream error")]
+    #[error("Substream error: `{0}`")]
     SubstreamError(SubstreamError),
+    #[error("Substream error: `{0}`")]
+    NotificationError(NotificationError),
     #[error("Essential task closed")]
     EssentialTaskClosed,
     #[error("Unknown error occurred")]
@@ -92,6 +94,14 @@ pub enum NegotiationError {
     ConnectionClosed,
     #[error("`PeerId` missing from Noise handshake")]
     PeerIdMissing,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum NotificationError {
+    #[error("Peer already exists")]
+    PeerAlreadyExists,
+    #[error("Peer is in invalid state")]
+    InvalidState,
 }
 
 // TODO: ???

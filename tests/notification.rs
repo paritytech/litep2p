@@ -86,13 +86,10 @@ async fn notification_substream() {
             assert_eq!(peer2, identified_peer2);
             assert_eq!(supported_protocols1, supported_protocols2);
         }
-        event => {
-            tracing::error!("invalid event {event:?}");
-            panic!("invalid event {event:?}");
-        }
+        event => panic!("invalid event {event:?}"),
     }
 
-    tracing::info!("\n\n");
+    tracing::info!("\n");
 
     // poll both `Litep2p` instances in the background
     tokio::spawn(async move {
@@ -111,16 +108,16 @@ async fn notification_substream() {
         while let Some(event) = service1.next_event().await {
             match event {
                 NotificationEvent::SubstreamReceived { peer, handshake: _ } => {
-                    tracing::error!("service1: substream received");
+                    tracing::info!("service1: substream received");
                     let result = service1
                         .report_validation_result(peer, ValidationResult::Accept)
                         .await;
                     tracing::info!("result: {result:?}");
                 }
-                NotificationEvent::SubstreamOpened { peer: _ } => {
-                    tracing::info!("notification stream opened");
+                NotificationEvent::SubstreamOpened { .. } => {
+                    tracing::info!("service1: notification stream opened");
                 }
-                event => panic!("unhandled event {event:?}"),
+                event => panic!("service1: unhandled event {event:?}"),
             }
         }
 
@@ -130,17 +127,16 @@ async fn notification_substream() {
     while let Some(event) = service2.next_event().await {
         match event {
             NotificationEvent::SubstreamReceived { peer, handshake: _ } => {
-                tracing::error!("service2: substream received");
+                tracing::info!("service2: substream received");
                 let result = service2
                     .report_validation_result(peer, ValidationResult::Accept)
                     .await;
                 tracing::info!("result: {result:?}");
             }
-            NotificationEvent::SubstreamOpened { peer: _ } => {
-                tracing::info!("notification stream opened");
+            NotificationEvent::SubstreamOpened { .. } => {
+                tracing::info!("service2: notification stream opened");
             }
-            event => panic!("unhandled event {event:?}"),
+            event => panic!("service2: unhandled event {event:?}"),
         }
     }
-    tracing::error!("here2");
 }
