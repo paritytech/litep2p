@@ -44,68 +44,22 @@ const LOG_TARGET_MSG: &str = "notification::msg";
 /// Unique ID for a request.
 pub type SubstreamId = usize;
 
-/// Type representing a pending substream.
-// TODO: this can be simplified
-type PendingSubstream = Pin<
-    Box<
-        dyn Future<Output = crate::Result<(PeerId, Vec<u8>, Box<dyn Connection>, Direction)>>
-            + Send,
-    >,
->;
-
-/// Pending inbound substream, receiving handshake.
-type PendingInbound =
-    Pin<Box<dyn Future<Output = crate::Result<(PeerId, Vec<u8>, Box<dyn Connection>)>> + Send>>;
-
-/// Pending outbound substream, sending and receiving handshakes.
-type PendingOutbound =
-    Pin<Box<dyn Future<Output = crate::Result<(PeerId, Vec<u8>, Box<dyn Connection>)>> + Send>>;
-
-// TODO: is there any way to reduce the number of states?
-// TODO: yes it can be, I've overcomplicated the issue
-
-/// Peer states.
-enum PeerState {
-    /// Local node received an inbound substream request from an unknown node.
-    InboundReceived,
-
-    /// Inbound substream has been accepted
-    InboundAccepted {
-        // Substream.
-        inbound: Box<dyn Connection>,
-    },
-
-    /// Handshake received from remote peer, validate substream
-    UnderValidation {
-        // Substream.
-        inbound: Box<dyn Connection>,
-    },
-
-    /// Local node has initiated an outbound substream request.
-    OutboundInitiated,
-
-    /// Local node has initiated an outbound substream request and while the
-    /// outbound substream was being processed, an inbound substream was received.
-    // TODO: rename
-    OutboundInitiatedInboundUnderValidation {
-        // Substream.
-        inbound: Box<dyn Connection>,
-    },
-
-    /// Outbound substream was initiated and the inbound substream TODO:
-    OutboundInitiatedInboundReceived,
-
-    /// Outbound opened, inbound pending
-    OutboundOpened,
-
-    /// Inbound opened, outbound pending
-    InboundOpened,
-
-    /// Both sides of the substream have been opened.
-    Opened,
-}
+// /// Type representing a pending substream.
+// type PendingSubstream = Pin<
+//     Box<
+//         dyn Future<Output = crate::Result<(PeerId, Vec<u8>, Box<dyn Connection>, Direction)>>
+//             + Send,
+//     >,
+// >;
+// /// Pending inbound substream, receiving handshake.
+// type PendingInbound =
+//     Pin<Box<dyn Future<Output = crate::Result<(PeerId, Vec<u8>, Box<dyn Connection>)>> + Send>>;
+// /// Pending outbound substream, sending and receiving handshakes.
+// type PendingOutbound =
+//     Pin<Box<dyn Future<Output = crate::Result<(PeerId, Vec<u8>, Box<dyn Connection>)>> + Send>>;
 
 /// Validation result for an inbound substream.
+#[derive(Debug)]
 pub enum ValidationResult {
     /// Accept the inbound substream.
     Accept,
@@ -202,20 +156,11 @@ pub struct NotificationService {
     /// Handshake.
     handshake: Vec<u8>,
 
-    /// Peers.
-    peers: HashMap<PeerId, PeerState>,
-
     /// TX channel for sending `TransportCommand`s to `Litep2p`.
     tx: mpsc::Sender<TransportCommand>,
 
     /// RX channel for receiving `TransportEvent`s from `Litep2p`.
     rx: mpsc::Receiver<TransportEvent>,
-
-    /// Pending inbound substreams.
-    pending_inbound: FuturesUnordered<PendingInbound>,
-
-    /// Pending outbound substreams.
-    pending_outbound: FuturesUnordered<PendingOutbound>,
 }
 
 impl NotificationService {
@@ -231,9 +176,6 @@ impl NotificationService {
             handshake,
             tx,
             rx,
-            peers: HashMap::new(),
-            pending_inbound: FuturesUnordered::new(),
-            pending_outbound: FuturesUnordered::new(),
         }
     }
 
@@ -250,24 +192,9 @@ impl NotificationService {
         peer: PeerId,
         result: ValidationResult,
     ) -> crate::Result<()> {
-        match result {
-            ValidationResult::Accept => {
-                // match self.peers.remove(&peer) {
-                // }
-                // TODO: update peer state
-                self.tx
-                    .send(TransportCommand::OpenSubstream {
-                        protocol: self.protocol.clone(),
-                        peer,
-                    })
-                    .await
-                    .map_err(From::from)
-            }
-            ValidationResult::Reject => {
-                self.peers.remove(&peer);
-                Ok(())
-            }
-        }
+        tracing::trace!(target: LOG_TARGET, protocol = ?self.protocol, ?peer, ?result, "report validation result");
+
+        todo!();
     }
 
     /// Open new substream to `peer` and send them `handshake` as the initial message.
@@ -275,148 +202,59 @@ impl NotificationService {
     /// This function only initiates the procedure of opening a substream. The result is
     /// polled using [`NotificationService::next_event()`].
     pub async fn open_substream(&mut self, peer: PeerId) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?peer, protocol = ?self.protocol, "open substream");
-
-        // verify that there isn't an open substream to the peer yet and if so,
-        // ask `Litep2p` to open a new substream.
-        if self.peers.get(&peer).is_some() {
-            return Err(Error::PeerAlreadyExists(peer));
-        }
-
-        self.tx
-            .send(TransportCommand::OpenSubstream {
-                protocol: self.protocol.clone(),
-                peer,
-            })
-            .await?;
+        tracing::trace!(target: LOG_TARGET, protocol = ?self.protocol, ?peer, "handle inbound substream");
 
         Ok(())
     }
 
-    fn send_inbound_handshake(&mut self, substream: Box<dyn Connection>, state: PeerState) {
-        todo!();
-    }
+    // fn send_outbound_handshake(
+    //     &mut self,
+    //     peer: PeerId,
+    //     mut substream: Box<dyn Connection>,
+    //     state: PeerState,
+    // ) {
+    //     let handshake = self.handshake.clone();
+
+    //     self.peers.insert(peer, state);
+    //     self.pending_outbound.push(Box::pin(async move {
+    //         let mut handshake = vec![0u8; 512];
+
+    //         substream.write(&handshake).await?;
+    //         let nread = substream.read(&mut handshake).await?;
+    //         Ok((peer, handshake[..nread].to_vec(), substream))
+    //     }));
+    // }
 
     /// Handle inbound substream.
     fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Connection>) {
-        match self.peers.get_mut(&peer) {
-            None => {
-                self.peers.insert(peer, PeerState::InboundReceived);
-                self.pending_inbound.push(Box::pin(async move {
-                    let mut handshake = vec![0u8; 512];
-                    let nread = substream.read(&mut handshake).await?;
-                    Ok((peer, handshake[..nread].to_vec(), substream))
-                }));
-            }
-            Some(_context) => {
-                tracing::warn!("unimplemented some for on_inbound_substream");
-                todo!();
-            }
-        }
-    }
+        tracing::info!(target: LOG_TARGET, protocol = ?self.protocol, ?peer, "handle inbound substream");
 
-    fn send_outbound_handshake(
-        &mut self,
-        peer: PeerId,
-        mut substream: Box<dyn Connection>,
-        state: PeerState,
-    ) {
-        let handshake = self.handshake.clone();
-
-        self.peers.insert(peer, state);
-        self.pending_outbound.push(Box::pin(async move {
-            let mut handshake = vec![0u8; 512];
-
-            substream.write(&handshake).await?;
-            let nread = substream.read(&mut handshake).await?;
-            Ok((peer, handshake[..nread].to_vec(), substream))
-        }));
+        // TODO: do something here
     }
 
     /// Handle outbound substream.
     fn on_outbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Connection>) {
-        tracing::info!("on outbound substream");
+        tracing::info!(target: LOG_TARGET, protocol = ?self.protocol, ?peer, "handle outbound substream");
 
-        // TODO: remove is probably not correct, depending on what has been reported to user thus far
-        // TODO: list out all states and see what make sense
-        match self.peers.remove(&peer) {
-            None => {
-                self.send_outbound_handshake(peer, substream, PeerState::OutboundInitiated);
-            }
-            Some(PeerState::InboundReceived) => {
-                self.send_outbound_handshake(
-                    peer,
-                    substream,
-                    PeerState::OutboundInitiatedInboundReceived,
-                );
-            }
-            Some(PeerState::UnderValidation { inbound }) => {
-                self.send_outbound_handshake(
-                    peer,
-                    substream,
-                    PeerState::OutboundInitiatedInboundUnderValidation { inbound },
-                );
-            }
-            _ => {} // other states are invalid
-        }
-    }
-
-    /// Validate inbound substream.
-    fn validate_inbound_substream(
-        &mut self,
-        peer: PeerId,
-        handshake: Vec<u8>,
-        inbound: Box<dyn Connection>,
-    ) -> Option<NotificationEvent> {
-        let mut state = self.peers.get_mut(&peer)?;
-
-        match state {
-            PeerState::InboundReceived => {
-                *state = PeerState::UnderValidation { inbound };
-                return Some(NotificationEvent::SubstreamReceived { peer, handshake });
-            }
-            PeerState::OutboundInitiated => {
-                *state = PeerState::OutboundInitiatedInboundUnderValidation { inbound };
-                return Some(NotificationEvent::SubstreamReceived { peer, handshake });
-            }
-            _ => None, // any other state is invalid
-        }
-    }
-
-    /// Validate outbound substream.
-    fn validate_outbound_substream(
-        &mut self,
-        peer: PeerId,
-        handshake: Vec<u8>,
-        outbound: Box<dyn Connection>,
-    ) -> Option<NotificationEvent> {
-        match self.peers.get_mut(&peer) {
-            Some(PeerState::OutboundInitiated) => {
-                todo!();
-            }
-            Some(PeerState::OutboundInitiatedInboundUnderValidation { inbound }) => {
-                todo!();
-            }
-            Some(PeerState::OutboundInitiatedInboundReceived) => {
-                todo!()
-            }
-            _ => None,
-        }
+        // TODO: do something here
     }
 
     /// Poll next event from the stream.
     ///
     /// [`NotificationStreamn::next_event()`] must be called in order to advance the state of the protocol.
     //
-    // TODO: what needs to happen:
-    //  - if we initiated the opening procedure, send handshake and wait for response
-    //     - if remote sends handshake back, the substream is accepted and the remote handshake is give in `SubstreamOpened`
-    //     - if remote closes the substream, our open was rejected
+    // TODO: how this should work
     //
-    // - if remote initiates the procedure, we get `SubstreamReceived` event which we must either accept or reject
-    //   - if we accept, we send our own handshake and open an outbound substream to remote peer.
+    // - local node open a substream:
+    //    - substream is opened, handshake is read and then the prepared substream is returned to user (`SubstreamOpened`)
+    //    - remote opens another substream in the background and it's acknowleged silently
     //
-    //
+    // - remote opens a substream:
+    //    - local node receives `SubstreamReceived` event which it must either accept or reject
+    //    - if accepted, substream is sent back to remote, the inbound substream is put on hold
+    //    - local node opens a substream to remote peer and waits until handshake is received from remote
+    //    - when handshake is received, the inbound substream put is taken out of hold
+    //    - local node is sent `SubstreamOpened` event
     //
     pub async fn next_event(&mut self) -> Option<NotificationEvent> {
         loop {
@@ -428,30 +266,6 @@ impl NotificationService {
                     },
                     event => tracing::debug!(target: LOG_TARGET, ?event, "ignoring `TransportEvent`"),
                 },
-                event = self.pending_inbound.select_next_some(), if !self.pending_inbound.is_empty() => {
-                    match event {
-                        Ok((peer, handshake, substream)) => {
-                            if let Some(event) = self.validate_inbound_substream(peer, handshake, substream) {
-                                return Some(event)
-                            };
-                        }
-                        Err(err) => { // TODO: error has to containt the PeerId
-                            // TODO: what should be done here?
-                        }
-                    }
-                }
-                event = self.pending_outbound.select_next_some(), if !self.pending_outbound.is_empty() => {
-                    match event {
-                        Ok((peer, handshake, substream)) => {
-                            if let Some(event) = self.validate_outbound_substream(peer, handshake, substream) {
-                                return Some(event)
-                            };
-                        }
-                        Err(err) => { // TODO: error has to containt the PeerId
-                            // TODO: what should be done here?
-                        }
-                    }
-                }
             }
         }
     }
