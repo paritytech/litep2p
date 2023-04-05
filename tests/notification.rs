@@ -56,7 +56,7 @@ async fn notification_substream() {
     .unwrap();
 
     // attempt to open connection to `litep2p` and verify that both got the event
-    litep2p1.open_connection(addr2).await;
+    litep2p1.open_connection(addr2).await.unwrap();
 
     let (peer1, peer2) = match tokio::join!(litep2p1.next_event(), litep2p2.next_event()) {
         (

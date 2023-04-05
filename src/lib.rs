@@ -61,6 +61,7 @@ mod transport;
 mod types;
 
 // TODO: move code from `TcpTransport` to here
+// TODO: remove unwraps
 
 /// Public result type used by the crate.
 pub type Result<T> = std::result::Result<T, error::Error>;
@@ -158,6 +159,9 @@ pub struct Litep2p {
 
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
+
+    /// Listen addresses.
+    listen_addresses: HashSet<Multiaddr>,
 
     /// Local peer ID.
     local_peer_id: PeerId,
@@ -258,6 +262,7 @@ impl Litep2p {
             request_response_handles,
             notification_commands: StreamMap::from_iter(notification_command_receivers),
             notification_handles,
+            listen_addresses: HashSet::from_iter(listen_addresses),
         })
     }
 
@@ -270,18 +275,24 @@ impl Litep2p {
     ///
     /// Connection is opened and negotiated in the background and the result is
     /// indicated to the caller through [`Litep2pEvent::ConnectionEstablished`]/[`Litep2pEvent::DialFailure`]
-    pub async fn open_connection(&mut self, address: Multiaddr) {
+    pub async fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,
             ?address,
             "establish outbound connection"
         );
 
+        if self.listen_addresses.contains(&address) {
+            return Err(Error::CannotDialSelf(address));
+        }
+
         self.tranports
             .get_mut("tcp")
-            .unwrap()
+            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
             .open_connection(address)
             .await;
+
+        Ok(())
     }
 
     /// Close connection to remote `peer`.

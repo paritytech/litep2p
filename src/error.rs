@@ -26,7 +26,7 @@
 
 use crate::peer_id::PeerId;
 
-use multiaddr::Protocol;
+use multiaddr::{Multiaddr, Protocol};
 use multihash::{Multihash, MultihashGeneric};
 
 use std::{
@@ -58,6 +58,10 @@ pub enum Error {
     EssentialTaskClosed,
     #[error("Unknown error occurred")]
     Unknown,
+    #[error("Cannot dial self: `{0}`")]
+    CannotDialSelf(Multiaddr),
+    #[error("Transport not supported")]
+    TransportNotSupported(Multiaddr),
 }
 
 #[derive(Debug, thiserror::Error)]

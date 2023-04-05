@@ -37,7 +37,8 @@ async fn libp2p() {
 
     litep2p
         .open_connection("/ip6/::1/tcp/8888".parse().expect("valid multiaddress"))
-        .await;
+        .await
+        .unwrap();
 
     loop {
         tokio::select! {
