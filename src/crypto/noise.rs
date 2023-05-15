@@ -520,10 +520,9 @@ mod tests {
 
     #[tokio::test]
     async fn noise_handshake() {
-        tracing_subscriber::fmt()
+        let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init()
-            .expect("to succeed");
+            .try_init();
 
         let keypair1 = Keypair::generate();
         let keypair2 = Keypair::generate();

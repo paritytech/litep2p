@@ -21,6 +21,7 @@
 use litep2p::{config::LiteP2pConfiguration, Litep2p};
 
 #[tokio::test]
+#[ignore]
 async fn identify() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

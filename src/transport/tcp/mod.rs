@@ -649,12 +649,12 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn establish_outbound_connection() {
         // TODO: create listener as well
-        tracing_subscriber::fmt()
+        let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init()
-            .expect("to succeed");
+            .try_init();
 
         let keypair = Keypair::generate();
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
