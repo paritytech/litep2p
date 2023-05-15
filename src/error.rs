@@ -109,7 +109,7 @@ pub enum NotificationError {
     #[error("Notifications clogged")]
     NotificationsClogged,
     #[error("Notification stream closed")]
-    NotificationStreamClosed,
+    NotificationStreamClosed(PeerId),
 }
 
 // TODO: ???

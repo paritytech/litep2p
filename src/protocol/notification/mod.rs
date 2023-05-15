@@ -56,14 +56,14 @@ pub type SubstreamId = usize;
 
 /// Pending outbound substream, sending and receiving handshakes.
 type PendingOutbound =
-    Pin<Box<dyn Future<Output = crate::Result<(PeerId, Vec<u8>, Box<dyn Connection>)>> + Send>>;
+    Pin<Box<dyn Future<Output = Result<(PeerId, Vec<u8>, Box<dyn Connection>), PeerId>> + Send>>;
 
 /// Pending inbound substream, receiving handshake.
 type PendingInbound =
     Pin<Box<dyn Future<Output = crate::Result<(PeerId, Vec<u8>, Box<dyn Connection>)>> + Send>>;
 
 /// Validation result for an inbound substream.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ValidationResult {
     /// Accept the inbound substream.
     Accept,
@@ -283,7 +283,7 @@ impl NotificationService {
                     Error::NotificationError(NotificationError::NotificationsClogged)
                 }
                 mpsc::error::TrySendError::Closed(_) => {
-                    Error::NotificationError(NotificationError::NotificationStreamClosed)
+                    Error::NotificationError(NotificationError::NotificationStreamClosed(peer))
                 }
             }),
             _ => return Err(Error::NotificationError(NotificationError::InvalidState)),
@@ -302,10 +302,9 @@ impl NotificationService {
             None => return Err(Error::PeerDoesntExist(peer)),
             Some(PeerState::SubstreamOpen {
                 ref mut async_tx, ..
-            }) => async_tx
-                .send(notification)
-                .await
-                .map_err(|_| Error::NotificationError(NotificationError::NotificationStreamClosed)),
+            }) => async_tx.send(notification).await.map_err(|_| {
+                Error::NotificationError(NotificationError::NotificationStreamClosed(peer))
+            }),
             _ => return Err(Error::NotificationError(NotificationError::InvalidState)),
         }
     }
@@ -318,12 +317,12 @@ impl NotificationService {
         peer: PeerId,
         result: ValidationResult,
     ) -> crate::Result<()> {
-        tracing::span!(
+        let span = tracing::span!(
             target: LOG_TARGET,
             tracing::Level::TRACE,
             "report_validation_result()"
-        )
-        .enter();
+        );
+        let _lock = span.enter();
         tracing::event!(
             target: LOG_TARGET,
             tracing::Level::TRACE,
@@ -332,10 +331,20 @@ impl NotificationService {
             ?result,
             "report validation result"
         );
+        let peer_state = self.peers.remove(&peer);
+
+        // TODO: so ugly
+        if result == ValidationResult::Reject {
+            tracing::info!(target: LOG_TARGET, ?peer, "drop inboudn substream");
+            if let Some(PeerState::InboundUnderValidation { mut inbound }) = peer_state {
+                inbound.close().await.unwrap();
+            }
+            return Ok(());
+        }
 
         // verify that the peer is in valid state which is only `InboundUnderValidation` and if so,
         // send them our handshake and ask `Litep2p` to open substream to them.
-        let mut inbound = match self.peers.remove(&peer) {
+        let mut inbound = match peer_state {
             Some(PeerState::InboundUnderValidation { inbound }) => inbound,
             state => {
                 tracing::event!(
@@ -578,9 +587,9 @@ impl NotificationService {
         // TODO: finish this comment
         match self.peers.get_mut(&peer) {
             Some(PeerState::OutboundInitiated { .. }) => {
-                tracing::event!(
+                tracing::trace!(
                     target: LOG_TARGET,
-                    tracing::Level::TRACE,
+                    ?peer,
                     "start handshaking with remote peer"
                 );
 
@@ -588,8 +597,27 @@ impl NotificationService {
                 self.pending_outbound.push(Box::pin(async move {
                     let mut handshake = vec![0u8; 512]; // TODO: handshake size
 
-                    substream.write(&handshake).await?;
-                    let nread = substream.read(&mut handshake).await?;
+                    substream.write(&handshake).await.map_err(|_| peer)?;
+
+                    let nread = match substream.read(&mut handshake).await {
+                        Ok(nread) => {
+                            if nread == 0 {
+                                return Err(peer);
+                            } else {
+                                nread
+                            }
+                        }
+                        Err(err) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?err,
+                                "failed to read handshake"
+                            );
+                            return Err(peer);
+                        }
+                    };
+
                     Ok((peer, handshake[..nread].to_vec(), substream))
                 }));
             }
@@ -702,7 +730,10 @@ impl NotificationService {
                                 return Some(event)
                             }
                         }
-                        _ => todo!("error not handled"),
+                        Err(peer) => {
+                            tracing::debug!(target: LOG_TARGET, ?peer, "failed to negotiate outbound substream");
+                            return Some(NotificationEvent::SubstreamRejected { peer });
+                        }
                     }
                 }
             }
