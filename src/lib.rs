@@ -406,6 +406,7 @@ impl Litep2p {
         }
 
         if let Some(tx) = self.notification_handles.get_mut(protocol) {
+            tracing::info!(target: LOG_TARGET, "notification substream opened");
             return tx
                 .send(TransportEvent::SubstreamOpened(
                     protocol.clone(),
@@ -549,8 +550,11 @@ impl Litep2p {
                         return Ok(Litep2pEvent::DialFailure(address));
                     }
                     Some(TransportEvent::SubstreamOpenFailure(protocol, peer, error)) => {
+                        tracing::error!(target: LOG_TARGET, ?peer, ?protocol, ?error, "substream open failure");
                         // return Ok(Litep2pEvent::SubstreamOpenFailure(protocol, peer, error));
-                        todo!();
+                        // todo!();
+                        // tracing::error!(target: LOG_TARGET, "channel to transports shut down");
+                        // return Err(Error::EssentialTaskClosed);
                     }
                     None => {
                         tracing::error!(target: LOG_TARGET, "channel to transports shut down");

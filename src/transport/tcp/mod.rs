@@ -458,11 +458,26 @@ impl TcpTransport {
         handshake: Vec<u8>,
     ) -> crate::Result<()> {
         // TODO: clone only if necessary (optimally don't clone at all?)
-        let mut yamux = self
-            .connections
-            .get_mut(&peer)
-            .ok_or(Error::SubstreamError(SubstreamError::ConnectionClosed))?
-            .clone();
+        // let mut yamux = self
+        //     .connections
+        //     .get_mut(&peer)
+        //     .ok_or(Error::SubstreamError(SubstreamError::ConnectionClosed))?
+        //     .clone();
+
+        let mut yamux = match self.connections.get_mut(&peer) {
+            Some(yamux) => yamux.clone(),
+            None => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?protocol,
+                    "connection does not exist"
+                );
+                return Err(Error::SubstreamError(SubstreamError::ConnectionClosed));
+            }
+        };
+
+        tracing::info!(target: LOG_TARGET, ?peer, "here");
 
         self.pending_outbound.push(Box::pin(async move {
             let substream_result = match yamux.open_stream().await {
@@ -568,7 +583,9 @@ impl TcpTransport {
                         self.connections.remove(&peer);
                     }
                     Some(TcpTransportEvent::OpenSubstream(protocol, peer, handshake)) => {
+                        tracing::warn!(target: LOG_TARGET, ?peer, "here1");
                         if let Err(err) = self.on_open_substream(protocol.clone(), peer, handshake).await {
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?protocol, ?err, "failed to open substream");
                             let _ = self
                                 .tx
                                 .send(TransportEvent::SubstreamOpenFailure(protocol, peer, err))

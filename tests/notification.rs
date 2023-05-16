@@ -179,9 +179,10 @@ async fn notification_substream() {
         while let Some(event) = service1.next_event().await {
             match event {
                 NotificationEvent::SubstreamReceived { peer, handshake: _ } => {
-                    let result = service1
+                    service1
                         .report_validation_result(peer, ValidationResult::Accept)
-                        .await;
+                        .await
+                        .unwrap();
                 }
                 NotificationEvent::SubstreamOpened { .. } => {
                     service1
@@ -196,16 +197,15 @@ async fn notification_substream() {
                 event => panic!("service1: unhandled event {event:?}"),
             }
         }
-
-        tracing::error!("here1");
     });
 
     while let Some(event) = service2.next_event().await {
         match event {
             NotificationEvent::SubstreamReceived { peer, handshake: _ } => {
-                let result = service2
+                service2
                     .report_validation_result(peer, ValidationResult::Accept)
-                    .await;
+                    .await
+                    .unwrap();
             }
             NotificationEvent::SubstreamOpened { .. } => {}
             NotificationEvent::NotificationReceived { peer, notification } => {
@@ -273,10 +273,91 @@ async fn reject_inbound_substream() {
 }
 
 #[tokio::test]
-async fn accept_inbound_substream() {}
+async fn accept_inbound_substream() {
+    let addr1: Multiaddr = "/ip6/::1/tcp/2224".parse().expect("valid multiaddress");
+    let addr2: Multiaddr = "/ip6/::1/tcp/2225".parse().expect("valid multiaddress");
+
+    let ((mut litep2p1, mut service1), (mut litep2p2, mut service2)) =
+        initialize_litep2p(addr1, addr2).await;
+    let peer2 = *litep2p2.local_peer_id();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    tokio::spawn(async move {
+        // attempt to open substream to remote peer.
+        while let Some(event) = service2.next_event().await {
+            match event {
+                NotificationEvent::SubstreamReceived { peer, handshake: _ } => {
+                    service2
+                        .report_validation_result(peer, ValidationResult::Accept)
+                        .await
+                        .unwrap();
+                }
+                event => panic!("service2: unhandled event {event:?}"),
+            }
+        }
+    });
+
+    service1.open_substream(peer2).await.unwrap();
+
+    while let Some(event) = service1.next_event().await {
+        match event {
+            NotificationEvent::SubstreamOpened { peer, .. } => {
+                assert_eq!(peer, peer2);
+                break;
+            }
+            event => panic!("service1: unhandled event {event:?}"),
+        }
+    }
+}
 
 #[tokio::test]
-async fn both_nodes_open_substream() {}
+async fn both_nodes_open_substream() {
+    let addr1: Multiaddr = "/ip6/::1/tcp/2224".parse().expect("valid multiaddress");
+    let addr2: Multiaddr = "/ip6/::1/tcp/2225".parse().expect("valid multiaddress");
+
+    let ((mut litep2p1, mut service1), (mut litep2p2, mut service2)) =
+        initialize_litep2p(addr1, addr2).await;
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    let (res1, res2) = tokio::join!(
+        service1.open_substream(peer2),
+        service2.open_substream(peer1),
+    );
+    let _ = res1.unwrap();
+    let _ = res2.unwrap();
+    // service2.open_substream(peer1).await.unwrap();
+
+    loop {
+        tokio::select! {
+            event = service1.next_event() => match event.unwrap() {
+                event => tracing::warn!(target: "notification", "service1: {event:?}")
+            },
+            event = service2.next_event() => match event.unwrap() {
+                event => tracing::warn!(target: "notification", "service2: {event:?}")
+            }
+        }
+    }
+}
 
 #[tokio::test]
 async fn notification_streams_exhausted() {}
@@ -306,4 +387,53 @@ async fn send_async_notification_to_non_existent_peer() {}
 async fn send_sync_notification_on_closed_substream() {}
 
 #[tokio::test]
-async fn send_async_notification_on_closed_substream() {}
+async fn send_async_notification_on_closed_substream() {
+    let addr1: Multiaddr = "/ip6/::1/tcp/2226".parse().expect("valid multiaddress");
+    let addr2: Multiaddr = "/ip6/::1/tcp/2227".parse().expect("valid multiaddress");
+
+    let ((mut litep2p1, mut service1), (mut litep2p2, mut service2)) =
+        initialize_litep2p(addr1, addr2).await;
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    service1.open_substream(peer2).await.unwrap();
+
+    loop {
+        tokio::select! {
+            event = service2.next_event() => match event.unwrap() {
+                NotificationEvent::SubstreamReceived { peer, handshake: _ } => {
+                    service2
+                        .report_validation_result(peer, ValidationResult::Accept)
+                        .await
+                        .unwrap();
+                }
+                _ => {},
+            },
+            event = service1.next_event() => match event.unwrap() {
+                NotificationEvent::SubstreamOpened { peer, .. } => {
+                    assert_eq!(peer, peer2);
+                    break;
+                }
+                _ => {},
+            }
+        }
+    }
+
+    service2.close_substream(peer1).unwrap();
+
+    for i in 0..5 {
+        let res = service1
+            .send_async_notification(peer2, vec![1, 3, 3, 7])
+            .await;
+        tracing::info!("res: {res:?}");
+    }
+}

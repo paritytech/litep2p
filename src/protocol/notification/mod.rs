@@ -406,6 +406,16 @@ impl NotificationService {
             .map_err(From::from)
     }
 
+    pub fn close_substream(&mut self, peer: PeerId) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?peer, "close substream");
+
+        match self.peers.remove(&peer) {
+            None => Err(Error::PeerDoesntExist(peer)),
+            Some(PeerState::SubstreamOpen { sync_tx, async_tx }) => Ok(()),
+            Some(_) => Ok(()),
+        }
+    }
+
     /// Start event loop for receiving inbound notifications from remote peer.
     // TODO make this into an object?
     // TODO: start using streammap in the future maybe
@@ -469,15 +479,25 @@ impl NotificationService {
                 tokio::select! {
                     notification = async_rx.recv() => match notification {
                         Some(notification) => if let Err(_) = outbound.write(&notification).await {
-                            return
+                            outbound.close().await.unwrap();
+                            return;
                         }
-                        None => return,
+                        None => {
+                            tracing::info!(target: LOG_TARGET, "closed async");
+                            outbound.close().await.unwrap();
+                            return;
+                        }
                     },
                     notification = sync_rx.recv() => match notification {
                         Some(notification) => if let Err(_) = outbound.write(&notification).await {
-                            return
+                            outbound.close().await.unwrap();
+                            return;
                         }
-                        None => return,
+                        None => {
+                            tracing::info!(target: LOG_TARGET, "closed sync");
+                            outbound.close().await.unwrap();
+                            return;
+                        }
                     },
                 }
             }
@@ -506,6 +526,7 @@ impl NotificationService {
 
         match self.peers.get_mut(&peer) {
             None => {
+                tracing::info!(target: LOG_TARGET, "read handshake");
                 // TODO: don't read handshake here?
                 let mut handshake = vec![0u8; 512];
                 let nread = inbound.read(&mut handshake).await.unwrap();
@@ -517,10 +538,16 @@ impl NotificationService {
                 })
             }
             Some(PeerState::OutboundInitiated { inbound: None }) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    "outbound initiated, try to read handshake"
+                );
                 // accept the stream by writing our handshake
                 // TODO: do this asynchronously?
                 let mut handshake = vec![0u8; 512];
                 let nread = inbound.read(&mut handshake).await.unwrap();
+                tracing::warn!(target: LOG_TARGET, ?nread, "handshake read");
                 inbound.write(&self.handshake).await.unwrap();
 
                 tracing::event!(
@@ -539,6 +566,7 @@ impl NotificationService {
                 None
             }
             Some(PeerState::SubstreamOpen { .. }) => {
+                tracing::info!(target: LOG_TARGET, "substream open");
                 // TODO: don't read handshake here?
                 let mut handshake = vec![0u8; 512];
                 let nread = inbound.read(&mut handshake).await.unwrap();
