@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 // TODO: return `SubstreamOpen` only when both substreams are open? woud allow simplifying the logic a bit
-// TODO: fix spans to work correctly
 // TODO: start using `StreamMap` for receiving inbound notifications
 
 use crate::{
@@ -317,15 +316,8 @@ impl NotificationService {
         peer: PeerId,
         result: ValidationResult,
     ) -> crate::Result<()> {
-        let span = tracing::span!(
+        tracing::debug!(
             target: LOG_TARGET,
-            tracing::Level::TRACE,
-            "report_validation_result()"
-        );
-        let _lock = span.enter();
-        tracing::event!(
-            target: LOG_TARGET,
-            tracing::Level::TRACE,
             protocol = ?self.protocol,
             ?peer,
             ?result,
@@ -335,7 +327,7 @@ impl NotificationService {
 
         // TODO: so ugly
         if result == ValidationResult::Reject {
-            tracing::info!(target: LOG_TARGET, ?peer, "drop inboudn substream");
+            tracing::trace!(target: LOG_TARGET, ?peer, "drop inbound substream");
             if let Some(PeerState::InboundUnderValidation { mut inbound }) = peer_state {
                 inbound.close().await.unwrap();
             }
@@ -347,12 +339,7 @@ impl NotificationService {
         let mut inbound = match peer_state {
             Some(PeerState::InboundUnderValidation { inbound }) => inbound,
             state => {
-                tracing::event!(
-                    target: LOG_TARGET,
-                    tracing::Level::DEBUG,
-                    ?state,
-                    "peer is in invalid state"
-                );
+                tracing::trace!(target: LOG_TARGET, ?state, "peer is in invalid state");
                 return Err(Error::NotificationError(NotificationError::InvalidState));
             }
         };
@@ -373,9 +360,8 @@ impl NotificationService {
                 inbound: Some(inbound),
             },
         );
-        tracing::event!(
+        tracing::trace!(
             target: LOG_TARGET,
-            tracing::Level::TRACE,
             "inbound substream accepted, outbound substream established"
         );
 
@@ -510,15 +496,8 @@ impl NotificationService {
         peer: PeerId,
         mut inbound: Box<dyn Connection>,
     ) -> Option<NotificationEvent> {
-        tracing::span!(
+        tracing::debug!(
             target: LOG_TARGET,
-            tracing::Level::TRACE,
-            "handle_inbound_substream()"
-        )
-        .enter();
-        tracing::event!(
-            target: LOG_TARGET,
-            tracing::Level::TRACE,
             protocol = ?self.protocol,
             ?peer,
             "handle inbound substream"
@@ -550,9 +529,8 @@ impl NotificationService {
                 tracing::warn!(target: LOG_TARGET, ?nread, "handshake read");
                 inbound.write(&self.handshake).await.unwrap();
 
-                tracing::event!(
+                tracing::trace!(
                     target: LOG_TARGET,
-                    tracing::Level::DEBUG,
                     "inbound substream opened successfully, waiting for outbound substream to finish"
                 );
 
@@ -572,19 +550,14 @@ impl NotificationService {
                 let nread = inbound.read(&mut handshake).await.unwrap();
                 inbound.write(&self.handshake).await.unwrap();
 
-                tracing::event!(
-                    target: LOG_TARGET,
-                    tracing::Level::DEBUG,
-                    "start listening to notifications"
-                );
+                tracing::trace!(target: LOG_TARGET, "start listening to notifications");
 
                 self.start_inbound_notification_receiver(peer, inbound);
                 None
             }
             state => {
-                tracing::event!(
+                tracing::trace!(
                     target: LOG_TARGET,
-                    tracing::Level::DEBUG,
                     ?state,
                     "invalid state for an inbound substream"
                 );
@@ -595,15 +568,8 @@ impl NotificationService {
 
     /// Handle outbound substream.
     fn on_outbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Connection>) {
-        tracing::span!(
+        tracing::debug!(
             target: LOG_TARGET,
-            tracing::Level::TRACE,
-            "handle_outbound_substream()"
-        )
-        .enter();
-        tracing::event!(
-            target: LOG_TARGET,
-            tracing::Level::TRACE,
             protocol = ?self.protocol,
             ?peer,
             "handle outbound substream"
@@ -649,9 +615,8 @@ impl NotificationService {
                     Ok((peer, handshake[..nread].to_vec(), substream))
                 }));
             }
-            state => tracing::event!(
+            state => tracing::trace!(
                 target: LOG_TARGET,
-                tracing::Level::DEBUG,
                 ?state,
                 "invalid state for an outbound substream"
             ),
@@ -665,15 +630,8 @@ impl NotificationService {
         handshake: Vec<u8>,
         outbound: Box<dyn Connection>,
     ) -> Option<NotificationEvent> {
-        tracing::span!(
+        tracing::trace!(
             target: LOG_TARGET,
-            tracing::Level::TRACE,
-            "handle_negotiated_outbound_substream()"
-        )
-        .enter();
-        tracing::event!(
-            target: LOG_TARGET,
-            tracing::Level::TRACE,
             protocol = ?self.protocol,
             ?peer,
             ?handshake,
@@ -684,29 +642,19 @@ impl NotificationService {
         match self.peers.remove(&peer) {
             Some(PeerState::OutboundInitiated { inbound }) => {
                 if let Some(inbound) = inbound {
-                    tracing::event!(
+                    tracing::trace!(
                         target: LOG_TARGET,
-                        tracing::Level::TRACE,
                         "spawn event loop for receiving notifications from inbound substream"
                     );
                     self.start_inbound_notification_receiver(peer, inbound);
                 }
-                tracing::event!(
-                    target: LOG_TARGET,
-                    tracing::Level::TRACE,
-                    "notification substream open to peer",
-                );
+                tracing::trace!(target: LOG_TARGET, "notification substream open to peer",);
 
                 self.start_outbound_notification_sender(peer, outbound);
                 return Some(NotificationEvent::SubstreamOpened { peer, handshake });
             }
             state => {
-                tracing::event!(
-                    target: LOG_TARGET,
-                    tracing::Level::TRACE,
-                    ?state,
-                    "invalid state for peer",
-                );
+                tracing::trace!(target: LOG_TARGET, ?state, "invalid state for peer",);
                 // TODO: return substream rejected?
                 todo!();
             }
