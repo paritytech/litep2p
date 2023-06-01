@@ -37,6 +37,10 @@ use std::fmt::Debug;
 
 pub mod tcp;
 
+// TODO: only return opaque connection object
+// TODO: add muxer only on upper level
+// TODO: move substream events away from here
+
 // TODO: protocols for substream events
 /// Supported transport types.
 pub enum TransportType {
@@ -44,8 +48,6 @@ pub enum TransportType {
     Tcp(Multiaddr),
 }
 
-// TODO: can these be removed all together?
-// TODO: these have to be moved elsewhere
 pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static {}
 
 impl<T: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static> Connection for T {}
@@ -82,8 +84,11 @@ pub trait TransportService: Send {
     /// Open substream to remote `peer` for `protocol`.
     ///
     /// The substream is closed by dropping the sink received in [`Litep2p::SubstreamOpened`] message.
+    // TODO: remove
     async fn open_substream(&mut self, protocol: String, peer: PeerId, handshake: Vec<u8>);
 }
+
+// TODO: make this into a poll so backpressure can be signaled easily
 
 #[async_trait::async_trait]
 pub trait Transport {
