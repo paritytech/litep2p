@@ -372,7 +372,57 @@ async fn node_disconnects_while_negotiation_is_in_progress() {}
 async fn sync_notifications_clogged() {}
 
 #[tokio::test]
-async fn async_notifications_clogged() {}
+async fn async_notifications_clogged() {
+    let addr1: Multiaddr = "/ip6/::1/tcp/2230".parse().expect("valid multiaddress");
+    let addr2: Multiaddr = "/ip6/::1/tcp/2231".parse().expect("valid multiaddress");
+
+    let ((mut litep2p1, mut service1), (mut litep2p2, mut service2)) =
+        initialize_litep2p(addr1, addr2).await;
+    let peer2 = *litep2p2.local_peer_id();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    tokio::spawn(async move {
+        // attempt to open substream to remote peer.
+        while let Some(event) = service2.next_event().await {
+            match event {
+                NotificationEvent::SubstreamReceived { peer, handshake: _ } => {
+                    service2
+                        .report_validation_result(peer, ValidationResult::Accept)
+                        .await
+                        .unwrap();
+                }
+                event => panic!("service2: unhandled event {event:?}"),
+            }
+        }
+    });
+
+    service1.open_substream(peer2).await.unwrap();
+
+    assert!(std::matches!(
+        service1.next_event().await,
+        Some(NotificationEvent::SubstreamOpened { .. })
+    ));
+
+    for _ in 0..256 {
+        service1
+            .send_async_notification(peer2, vec![1, 3, 3, 7])
+            .await
+            .unwrap();
+    }
+
+    assert!(service1
+        .send_async_notification(peer2, vec![1, 3, 3, 7])
+        .await
+        .is_err());
+}
 
 #[tokio::test]
 async fn set_new_handshake() {}
@@ -430,7 +480,7 @@ async fn send_async_notification_on_closed_substream() {
 
     service2.close_substream(peer1).unwrap();
 
-    for i in 0..5 {
+    for _ in 0..5 {
         let res = service1
             .send_async_notification(peer2, vec![1, 3, 3, 7])
             .await;
