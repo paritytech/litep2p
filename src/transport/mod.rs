@@ -36,6 +36,7 @@ use tokio::sync::mpsc::Sender;
 use std::fmt::Debug;
 
 pub mod tcp;
+pub mod tcp_new;
 
 // TODO: only return opaque connection object
 // TODO: add muxer only on upper level
@@ -99,4 +100,28 @@ pub trait Transport {
         config: TransportConfig,
         tx: Sender<TransportEvent>,
     ) -> crate::Result<Box<dyn TransportService>>;
+}
+
+#[async_trait::async_trait]
+pub trait NewTransportService: Send {
+    /// Open connection to remote peer.
+    ///
+    /// Negotiate `noise`, perform the Noise handshake, negotiate `yamux` and return TODO
+    async fn open_connection(&mut self, address: Multiaddr);
+
+    /// Close connection to remote peer.
+    async fn close_connection(&mut self, peer: PeerId);
+
+    /// Open substream to remote `peer` for `protocol`.
+    ///
+    /// The substream is closed by dropping the sink received in [`Litep2p::SubstreamOpened`] message.
+    async fn next_connection(&mut self);
+}
+
+#[async_trait::async_trait]
+pub trait NewTransport {
+    type Handle: NewTransportService;
+
+    /// Create new [`TransportService`] object and return a handle to it.
+    async fn new(keypair: &Keypair, config: TransportConfig) -> crate::Result<Self::Handle>;
 }
