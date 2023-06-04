@@ -34,7 +34,10 @@ use crate::{
     DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::future::BoxFuture;
+use futures::{
+    future::BoxFuture,
+    stream::{FuturesUnordered, StreamExt},
+};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -102,6 +105,9 @@ pub struct TcpTransport {
 
     /// Assigned listen addresss.
     listen_address: SocketAddr,
+
+    /// Pending connections.
+    pending_connections: FuturesUnordered<BoxFuture<'static, crate::Result<TcpConnection>>>,
 }
 
 impl TcpTransport {
@@ -178,6 +184,7 @@ impl TransportNew for TcpTransport {
             config,
             listener,
             listen_address,
+            pending_connections: FuturesUnordered::new(),
         })
     }
 
@@ -190,27 +197,29 @@ impl TransportNew for TcpTransport {
     }
 
     /// Open connection to remote peer at `address`.
-    fn open_connection(
-        &mut self,
-        address: Multiaddr,
-    ) -> crate::Result<BoxFuture<'static, crate::Result<Self::Connection>>> {
+    fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()> {
         let keypair = self.config.keypair.clone();
         let (socket_address, peer) = Self::get_socket_address(&address)?;
 
-        Ok(Box::pin(async move {
+        self.pending_connections.push(Box::pin(async move {
             TcpConnection::connect(keypair, socket_address, peer).await
-        }))
+        }));
+
+        Ok(())
     }
 
-    /// Poll next connection from `TcpListener`.
+    /// Poll next connection from [`TcpTransport`].
     async fn next_connection(&mut self) -> crate::Result<Self::Connection> {
         loop {
             tokio::select! {
-                stream = self.listener.accept() => match stream {
-                    Ok((stream, address)) => {
-                        return TcpConnection::accept(self.config.keypair.clone(), stream, address)
+                connection = self.listener.accept() => match connection {
+                    Ok((connection, address)) => {
+                        return TcpConnection::accept(self.config.keypair.clone(), connection, address)
                     }
                     Err(err) => return Err(err.into()),
+                },
+                connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
+                    return connection
                 }
             }
         }
@@ -280,10 +289,12 @@ mod tests {
         .unwrap();
 
         let listen_address = TransportNew::listen_address(&transport1);
-        let (res1, res2) = tokio::join!(
-            transport1.next_connection(),
-            transport2.open_connection(listen_address).unwrap(),
-        );
+        let _ = transport2.open_connection(listen_address).unwrap();
+
+        let (res1, res2) =
+            tokio::join!(transport1.next_connection(), transport2.next_connection(),);
         let (_stream1, _stream2) = (res1.unwrap(), res2.unwrap());
+
+        tracing::info!(target: LOG_TARGET, ?_stream1, ?_stream2);
     }
 }

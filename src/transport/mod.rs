@@ -138,10 +138,9 @@ trait TransportNew {
     fn listen_address(&self) -> Multiaddr;
 
     /// Try to open a connection to remote peer.
-    fn open_connection(
-        &mut self,
-        address: Multiaddr,
-    ) -> crate::Result<BoxFuture<'static, crate::Result<Self::Connection>>>;
+    ///
+    /// The result is polled using [`Transport::next_connection()`].
+    fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()>;
 
     /// Poll next connection.
     async fn next_connection(&mut self) -> crate::Result<Self::Connection>;
