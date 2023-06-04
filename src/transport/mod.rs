@@ -144,5 +144,5 @@ trait TransportNew {
     ) -> crate::Result<BoxFuture<'static, crate::Result<Self::Connection>>>;
 
     /// Poll next connection.
-    async fn next_connection(&mut self) -> Option<Self::Connection>;
+    async fn next_connection(&mut self) -> crate::Result<Self::Connection>;
 }

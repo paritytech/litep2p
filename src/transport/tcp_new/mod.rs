@@ -54,7 +54,7 @@ pub struct TcpConnection {
 
 impl TcpConnection {
     /// Open connection to remote peer at `address`.
-    async fn new(
+    async fn connect(
         keypair: Keypair,
         address: SocketAddr,
         peer: Option<PeerId>,
@@ -69,6 +69,13 @@ impl TcpConnection {
         Ok(Self {
             stream: TcpStream::connect(address).await?,
         })
+    }
+
+    /// Accept a new connection.
+    fn accept(keypair: Keypair, stream: TcpStream, address: SocketAddr) -> crate::Result<Self> {
+        tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
+
+        Ok(Self { stream })
     }
 }
 
@@ -191,17 +198,22 @@ impl TransportNew for TcpTransport {
         let (socket_address, peer) = Self::get_socket_address(&address)?;
 
         Ok(Box::pin(async move {
-            TcpConnection::new(keypair, socket_address, peer).await
+            TcpConnection::connect(keypair, socket_address, peer).await
         }))
     }
 
     /// Poll next connection from `TcpListener`.
-    async fn next_connection(&mut self) -> Option<Self::Connection> {
-        self.listener
-            .accept()
-            .await
-            .ok()
-            .map(|(stream, _)| Self::Connection { stream })
+    async fn next_connection(&mut self) -> crate::Result<Self::Connection> {
+        loop {
+            tokio::select! {
+                stream = self.listener.accept() => match stream {
+                    Ok((stream, address)) => {
+                        return TcpConnection::accept(self.config.keypair.clone(), stream, address)
+                    }
+                    Err(err) => return Err(err.into()),
+                }
+            }
+        }
     }
 }
 
