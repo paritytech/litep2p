@@ -52,6 +52,26 @@ pub struct TcpConnection {
     stream: TcpStream,
 }
 
+impl TcpConnection {
+    /// Open connection to remote peer at `address`.
+    async fn new(
+        keypair: Keypair,
+        address: SocketAddr,
+        peer: Option<PeerId>,
+    ) -> crate::Result<Self> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?address,
+            ?peer,
+            "open connection to remote peer"
+        );
+
+        Ok(Self {
+            stream: TcpStream::connect(address).await?,
+        })
+    }
+}
+
 impl ConnectionNew for TcpConnection {
     /// Open substream to remote peer.
     fn open_substream() -> Result<(), ()> {
@@ -148,14 +168,11 @@ impl TransportNew for TcpTransport {
         &mut self,
         address: Multiaddr,
     ) -> crate::Result<BoxFuture<'static, crate::Result<Self::Connection>>> {
-        tracing::debug!(target: LOG_TARGET, ?address, "open connection");
-
+        let keypair = self.config.keypair.clone();
         let (socket_address, peer) = Self::get_socket_address(&address)?;
 
         Ok(Box::pin(async move {
-            Ok(Self::Connection {
-                stream: TcpStream::connect(socket_address).await?,
-            })
+            TcpConnection::new(keypair, socket_address, peer).await
         }))
     }
 
