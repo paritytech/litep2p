@@ -124,7 +124,7 @@ impl TransportNew for TcpTransport {
     async fn new(listen_address: Multiaddr) -> crate::Result<Self> {
         let (listen_address, _) = Self::get_socket_address(&listen_address)?;
 
-        tracing::info!(target: LOG_TARGET, ?listen_address, "start `TcpTransport`");
+        tracing::info!(target: LOG_TARGET, ?listen_address, "start tcp transport");
 
         Ok(Self {
             listener: TcpListener::bind(listen_address).await?,
@@ -154,5 +154,49 @@ impl TransportNew for TcpTransport {
             .await
             .ok()
             .map(|(stream, _)| Self::Connection { stream })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{Libp2pProtocol, ProtocolName};
+
+    #[test]
+    fn parse_multiaddresses() {
+        assert!(TcpTransport::get_socket_address(
+            &"/ip6/::1/tcp/8888".parse().expect("valid multiaddress")
+        )
+        .is_ok());
+        assert!(TcpTransport::get_socket_address(
+            &"/ip4/127.0.0.1/tcp/8888"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_ok());
+        assert!(TcpTransport::get_socket_address(
+            &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_ok());
+        assert!(TcpTransport::get_socket_address(
+            &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_ok());
+        assert!(TcpTransport::get_socket_address(
+            &"/ip6/::1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_err());
+        assert!(TcpTransport::get_socket_address(
+            &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_err());
     }
 }

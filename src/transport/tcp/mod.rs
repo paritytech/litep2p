@@ -627,44 +627,6 @@ mod tests {
     use super::*;
     use crate::protocol::{Libp2pProtocol, ProtocolName};
 
-    #[test]
-    fn parse_multiaddresses() {
-        assert!(TcpTransport::get_socket_address(
-            &"/ip6/::1/tcp/8888".parse().expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip4/127.0.0.1/tcp/8888"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip6/::1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_err());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_err());
-    }
-
     #[tokio::test]
     #[ignore]
     async fn establish_outbound_connection() {
