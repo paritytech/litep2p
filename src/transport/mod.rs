@@ -27,6 +27,7 @@ use crate::{
 };
 
 use futures::{
+    future::BoxFuture,
     io::{AsyncRead, AsyncWrite},
     Stream,
 };
@@ -118,10 +119,26 @@ pub trait NewTransportService: Send {
     async fn next_connection(&mut self);
 }
 
-#[async_trait::async_trait]
-pub trait NewTransport {
-    type Handle: NewTransportService;
+trait ConnectionNew {
+    fn open_substream() -> Result<(), ()>;
+    fn close_substream() -> Result<(), ()>;
+}
 
-    /// Create new [`TransportService`] object and return a handle to it.
-    async fn new(keypair: &Keypair, config: TransportConfig) -> crate::Result<Self::Handle>;
+#[async_trait::async_trait]
+trait TransportNew {
+    type Connection: ConnectionNew;
+
+    /// Create new [`Transport`] object.
+    async fn new(listen_address: Multiaddr) -> crate::Result<Self>
+    where
+        Self: Sized;
+
+    /// Try to open a connection to remote peer.
+    fn open_connection(
+        &mut self,
+        address: Multiaddr,
+    ) -> crate::Result<BoxFuture<'static, crate::Result<Self::Connection>>>;
+
+    /// Poll next connection.
+    async fn next_connection(&mut self) -> Option<Self::Connection>;
 }
