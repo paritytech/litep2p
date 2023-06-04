@@ -174,6 +174,14 @@ impl TransportNew for TcpTransport {
         })
     }
 
+    /// Get assigned listen address.
+    fn listen_address(&self) -> Multiaddr {
+        let listen_address = self.listen_address();
+        let mut multiaddr = Multiaddr::from(listen_address.ip());
+        multiaddr.push(Protocol::Tcp(listen_address.port()));
+        multiaddr
+    }
+
     /// Open connection to remote peer at `address`.
     fn open_connection(
         &mut self,

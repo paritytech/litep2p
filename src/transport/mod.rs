@@ -134,6 +134,9 @@ trait TransportNew {
     where
         Self: Sized;
 
+    /// Get assigned listen address.
+    fn listen_address(&self) -> Multiaddr;
+
     /// Try to open a connection to remote peer.
     fn open_connection(
         &mut self,
