@@ -92,6 +92,9 @@ pub struct TcpTransport {
 
     /// TCP listener.
     listener: TcpListener,
+
+    /// Assigned listen addresss.
+    listen_address: SocketAddr,
 }
 
 impl TcpTransport {
@@ -144,6 +147,11 @@ impl TcpTransport {
 
         Ok((socket_address, maybe_peer))
     }
+
+    /// Get assigned listen address.
+    fn listen_address(&self) -> &SocketAddr {
+        &self.listen_address
+    }
 }
 
 #[async_trait::async_trait]
@@ -153,13 +161,16 @@ impl TransportNew for TcpTransport {
 
     /// Create new [`TcpTransport`].
     async fn new(config: TransportConfig) -> crate::Result<Self> {
-        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
+        tracing::info!(target: LOG_TARGET, listen_address = ?config.listen_address, "start tcp transport");
 
-        tracing::info!(target: LOG_TARGET, ?listen_address, "start tcp transport");
+        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
+        let listener = TcpListener::bind(listen_address).await?;
+        let listen_address = listener.local_addr()?;
 
         Ok(Self {
             config,
-            listener: TcpListener::bind(listen_address).await?,
+            listener,
+            listen_address,
         })
     }
 
