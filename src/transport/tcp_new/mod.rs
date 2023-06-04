@@ -247,4 +247,31 @@ mod tests {
         )
         .is_err());
     }
+
+    #[tokio::test]
+    async fn connect_and_accept_works() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let mut transport1 = TcpTransport::new(TransportConfig {
+            keypair: Keypair::generate(),
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .await
+        .unwrap();
+        let mut transport2 = TcpTransport::new(TransportConfig {
+            keypair: Keypair::generate(),
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .await
+        .unwrap();
+
+        let listen_address = TransportNew::listen_address(&transport1);
+        let (res1, res2) = tokio::join!(
+            transport1.next_connection(),
+            transport2.open_connection(listen_address).unwrap(),
+        );
+        let (_stream1, _stream2) = (res1.unwrap(), res2.unwrap());
+    }
 }
