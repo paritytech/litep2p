@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    config::{Role, TransportConfig},
     crypto::{
         ed25519::Keypair,
         noise::{self, NoiseConfiguration},
@@ -28,8 +27,8 @@ use crate::{
     error::{AddressError, Error, SubstreamError},
     peer_id::PeerId,
     transport::{
-        Connection, ConnectionNew, Direction, Transport, TransportEvent, TransportNew,
-        TransportService,
+        tcp_new::config::TransportConfig, Connection, ConnectionNew, Direction, Transport,
+        TransportEvent, TransportNew, TransportService,
     },
     types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
@@ -41,26 +40,37 @@ use tokio::net::{TcpListener, TcpStream};
 
 use std::net::{IpAddr, SocketAddr};
 
+mod config;
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "tcp";
 
+/// TCP connection.
 #[derive(Debug)]
 pub struct TcpConnection {
+    /// TCP stream.
     stream: TcpStream,
 }
 
 impl ConnectionNew for TcpConnection {
+    /// Open substream to remote peer.
     fn open_substream() -> Result<(), ()> {
         todo!();
     }
 
+    /// Close substream to remote peer.
     fn close_substream() -> Result<(), ()> {
         todo!();
     }
 }
 
+/// TCP transport.
 #[derive(Debug)]
 pub struct TcpTransport {
+    /// Transport configuration.
+    config: TransportConfig,
+
+    /// TCP listener.
     listener: TcpListener,
 }
 
@@ -119,14 +129,16 @@ impl TcpTransport {
 #[async_trait::async_trait]
 impl TransportNew for TcpTransport {
     type Connection = TcpConnection;
+    type Config = TransportConfig;
 
     /// Create new [`TcpTransport`].
-    async fn new(listen_address: Multiaddr) -> crate::Result<Self> {
-        let (listen_address, _) = Self::get_socket_address(&listen_address)?;
+    async fn new(config: TransportConfig) -> crate::Result<Self> {
+        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
 
         tracing::info!(target: LOG_TARGET, ?listen_address, "start tcp transport");
 
         Ok(Self {
+            config,
             listener: TcpListener::bind(listen_address).await?,
         })
     }

@@ -127,9 +127,10 @@ trait ConnectionNew {
 #[async_trait::async_trait]
 trait TransportNew {
     type Connection: ConnectionNew;
+    type Config: Debug;
 
     /// Create new [`Transport`] object.
-    async fn new(listen_address: Multiaddr) -> crate::Result<Self>
+    async fn new(config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized;
 
