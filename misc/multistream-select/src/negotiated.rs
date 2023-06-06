@@ -108,6 +108,13 @@ impl<TInner> Negotiated<TInner> {
         }
     }
 
+    pub fn inner(self) -> TInner {
+        match self.state {
+            State::Completed { io } => io,
+            _ => panic!("stream is not negotiated"),
+        }
+    }
+
     /// Polls the `Negotiated` for completion.
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), NegotiationError>>
     where
