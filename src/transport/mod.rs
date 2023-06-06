@@ -119,9 +119,18 @@ pub trait NewTransportService: Send {
     async fn next_connection(&mut self);
 }
 
+#[async_trait::async_trait]
 trait ConnectionNew {
-    fn open_substream() -> Result<(), ()>;
-    fn close_substream() -> Result<(), ()>;
+    type Substream: Debug + AsyncRead + AsyncWrite + Unpin;
+
+    /// Get remote peer ID.
+    fn peer_id(&self) -> &PeerId;
+
+    /// Open substream for `protocol`.
+    async fn open_substream(&mut self) -> crate::Result<Self::Substream>;
+
+    /// Poll next inbound substream.
+    async fn next_substream(&mut self) -> Result<(), ()>;
 }
 
 #[async_trait::async_trait]
