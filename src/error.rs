@@ -62,6 +62,8 @@ pub enum Error {
     CannotDialSelf(Multiaddr),
     #[error("Transport not supported")]
     TransportNotSupported(Multiaddr),
+    #[error("Yamux error: `{0}`")]
+    YamuxError(yamux::ConnectionError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -156,6 +158,12 @@ impl From<prost::DecodeError> for Error {
 impl From<DecodingError> for Error {
     fn from(error: DecodingError) -> Self {
         Error::ParseError(ParseError::DecodingError(error))
+    }
+}
+
+impl From<yamux::ConnectionError> for Error {
+    fn from(error: yamux::ConnectionError) -> Self {
+        Error::YamuxError(error)
     }
 }
 

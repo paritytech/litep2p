@@ -161,14 +161,22 @@ impl TcpConnection {
     }
 }
 
+#[async_trait::async_trait]
 impl ConnectionNew for TcpConnection {
-    /// Open substream to remote peer.
-    fn open_substream() -> Result<(), ()> {
-        todo!();
+    type Substream = yamux::Stream;
+
+    /// Get remote peer ID.
+    fn peer_id(&self) -> &PeerId {
+        &self.peer
     }
 
-    /// Close substream to remote peer.
-    fn close_substream() -> Result<(), ()> {
+    /// Open substream for `protocol`.
+    async fn open_substream(&mut self) -> crate::Result<yamux::Stream> {
+        self.control.open_stream().await.map_err(From::from)
+    }
+
+    /// Poll next substream.
+    async fn next_substream(&mut self) -> Result<(), ()> {
         todo!();
     }
 }
