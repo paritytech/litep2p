@@ -81,7 +81,7 @@ pub struct TcpConnection {
 
 impl TcpConnection {
     /// Open connection to remote peer at `address`.
-    async fn connect(
+    async fn open_connection(
         config: Config,
         address: SocketAddr,
         peer: Option<PeerId>,
@@ -98,12 +98,72 @@ impl TcpConnection {
         Self::negotiate_connection(stream, config, noise_config).await
     }
 
+    /// Open substream for `protocol`.
+    async fn open_substream(
+        mut control: yamux::Control,
+        substream: usize,
+        protocol: ProtocolName,
+    ) -> crate::Result<Substream> {
+        tracing::debug!(target: LOG_TARGET, ?substream, ?protocol, "open substream");
+
+        let stream = match control.open_stream().await {
+            Ok(stream) => {
+                tracing::trace!(target: LOG_TARGET, ?substream, "substream opened");
+                stream
+            }
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?substream,
+                    ?error,
+                    "failed to open substream"
+                );
+                return Err(Error::YamuxError(substream, error));
+            }
+        };
+
+        let io = Self::negotiate_protocol(stream, &Role::Dialer, vec![&protocol])
+            .await?
+            .inner();
+
+        Ok(Substream { io, substream })
+    }
+
     /// Accept a new connection.
-    async fn accept(stream: TcpStream, config: Config, address: SocketAddr) -> crate::Result<Self> {
+    async fn accept_connection(
+        stream: TcpStream,
+        config: Config,
+        address: SocketAddr,
+    ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
         let noise_config = NoiseConfiguration::new(config.keypair(), Role::Listener);
         Self::negotiate_connection(stream, config, noise_config).await
+    }
+
+    /// Accept substream.
+    async fn accept_substream(
+        mut stream: yamux::Stream,
+        substream: usize,
+        protocols: Vec<ProtocolName>,
+    ) -> crate::Result<Substream> {
+        tracing::trace!(target: LOG_TARGET, ?substream, "accept inbound substream");
+
+        let protocols = protocols
+            .iter()
+            .map(|protocol| &**protocol)
+            .collect::<Vec<&str>>();
+        let io = Self::negotiate_protocol(stream, &Role::Listener, protocols)
+            .await?
+            .inner();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?substream,
+            "substream accepted and negotiated"
+        );
+
+        Ok(Substream { io, substream })
     }
 
     /// Negotiate protocol.
@@ -119,7 +179,7 @@ impl TcpConnection {
             Role::Listener => listener_select_proto(stream, protocols).await?,
         };
 
-        tracing::warn!(target: LOG_TARGET, ?protocol, "protocol negotiated");
+        tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
 
         Ok(socket)
     }
@@ -244,29 +304,7 @@ impl ConnectionNew for TcpConnection {
         let substream = self.next_substream_id();
 
         self.pending_substreams.push(Box::pin(async move {
-            tracing::debug!(target: LOG_TARGET, ?substream, ?protocol, "open substream");
-
-            let stream = match control.open_stream().await {
-                Ok(stream) => {
-                    tracing::trace!(target: LOG_TARGET, ?substream, "substream opened");
-                    stream
-                }
-                Err(error) => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?substream,
-                        ?error,
-                        "failed to open substream"
-                    );
-                    return Err(Error::YamuxError(substream, error));
-                }
-            };
-
-            let io = Self::negotiate_protocol(stream, &Role::Dialer, vec![&protocol])
-                .await?
-                .inner();
-
-            Ok(Substream { io, substream })
+            Self::open_substream(control, substream, protocol).await
         }));
 
         substream
@@ -282,16 +320,7 @@ impl ConnectionNew for TcpConnection {
                         let protocols = self.config.protocols().clone();
 
                         self.pending_substreams.push(Box::pin(async move {
-                            tracing::trace!(target: LOG_TARGET, ?substream, "accept inbound substream");
-
-                            let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
-                            let io = Self::negotiate_protocol(stream, &Role::Listener, protocols)
-                                .await?
-                                .inner();
-
-                            tracing::trace!(target: LOG_TARGET, ?substream, "substream accepted and negotiated");
-
-                            Ok(Substream { io, substream })
+                            Self::accept_substream(stream, substream, protocols).await
                         }));
                     },
                     Some(Err(error)) => {
@@ -420,7 +449,7 @@ impl TransportNew for TcpTransport {
         let (socket_address, peer) = Self::get_socket_address(&address)?;
 
         self.pending_connections.push(Box::pin(async move {
-            TcpConnection::connect(config, socket_address, peer).await
+            TcpConnection::open_connection(config, socket_address, peer).await
         }));
 
         Ok(())
@@ -434,7 +463,7 @@ impl TransportNew for TcpTransport {
                     Ok((connection, address)) => {
                         let config = self.config.clone();
                         self.pending_connections.push(Box::pin(async move {
-                            TcpConnection::accept(connection, config, address).await
+                            TcpConnection::accept_connection(connection, config, address).await
                         }));
                     }
                     Err(err) => return Err(err.into()),
