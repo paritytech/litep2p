@@ -57,6 +57,9 @@ const LOG_TARGET: &str = "tcp";
 pub struct TcpConnection {
     /// TCP stream.
     stream: Encrypted<Compat<TcpStream>>,
+
+    /// Remote peer ID.
+    peer: PeerId,
 }
 
 impl TcpConnection {
@@ -70,15 +73,14 @@ impl TcpConnection {
             target: LOG_TARGET,
             ?address,
             ?peer,
-            "open connection to remote peer"
+            "open connection to remote peer",
         );
 
         let config = NoiseConfiguration::new(&keypair, Role::Dialer);
         let stream = TcpStream::connect(address).await?;
+        let (stream, peer) = Self::negotiate_connection(stream, config).await?;
 
-        Ok(Self {
-            stream: Self::negotiate_connection(stream, config).await?,
-        })
+        Ok(Self { stream, peer })
     }
 
     /// Accept a new connection.
@@ -89,13 +91,10 @@ impl TcpConnection {
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
-        Ok(Self {
-            stream: Self::negotiate_connection(
-                stream,
-                NoiseConfiguration::new(&keypair, Role::Listener),
-            )
-            .await?,
-        })
+        let config = NoiseConfiguration::new(&keypair, Role::Listener);
+        let (stream, peer) = Self::negotiate_connection(stream, config).await?;
+
+        Ok(Self { stream, peer })
     }
 
     /// Negotiate protocol.
@@ -121,7 +120,7 @@ impl TcpConnection {
     async fn negotiate_connection(
         stream: TcpStream,
         config: NoiseConfiguration,
-    ) -> crate::Result<Encrypted<Compat<TcpStream>>> {
+    ) -> crate::Result<(Encrypted<Compat<TcpStream>>, PeerId)> {
         tracing::trace!(
             target: LOG_TARGET,
             role = ?config.role,
@@ -153,7 +152,7 @@ impl TcpConnection {
             .inner();
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-        Ok(stream)
+        Ok((stream, peer))
     }
 }
 
@@ -353,18 +352,25 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
+        let keypair1 = Keypair::generate();
         let mut transport1 = TcpTransport::new(TransportConfig {
-            keypair: Keypair::generate(),
+            keypair: keypair1.clone(),
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         })
         .await
         .unwrap();
+        let keypair2 = Keypair::generate();
         let mut transport2 = TcpTransport::new(TransportConfig {
-            keypair: Keypair::generate(),
+            keypair: keypair2.clone(),
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         })
         .await
         .unwrap();
+
+        let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public().clone()));
+        let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public().clone()));
+
+        tracing::info!(target: LOG_TARGET, "peer1 {peer1}, peer2 {peer2}");
 
         let listen_address = TransportNew::listen_address(&transport1);
         let _ = transport2.open_connection(listen_address).unwrap();
@@ -373,6 +379,6 @@ mod tests {
             tokio::join!(transport1.next_connection(), transport2.next_connection(),);
         let (_stream1, _stream2) = (res1.unwrap(), res2.unwrap());
 
-        tracing::info!(target: LOG_TARGET, ?_stream1, ?_stream2);
+        tracing::info!(target: LOG_TARGET, peer1 = ?_stream1.peer, peer2 = ?_stream2.peer);
     }
 }
