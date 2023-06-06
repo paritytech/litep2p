@@ -38,6 +38,7 @@ use crate::{
 use futures::{
     future::BoxFuture,
     stream::{FuturesUnordered, StreamExt},
+    AsyncRead, AsyncWrite,
 };
 use multiaddr::{Multiaddr, Protocol};
 use multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version};
@@ -45,15 +46,23 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{instrument, Level};
 
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    io,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+};
 
 mod config;
+mod connection;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "tcp";
 
 /// TCP connection.
 pub struct TcpConnection {
+    /// Configuration.
+    config: Config,
+
     /// Yamux connection.
     connection: yamux::ControlledConnection<Encrypted<Compat<TcpStream>>>,
 
@@ -62,12 +71,18 @@ pub struct TcpConnection {
 
     /// Remote peer ID.
     peer: PeerId,
+
+    /// Next substream ID.
+    next_substream_id: usize,
+
+    /// Pending substreams.
+    pending_substreams: FuturesUnordered<BoxFuture<'static, crate::Result<Substream>>>,
 }
 
 impl TcpConnection {
     /// Open connection to remote peer at `address`.
     async fn connect(
-        keypair: Keypair,
+        config: Config,
         address: SocketAddr,
         peer: Option<PeerId>,
     ) -> crate::Result<Self> {
@@ -78,25 +93,20 @@ impl TcpConnection {
             "open connection to remote peer",
         );
 
-        let config = NoiseConfiguration::new(&keypair, Role::Dialer);
+        let noise_config = NoiseConfiguration::new(config.keypair(), Role::Dialer);
         let stream = TcpStream::connect(address).await?;
-        Self::negotiate_connection(stream, config).await
+        Self::negotiate_connection(stream, config, noise_config).await
     }
 
     /// Accept a new connection.
-    async fn accept(
-        stream: TcpStream,
-        keypair: Keypair,
-        address: SocketAddr,
-    ) -> crate::Result<Self> {
+    async fn accept(stream: TcpStream, config: Config, address: SocketAddr) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
-        let config = NoiseConfiguration::new(&keypair, Role::Listener);
-        Self::negotiate_connection(stream, config).await
+        let noise_config = NoiseConfiguration::new(config.keypair(), Role::Listener);
+        Self::negotiate_connection(stream, config, noise_config).await
     }
 
     /// Negotiate protocol.
-    // TODO: move this to utils or something?
     async fn negotiate_protocol<S: Connection>(
         stream: S,
         role: &Role,
@@ -109,7 +119,7 @@ impl TcpConnection {
             Role::Listener => listener_select_proto(stream, protocols).await?,
         };
 
-        tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
+        tracing::warn!(target: LOG_TARGET, ?protocol, "protocol negotiated");
 
         Ok(socket)
     }
@@ -117,20 +127,21 @@ impl TcpConnection {
     /// Negotiate noise + yamux for the connection.
     async fn negotiate_connection(
         stream: TcpStream,
-        config: NoiseConfiguration,
+        config: Config,
+        noise_config: NoiseConfiguration,
     ) -> crate::Result<Self> {
         tracing::trace!(
             target: LOG_TARGET,
-            role = ?config.role,
+            role = ?noise_config.role,
             "negotiate connection",
         );
 
         let stream = TokioAsyncReadCompatExt::compat(stream).into_inner();
         let stream = TokioAsyncWriteCompatExt::compat_write(stream);
-        let role = config.role;
+        let role = noise_config.role;
 
         // negotiate `noise`
-        let stream = Self::negotiate_protocol(stream, &config.role, vec!["/noise"])
+        let stream = Self::negotiate_protocol(stream, &noise_config.role, vec!["/noise"])
             .await?
             .inner();
 
@@ -140,7 +151,7 @@ impl TcpConnection {
         );
 
         // perform noise handshake
-        let (stream, peer) = noise::handshake_new(stream, config).await?;
+        let (stream, peer) = noise::handshake_new(stream, noise_config).await?;
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
         let stream: Encrypted<Compat<TcpStream>> = stream;
 
@@ -154,16 +165,73 @@ impl TcpConnection {
         let (control, mut connection) = yamux::Control::new(connection);
 
         Ok(Self {
+            config,
             connection,
             control,
             peer,
+            next_substream_id: 0usize,
+            pending_substreams: FuturesUnordered::new(),
         })
+    }
+
+    /// Get next substream ID.
+    fn next_substream_id(&mut self) -> usize {
+        let substream = self.next_substream_id;
+        self.next_substream_id += 1;
+        substream
+    }
+}
+
+#[derive(Debug)]
+pub struct Substream {
+    /// Substream ID.
+    substream: usize,
+
+    /// Yamux substream.
+    io: yamux::Stream,
+}
+
+impl AsyncRead for Substream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let mut inner = Pin::into_inner(self);
+        Pin::new(&mut inner.io).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Substream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let mut inner = Pin::into_inner(self);
+        Pin::new(&mut inner.io).poll_write(cx, &buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let mut inner = Pin::into_inner(self);
+        Pin::new(&mut inner.io).poll_flush(cx)
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let mut inner = Pin::into_inner(self);
+        Pin::new(&mut inner.io).poll_close(cx)
     }
 }
 
 #[async_trait::async_trait]
 impl ConnectionNew for TcpConnection {
-    type Substream = yamux::Stream;
+    type Substream = Substream;
 
     /// Get remote peer ID.
     fn peer_id(&self) -> &PeerId {
@@ -176,7 +244,7 @@ impl ConnectionNew for TcpConnection {
         let substream = self.next_substream_id();
 
         self.pending_substreams.push(Box::pin(async move {
-            tracing::trace!(target: LOG_TARGET, ?substream, ?protocol, "open substream");
+            tracing::debug!(target: LOG_TARGET, ?substream, ?protocol, "open substream");
 
             let stream = match control.open_stream().await {
                 Ok(stream) => {
@@ -210,15 +278,18 @@ impl ConnectionNew for TcpConnection {
             tokio::select! {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
-                        let protocols = self.protocols().clone();
                         let substream = self.next_substream_id();
+                        let protocols = self.config.protocols().clone();
 
                         self.pending_substreams.push(Box::pin(async move {
                             tracing::trace!(target: LOG_TARGET, ?substream, "accept inbound substream");
 
-                            let io = Self::negotiate_protocol(stream, &Role::Dialer, protocols)
+                            let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
+                            let io = Self::negotiate_protocol(stream, &Role::Listener, protocols)
                                 .await?
                                 .inner();
+
+                            tracing::trace!(target: LOG_TARGET, ?substream, "substream accepted and negotiated");
 
                             Ok(Substream { io, substream })
                         }));
@@ -345,11 +416,11 @@ impl TransportNew for TcpTransport {
 
     /// Open connection to remote peer at `address`.
     fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()> {
-        let keypair = self.config.keypair().clone();
+        let config = self.config.clone();
         let (socket_address, peer) = Self::get_socket_address(&address)?;
 
         self.pending_connections.push(Box::pin(async move {
-            TcpConnection::connect(keypair, socket_address, peer).await
+            TcpConnection::connect(config, socket_address, peer).await
         }));
 
         Ok(())
@@ -361,9 +432,9 @@ impl TransportNew for TcpTransport {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
-                        let keypair = self.config.keypair().clone();
+                        let config = self.config.clone();
                         self.pending_connections.push(Box::pin(async move {
-                            TcpConnection::accept(connection, keypair, address).await
+                            TcpConnection::accept(connection, config, address).await
                         }));
                     }
                     Err(err) => return Err(err.into()),
@@ -466,10 +537,35 @@ mod tests {
         let listen_address = TransportNew::listen_address(&transport1);
         let _ = transport2.open_connection(listen_address).unwrap();
 
-        let (res1, res2) =
-            tokio::join!(transport1.next_connection(), transport2.next_connection(),);
-        let (_stream1, _stream2) = (res1.unwrap(), res2.unwrap());
+        let (res1, res2) = tokio::join!(transport1.next_connection(), transport2.next_connection());
+        let (mut stream1, mut stream2) = (res1.unwrap(), res2.unwrap());
 
-        tracing::info!(target: LOG_TARGET, peer1 = ?_stream1.peer, peer2 = ?_stream2.peer);
+        tracing::info!(target: LOG_TARGET, peer1 = ?stream1.peer, peer2 = ?stream2.peer);
+
+        let substream = stream1.open_substream(ProtocolName::from("/notification/1"));
+
+        let mut stream1_res = None;
+        let mut stream2_res = None;
+
+        loop {
+            tokio::select! {
+                event = stream1.next_substream() => match event {
+                    Ok(stream) => {
+                        stream1_res = Some(stream);
+                    }
+                    _ => panic!("error 1"),
+                },
+                event = stream2.next_substream() => match event {
+                    Ok(stream) => {
+                        stream2_res = Some(stream);
+                    }
+                    _ => panic!("error 1"),
+                }
+            }
+
+            if stream2_res.is_some() && stream1_res.is_some() {
+                break;
+            }
+        }
     }
 }

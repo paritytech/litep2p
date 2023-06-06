@@ -119,6 +119,8 @@ pub trait NewTransportService: Send {
     async fn next_connection(&mut self);
 }
 
+// TODO: introduce error type?
+// TODO: introduce `Substream` trait?
 #[async_trait::async_trait]
 trait ConnectionNew {
     type Substream: Debug + AsyncRead + AsyncWrite + Unpin;
@@ -127,12 +129,19 @@ trait ConnectionNew {
     fn peer_id(&self) -> &PeerId;
 
     /// Open substream for `protocol`.
-    async fn open_substream(&mut self) -> crate::Result<Self::Substream>;
+    ///
+    /// Substream is opened and negotiated in the background and the result is
+    /// polled using [`Connection::next_substream()`].
+    ///
+    /// Returns a substream ID which the caller can associate with the result
+    /// returned from [`Connection::next_substream()`].
+    fn open_substream(&mut self, protocol: ProtocolName) -> usize;
 
-    /// Poll next inbound substream.
-    async fn next_substream(&mut self) -> Result<(), ()>;
+    /// Poll next substream.
+    async fn next_substream(&mut self) -> crate::Result<Self::Substream>;
 }
 
+// TODO: introduce error type?
 #[async_trait::async_trait]
 trait TransportNew {
     type Connection: ConnectionNew;

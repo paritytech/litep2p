@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 /// Protocol name.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProtocolName {
     Static(&'static str),
 }
