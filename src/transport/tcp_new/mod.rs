@@ -19,9 +19,10 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    config::Role,
     crypto::{
         ed25519::Keypair,
-        noise::{self, NoiseConfiguration},
+        noise::{self, Encrypted, NoiseConfiguration},
         PublicKey,
     },
     error::{AddressError, Error, SubstreamError},
@@ -39,7 +40,10 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
 };
 use multiaddr::{Multiaddr, Protocol};
+use multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use tracing::{instrument, Level};
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -52,7 +56,7 @@ const LOG_TARGET: &str = "tcp";
 #[derive(Debug)]
 pub struct TcpConnection {
     /// TCP stream.
-    stream: TcpStream,
+    stream: Encrypted<Compat<TcpStream>>,
 }
 
 impl TcpConnection {
@@ -69,16 +73,87 @@ impl TcpConnection {
             "open connection to remote peer"
         );
 
+        let config = NoiseConfiguration::new(&keypair, Role::Dialer);
+        let stream = TcpStream::connect(address).await?;
+
         Ok(Self {
-            stream: TcpStream::connect(address).await?,
+            stream: Self::negotiate_connection(stream, config).await?,
         })
     }
 
     /// Accept a new connection.
-    fn accept(keypair: Keypair, stream: TcpStream, address: SocketAddr) -> crate::Result<Self> {
+    async fn accept(
+        stream: TcpStream,
+        keypair: Keypair,
+        address: SocketAddr,
+    ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
-        Ok(Self { stream })
+        Ok(Self {
+            stream: Self::negotiate_connection(
+                stream,
+                NoiseConfiguration::new(&keypair, Role::Listener),
+            )
+            .await?,
+        })
+    }
+
+    /// Negotiate protocol.
+    // TODO: move this to utils or something?
+    async fn negotiate_protocol<S: Connection>(
+        stream: S,
+        role: &Role,
+        protocols: Vec<&str>,
+    ) -> crate::Result<Negotiated<S>> {
+        tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
+
+        let (protocol, mut socket) = match role {
+            Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await?,
+            Role::Listener => listener_select_proto(stream, protocols).await?,
+        };
+
+        tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
+
+        Ok(socket)
+    }
+
+    /// Negotiate noise + yamux for the connection.
+    async fn negotiate_connection(
+        stream: TcpStream,
+        config: NoiseConfiguration,
+    ) -> crate::Result<Encrypted<Compat<TcpStream>>> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            role = ?config.role,
+            "negotiate connection",
+        );
+
+        let stream = TokioAsyncReadCompatExt::compat(stream).into_inner();
+        let stream = TokioAsyncWriteCompatExt::compat_write(stream);
+        let role = config.role;
+
+        // negotiate `noise`
+        let stream = Self::negotiate_protocol(stream, &config.role, vec!["/noise"])
+            .await?
+            .inner();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            "`multistream-select` and `noise` negotiated"
+        );
+
+        // perform noise handshake
+        let (stream, peer) = noise::handshake_new(stream, config).await?;
+        tracing::trace!(target: LOG_TARGET, "noise handshake done");
+        let stream: Encrypted<Compat<TcpStream>> = stream;
+
+        // negotiate `yamux`
+        let stream = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"])
+            .await?
+            .inner();
+        tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
+
+        Ok(stream)
     }
 }
 
@@ -214,7 +289,10 @@ impl TransportNew for TcpTransport {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
-                        return TcpConnection::accept(self.config.keypair.clone(), connection, address)
+                        let keypair = self.config.keypair.clone();
+                        self.pending_connections.push(Box::pin(async move {
+                            TcpConnection::accept(connection, keypair, address).await
+                        }));
                     }
                     Err(err) => return Err(err.into()),
                 },
