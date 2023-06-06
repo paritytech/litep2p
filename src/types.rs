@@ -20,6 +20,8 @@
 
 use std::fmt::Display;
 
+mod protocol;
+
 /// Unique identifier for a peer.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct PeerId(usize);
