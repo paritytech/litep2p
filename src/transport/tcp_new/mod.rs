@@ -244,8 +244,8 @@ mod tests {
         .is_err());
     }
 
-    #[tokio::test]
-    async fn connect_and_accept_works() {
+    // build two connected peers
+    async fn build_two_connected_peers() -> (TcpConnection, TcpConnection) {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
@@ -292,10 +292,12 @@ mod tests {
         let _ = transport2.open_connection(listen_address).unwrap();
 
         let (res1, res2) = tokio::join!(transport1.next_connection(), transport2.next_connection());
-        let (mut stream1, mut stream2) = (res1.unwrap(), res2.unwrap());
+        (res1.unwrap(), res2.unwrap())
+    }
 
-        tracing::info!(target: LOG_TARGET, peer1 = ?stream1.peer_id(), peer2 = ?stream2.peer_id());
-
+    #[tokio::test]
+    async fn connect_and_accept_works() {
+        let (mut stream1, mut stream2) = build_two_connected_peers().await;
         let substream = stream1.open_substream(ProtocolName::from("/notification/1"));
 
         let mut stream1_res = None;
