@@ -78,9 +78,7 @@ impl TcpConnection {
 
         let config = NoiseConfiguration::new(&keypair, Role::Dialer);
         let stream = TcpStream::connect(address).await?;
-        let (stream, peer) = Self::negotiate_connection(stream, config).await?;
-
-        Ok(Self { stream, peer })
+        Self::negotiate_connection(stream, config).await
     }
 
     /// Accept a new connection.
@@ -92,9 +90,7 @@ impl TcpConnection {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
         let config = NoiseConfiguration::new(&keypair, Role::Listener);
-        let (stream, peer) = Self::negotiate_connection(stream, config).await?;
-
-        Ok(Self { stream, peer })
+        Self::negotiate_connection(stream, config).await
     }
 
     /// Negotiate protocol.
@@ -120,7 +116,7 @@ impl TcpConnection {
     async fn negotiate_connection(
         stream: TcpStream,
         config: NoiseConfiguration,
-    ) -> crate::Result<(Encrypted<Compat<TcpStream>>, PeerId)> {
+    ) -> crate::Result<Self> {
         tracing::trace!(
             target: LOG_TARGET,
             role = ?config.role,
@@ -152,7 +148,7 @@ impl TcpConnection {
             .inner();
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-        Ok((stream, peer))
+        Ok(Self { stream, peer })
     }
 }
 
