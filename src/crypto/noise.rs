@@ -66,13 +66,13 @@ const LOG_TARGET_MSG: &str = "crypto::noise::message";
 #[derive(Debug)]
 pub struct NoiseConfiguration {
     /// Noise handshake state.
-    noise: HandshakeState,
+    pub noise: HandshakeState,
 
     /// Role of the node.
-    role: Role,
+    pub role: Role,
 
     /// Payload that's sent as part of the libp2p Noise handshake.
-    payload: Vec<u8>,
+    pub payload: Vec<u8>,
 }
 
 impl NoiseConfiguration {
@@ -509,6 +509,47 @@ pub async fn handshake(
     );
 
     Ok((io, peer))
+}
+
+/// Noise-encrypted connection.
+pub struct Encrypted<S> {
+    socket: S,
+    noise: TransportState,
+}
+
+/// Perform Noise handshake.
+pub async fn handshake_new<S: AsyncRead + AsyncWrite + Unpin>(
+    io: S,
+    config: NoiseConfiguration,
+) -> crate::Result<(Encrypted<S>, PeerId)> {
+    tracing::trace!(target: LOG_TARGET, ?config, "start noise handshake");
+
+    let role = config.role;
+    let mut socket = NoiseSocket::new(io, NoiseHandshakeState(config.noise));
+    let mut buf = vec![0u8; 2048];
+
+    let peer = match role {
+        Role::Dialer => {
+            socket.write(&[]).await?;
+            let read = socket.read(&mut buf).await?;
+            socket.write(&config.payload).await?;
+            parse_peer_id(&buf[..read])?
+        }
+        Role::Listener => {
+            socket.read(&mut buf).await?;
+            socket.write(&config.payload).await?;
+            let read = socket.read(&mut buf).await?;
+            parse_peer_id(&buf[..read])?
+        }
+    };
+
+    Ok((
+        Encrypted {
+            socket: socket.io,
+            noise: socket.noise.into_transport_mode()?,
+        },
+        peer,
+    ))
 }
 
 #[cfg(test)]
