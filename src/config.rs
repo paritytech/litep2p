@@ -129,7 +129,7 @@ impl TransportConfig {
 }
 
 /// Litep2p configuration.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     /// Keypair.
     keypair: Keypair,
@@ -151,5 +151,31 @@ impl Config {
     /// Get protocols.
     pub fn protocols(&self) -> &Vec<ProtocolName> {
         &self.protocols
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::ed25519::Keypair;
+
+    #[test]
+    fn collect_protocols() {
+        let keypair = Keypair::generate();
+        let config = Config::new(
+            keypair,
+            vec![
+                ProtocolName::from("/notification/1"),
+                ProtocolName::from("/notification/2"),
+            ],
+        );
+
+        let protocols: Vec<ProtocolName> = config.protocols().clone();
+        let protocols = protocols
+            .iter()
+            .map(|protocol| &**protocol)
+            .collect::<Vec<&str>>();
+
+        println!("{protocols:?}");
     }
 }
