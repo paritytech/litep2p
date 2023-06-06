@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    config::Role,
+    config::{Config, Role},
     crypto::{
         ed25519::Keypair,
         noise::{self, Encrypted, NoiseConfiguration},
@@ -31,7 +31,7 @@ use crate::{
         tcp_new::config::TransportConfig, Connection, ConnectionNew, Direction, Transport,
         TransportEvent, TransportNew, TransportService,
     },
-    types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
+    types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
 
@@ -171,21 +171,77 @@ impl ConnectionNew for TcpConnection {
     }
 
     /// Open substream for `protocol`.
-    async fn open_substream(&mut self) -> crate::Result<yamux::Stream> {
-        self.control.open_stream().await.map_err(From::from)
+    fn open_substream(&mut self, protocol: ProtocolName) -> usize {
+        let mut control = self.control.clone();
+        let substream = self.next_substream_id();
+
+        self.pending_substreams.push(Box::pin(async move {
+            tracing::trace!(target: LOG_TARGET, ?substream, ?protocol, "open substream");
+
+            let stream = match control.open_stream().await {
+                Ok(stream) => {
+                    tracing::trace!(target: LOG_TARGET, ?substream, "substream opened");
+                    stream
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?substream,
+                        ?error,
+                        "failed to open substream"
+                    );
+                    return Err(Error::YamuxError(substream, error));
+                }
+            };
+
+            let io = Self::negotiate_protocol(stream, &Role::Dialer, vec![&protocol])
+                .await?
+                .inner();
+
+            Ok(Substream { io, substream })
+        }));
+
+        substream
     }
 
     /// Poll next substream.
-    async fn next_substream(&mut self) -> Result<(), ()> {
-        todo!();
+    async fn next_substream(&mut self) -> crate::Result<Self::Substream> {
+        loop {
+            tokio::select! {
+                substream = self.connection.next() => match substream {
+                    Some(Ok(stream)) => {
+                        let protocols = self.protocols().clone();
+                        let substream = self.next_substream_id();
+
+                        self.pending_substreams.push(Box::pin(async move {
+                            tracing::trace!(target: LOG_TARGET, ?substream, "accept inbound substream");
+
+                            let io = Self::negotiate_protocol(stream, &Role::Dialer, protocols)
+                                .await?
+                                .inner();
+
+                            Ok(Substream { io, substream })
+                        }));
+                    },
+                    Some(Err(error)) => {
+                        tracing::error!(target: LOG_TARGET, ?error, "failed to poll inbound substream");
+                        return Err(Error::SubstreamError(SubstreamError::YamuxError(error)));
+                    }
+                    None => return Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
+                },
+                substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
+                    return substream
+                }
+            }
+        }
     }
 }
 
 /// TCP transport.
 #[derive(Debug)]
 pub struct TcpTransport {
-    /// Transport configuration.
-    config: TransportConfig,
+    /// Configuration.
+    config: Config,
 
     /// TCP listener.
     listener: TcpListener,
@@ -260,10 +316,14 @@ impl TransportNew for TcpTransport {
     type Config = TransportConfig;
 
     /// Create new [`TcpTransport`].
-    async fn new(config: TransportConfig) -> crate::Result<Self> {
-        tracing::info!(target: LOG_TARGET, listen_address = ?config.listen_address, "start tcp transport");
+    async fn new(config: Config, transport_config: TransportConfig) -> crate::Result<Self> {
+        tracing::info!(
+            target: LOG_TARGET,
+            listen_address = ?transport_config.listen_address,
+            "start tcp transport",
+        );
 
-        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
+        let (listen_address, _) = Self::get_socket_address(&transport_config.listen_address)?;
         let listener = TcpListener::bind(listen_address).await?;
         let listen_address = listener.local_addr()?;
 
@@ -285,7 +345,7 @@ impl TransportNew for TcpTransport {
 
     /// Open connection to remote peer at `address`.
     fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()> {
-        let keypair = self.config.keypair.clone();
+        let keypair = self.config.keypair().clone();
         let (socket_address, peer) = Self::get_socket_address(&address)?;
 
         self.pending_connections.push(Box::pin(async move {
@@ -301,7 +361,7 @@ impl TransportNew for TcpTransport {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
-                        let keypair = self.config.keypair.clone();
+                        let keypair = self.config.keypair().clone();
                         self.pending_connections.push(Box::pin(async move {
                             TcpConnection::accept(connection, keypair, address).await
                         }));
@@ -319,7 +379,7 @@ impl TransportNew for TcpTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Libp2pProtocol, ProtocolName};
+    use crate::{protocol::Libp2pProtocol, types::protocol::ProtocolName};
 
     #[test]
     fn parse_multiaddresses() {
@@ -366,17 +426,35 @@ mod tests {
             .try_init();
 
         let keypair1 = Keypair::generate();
-        let mut transport1 = TcpTransport::new(TransportConfig {
-            keypair: keypair1.clone(),
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-        })
+        let config = Config::new(
+            keypair1.clone(),
+            vec![ProtocolName::from("/notification/1")],
+        );
+
+        let mut transport1 = TcpTransport::new(
+            config,
+            TransportConfig {
+                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            },
+        )
         .await
         .unwrap();
+
         let keypair2 = Keypair::generate();
-        let mut transport2 = TcpTransport::new(TransportConfig {
-            keypair: keypair2.clone(),
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-        })
+        let config = Config::new(
+            keypair2.clone(),
+            vec![
+                ProtocolName::from("/notification/1"),
+                ProtocolName::from("/notification/2"),
+            ],
+        );
+
+        let mut transport2 = TcpTransport::new(
+            config,
+            TransportConfig {
+                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            },
+        )
         .await
         .unwrap();
 

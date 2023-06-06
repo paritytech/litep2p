@@ -27,7 +27,4 @@ use multiaddr::Multiaddr;
 pub struct TransportConfig {
     /// Listening address for the transport.
     pub listen_address: Multiaddr,
-
-    /// Key pair.
-    pub keypair: Keypair,
 }

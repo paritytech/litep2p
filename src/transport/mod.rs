@@ -19,11 +19,11 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    config::TransportConfig,
+    config::{Config, TransportConfig},
     crypto::{ed25519::Keypair, noise::NoiseConfiguration},
     error::Error,
     peer_id::PeerId,
-    types::{ProtocolId, ProtocolType, RequestId, SubstreamId},
+    types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
 };
 
 use futures::{
@@ -139,7 +139,7 @@ trait TransportNew {
     type Config: Debug;
 
     /// Create new [`Transport`] object.
-    async fn new(config: Self::Config) -> crate::Result<Self>
+    async fn new(config: Config, transport_config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized;
 
