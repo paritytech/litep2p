@@ -19,17 +19,18 @@
 // DEALINGS IN THE SOFTWARE.
 
 /// Protocol name.
-pub enum NewProtocolName {
+#[derive(Debug)]
+pub enum ProtocolName {
     Static(&'static str),
 }
 
-impl From<&'static str> for NewProtocolName {
+impl From<&'static str> for ProtocolName {
     fn from(protocol: &'static str) -> Self {
-        NewProtocolName::Static(protocol)
+        ProtocolName::Static(protocol)
     }
 }
 
-impl std::ops::Deref for NewProtocolName {
+impl std::ops::Deref for ProtocolName {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {

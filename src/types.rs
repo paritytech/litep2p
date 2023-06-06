@@ -20,7 +20,7 @@
 
 use std::fmt::Display;
 
-mod protocol;
+pub mod protocol;
 
 /// Unique identifier for a peer.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
