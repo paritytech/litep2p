@@ -53,10 +53,12 @@ mod config;
 const LOG_TARGET: &str = "tcp";
 
 /// TCP connection.
-#[derive(Debug)]
 pub struct TcpConnection {
-    /// TCP stream.
-    stream: Encrypted<Compat<TcpStream>>,
+    /// Yamux connection.
+    connection: yamux::ControlledConnection<Encrypted<Compat<TcpStream>>>,
+
+    /// Yamux control.
+    control: yamux::Control,
 
     /// Remote peer ID.
     peer: PeerId,
@@ -148,7 +150,14 @@ impl TcpConnection {
             .inner();
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-        Ok(Self { stream, peer })
+        let connection = yamux::Connection::new(stream, yamux::Config::default(), role.into());
+        let (control, mut connection) = yamux::Control::new(connection);
+
+        Ok(Self {
+            connection,
+            control,
+            peer,
+        })
     }
 }
 
