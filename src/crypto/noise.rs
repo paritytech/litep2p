@@ -512,9 +512,212 @@ pub async fn handshake(
 }
 
 /// Noise-encrypted connection.
-pub struct Encrypted<S> {
+#[derive(Debug)]
+pub struct Encrypted<S: AsyncRead + AsyncWrite + Unpin> {
+    /// Underlying socket.
     socket: S,
+
+    /// Noise transport state.
     noise: TransportState,
+
+    /// Buffer used by `snow` as destination for encrypted data.
+    write_buffer: Vec<u8>,
+
+    /// Buffer used by `snow` as destination for decrypted data.
+    read_buffer: Vec<u8>,
+
+    /// Buffer used by `snow` as destination for decrypted data.
+    decrypt_buffer: Vec<u8>,
+
+    /// Read state of the stream.
+    read_state: ReadState,
+
+    /// Write state of the stream.
+    write_state: WriteState,
+}
+
+// TODO: optimize
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Encrypted<S> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let mut this = Pin::into_inner(self);
+
+        loop {
+            match this.read_state {
+                ReadState::Ready => {
+                    this.read_state = ReadState::ReadLen {
+                        buf: [0, 0],
+                        off: 0,
+                    };
+                }
+                ReadState::ReadLen { mut buf, mut off } => {
+                    let n = match read_frame_len(&mut this.socket, cx, &mut buf, &mut off) {
+                        Poll::Ready(Ok(Some(n))) => n,
+                        Poll::Ready(Ok(None)) => {
+                            this.read_state = ReadState::Eof(Ok(()));
+                            todo!();
+                            // return Poll::Ready(None);
+                        }
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => {
+                            this.read_state = ReadState::ReadLen { buf, off };
+                            return Poll::Pending;
+                        }
+                    };
+
+                    if n == 0 {
+                        this.read_state = ReadState::Ready;
+                        continue;
+                    }
+
+                    this.read_buffer.resize(usize::from(n), 0u8);
+                    this.read_state = ReadState::ReadData {
+                        len: usize::from(n),
+                        off: 0,
+                    }
+                }
+                ReadState::ReadData { len, ref mut off } => {
+                    let n = {
+                        let f = Pin::new(&mut this.socket)
+                            .poll_read(cx, &mut this.read_buffer[*off..len]);
+                        match ready!(f) {
+                            Ok(n) => n,
+                            Err(e) => return Poll::Ready(Err(e)),
+                        }
+                    };
+                    tracing::trace!(target: LOG_TARGET, "read: {}/{} bytes", *off + n, len);
+                    if n == 0 {
+                        tracing::trace!(target: LOG_TARGET, "read: eof");
+                        this.read_state = ReadState::Eof(Err(()));
+                        return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
+                    }
+                    *off += n;
+                    if len == *off {
+                        tracing::trace!(target: LOG_TARGET, "read: decrypting {} bytes", len,);
+                        this.decrypt_buffer.resize(len, 0u8);
+
+                        match this
+                            .noise
+                            .read_message(&this.read_buffer, &mut this.decrypt_buffer)
+                        {
+                            Ok(nread) => {
+                                this.decrypt_buffer.resize(nread, 0u8);
+                                let amount = std::cmp::min(buf.len(), nread);
+                                let new = this.decrypt_buffer.split_off(amount);
+                                buf[..amount].copy_from_slice(&this.decrypt_buffer);
+
+                                if amount >= nread {
+                                    this.read_state = ReadState::Ready
+                                } else {
+                                    this.read_state = ReadState::ReadBuffered { unread: new };
+                                }
+
+                                return Poll::Ready(Ok(amount));
+                            }
+                            Err(error) => {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    ?error,
+                                    "read: decryption error",
+                                );
+                                this.read_state = ReadState::DecErr;
+                                return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                            }
+                        }
+                    }
+                }
+                ReadState::ReadBuffered { ref mut unread } => {
+                    let amount = std::cmp::min(buf.len(), unread.len());
+                    let new = unread.split_off(amount);
+                    buf[..amount].copy_from_slice(&unread);
+
+                    if new.is_empty() {
+                        this.read_state = ReadState::Ready
+                    } else {
+                        this.read_state = ReadState::ReadBuffered { unread: new };
+                    }
+
+                    return Poll::Ready(Ok(amount));
+                }
+                ReadState::Eof(_res) => {
+                    tracing::trace!(target: LOG_TARGET, "read: eof");
+                    todo!();
+                    // return Poll::Ready(None);
+                }
+                ReadState::Eof(Err(())) => {
+                    tracing::trace!(target: LOG_TARGET, "read: eof (unexpected)");
+                    todo!();
+                    // return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())));
+                }
+                ReadState::DecErr => {
+                    tracing::trace!(target: LOG_TARGET, "read: decryption error");
+                    todo!();
+                    // return Poll::Ready(Some(Err(io::ErrorKind::InvalidData.into())))
+                }
+            }
+        }
+    }
+}
+
+// TODO: optimize
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Encrypted<S> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let mut this = Pin::into_inner(self);
+        this.write_buffer
+            .resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
+
+        match this.noise.write_message(&buf, &mut this.write_buffer) {
+            Ok(nwritten) => {
+                tracing::span!(
+                    target: LOG_TARGET,
+                    tracing::Level::TRACE,
+                    "write: send data"
+                )
+                .enter();
+                tracing::event!(
+                    target: LOG_TARGET,
+                    tracing::Level::TRACE,
+                    size = ?nwritten,
+                    "write: send message",
+                );
+                tracing::event!(
+                    target: LOG_TARGET_MSG,
+                    tracing::Level::TRACE,
+                    buffer =? this.write_buffer[..nwritten],
+                );
+
+                Pin::new(&mut this.socket).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
+                Pin::new(&mut this.socket).poll_write(cx, &this.write_buffer[..nwritten]);
+
+                return Poll::Ready(Ok(buf.len()));
+            }
+            Err(error) => {
+                tracing::error!(target: LOG_TARGET, ?error, "write: encryption error");
+                return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+            }
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        Pin::into_inner(self).socket.flush().poll_unpin(cx)
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        Pin::into_inner(self).socket.close().poll_unpin(cx)
+    }
 }
 
 /// Perform Noise handshake.
@@ -547,6 +750,11 @@ pub async fn handshake_new<S: AsyncRead + AsyncWrite + Unpin>(
         Encrypted {
             socket: socket.io,
             noise: socket.noise.into_transport_mode()?,
+            write_buffer: Vec::new(),
+            read_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
+            decrypt_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
+            read_state: ReadState::Ready,
+            write_state: WriteState::Ready,
         },
         peer,
     ))
