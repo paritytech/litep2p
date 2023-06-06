@@ -18,9 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::protocol::{
-    notification::NotificationProtocolConfig, request_response::RequestResponseProtocolConfig,
-    Libp2pProtocol, NotificationProtocol,
+use crate::{
+    crypto::ed25519::Keypair,
+    protocol::{
+        notification::NotificationProtocolConfig, request_response::RequestResponseProtocolConfig,
+        Libp2pProtocol, NotificationProtocol,
+    },
+    types::protocol::ProtocolName,
 };
 
 use multiaddr::Multiaddr;
@@ -121,5 +125,31 @@ impl TransportConfig {
     /// Get the number of maximum open connections.
     pub fn max_connections(&self) -> usize {
         self.max_connections
+    }
+}
+
+/// Litep2p configuration.
+#[derive(Debug)]
+pub struct Config {
+    /// Keypair.
+    keypair: Keypair,
+
+    /// Supported protocols.
+    protocols: Vec<ProtocolName>,
+}
+
+impl Config {
+    pub fn new(keypair: Keypair, protocols: Vec<ProtocolName>) -> Self {
+        Self { keypair, protocols }
+    }
+
+    /// Get keypair.
+    pub fn keypair(&self) -> &Keypair {
+        &self.keypair
+    }
+
+    /// Get protocols.
+    pub fn protocols(&self) -> &Vec<ProtocolName> {
+        &self.protocols
     }
 }
