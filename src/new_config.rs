@@ -96,7 +96,7 @@ pub struct Litep2pConfig {
     enable_ping: bool,
 
     /// Installed protocols.
-    protocols: Vec<ProtocolName>,
+    pub(crate) protocols: Vec<ProtocolName>,
 }
 
 impl Litep2pConfig {

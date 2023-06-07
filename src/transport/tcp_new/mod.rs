@@ -208,7 +208,9 @@ impl TransportNew for TcpTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{protocol::Libp2pProtocol, types::protocol::ProtocolName};
+    use crate::{
+        new_config::Litep2pConfigBuilder, protocol::Libp2pProtocol, types::protocol::ProtocolName,
+    };
 
     #[test]
     fn parse_multiaddresses() {
@@ -255,37 +257,28 @@ mod tests {
             .try_init();
 
         let keypair1 = Keypair::generate();
-        let config = Config::new(
-            keypair1.clone(),
-            vec![ProtocolName::from("/notification/1")],
-        );
-
-        let mut transport1 = TcpTransport::new(
-            config,
-            TransportConfig {
+        let mut config = Litep2pConfigBuilder::new()
+            .with_keypair(keypair1.clone())
+            .with_tcp(TransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .build();
+        config.protocols = vec![ProtocolName::from("/notification/1")];
+
+        let mut transport1 = TcpTransport::new(config).await.unwrap();
 
         let keypair2 = Keypair::generate();
-        let config = Config::new(
-            keypair2.clone(),
-            vec![
-                ProtocolName::from("/notification/1"),
-                ProtocolName::from("/notification/2"),
-            ],
-        );
-
-        let mut transport2 = TcpTransport::new(
-            config,
-            TransportConfig {
+        let mut config = Litep2pConfigBuilder::new()
+            .with_keypair(keypair2.clone())
+            .with_tcp(TransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .build();
+        config.protocols = vec![
+            ProtocolName::from("/notification/1"),
+            ProtocolName::from("/notification/2"),
+        ];
+        let mut transport2 = TcpTransport::new(config).await.unwrap();
 
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public().clone()));
         let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public().clone()));
