@@ -348,4 +348,31 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    async fn dial_failure() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let keypair = Keypair::generate();
+        let mut config = Litep2pConfigBuilder::new()
+            .with_keypair(keypair)
+            .with_tcp(TransportConfig {
+                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            })
+            .build();
+        config.protocols = vec![ProtocolName::from("/notification/1")];
+
+        let mut transport = TcpTransport::new(config).await.unwrap();
+        let _ = transport
+            .open_connection("/ip6/::1/tcp/33013".parse().unwrap())
+            .unwrap();
+
+        let event = transport.next_connection().await;
+        assert!(std::matches!(
+            event,
+            Err(Error::IoError(io::ErrorKind::ConnectionRefused))
+        ));
+    }
 }
