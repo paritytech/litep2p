@@ -123,7 +123,7 @@ pub trait NewTransportService: Send {
 // TODO: introduce error type?
 // TODO: introduce `Substream` trait?
 #[async_trait::async_trait]
-trait ConnectionNew {
+pub trait ConnectionNew {
     type Substream: Debug + AsyncRead + AsyncWrite + Unpin;
 
     /// Get remote peer ID.
@@ -144,7 +144,7 @@ trait ConnectionNew {
 
 // TODO: introduce error type?
 #[async_trait::async_trait]
-trait TransportNew {
+pub trait TransportNew {
     type Connection: ConnectionNew;
     type Config: Debug;
 

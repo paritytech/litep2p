@@ -174,6 +174,8 @@ impl TransportNew for TcpTransport {
 
     /// Open connection to remote peer at `address`.
     fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?address, "open connection");
+
         let config = self.config.clone();
         let (socket_address, peer) = Self::get_socket_address(&address)?;
 

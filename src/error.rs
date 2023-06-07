@@ -64,6 +64,8 @@ pub enum Error {
     TransportNotSupported(Multiaddr),
     #[error("Yamux error for substream `{0}`: `{1}`")]
     YamuxError(usize, yamux::ConnectionError),
+    #[error("Operation not supported: `{0}`")]
+    NotSupported(String),
 }
 
 #[derive(Debug, thiserror::Error)]
