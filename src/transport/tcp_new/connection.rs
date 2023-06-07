@@ -50,7 +50,7 @@ use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatE
 use tracing::{instrument, Level};
 
 use std::{
-    io,
+    fmt, io,
     net::{IpAddr, SocketAddr},
     pin::Pin,
 };
@@ -74,6 +74,16 @@ pub struct TcpConnection {
 
     /// Pending substreams.
     pending_substreams: FuturesUnordered<BoxFuture<'static, crate::Result<Substream>>>,
+}
+
+impl fmt::Debug for TcpConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TcpConnection")
+            .field("config", &self.config)
+            .field("peer", &self.peer)
+            .field("next_substream_id", &self.next_substream_id)
+            .finish()
+    }
 }
 
 impl TcpConnection {
