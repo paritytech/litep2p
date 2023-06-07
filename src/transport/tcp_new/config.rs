@@ -23,7 +23,7 @@ use crate::crypto::ed25519::Keypair;
 use multiaddr::Multiaddr;
 
 // Transport configuration.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TransportConfig {
     /// Listening address for the transport.
     pub listen_address: Multiaddr,

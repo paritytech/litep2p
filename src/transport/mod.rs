@@ -22,6 +22,7 @@ use crate::{
     config::{Config, TransportConfig},
     crypto::{ed25519::Keypair, noise::NoiseConfiguration},
     error::Error,
+    new_config::Litep2pConfig,
     peer_id::PeerId,
     types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
 };
@@ -148,7 +149,7 @@ trait TransportNew {
     type Config: Debug;
 
     /// Create new [`Transport`] object.
-    async fn new(config: Config, transport_config: Self::Config) -> crate::Result<Self>
+    async fn new(config: Litep2pConfig) -> crate::Result<Self>
     where
         Self: Sized;
 

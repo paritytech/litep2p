@@ -21,7 +21,7 @@
 use crate::{
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
-    new_config::Litep2pConfiguration,
+    new_config::Litep2pConfig,
     peer_id::PeerId,
     protocol::{
         libp2p::{identify, ping, Libp2pProtocolEvent},
@@ -53,22 +53,18 @@ pub struct Litep2p {
     local_peer_id: PeerId,
 
     // Litep2p configuration.
-    config: Litep2pConfiguration,
+    config: Litep2pConfig,
 }
 
 impl Litep2p {
     /// Create new [`Litep2p`].
-    pub async fn new(config: Litep2pConfiguration) -> crate::Result<Litep2p> {
-        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(
-            config.keypair.clone().expect("keypair to exist").public(),
-        ));
+    pub async fn new(config: Litep2pConfig) -> crate::Result<Litep2p> {
+        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair().public()));
 
         // enable tcp transport if the config exists
-        if let Some(config) = config.tcp {
+        if let Some(config) = config.tcp() {
             todo!();
         }
-
-        // TODO: how to store connections?
 
         Ok(Self {
             local_peer_id,

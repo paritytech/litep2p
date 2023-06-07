@@ -19,13 +19,14 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    config::{Config, Role},
+    config::Role,
     crypto::{
         ed25519::Keypair,
         noise::{self, Encrypted, NoiseConfiguration},
         PublicKey,
     },
     error::{AddressError, Error, SubstreamError},
+    new_config::Litep2pConfig,
     peer_id::PeerId,
     transport::{
         tcp_new::{
@@ -57,7 +58,7 @@ use std::{
 /// TCP connection.
 pub struct TcpConnection {
     /// Configuration.
-    config: Config,
+    config: Litep2pConfig,
 
     /// Yamux connection.
     connection: yamux::ControlledConnection<Encrypted<Compat<TcpStream>>>,
@@ -78,7 +79,7 @@ pub struct TcpConnection {
 impl TcpConnection {
     /// Open connection to remote peer at `address`.
     pub async fn open_connection(
-        config: Config,
+        config: Litep2pConfig,
         address: SocketAddr,
         peer: Option<PeerId>,
     ) -> crate::Result<Self> {
@@ -128,7 +129,7 @@ impl TcpConnection {
     /// Accept a new connection.
     pub async fn accept_connection(
         stream: TcpStream,
-        config: Config,
+        config: Litep2pConfig,
         address: SocketAddr,
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
@@ -183,7 +184,7 @@ impl TcpConnection {
     /// Negotiate noise + yamux for the connection.
     async fn negotiate_connection(
         stream: TcpStream,
-        config: Config,
+        config: Litep2pConfig,
         noise_config: NoiseConfiguration,
     ) -> crate::Result<Self> {
         tracing::trace!(

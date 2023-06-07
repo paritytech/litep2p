@@ -22,20 +22,29 @@ use crate::{crypto::ed25519::Keypair, transport::tcp_new::config, types::protoco
 
 use multiaddr::Multiaddr;
 
-pub struct Litep2pConfiguration {
+#[derive(Debug, Clone)]
+pub struct Litep2pConfigBuilder {
     // TCP transport configuration.
     pub(crate) tcp: Option<config::TransportConfig>,
 
     /// Keypair.
     pub(crate) keypair: Option<Keypair>,
+
+    /// Installed protocols.
+    pub(crate) protocols: Vec<ProtocolName>,
+
+    /// Enable `/ipfs/ping/1.0.0`.
+    pub(crate) enable_ping: bool,
 }
 
-impl Litep2pConfiguration {
-    /// Create new empty [`NewLiteP2pConfiguration`].
+impl Litep2pConfigBuilder {
+    /// Create new empty [`LiteP2pConfigBuilder`].
     pub fn new() -> Self {
         Self {
             tcp: None,
             keypair: None,
+            enable_ping: false,
+            protocols: Vec::new(),
         }
     }
 
@@ -52,18 +61,57 @@ impl Litep2pConfiguration {
     }
 
     /// With `/ipfs/ping/1.0.0` protocol.
-    pub fn with_ping(self) -> Self {
+    pub fn with_ping(mut self) -> Self {
+        self.enable_ping = true;
         self
     }
 
-    /// Build [`NewLiteP2pConfiguration`].
+    /// Build [`Litep2pConfig`].
     ///
     /// Generates a default keypair if user didn't provide one.
-    pub fn build(mut self) -> Self {
-        if self.keypair.is_none() {
-            self.keypair = Some(Keypair::generate());
-        }
+    pub fn build(mut self) -> Litep2pConfig {
+        let keypair = match self.keypair {
+            Some(keypair) => keypair,
+            None => Keypair::generate(),
+        };
 
-        self
+        Litep2pConfig {
+            keypair,
+            tcp: self.tcp.take(),
+            enable_ping: self.enable_ping,
+            protocols: self.protocols,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Litep2pConfig {
+    // TCP transport configuration.
+    tcp: Option<config::TransportConfig>,
+
+    /// Keypair.
+    keypair: Keypair,
+
+    /// Enable `/ipfs/ping/1.0.0`.
+    enable_ping: bool,
+
+    /// Installed protocols.
+    protocols: Vec<ProtocolName>,
+}
+
+impl Litep2pConfig {
+    /// Get keypair.
+    pub fn keypair(&self) -> &Keypair {
+        &self.keypair
+    }
+
+    /// Get installed protocols.
+    pub fn protocols(&self) -> &Vec<ProtocolName> {
+        &self.protocols
+    }
+
+    /// Get TCP transport configuration.
+    pub fn tcp(&self) -> &Option<config::TransportConfig> {
+        &self.tcp
     }
 }

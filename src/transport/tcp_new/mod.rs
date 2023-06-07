@@ -26,6 +26,7 @@ use crate::{
         PublicKey,
     },
     error::{AddressError, Error, SubstreamError},
+    new_config::Litep2pConfig,
     peer_id::PeerId,
     transport::{
         tcp_new::{
@@ -67,7 +68,7 @@ const LOG_TARGET: &str = "tcp";
 #[derive(Debug)]
 pub struct TcpTransport {
     /// Configuration.
-    config: Config,
+    config: Litep2pConfig,
 
     /// TCP listener.
     listener: TcpListener,
@@ -142,7 +143,9 @@ impl TransportNew for TcpTransport {
     type Config = TransportConfig;
 
     /// Create new [`TcpTransport`].
-    async fn new(config: Config, transport_config: TransportConfig) -> crate::Result<Self> {
+    async fn new(config: Litep2pConfig) -> crate::Result<Self> {
+        let transport_config = config.tcp().as_ref().expect("tcp configuration to exist");
+
         tracing::info!(
             target: LOG_TARGET,
             listen_address = ?transport_config.listen_address,
