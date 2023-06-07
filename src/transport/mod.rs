@@ -142,11 +142,21 @@ pub trait ConnectionNew {
     async fn next_substream(&mut self) -> crate::Result<Self::Substream>;
 }
 
+/// Trait which allows `litep2p` to associate dial failures to opened connections.
+pub trait TransportError {
+    /// Get connection ID.
+    fn connection_id(&self) -> &Option<usize>;
+
+    /// Get error.
+    fn error(&self) -> &Error;
+}
+
 // TODO: introduce error type?
 #[async_trait::async_trait]
 pub trait TransportNew {
-    type Connection: ConnectionNew;
     type Config: Debug;
+    type Error: TransportError;
+    type Connection: ConnectionNew;
 
     /// Create new [`Transport`] object.
     async fn new(config: Litep2pConfig) -> crate::Result<Self>

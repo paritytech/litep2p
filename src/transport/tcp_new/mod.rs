@@ -33,8 +33,8 @@ use crate::{
             config::TransportConfig,
             connection::{Substream, TcpConnection},
         },
-        Connection, ConnectionNew, Direction, Transport, TransportEvent, TransportNew,
-        TransportService,
+        Connection, ConnectionNew, Direction, Transport, TransportError, TransportEvent,
+        TransportNew, TransportService,
     },
     types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
@@ -63,6 +63,33 @@ pub mod config;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "tcp";
+
+pub struct TcpError {
+    /// Error.
+    error: Error,
+
+    /// Connection ID.
+    connection_id: Option<usize>,
+}
+
+impl TcpError {
+    pub fn new(error: Error, connection_id: Option<usize>) -> Self {
+        Self {
+            error,
+            connection_id,
+        }
+    }
+}
+
+impl TransportError for TcpError {
+    fn connection_id(&self) -> &Option<usize> {
+        &self.connection_id
+    }
+
+    fn error(&self) -> &Error {
+        &self.error
+    }
+}
 
 /// TCP transport.
 #[derive(Debug)]
@@ -149,8 +176,9 @@ impl TcpTransport {
 
 #[async_trait::async_trait]
 impl TransportNew for TcpTransport {
-    type Connection = TcpConnection;
+    type Error = TcpError;
     type Config = TransportConfig;
+    type Connection = TcpConnection;
 
     /// Create new [`TcpTransport`].
     async fn new(config: Litep2pConfig) -> crate::Result<Self> {
