@@ -23,7 +23,7 @@ use crate::{
     error::Error,
     new_config::Litep2pConfig,
     peer_id::PeerId,
-    transport::{tcp_new::TcpTransport, TransportNew},
+    transport::{tcp_new::TcpTransport, TransportError, TransportNew},
     LOG_TARGET,
 };
 
@@ -41,6 +41,7 @@ use std::{
 };
 
 /// Litep2p events.
+#[derive(Debug)]
 pub enum Litep2pEvent {
     /// Connection established to peer.
     ConnectionEstablished {
@@ -53,8 +54,11 @@ pub enum Litep2pEvent {
 
     /// Failed to dial peer.
     DialFailure {
-        /// Remote peer ID.
-        peer: PeerId,
+        /// Address of the peer.
+        address: Multiaddr,
+
+        /// Dial error.
+        error: Error,
     },
 }
 
@@ -75,7 +79,7 @@ pub struct Litep2p {
     tcp: TcpTransport,
 
     /// Pending connections.
-    pending_connections: HashSet<usize>,
+    pending_connections: HashMap<usize, Multiaddr>,
 }
 
 impl Litep2p {
@@ -93,7 +97,7 @@ impl Litep2p {
             tcp,
             config,
             local_peer_id,
-            pending_connections: HashSet::new(),
+            pending_connections: HashMap::new(),
         })
     }
 
@@ -131,8 +135,8 @@ impl Litep2p {
 
         match protocol_stack.next() {
             Some("tcp") => {
-                self.pending_connections
-                    .insert(self.tcp.open_connection(address)?);
+                let connection_id = self.tcp.open_connection(address.clone())?;
+                self.pending_connections.insert(connection_id, address);
                 Ok(())
             }
             protocol => {
@@ -147,11 +151,32 @@ impl Litep2p {
     }
 
     /// Poll next event.
-    pub async fn poll_next(&mut self) -> Option<()> {
+    pub async fn poll_next(&mut self) -> crate::Result<Litep2pEvent> {
         loop {
             tokio::select! {
                 event = self.tcp.next_connection() => match event {
-                    event => tracing::warn!(target: LOG_TARGET, "ignoring connection"),
+                    Ok(connection) => {
+                        tracing::info!(target: LOG_TARGET, "got connection");
+                    }
+                    Err(error) => {
+                        tracing::debug!(target: LOG_TARGET, ?error, "failed to poll next connection");
+
+                        match error.connection_id() {
+                            Some(connection_id) => match self.pending_connections.remove(&connection_id) {
+                                Some(address) => {
+                                    return Ok(Litep2pEvent::DialFailure {
+                                        address,
+                                        error: error.into_error(),
+                                    });
+                                }
+                                None => panic!("dial failed but there is no pending connection"),
+                            },
+                            None => {
+                                debug_assert!(false);
+                                return Err(error.into_error())
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -162,7 +187,8 @@ impl Litep2p {
 mod tests {
     use crate::{
         crypto::ed25519::Keypair,
-        new::{Litep2p, SupportedProtocol},
+        error::Error,
+        new::{Litep2p, Litep2pEvent, SupportedProtocol},
         new_config::{Litep2pConfig, Litep2pConfigBuilder},
         transport::tcp_new::config::TransportConfig,
         types::protocol::ProtocolName,
@@ -205,6 +231,30 @@ mod tests {
                 event = litep2p1.poll_next() => {}
                 event = litep2p2.poll_next() => {}
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn dial_failure() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let config1 = generate_config(vec![ProtocolName::from("/notification/1")]);
+        let mut litep2p = Litep2p::new(config1).await.unwrap();
+
+        litep2p.connect("/ip6/::1/tcp/1".parse().unwrap()).unwrap();
+
+        assert_eq!(litep2p.pending_connections.len(), 1);
+
+        if let Ok(Litep2pEvent::DialFailure { address, error }) = litep2p.poll_next().await {
+            assert_eq!(address, "/ip6/::1/tcp/1".parse().unwrap());
+            assert!(std::matches!(
+                error,
+                Error::IoError(std::io::ErrorKind::ConnectionRefused)
+            ));
+        } else {
+            panic!("invalid event");
         }
     }
 }

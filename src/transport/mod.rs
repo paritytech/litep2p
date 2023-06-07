@@ -145,10 +145,10 @@ pub trait ConnectionNew {
 /// Trait which allows `litep2p` to associate dial failures to opened connections.
 pub trait TransportError {
     /// Get connection ID.
-    fn connection_id(&self) -> &Option<usize>;
+    fn connection_id(&self) -> Option<usize>;
 
-    /// Get error.
-    fn error(&self) -> &Error;
+    /// Convert [`TransportError`] into `Error`
+    fn into_error(self) -> Error;
 }
 
 // TODO: introduce error type?
@@ -172,5 +172,5 @@ pub trait TransportNew {
     fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize>;
 
     /// Poll next connection.
-    async fn next_connection(&mut self) -> crate::Result<Self::Connection>;
+    async fn next_connection(&mut self) -> Result<Self::Connection, Self::Error>;
 }

@@ -64,6 +64,7 @@ pub mod config;
 /// Logging target for the file.
 const LOG_TARGET: &str = "tcp";
 
+#[derive(Debug)]
 pub struct TcpError {
     /// Error.
     error: Error,
@@ -82,12 +83,12 @@ impl TcpError {
 }
 
 impl TransportError for TcpError {
-    fn connection_id(&self) -> &Option<usize> {
-        &self.connection_id
+    fn connection_id(&self) -> Option<usize> {
+        self.connection_id
     }
 
-    fn error(&self) -> &Error {
-        &self.error
+    fn into_error(self) -> Error {
+        self.error
     }
 }
 
@@ -107,7 +108,7 @@ pub struct TcpTransport {
     next_connection_id: usize,
 
     /// Pending connections.
-    pending_connections: FuturesUnordered<BoxFuture<'static, crate::Result<TcpConnection>>>,
+    pending_connections: FuturesUnordered<BoxFuture<'static, Result<TcpConnection, TcpError>>>,
 }
 
 impl TcpTransport {
@@ -220,25 +221,30 @@ impl TransportNew for TcpTransport {
         let connection_id = self.next_connection_id();
 
         self.pending_connections.push(Box::pin(async move {
-            TcpConnection::open_connection(connection_id, config, socket_address, peer).await
+            TcpConnection::open_connection(connection_id, config, socket_address, peer)
+                .await
+                .map_err(|error| TcpError::new(error, Some(connection_id)))
         }));
 
         Ok(connection_id)
     }
 
     /// Poll next connection from [`TcpTransport`].
-    async fn next_connection(&mut self) -> crate::Result<Self::Connection> {
+    async fn next_connection(&mut self) -> Result<Self::Connection, TcpError> {
         loop {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
                         let config = self.config.clone();
                         let connection_id = self.next_connection_id();
+
                         self.pending_connections.push(Box::pin(async move {
-                            TcpConnection::accept_connection(connection, connection_id, config, address).await
+                            TcpConnection::accept_connection(connection, connection_id, config, address)
+                                .await
+                                .map_err(|error| TcpError::new(error, Some(connection_id)))
                         }));
                     }
-                    Err(err) => return Err(err.into()),
+                    Err(err) => return Err(TcpError::new(err.into(), None)),
                 },
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
                     return connection
@@ -407,13 +413,15 @@ mod tests {
 
         let mut transport = TcpTransport::new(config).await.unwrap();
         let _ = transport
-            .open_connection("/ip6/::1/tcp/33013".parse().unwrap())
+            .open_connection("/ip6/::1/tcp/1".parse().unwrap())
             .unwrap();
 
-        let event = transport.next_connection().await;
-        assert!(std::matches!(
-            event,
-            Err(Error::IoError(io::ErrorKind::ConnectionRefused))
-        ));
+        let TcpError {
+            error,
+            connection_id,
+        } = transport.next_connection().await.unwrap_err();
+
+        assert_eq!(connection_id, Some(0));
+        std::matches!(error, Error::IoError(io::ErrorKind::ConnectionRefused));
     }
 }

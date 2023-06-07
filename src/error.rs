@@ -66,6 +66,8 @@ pub enum Error {
     YamuxError(usize, yamux::ConnectionError),
     #[error("Operation not supported: `{0}`")]
     NotSupported(String),
+    #[error("Other error occurred: `{0}`")]
+    Other(String),
 }
 
 #[derive(Debug, thiserror::Error)]
