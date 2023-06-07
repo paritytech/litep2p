@@ -56,8 +56,9 @@ use std::{
     pin::Pin,
 };
 
-mod config;
 mod connection;
+
+pub mod config;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "tcp";

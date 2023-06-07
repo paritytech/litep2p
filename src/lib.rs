@@ -56,6 +56,7 @@ pub mod protocol;
 
 mod crypto;
 mod error;
+mod new;
 mod new_config;
 mod peer_id;
 mod transport;
