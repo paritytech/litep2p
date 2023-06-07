@@ -25,7 +25,7 @@ use crate::{
         Libp2pProtocol, NotificationProtocol,
     },
     transport::tcp_new::config,
-    types::protocol::ProtocolName,
+    types::{self, protocol::ProtocolName},
 };
 
 use multiaddr::Multiaddr;
@@ -46,47 +46,6 @@ impl Into<yamux::Mode> for Role {
             Role::Dialer => yamux::Mode::Client,
             Role::Listener => yamux::Mode::Server,
         }
-    }
-}
-
-pub struct NewLitep2pConfiguration {
-    // TCP transport configuration.
-    pub(crate) tcp: Option<config::TransportConfig>,
-
-    /// Keypair.
-    pub(crate) keypair: Option<Keypair>,
-}
-
-impl NewLitep2pConfiguration {
-    /// Create new empty [`NewLiteP2pConfiguration`].
-    pub fn new() -> Self {
-        Self {
-            tcp: None,
-            keypair: None,
-        }
-    }
-
-    /// Add TCP transport configuration.
-    pub fn with_tcp(mut self, config: config::TransportConfig) -> Self {
-        self.tcp = Some(config);
-        self
-    }
-
-    /// Add keypair.
-    pub fn with_keypair(mut self, keypair: Keypair) -> Self {
-        self.keypair = Some(keypair);
-        self
-    }
-
-    /// Build [`NewLiteP2pConfiguration`].
-    ///
-    /// Generates a default keypair if user didn't provide one.
-    pub fn build(mut self) -> Self {
-        if self.keypair.is_none() {
-            self.keypair = Some(Keypair::generate());
-        }
-
-        self
     }
 }
 
