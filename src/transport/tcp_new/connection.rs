@@ -57,6 +57,9 @@ use std::{
 
 /// TCP connection.
 pub struct TcpConnection {
+    /// Connection ID.
+    connection_id: usize,
+
     /// Configuration.
     config: Litep2pConfig,
 
@@ -89,6 +92,7 @@ impl fmt::Debug for TcpConnection {
 impl TcpConnection {
     /// Open connection to remote peer at `address`.
     pub async fn open_connection(
+        connection_id: usize,
         config: Litep2pConfig,
         address: SocketAddr,
         peer: Option<PeerId>,
@@ -102,7 +106,7 @@ impl TcpConnection {
 
         let noise_config = NoiseConfiguration::new(config.keypair(), Role::Dialer);
         let stream = TcpStream::connect(address).await?;
-        Self::negotiate_connection(stream, config, noise_config).await
+        Self::negotiate_connection(stream, connection_id, config, noise_config).await
     }
 
     /// Open substream for `protocol`.
@@ -139,13 +143,14 @@ impl TcpConnection {
     /// Accept a new connection.
     pub async fn accept_connection(
         stream: TcpStream,
+        connection_id: usize,
         config: Litep2pConfig,
         address: SocketAddr,
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
         let noise_config = NoiseConfiguration::new(config.keypair(), Role::Listener);
-        Self::negotiate_connection(stream, config, noise_config).await
+        Self::negotiate_connection(stream, connection_id, config, noise_config).await
     }
 
     /// Accept substream.
@@ -194,6 +199,7 @@ impl TcpConnection {
     /// Negotiate noise + yamux for the connection.
     async fn negotiate_connection(
         stream: TcpStream,
+        connection_id: usize,
         config: Litep2pConfig,
         noise_config: NoiseConfiguration,
     ) -> crate::Result<Self> {
@@ -232,10 +238,11 @@ impl TcpConnection {
         let (control, mut connection) = yamux::Control::new(connection);
 
         Ok(Self {
-            config,
-            connection,
-            control,
             peer,
+            config,
+            control,
+            connection,
+            connection_id,
             next_substream_id: 0usize,
             pending_substreams: FuturesUnordered::new(),
         })

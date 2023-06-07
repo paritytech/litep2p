@@ -159,7 +159,7 @@ pub trait TransportNew {
     /// Try to open a connection to remote peer.
     ///
     /// The result is polled using [`Transport::next_connection()`].
-    fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()>;
+    fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize>;
 
     /// Poll next connection.
     async fn next_connection(&mut self) -> crate::Result<Self::Connection>;

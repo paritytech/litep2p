@@ -76,6 +76,9 @@ pub struct TcpTransport {
     /// Assigned listen addresss.
     listen_address: SocketAddr,
 
+    /// Next connection ID.
+    next_connection_id: usize,
+
     /// Pending connections.
     pending_connections: FuturesUnordered<BoxFuture<'static, crate::Result<TcpConnection>>>,
 }
@@ -135,6 +138,13 @@ impl TcpTransport {
     fn listen_address(&self) -> &SocketAddr {
         &self.listen_address
     }
+
+    /// Get next substream ID.
+    fn next_connection_id(&mut self) -> usize {
+        let connection = self.next_connection_id;
+        self.next_connection_id += 1;
+        connection
+    }
 }
 
 #[async_trait::async_trait]
@@ -160,6 +170,7 @@ impl TransportNew for TcpTransport {
             config,
             listener,
             listen_address,
+            next_connection_id: 0usize,
             pending_connections: FuturesUnordered::new(),
         })
     }
@@ -173,17 +184,18 @@ impl TransportNew for TcpTransport {
     }
 
     /// Open connection to remote peer at `address`.
-    fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()> {
+    fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize> {
         tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
         let config = self.config.clone();
         let (socket_address, peer) = Self::get_socket_address(&address)?;
+        let connection_id = self.next_connection_id();
 
         self.pending_connections.push(Box::pin(async move {
-            TcpConnection::open_connection(config, socket_address, peer).await
+            TcpConnection::open_connection(connection_id, config, socket_address, peer).await
         }));
 
-        Ok(())
+        Ok(connection_id)
     }
 
     /// Poll next connection from [`TcpTransport`].
@@ -193,8 +205,9 @@ impl TransportNew for TcpTransport {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
                         let config = self.config.clone();
+                        let connection_id = self.next_connection_id();
                         self.pending_connections.push(Box::pin(async move {
-                            TcpConnection::accept_connection(connection, config, address).await
+                            TcpConnection::accept_connection(connection, connection_id, config, address).await
                         }));
                     }
                     Err(err) => return Err(err.into()),

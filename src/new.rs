@@ -73,6 +73,9 @@ pub struct Litep2p {
 
     /// TCP transport.
     tcp: TcpTransport,
+
+    /// Pending connections.
+    pending_connections: HashSet<usize>,
 }
 
 impl Litep2p {
@@ -87,9 +90,10 @@ impl Litep2p {
         };
 
         Ok(Self {
-            local_peer_id,
-            config,
             tcp,
+            config,
+            local_peer_id,
+            pending_connections: HashSet::new(),
         })
     }
 
@@ -126,7 +130,11 @@ impl Litep2p {
         }
 
         match protocol_stack.next() {
-            Some("tcp") => self.tcp.open_connection(address),
+            Some("tcp") => {
+                self.pending_connections
+                    .insert(self.tcp.open_connection(address)?);
+                Ok(())
+            }
             protocol => {
                 tracing::error!(
                     target: LOG_TARGET,
