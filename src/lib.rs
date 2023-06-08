@@ -52,11 +52,12 @@ use std::{
 };
 
 pub mod config;
+pub mod new;
 pub mod protocol;
 
+mod connection;
 mod crypto;
 mod error;
-mod new;
 mod new_config;
 mod peer_id;
 mod transport;
