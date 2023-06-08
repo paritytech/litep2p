@@ -30,13 +30,14 @@ use crate::{
 use futures::{
     future::BoxFuture,
     io::{AsyncRead, AsyncWrite},
-    Stream,
+    Sink, Stream,
 };
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::Sender;
 
 use std::fmt::Debug;
 
+pub mod substream;
 pub mod tcp;
 pub mod tcp_new;
 
@@ -123,7 +124,7 @@ pub trait NewTransportService: Send {
 // TODO: introduce error type?
 // TODO: introduce `Substream` trait?
 #[async_trait::async_trait]
-pub trait ConnectionNew {
+pub trait ConnectionNew: Send + 'static {
     type Substream: Debug + AsyncRead + AsyncWrite + Unpin;
 
     /// Get remote peer ID.
