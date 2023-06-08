@@ -19,11 +19,12 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    connection::Connection,
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
     new_config::Litep2pConfig,
     peer_id::PeerId,
-    transport::{tcp_new::TcpTransport, TransportError, TransportNew},
+    transport::{tcp_new::TcpTransport, ConnectionNew, TransportError, TransportNew},
     LOG_TARGET,
 };
 
@@ -156,7 +157,20 @@ impl Litep2p {
             tokio::select! {
                 event = self.tcp.next_connection() => match event {
                     Ok(connection) => {
-                        tracing::info!(target: LOG_TARGET, "got connection");
+                        let peer = *connection.peer_id();
+                        let address = self
+                            .pending_connections
+                            .remove(connection.connection_id())
+                            .map_or(connection.remote_address().clone(), |address| address);
+
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            remote_address = ?address,
+                            "connection established"
+                        );
+
+                        return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
                     }
                     Err(error) => {
                         tracing::debug!(target: LOG_TARGET, ?error, "failed to poll next connection");
