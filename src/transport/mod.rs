@@ -129,6 +129,12 @@ pub trait ConnectionNew {
     /// Get remote peer ID.
     fn peer_id(&self) -> &PeerId;
 
+    /// Get connection ID.
+    fn connection_id(&self) -> &usize;
+
+    /// Remote peer's address.
+    fn remote_address(&self) -> &Multiaddr;
+
     /// Open substream for `protocol`.
     ///
     /// Substream is opened and negotiated in the background and the result is

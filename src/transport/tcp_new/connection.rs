@@ -30,7 +30,8 @@ use crate::{
     peer_id::PeerId,
     transport::{
         tcp_new::{
-            config::TransportConfig, Connection, ConnectionNew, Direction, Transport, LOG_TARGET,
+            config::TransportConfig, socket_addr_to_multi_addr, Connection, ConnectionNew,
+            Direction, Transport, LOG_TARGET,
         },
         TransportEvent, TransportNew, TransportService,
     },
@@ -75,6 +76,9 @@ pub struct TcpConnection {
     /// Next substream ID.
     next_substream_id: usize,
 
+    /// Remote address.
+    address: Multiaddr,
+
     /// Pending substreams.
     pending_substreams: FuturesUnordered<BoxFuture<'static, crate::Result<Substream>>>,
 }
@@ -106,7 +110,7 @@ impl TcpConnection {
 
         let noise_config = NoiseConfiguration::new(config.keypair(), Role::Dialer);
         let stream = TcpStream::connect(address).await?;
-        Self::negotiate_connection(stream, connection_id, config, noise_config).await
+        Self::negotiate_connection(stream, connection_id, config, noise_config, address).await
     }
 
     /// Open substream for `protocol`.
@@ -150,7 +154,7 @@ impl TcpConnection {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
         let noise_config = NoiseConfiguration::new(config.keypair(), Role::Listener);
-        Self::negotiate_connection(stream, connection_id, config, noise_config).await
+        Self::negotiate_connection(stream, connection_id, config, noise_config, address).await
     }
 
     /// Accept substream.
@@ -202,6 +206,7 @@ impl TcpConnection {
         connection_id: usize,
         config: Litep2pConfig,
         noise_config: NoiseConfiguration,
+        address: SocketAddr,
     ) -> crate::Result<Self> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -243,6 +248,7 @@ impl TcpConnection {
             control,
             connection,
             connection_id,
+            address: socket_addr_to_multi_addr(&address),
             next_substream_id: 0usize,
             pending_substreams: FuturesUnordered::new(),
         })
@@ -310,6 +316,16 @@ impl ConnectionNew for TcpConnection {
     /// Get remote peer ID.
     fn peer_id(&self) -> &PeerId {
         &self.peer
+    }
+
+    /// Get connection ID.
+    fn connection_id(&self) -> &usize {
+        &self.connection_id
+    }
+
+    /// Remote peer's address.
+    fn remote_address(&self) -> &Multiaddr {
+        &self.address
     }
 
     /// Open substream for `protocol`.

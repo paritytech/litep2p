@@ -64,6 +64,13 @@ pub mod config;
 /// Logging target for the file.
 const LOG_TARGET: &str = "tcp";
 
+/// Convert `SocketAddr` to `Multiaddr`
+pub(crate) fn socket_addr_to_multi_addr(address: &SocketAddr) -> Multiaddr {
+    let mut multiaddr = Multiaddr::from(address.ip());
+    multiaddr.push(Protocol::Tcp(address.port()));
+    multiaddr
+}
+
 #[derive(Debug)]
 pub struct TcpError {
     /// Error.
@@ -206,10 +213,7 @@ impl TransportNew for TcpTransport {
 
     /// Get assigned listen address.
     fn listen_address(&self) -> Multiaddr {
-        let listen_address = self.listen_address();
-        let mut multiaddr = Multiaddr::from(listen_address.ip());
-        multiaddr.push(Protocol::Tcp(listen_address.port()));
-        multiaddr
+        socket_addr_to_multi_addr(self.listen_address())
     }
 
     /// Open connection to remote peer at `address`.
