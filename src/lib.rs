@@ -51,6 +51,7 @@ use std::{
     net::SocketAddr,
 };
 
+pub mod codec;
 pub mod config;
 pub mod new;
 pub mod protocol;
