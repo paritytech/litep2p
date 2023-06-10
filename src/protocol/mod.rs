@@ -21,13 +21,14 @@
 //! Protocol-related defines.
 
 use crate::{
+    error::Error,
     peer_id::PeerId,
-    transport::{Connection, TransportEvent},
+    transport::{substream::Substream, Connection, TransportEvent},
 };
 
 use tokio::sync::{mpsc, oneshot};
 
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 pub mod libp2p;
 pub mod notification;
@@ -111,4 +112,61 @@ impl NotificationProtocol {
     pub fn to_string(&self) -> String {
         self.name.to_string()
     }
+}
+
+/// Events received from connections that relevant to the execution of a user protocol.
+pub enum ExecutionEvent<S: Substream> {
+    /// Connection established to remote peer.
+    ConnectionEstablished {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
+    /// Connection closed to remote peer.
+    ConnectionClosed {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
+    /// Substream opened to remote peer.
+    SubstreamOpened {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Opened substream.
+        substream: S,
+    },
+
+    /// Failed to open substream.
+    SubstreamOpenFailure {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Error that occurred.
+        error: Error,
+    },
+}
+
+#[async_trait::async_trait]
+trait ExecutionContext {
+    /// Open substream.
+    async fn open_subtream(&mut self, peer: PeerId) -> crate::Result<()>;
+
+    /// Poll next event from the execution context.
+    async fn next_event<S: Substream>(&mut self) -> Option<ExecutionEvent<S>>;
+}
+
+pub trait Codec {}
+pub type EventStream = ();
+
+trait Protocol<C: Codec> {
+    type Context: Debug + Send;
+
+    /// Create new protocol.
+    fn new(protocol: ProtocolName, context: Option<Self::Context>) -> (Self, EventStream)
+    where
+        Self: Sized;
+
+    /// Start protocol executor.
+    fn run<E: ExecutionContext>(&mut self, exec_context: E) -> crate::Result<()>;
 }
