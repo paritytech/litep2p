@@ -170,6 +170,10 @@ impl Litep2p {
                             "connection established"
                         );
 
+                        // TODO: this would need to take:
+                        // TODO:   - handle which allows it to send open substreams to protocol
+                        // TODO:   - handle which allows it to receive events from protocol
+                        Connection::start(connection);
                         return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
                     }
                     Err(error) => {
