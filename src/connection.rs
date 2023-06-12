@@ -33,19 +33,6 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use std::fmt::Debug;
 
-pub trait Protocol {
-    /// Events emitted by the protocol.
-    type Event: Debug;
-
-    /// Initialize protocol and return its event stream for the caller.
-    fn initialize() -> (Self, Box<dyn Stream<Item = Self::Event> + Send>)
-    where
-        Self: Sized;
-
-    /// Return protocol name.
-    fn protocol_name(&self) -> ProtocolName;
-}
-
 /// Service provided by an open connection to protocols.
 #[async_trait::async_trait]
 pub trait ConnectionService: Send {
