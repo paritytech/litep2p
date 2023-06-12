@@ -29,7 +29,7 @@ use crate::{
 };
 
 use futures::Stream;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc::Sender;
 
 use std::fmt::{Debug, Display};
 
@@ -151,7 +151,7 @@ pub enum ExecutionEvent<S: Substream> {
 }
 
 #[async_trait::async_trait]
-pub trait ExecutionContext {
+pub trait SubstreamService {
     /// Open substream.
     async fn open_subtream(&mut self, peer: PeerId) -> crate::Result<()>;
 
@@ -162,18 +162,21 @@ pub trait ExecutionContext {
 pub trait Codec {}
 pub type EventStream = ();
 
-trait Protocol<C: Codec> {
+/// TODO: documentation
+pub trait ProtocolBuilder {
+    type Protocol: Protocol;
+
+    /// Get protocol name.
+    fn protocol_name(&self) -> &NewProtocolName;
+
+    /// Build `Protocol`.
+    fn build(self, sender: Sender<()>) -> (Self::Protocol, Sender<()>);
+}
+
+#[async_trait::async_trait]
+pub trait Protocol {
     type Event: Debug;
-    type Context: Debug + Send;
 
-    /// Create new protocol.
-    fn new(
-        protocol: NewProtocolName,
-        context: Option<Self::Context>,
-    ) -> (Self, Box<dyn Stream<Item = Self::Event> + Send>)
-    where
-        Self: Sized;
-
-    /// Start protocol executor.
-    fn run<E: ExecutionContext>(&mut self, exec_context: E) -> crate::Result<()>;
+    /// Start the protocol runner.
+    async fn run(self);
 }
