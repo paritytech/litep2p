@@ -24,8 +24,10 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     transport::{substream::Substream, Connection, TransportEvent},
+    types::protocol::ProtocolName as NewProtocolName,
 };
 
+use futures::Stream;
 use tokio::sync::{mpsc, oneshot};
 
 use std::fmt::{Debug, Display};
@@ -148,7 +150,7 @@ pub enum ExecutionEvent<S: Substream> {
 }
 
 #[async_trait::async_trait]
-trait ExecutionContext {
+pub trait ExecutionContext {
     /// Open substream.
     async fn open_subtream(&mut self, peer: PeerId) -> crate::Result<()>;
 
@@ -160,10 +162,14 @@ pub trait Codec {}
 pub type EventStream = ();
 
 trait Protocol<C: Codec> {
+    type Event: Debug;
     type Context: Debug + Send;
 
     /// Create new protocol.
-    fn new(protocol: ProtocolName, context: Option<Self::Context>) -> (Self, EventStream)
+    fn new(
+        protocol: NewProtocolName,
+        context: Option<Self::Context>,
+    ) -> (Self, Box<dyn Stream<Item = Self::Event> + Send>)
     where
         Self: Sized;
 

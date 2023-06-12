@@ -24,6 +24,12 @@ pub enum ProtocolName {
     Static(&'static str),
 }
 
+impl ProtocolName {
+    pub const fn from_static_str(name: &'static str) -> Self {
+        ProtocolName::Static(name)
+    }
+}
+
 impl From<&'static str> for ProtocolName {
     fn from(protocol: &'static str) -> Self {
         ProtocolName::Static(protocol)

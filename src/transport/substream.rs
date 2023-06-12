@@ -41,6 +41,15 @@ pub struct SubstreamSet<S: Substream> {
 }
 
 impl<S: Substream> SubstreamSet<S> {
+    /// Create new [`SubstreamSet`].
+    pub fn new() -> Self {
+        Self {
+            substreams: HashMap::new(),
+        }
+    }
+}
+
+impl<S: Substream> SubstreamSet<S> {
     // TODO: rewrite this
     async fn send_notification(&mut self, peer: PeerId, data: Bytes) -> Result<(), ()> {
         match self.substreams.get_mut(&peer) {

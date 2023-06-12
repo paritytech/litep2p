@@ -25,8 +25,10 @@ pub use crate::protocol::libp2p::{
 pub mod bitswap;
 pub mod identify;
 pub mod kad;
+pub mod new_ping;
 pub mod ping;
 
+// TODO: remove this eventually
 /// Events emitted by libp2p standard protocols.
 #[derive(Debug)]
 pub enum Libp2pProtocolEvent {

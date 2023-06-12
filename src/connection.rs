@@ -20,12 +20,16 @@
 
 use crate::{
     peer_id::PeerId,
-    transport::{substream::Substream, ConnectionNew},
+    transport::{
+        substream::{Substream, SubstreamSet},
+        ConnectionNew,
+    },
     types::protocol::ProtocolName,
 };
 
 use futures::Stream;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_stream::wrappers::ReceiverStream;
 
 use std::fmt::Debug;
 
@@ -48,12 +52,12 @@ pub trait ConnectionService: Send {
     /// Open substream for `protocol`.
     async fn open_substream(&self, protocol: ProtocolName) -> crate::Result<()>;
 
-    /// Try to open substream for `protocol` and if the call would block, return an error.
+    /// Try to open a substream for `protocol` and if the call would block, return an error.
     fn try_open_substream(&self, protocol: ProtocolName) -> crate::Result<()>;
 }
 
 /// Events emitted by [`Connection`] to protocol handlers.
-pub enum ConnectionEvents<S: Substream> {
+pub enum ConnectionEvent<S: Substream> {
     /// Connection established to remote peer.
     ConnectionEstablished {
         /// Peer ID.
