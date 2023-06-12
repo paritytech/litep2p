@@ -37,7 +37,6 @@ use tokio::sync::mpsc::Sender;
 
 use std::fmt::Debug;
 
-pub mod substream;
 pub mod tcp;
 pub mod tcp_new;
 

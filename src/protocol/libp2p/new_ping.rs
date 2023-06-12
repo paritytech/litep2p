@@ -21,11 +21,9 @@
 use crate::{
     connection::ConnectionEvent,
     protocol::libp2p::Libp2pProtocolEvent,
-    protocol::{Codec, ExecutionContext, Protocol},
-    transport::{
-        substream::{Substream, SubstreamSet},
-        Connection, TransportEvent,
-    },
+    protocol::{Codec, Protocol, ProtocolBuilder},
+    substream::{Substream, SubstreamSet},
+    transport::{Connection, TransportEvent},
     types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE,
 };

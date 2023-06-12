@@ -20,10 +20,8 @@
 
 use crate::{
     peer_id::PeerId,
-    transport::{
-        substream::{Substream, SubstreamSet},
-        ConnectionNew,
-    },
+    substream::{Substream, SubstreamSet},
+    transport::ConnectionNew,
     types::protocol::ProtocolName,
 };
 

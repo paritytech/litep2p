@@ -53,16 +53,17 @@ use std::{
 
 pub mod codec;
 pub mod config;
+pub mod crypto;
 pub mod new;
+pub mod new_config;
 pub mod protocol;
+pub mod substream;
+pub mod transport;
+pub mod types;
 
 mod connection;
-mod crypto;
 mod error;
-mod new_config;
 mod peer_id;
-mod transport;
-mod types;
 
 // TODO: move code from `TcpTransport` to here
 // TODO: remove unwraps

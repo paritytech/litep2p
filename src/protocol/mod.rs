@@ -23,7 +23,8 @@
 use crate::{
     error::Error,
     peer_id::PeerId,
-    transport::{substream::Substream, Connection, TransportEvent},
+    substream::Substream,
+    transport::{Connection, TransportEvent},
     types::protocol::ProtocolName as NewProtocolName,
 };
 
