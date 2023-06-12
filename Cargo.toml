@@ -16,6 +16,7 @@ bytes = "1.4.0"
 ed25519-dalek = "1.0.1"
 futures = "0.3.27"
 lazy_static = "1.4.0"
+mockall = "0.11.4"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
 multistream-select = { path = "misc/multistream-select" }

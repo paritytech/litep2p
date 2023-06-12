@@ -30,6 +30,8 @@ use std::{
     task::{Context, Poll},
 };
 
+pub mod mock;
+
 /// Trait which describes the behavior of a substream.
 pub trait Substream: Debug + Stream + Sink<Bytes> + Unpin {
     /// Get protocol name.
