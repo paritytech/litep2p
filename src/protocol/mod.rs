@@ -29,9 +29,12 @@ use crate::{
 };
 
 use futures::Stream;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::fmt::{Debug, Display};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+};
 
 pub mod libp2p;
 pub mod notification;
@@ -179,4 +182,81 @@ pub trait Protocol {
 
     /// Start the protocol runner.
     async fn run(self);
+}
+
+/// Events emitted by a connection to protocols.
+pub enum ConnectionEvent {
+    /// Substream opened for `peer`.
+    SubstreamOpened {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Substream.
+        substream: Box<dyn Substream>,
+    },
+
+    /// Failed to open substream.
+    SubstreamOpenFailure {
+        /// Peer Id.
+        peer: PeerId,
+
+        /// Error.
+        error: Error,
+    },
+}
+
+/// Supported protocol information.
+///
+/// Each connection gets a copy of [`ProtocolInfo`] which allows it to interact
+/// directly with installed protocols.
+pub struct ProtocolInfo {
+    protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
+    rx: Receiver<NewProtocolName>,
+}
+
+impl ProtocolInfo {
+    /// Create new [`ProtocolInfo`].
+    pub fn new(
+        protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
+        rx: Receiver<NewProtocolName>,
+    ) -> Self {
+        Self { protocols, rx }
+    }
+
+    /// Report to `protocol` that substream was opened for `peer`.
+    pub async fn report_substream_open(
+        &mut self,
+        protocol: NewProtocolName,
+        peer: PeerId,
+        substream: Box<dyn Substream>,
+    ) -> crate::Result<()> {
+        match self.protocols.get_mut(&protocol) {
+            Some(sender) => sender
+                .send(ConnectionEvent::SubstreamOpened { peer, substream })
+                .await
+                .map_err(From::from),
+            None => Err(Error::ProtocolNotSupported(protocol.to_string())),
+        }
+    }
+
+    /// Report to `protocol` that connection failed to open substream for `peer`.
+    pub async fn report_substream_open_failure(
+        &mut self,
+        protocol: NewProtocolName,
+        peer: PeerId,
+        error: Error,
+    ) -> crate::Result<()> {
+        match self.protocols.get_mut(&protocol) {
+            Some(sender) => sender
+                .send(ConnectionEvent::SubstreamOpenFailure { peer, error })
+                .await
+                .map_err(From::from),
+            None => Err(Error::ProtocolNotSupported(protocol.to_string())),
+        }
+    }
+
+    /// Poll next substream open query from one of the installed protocols.
+    pub async fn poll_next(&mut self) -> Option<NewProtocolName> {
+        self.rx.recv().await
+    }
 }
