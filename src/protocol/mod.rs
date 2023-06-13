@@ -170,7 +170,7 @@ pub trait ProtocolBuilder {
     type Protocol: Protocol;
 
     /// Get protocol name.
-    fn protocol_name(&self) -> &NewProtocolName;
+    fn protocol_name(&self) -> NewProtocolName;
 
     /// Build `Protocol`.
     fn build(self, sender: Sender<()>) -> Self::Protocol;

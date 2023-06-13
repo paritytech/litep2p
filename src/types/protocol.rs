@@ -18,10 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::sync::Arc;
+
 /// Protocol name.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum ProtocolName {
     Static(&'static str),
+    Allocated(Arc<String>),
 }
 
 impl ProtocolName {
@@ -36,12 +39,19 @@ impl From<&'static str> for ProtocolName {
     }
 }
 
+impl From<String> for ProtocolName {
+    fn from(protocol: String) -> Self {
+        ProtocolName::Allocated(Arc::new(protocol))
+    }
+}
+
 impl std::ops::Deref for ProtocolName {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Static(protocol) => protocol,
+            Self::Allocated(protocol) => protocol.as_str(),
         }
     }
 }
