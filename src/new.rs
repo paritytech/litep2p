@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    connection::Connection,
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
     new_config::Litep2pConfig,
