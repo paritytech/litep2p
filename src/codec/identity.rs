@@ -18,10 +18,35 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! Identity codec that reads/writes `N` bytes from/to source/sink.
+
+use crate::error::Error;
+
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-pub mod identity;
+#[derive(Debug)]
+pub struct Identity<const N: usize> {}
 
-pub trait Codec<D>: Encoder<D> + Decoder {}
+impl<const N: usize> Decoder for Identity<N> {
+    type Item = Bytes;
+    type Error = Error;
 
-impl<D, T: Encoder<D> + Decoder> Codec<D> for T {}
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(src.split_to(N).freeze()))
+    }
+}
+
+impl<const N: usize> Encoder<Bytes> for Identity<N> {
+    type Error = Error;
+
+    fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
+        // TODO: verify that `item` is `N` bytes long
+        dst.put_slice(item.as_ref());
+        Ok(())
+    }
+}
