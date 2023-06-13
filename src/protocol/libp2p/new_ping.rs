@@ -20,10 +20,9 @@
 
 use crate::{
     connection::ConnectionEvent,
-    protocol::libp2p::Libp2pProtocolEvent,
-    protocol::{Codec, Protocol, ProtocolBuilder},
+    peer_id::PeerId,
+    protocol::{Codec, Protocol, ProtocolBuilder, SubstreamService},
     substream::{Substream, SubstreamSet},
-    transport::{Connection, TransportEvent},
     types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE,
 };
@@ -32,62 +31,145 @@ use futures::{AsyncReadExt, AsyncWriteExt, Stream};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
+use std::collections::HashMap;
+
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::ping";
 
-/// IPFS Identify protocol name
+/// IPFS Ping protocol name as a string.
 pub const PROTOCOL_STRING: &str = "/ipfs/ping/1.0.0";
 
+/// IPFS Ping protocol name.
 pub const PROTOCOL_NAME: ProtocolName = ProtocolName::from_static_str(PROTOCOL_STRING);
 
 /// Size for `/ipfs/ping/1.0.0` payloads.
 const PING_PAYLOAD_SIZE: usize = 32;
 
+struct PingBuilder<S: Substream> {
+    event_tx: Sender<PingEvent>,
+    connection_rx: Receiver<ConnectionEvent<S>>,
+    connection_tx: Sender<ConnectionEvent<S>>,
+}
+
+impl<S: Substream> PingBuilder<S> {
+    /// Create new [`PingBuilder`].
+    pub fn new() -> (Self, Box<dyn Stream<Item = PingEvent> + Send>) {
+        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (connection_tx, connection_rx) = channel(DEFAULT_CHANNEL_SIZE);
+
+        (
+            Self {
+                event_tx,
+                connection_tx,
+                connection_rx,
+            },
+            Box::new(ReceiverStream::new(event_rx)),
+        )
+    }
+}
+
+impl<S: Substream> ProtocolBuilder<S> for PingBuilder<S> {
+    type Protocol = Ping<S>;
+
+    /// Get protocol name.
+    fn protocol_name(&self) -> &ProtocolName {
+        return &PROTOCOL_NAME;
+    }
+
+    /// Build `Protocol`.
+    fn build(self, service: Sender<()>) -> (Self::Protocol, Sender<ConnectionEvent<S>>) {
+        let PingBuilder {
+            event_tx,
+            connection_rx,
+            connection_tx,
+        } = self;
+
+        (
+            Ping {
+                event_tx,
+                connection_rx,
+                service,
+                peers: HashMap::new(),
+            },
+            connection_tx,
+        )
+    }
+}
+
 #[derive(Debug)]
 enum PingEvent {}
 
 struct Ping<S: Substream> {
+    /// Connected peers.
+    peers: HashMap<PeerId, ()>,
+
+    ///
     event_tx: Sender<PingEvent>,
     connection_rx: Receiver<ConnectionEvent<S>>,
-    substreams: SubstreamSet<S>,
+
+    // TODO: this is used to open substreams
+    service: Sender<()>,
 }
 
-impl<S: Substream> Ping<S> {
-    /// Create new [`Ping`] protocol.
-    pub fn new(
-        event_tx: Sender<PingEvent>,
-        connection_rx: Receiver<ConnectionEvent<S>>,
-        substreams: SubstreamSet<S>,
-    ) -> Self {
-        Self {
-            event_tx,
-            connection_rx,
-            substreams,
+impl<S: Substream> Ping<S> {}
+
+#[async_trait::async_trait]
+impl<S: Substream> Protocol for Ping<S> {
+    type Event = PingEvent;
+
+    /// Start the protocol runner.
+    async fn run(mut self) {
+        tracing::debug!(target: LOG_TARGET, "starting ping event loop");
+
+        while let Some(event) = self.connection_rx.recv().await {
+            match event {
+                ConnectionEvent::ConnectionEstablished { peer } => {
+                    tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
+                    self.peers.insert(peer, ());
+                }
+                ConnectionEvent::ConnectionClosed { peer } => {
+                    tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
+                    self.peers.remove(&peer);
+                }
+                ConnectionEvent::SubstreamOpened { peer, substream } => {
+                    tracing::debug!(target: LOG_TARGET, ?peer, "substream opened");
+                }
+            }
         }
     }
 }
 
-impl<S: Substream, C: Codec> Protocol<C> for Ping<S> {
-    type Event = PingEvent;
-    type Context = ();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::substream::mock::MockSubstream;
+    use futures::Sink;
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+        time::Duration,
+    };
+    use tokio::sync::mpsc;
 
-    /// Initialize protocol and return its event stream for the caller.
-    fn new(
-        protocol: ProtocolName,
-        context: Option<Self::Context>,
-    ) -> (Self, Box<dyn Stream<Item = Self::Event> + Send>)
-    where
-        Self: Sized,
-    {
-        let (event_tx, event_rx) = channel(64);
-        let (connection_tx, connection_rx) = channel(64);
-        let ping = Ping::new(event_tx, connection_rx, SubstreamSet::new());
+    #[tokio::test]
+    async fn initialize_ping() {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init()
+            .expect("to succeed");
 
-        (ping, Box::new(ReceiverStream::new(event_rx)))
-    }
+        let (ping, event_stream) = PingBuilder::<MockSubstream>::new();
+        let (tx, rx) = mpsc::channel(64);
+        let (ping, tx_conn) = ping.build(tx);
+        tokio::spawn(ping.run());
 
-    /// Start protocol executor.
-    fn run<E: ExecutionContext>(&mut self, exec_context: E) -> crate::Result<()> {
-        todo!();
+        tx_conn
+            .send(ConnectionEvent::ConnectionEstablished {
+                peer: PeerId::random(),
+            })
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }

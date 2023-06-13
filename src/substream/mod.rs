@@ -33,7 +33,7 @@ use std::{
 pub mod mock;
 
 /// Trait which describes the behavior of a substream.
-pub trait Substream: Debug + Stream + Sink<Bytes> + Unpin {
+pub trait Substream: Debug + Stream + Sink<Bytes> + Send + Unpin {
     /// Get protocol name.
     fn protocol(&self) -> &ProtocolName;
 }

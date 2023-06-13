@@ -42,14 +42,12 @@ pub trait ConnectionService: Send {
 }
 
 /// Events emitted by [`Connection`] to protocol handlers.
+#[derive(Debug)]
 pub enum ConnectionEvent<S: Substream> {
     /// Connection established to remote peer.
     ConnectionEstablished {
         /// Peer ID.
         peer: PeerId,
-
-        /// Connection event sender.
-        tx: Box<dyn ConnectionService>,
     },
 
     /// Connection closed to remote peer.

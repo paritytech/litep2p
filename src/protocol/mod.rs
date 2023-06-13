@@ -21,6 +21,7 @@
 //! Protocol-related defines.
 
 use crate::{
+    connection::ConnectionEvent,
     error::Error,
     peer_id::PeerId,
     substream::Substream,
@@ -163,14 +164,14 @@ pub trait Codec {}
 pub type EventStream = ();
 
 /// TODO: documentation
-pub trait ProtocolBuilder {
+pub trait ProtocolBuilder<S: Substream> {
     type Protocol: Protocol;
 
     /// Get protocol name.
     fn protocol_name(&self) -> &NewProtocolName;
 
     /// Build `Protocol`.
-    fn build(self, sender: Sender<()>) -> (Self::Protocol, Sender<()>);
+    fn build(self, sender: Sender<()>) -> (Self::Protocol, Sender<ConnectionEvent<S>>);
 }
 
 #[async_trait::async_trait]
