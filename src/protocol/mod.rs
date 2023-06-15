@@ -40,6 +40,7 @@ pub mod libp2p;
 pub mod notification;
 pub mod notification_new;
 pub mod request_response;
+pub mod request_response_new;
 
 /// Commands sent by different protocols to `Litep2p`.
 #[derive(Debug)]
