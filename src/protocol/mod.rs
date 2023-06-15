@@ -38,6 +38,7 @@ use std::{
 
 pub mod libp2p;
 pub mod notification;
+pub mod notification_new;
 pub mod request_response;
 
 /// Commands sent by different protocols to `Litep2p`.
