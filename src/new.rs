@@ -90,6 +90,19 @@ impl Litep2p {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair().public()));
         let inner_config = Config::from(&config);
 
+        // TODO: go through all notification protocols and start the protocol runners
+        //       passing in the command the notification config
+
+        // TODO: go through all request-response protocols and start the protocol runners
+        //       passing in the command the notification config
+
+        // TODO: check if ping is enabled and if so, start ping event loop
+
+        // TODO: check if identify is enabled and if so, start identify event loop
+
+        // TODO: for each protocol, return a handle which allows transports to send events to them
+        //       and pass these protocol handles to the transport along with other context
+
         // enable tcp transport if the config exists
         let tcp = match inner_config.tcp() {
             Some(_) => <TcpTransport as TransportNew>::new(inner_config).await?,

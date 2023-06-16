@@ -114,6 +114,7 @@ pub struct Config {
     protocols: Vec<ProtocolName>,
 }
 
+// TODO: remove this and introduce some context object instead
 impl Config {
     /// Get keypair.
     pub fn keypair(&self) -> &Keypair {
