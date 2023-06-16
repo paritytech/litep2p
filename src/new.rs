@@ -21,17 +21,19 @@
 use crate::{
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
-    new_config::Litep2pConfig,
+    new_config::{Config, Litep2pConfig},
     peer_id::PeerId,
+    protocol::{ConnectionEvent, ProtocolContext, ProtocolInfo},
     transport::{tcp_new::TcpTransport, ConnectionNew, TransportError, TransportNew},
-    LOG_TARGET,
+    types::protocol::ProtocolName,
+    DEFAULT_CHANNEL_SIZE, LOG_TARGET,
 };
 
 use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{mpsc, oneshot},
+    sync::mpsc::{channel, Sender},
 };
 use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
@@ -86,10 +88,11 @@ impl Litep2p {
     /// Create new [`Litep2p`].
     pub async fn new(config: Litep2pConfig) -> crate::Result<Litep2p> {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair().public()));
+        let inner_config = Config::from(&config);
 
         // enable tcp transport if the config exists
-        let tcp = match config.tcp() {
-            Some(_) => <TcpTransport as TransportNew>::new(config.clone()).await?,
+        let tcp = match inner_config.tcp() {
+            Some(_) => <TcpTransport as TransportNew>::new(inner_config).await?,
             None => panic!("tcp not enabled"),
         };
 
@@ -155,7 +158,7 @@ impl Litep2p {
         loop {
             tokio::select! {
                 event = self.tcp.next_connection() => match event {
-                    Ok(connection) => {
+                    Ok(mut connection) => {
                         let peer = *connection.peer_id();
                         let address = self
                             .pending_connections
@@ -169,10 +172,10 @@ impl Litep2p {
                             "connection established"
                         );
 
-                        // TODO: this would need to take:
-                        // TODO:   - handle which allows it to send open substreams to protocol
-                        // TODO:   - handle which allows it to receive events from protocol
-                        Connection::start(connection);
+                        // TODO: fix
+                        // tokio::spawn(async move { if let Err(error) = connection.start(protocol_info).await {
+                        //     tracing::error!(target: LOG_TARGET, ?peer, "connection failure");
+                        // }});
                         return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
                     }
                     Err(error) => {

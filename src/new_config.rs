@@ -42,9 +42,6 @@ pub struct Litep2pConfigBuilder {
 
     /// Request-response protocols.
     request_response_protocols: HashMap<ProtocolName, request_response_new::types::Config>,
-
-    /// Enabled protocols.
-    protocols: HashMap<ProtocolName, Box<dyn Protocol>>,
 }
 
 impl Litep2pConfigBuilder {
@@ -53,7 +50,6 @@ impl Litep2pConfigBuilder {
         Self {
             tcp: None,
             keypair: None,
-            protocols: HashMap::new(),
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
         }
@@ -100,7 +96,6 @@ impl Litep2pConfigBuilder {
         Litep2pConfig {
             keypair,
             tcp: self.tcp.take(),
-            protocols: self.protocols,
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
         }
@@ -138,14 +133,25 @@ impl Config {
 
 impl From<&Litep2pConfig> for Config {
     fn from(config: &Litep2pConfig) -> Self {
+        let protocols = {
+            let mut protocols = Vec::new();
+
+            config
+                .notification_protocols
+                .iter()
+                .for_each(|(name, _)| protocols.push(name.clone()));
+            config
+                .request_response_protocols
+                .iter()
+                .for_each(|(name, _)| protocols.push(name.clone()));
+
+            protocols
+        };
+
         Self {
             keypair: config.keypair.clone(),
             tcp: config.tcp.clone(),
-            protocols: config
-                .protocols
-                .iter()
-                .map(|(protocol, _)| protocol.clone())
-                .collect(),
+            protocols,
         }
     }
 }
@@ -157,9 +163,6 @@ pub struct Litep2pConfig {
 
     /// Keypair.
     keypair: Keypair,
-
-    /// Enabled protocols.
-    protocols: HashMap<ProtocolName, Box<dyn Protocol>>,
 
     /// Notification protocols.
     notification_protocols: HashMap<ProtocolName, notification_new::types::Config>,
@@ -177,10 +180,5 @@ impl Litep2pConfig {
     /// Get TCP transport configuration.
     pub fn tcp(&self) -> &Option<config::TransportConfig> {
         &self.tcp
-    }
-
-    /// Get a list of enabled protocols.
-    pub fn protocols(&self) -> &HashMap<ProtocolName, Box<dyn Protocol>> {
-        &self.protocols
     }
 }
