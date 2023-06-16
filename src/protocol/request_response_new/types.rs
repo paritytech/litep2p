@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use crate::types::protocol::ProtocolName;
+
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 pub trait Encode {}
@@ -67,16 +69,19 @@ impl<R: Encode + Send> RequestResponseService for RequestResponseHandle<R> {
     }
 }
 
-pub struct RequestResponseConfig {
-    name: String,
+/// Request-response configuration.
+#[derive(Debug)]
+pub struct Config {
+    protocol_name: ProtocolName,
     max_slots: usize,
     event_tx: Sender<InnerRequestResponseEvent>,
     command_rx: Receiver<RequestResponseCommand>,
 }
 
-impl RequestResponseConfig {
+impl Config {
+    /// Create new [`Config`].
     pub fn new<R: Encode + Send>(
-        name: String,
+        protocol_name: ProtocolName,
         max_slots: usize,
     ) -> (Self, Box<dyn RequestResponseService<Request = R>>) {
         let (event_tx, event_rx) = channel(64);
@@ -85,12 +90,17 @@ impl RequestResponseConfig {
 
         (
             Self {
-                name,
+                protocol_name,
                 max_slots,
                 event_tx,
                 command_rx,
             },
             todo!(),
         )
+    }
+
+    /// Get protocol name.
+    pub(crate) fn protocol_name(&self) -> &ProtocolName {
+        &self.protocol_name
     }
 }

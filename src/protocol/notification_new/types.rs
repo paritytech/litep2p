@@ -76,7 +76,8 @@ impl NotificationService for NotificationHandle {
 }
 
 /// Notification configuration.
-pub struct NotificationConfig {
+#[derive(Debug)]
+pub struct Config {
     /// Protocol name.
     protocol_name: ProtocolName,
 
@@ -96,8 +97,8 @@ pub struct NotificationConfig {
     command_rx: Receiver<NotificationCommand>,
 }
 
-impl NotificationConfig {
-    /// Create new [`NotificationConfig`].
+impl Config {
+    /// Create new [`Config`].
     pub fn new(
         protocol_name: ProtocolName,
         max_notification_size: usize,
@@ -119,5 +120,10 @@ impl NotificationConfig {
             },
             Box::new(handle),
         )
+    }
+
+    /// Get protocol name.
+    pub(crate) fn protocol_name(&self) -> &ProtocolName {
+        &self.protocol_name
     }
 }
