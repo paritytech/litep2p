@@ -27,7 +27,7 @@ use crate::{
     },
     error::{AddressError, Error, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
-    new::{Litep2pContext, TransportContext},
+    new::TransportContext,
     new_config::Config,
     peer_id::PeerId,
     transport::{

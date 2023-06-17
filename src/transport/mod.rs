@@ -22,7 +22,7 @@ use crate::{
     config::TransportConfig,
     crypto::{ed25519::Keypair, noise::NoiseConfiguration},
     error::Error,
-    new::{Litep2pContext, TransportContext},
+    new::TransportContext,
     new_config::Config,
     peer_id::PeerId,
     protocol::ProtocolContext,

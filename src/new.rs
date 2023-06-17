@@ -87,16 +87,6 @@ pub struct Litep2p {
     pending_connections: HashMap<usize, Multiaddr>,
 }
 
-/// Litep2p context.
-#[derive(Debug)]
-pub struct Litep2pContext {
-    /// Enabled protocols.
-    protocols: HashMap<ProtocolName, ProtocolContext>,
-
-    /// Keypair.
-    keypair: Keypair,
-}
-
 /// Transport context.
 #[derive(Debug, Clone)]
 pub struct TransportContext {
