@@ -18,10 +18,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{peer_id::PeerId, types::protocol::ProtocolName};
+use crate::{error::Error, peer_id::PeerId, types::protocol::ProtocolName};
 
 use bytes::Bytes;
 use futures::{Sink, SinkExt, Stream};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use std::{
     collections::HashMap,
@@ -32,10 +33,28 @@ use std::{
 
 pub mod mock;
 
+/// Raw substream received from one of the enabled transports.
+pub trait RawSubstream: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static {}
+
+/// Blanket implementation for [`RawSubstream`].
+impl<T: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static> RawSubstream for T {}
+
 /// Trait which describes the behavior of a substream.
-pub trait Substream: Debug + Stream + Sink<Bytes> + Send + Unpin {
-    /// Get protocol name.
-    fn protocol(&self) -> &ProtocolName;
+pub trait Substream:
+    Debug + Stream<Item = crate::Result<Bytes>> + Sink<Bytes, Error = Error> + Send + Unpin + 'static
+{
+}
+
+/// Blanket implementation for [`Substream`].
+impl<
+        T: Debug
+            + Stream<Item = crate::Result<Bytes>>
+            + Sink<Bytes, Error = Error>
+            + Send
+            + Unpin
+            + 'static,
+    > Substream for T
+{
 }
 
 pub struct SubstreamSet<S: Substream> {
