@@ -195,20 +195,30 @@ pub enum ConnectionEvent {
     },
 }
 
+/// Events emitted by the installed protocols to transport.
+#[derive(Debug)]
+pub enum ProtocolEvent {
+    /// Open substream.
+    OpenSubstream {
+        /// Protocol name.
+        protocol: NewProtocolName,
+    },
+}
+
 /// Supported protocol information.
 ///
 /// Each connection gets a copy of [`ProtocolInfo`] which allows it to interact
 /// directly with installed protocols.
 pub struct ProtocolInfo {
     protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
-    rx: Receiver<NewProtocolName>,
+    rx: Receiver<ProtocolEvent>,
 }
 
 impl ProtocolInfo {
     /// Create new [`ProtocolInfo`].
     pub fn new(
         protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
-        rx: Receiver<NewProtocolName>,
+        rx: Receiver<ProtocolEvent>,
     ) -> Self {
         Self { protocols, rx }
     }
@@ -253,7 +263,7 @@ impl ProtocolInfo {
     }
 
     /// Poll next substream open query from one of the installed protocols.
-    pub async fn poll_next(&mut self) -> Option<NewProtocolName> {
+    pub async fn poll_next(&mut self) -> Option<ProtocolEvent> {
         self.rx.recv().await
     }
 }
