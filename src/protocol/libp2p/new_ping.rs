@@ -42,35 +42,77 @@ pub const PROTOCOL_NAME: &str = "/ipfs/ping/1.0.0";
 const PING_PAYLOAD_SIZE: usize = 32;
 
 /// Ping configuration.
-pub struct Config {}
+#[derive(Debug)]
+pub struct Config {
+    /// Protocol name.
+    pub(crate) protocol: ProtocolName,
+
+    /// Maximum failures before the peer is considered unreachable.
+    max_failures: usize,
+
+    /// TX channel for sending events to the user protocol.
+    tx: Sender<PingEvent>,
+}
 
 impl Config {
     /// Create new [`PingConfig`].
-    pub fn new() -> Self {
-        Self {}
+    ///
+    /// Returns a config that is given to `Litep2pConfig` and an event stream for ping events.
+    pub fn new(max_failures: usize) -> (Self, Box<dyn Stream<Item = PingEvent> + Send>) {
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+
+        (
+            Self {
+                tx,
+                max_failures,
+                protocol: ProtocolName::from(PROTOCOL_NAME),
+            },
+            Box::new(ReceiverStream::new(rx)),
+        )
     }
 }
 
+/// Events emitted by the ping protocol.
 #[derive(Debug)]
 pub enum PingEvent {}
 
-struct Ping {}
+/// Ping protocol.
+pub struct Ping {
+    /// Maximum failures before the peer is considered unreachable.
+    max_failures: usize,
+
+    /// RX channel for receiving connection events from transports.
+    rx: Receiver<ConnectionEvent>,
+
+    /// TX channel for sending events to the user protocol.
+    tx: Sender<PingEvent>,
+
+    /// Connected peers.
+    peers: HashMap<PeerId, Sender<ProtocolName>>,
+}
 
 impl Ping {
-    fn new() -> Self {
-        Self {}
+    /// Create new [`Ping`].
+    pub fn new(rx: Receiver<ConnectionEvent>, config: Config) -> Self {
+        Self {
+            rx,
+            tx: config.tx,
+            peers: HashMap::new(),
+            max_failures: config.max_failures,
+        }
     }
 
-    async fn run(mut self) {
-        while let Some(event) = todo!() {
+    /// Start [`Ping`] event loop.
+    pub async fn run(mut self) {
+        while let Some(event) = self.rx.recv().await {
             match event {
                 ConnectionEvent::ConnectionEstablished { peer, connection } => {
                     tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
-                    // TODO: store peer information
+                    self.peers.insert(peer, connection);
                 }
                 ConnectionEvent::ConnectionClosed { peer } => {
                     tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
-                    // TODO: remove peer information
+                    self.peers.remove(&peer);
                 }
                 ConnectionEvent::SubstreamOpened { peer, substream } => {
                     tracing::trace!(target: LOG_TARGET, ?peer, "substream opened");

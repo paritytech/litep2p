@@ -24,6 +24,7 @@ use crate::{
     new_config::{Config, Litep2pConfig},
     peer_id::PeerId,
     protocol::{
+        libp2p::new_ping::Ping,
         notification_new::{types::Config as NotificationConfig, NotificationProtocol},
         ConnectionEvent, ProtocolContext,
     },
@@ -136,12 +137,34 @@ impl Litep2p {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
         let mut transport_ctx = TransportContext::new(config.keypair.clone());
 
+        // start notification protocol event loops
         for (name, config) in config.notification_protocols.into_iter() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?name,
+                "enable notification protocol",
+            );
+
             // TODO: specify some other channel size
             let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
             transport_ctx.add_protocol(name, tx);
             tokio::spawn(async move { NotificationProtocol::new(rx, config).run().await });
+        }
+
+        // start ping protocol event loop if enabled
+        if let Some(config) = config.ping.take() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?config.protocol,
+                "enable ping protocol",
+            );
+
+            // TODO: specify some other channel size
+            let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+
+            transport_ctx.add_protocol(config.protocol.clone(), tx);
+            tokio::spawn(async move { Ping::new(rx, config).run().await });
         }
 
         // TODO: go through all request-response protocols and start the protocol runners
@@ -270,13 +293,20 @@ mod tests {
         error::Error,
         new::{Litep2p, Litep2pEvent, SupportedProtocol},
         new_config::{Litep2pConfig, Litep2pConfigBuilder},
-        protocol::notification_new::types::Config as NotificationConfig,
+        protocol::{
+            libp2p::new_ping::Config as PingConfig,
+            notification_new::types::Config as NotificationConfig,
+        },
         transport::tcp_new::config::TransportConfig as TcpTransportConfig,
         types::protocol::ProtocolName,
     };
 
     #[tokio::test]
     async fn initialize_litep2p() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
         let (config1, _service1) = NotificationConfig::new(
             ProtocolName::from("/notificaton/1"),
             1337usize,
@@ -289,6 +319,7 @@ mod tests {
             vec![1, 2, 3, 4],
             Vec::new(),
         );
+        let (ping_config, ping_event_stream) = PingConfig::new(3);
 
         let mut config = Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
@@ -296,9 +327,10 @@ mod tests {
             })
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
+            .with_ping_protocol(ping_config)
             .build();
 
-        println!("{config:#?}");
+        // println!("{config:#?}");
 
         let litep2p = Litep2p::new(config).await.unwrap();
     }

@@ -20,7 +20,7 @@
 
 use crate::{
     crypto::ed25519::Keypair,
-    protocol::{notification_new, request_response_new},
+    protocol::{libp2p::new_ping, notification_new, request_response_new},
     transport::tcp_new::config,
     types::protocol::ProtocolName,
 };
@@ -37,6 +37,9 @@ pub struct Litep2pConfigBuilder {
     /// Keypair.
     keypair: Option<Keypair>,
 
+    /// Ping protocol.
+    ping: Option<new_ping::Config>,
+
     /// Notification protocols.
     notification_protocols: HashMap<ProtocolName, notification_new::types::Config>,
 
@@ -50,6 +53,7 @@ impl Litep2pConfigBuilder {
         Self {
             tcp: None,
             keypair: None,
+            ping: None,
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
         }
@@ -71,6 +75,12 @@ impl Litep2pConfigBuilder {
     pub fn with_notification_protocol(mut self, config: notification_new::types::Config) -> Self {
         self.notification_protocols
             .insert(config.protocol_name().clone(), config);
+        self
+    }
+
+    /// Enable ping protocol.
+    pub fn with_ping_protocol(mut self, config: new_ping::Config) -> Self {
+        self.ping = Some(config);
         self
     }
 
@@ -96,6 +106,7 @@ impl Litep2pConfigBuilder {
         Litep2pConfig {
             keypair,
             tcp: self.tcp.take(),
+            ping: self.ping.take(),
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
         }
@@ -164,6 +175,9 @@ pub struct Litep2pConfig {
 
     /// Keypair.
     pub(crate) keypair: Keypair,
+
+    /// Ping protocol configuration, if enabled.
+    pub(crate) ping: Option<new_ping::Config>,
 
     /// Notification protocols.
     pub(crate) notification_protocols: HashMap<ProtocolName, notification_new::types::Config>,
