@@ -167,8 +167,11 @@ pub enum NewTransportEvent {
     },
 
     DialFailure {
-        /// Peer ID.
-        peer: Multiaddr,
+        /// Dialed address.
+        address: Multiaddr,
+
+        /// Error.
+        error: Error,
     },
 }
 

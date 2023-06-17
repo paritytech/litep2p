@@ -246,6 +246,9 @@ impl Litep2p {
                     Ok(TransportEvent::ConnectionEstablished { peer, address }) => {
                         return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
                     }
+                    Ok(TransportEvent::DialFailure { error, address }) => {
+                        return Ok(Litep2pEvent::DialFailure { address, error })
+                    }
                     Err(error) => {
                         panic!("tcp transport failed: {error:?}");
                     }
@@ -266,12 +269,13 @@ mod tests {
         new::{Litep2p, Litep2pEvent, SupportedProtocol},
         new_config::{Litep2pConfig, Litep2pConfigBuilder},
         protocol::{
-            libp2p::new_ping::Config as PingConfig,
+            libp2p::new_ping::{Config as PingConfig, PingEvent},
             notification_new::types::Config as NotificationConfig,
         },
         transport::tcp_new::config::TransportConfig as TcpTransportConfig,
         types::protocol::ProtocolName,
     };
+    use futures::Stream;
 
     #[tokio::test]
     async fn initialize_litep2p() {
@@ -302,61 +306,74 @@ mod tests {
             .with_ping_protocol(ping_config)
             .build();
 
-        // println!("{config:#?}");
-
         let litep2p = Litep2p::new(config).await.unwrap();
     }
 
-    // // generate config for testing
-    // fn generate_config(protocols: Vec<ProtocolName>) -> Litep2pConfig {
-    //     let keypair = Keypair::generate();
-    //     let mut config = Litep2pConfigBuilder::new()
-    //         .with_keypair(keypair)
-    //         .with_tcp(TransportConfig {
-    //             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-    //         })
-    //         .build();
-    //     config.protocols = protocols;
-    //     config
-    // }
-    // #[tokio::test]
-    // async fn two_litep2ps_work() {
-    //     let _ = tracing_subscriber::fmt()
-    //         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-    //         .try_init();
-    //     let config1 = generate_config(vec![ProtocolName::from("/notification/1")]);
-    //     let config2 = generate_config(vec![
-    //         ProtocolName::from("/notification/1"),
-    //         ProtocolName::from("/notification/2"),
-    //     ]);
-    //     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    //     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
-    //     let address = litep2p2.listen_address(SupportedProtocol::Tcp).unwrap();
-    //     litep2p1.connect(address).unwrap();
-    //     loop {
-    //         tokio::select! {
-    //             event = litep2p1.poll_next() => {}
-    //             event = litep2p2.poll_next() => {}
-    //         }
-    //     }
-    // }
-    // #[tokio::test]
-    // async fn dial_failure() {
-    //     let _ = tracing_subscriber::fmt()
-    //         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-    //         .try_init();
-    //     let config1 = generate_config(vec![ProtocolName::from("/notification/1")]);
-    //     let mut litep2p = Litep2p::new(config1).await.unwrap();
-    //     litep2p.connect("/ip6/::1/tcp/1".parse().unwrap()).unwrap();
-    //     assert_eq!(litep2p.pending_connections.len(), 1);
-    //     if let Ok(Litep2pEvent::DialFailure { address, error }) = litep2p.poll_next().await {
-    //         assert_eq!(address, "/ip6/::1/tcp/1".parse().unwrap());
-    //         assert!(std::matches!(
-    //             error,
-    //             Error::IoError(std::io::ErrorKind::ConnectionRefused)
-    //         ));
-    //     } else {
-    //         panic!("invalid event");
-    //     }
-    // }
+    // generate config for testing
+    fn generate_config() -> (Litep2pConfig, Box<dyn Stream<Item = PingEvent> + Send>) {
+        let keypair = Keypair::generate();
+        let (ping_config, ping_event_stream) = PingConfig::new(3);
+
+        (
+            Litep2pConfigBuilder::new()
+                .with_keypair(keypair)
+                .with_tcp(TcpTransportConfig {
+                    listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+                })
+                .with_ping_protocol(ping_config)
+                .build(),
+            ping_event_stream,
+        )
+    }
+
+    #[tokio::test]
+    async fn two_litep2ps_work() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (config1, ping_event_stream1) = generate_config();
+        let (config2, ping_event_stream2) = generate_config();
+        let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+        let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+        let address = litep2p2.listen_address(SupportedProtocol::Tcp).unwrap();
+        litep2p1.connect(address).unwrap();
+
+        let (res1, res2) = tokio::join!(litep2p1.poll_next(), litep2p2.poll_next());
+
+        assert!(std::matches!(
+            res1,
+            Ok(Litep2pEvent::ConnectionEstablished { .. })
+        ));
+        assert!(std::matches!(
+            res2,
+            Ok(Litep2pEvent::ConnectionEstablished { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn dial_failure() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (config1, ping_event_stream1) = generate_config();
+        let (config2, ping_event_stream2) = generate_config();
+        let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+        let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+        litep2p1.connect("/ip6/::1/tcp/1".parse().unwrap()).unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let _ = litep2p2.poll_next().await;
+            }
+        });
+
+        assert!(std::matches!(
+            litep2p1.poll_next().await,
+            Ok(Litep2pEvent::DialFailure { .. })
+        ));
+    }
 }

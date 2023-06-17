@@ -53,6 +53,7 @@ use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatE
 use tracing::{instrument, Level};
 
 use std::{
+    collections::HashMap,
     io,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -114,6 +115,9 @@ pub struct TcpTransport {
 
     /// Next connection ID.
     next_connection_id: usize,
+
+    /// Pending dials.
+    pending_dials: HashMap<usize, (Multiaddr)>,
 
     /// Pending connections.
     pending_connections: FuturesUnordered<BoxFuture<'static, Result<TcpConnection, TcpError>>>,
@@ -205,6 +209,7 @@ impl TransportNew for TcpTransport {
             listener,
             listen_address,
             next_connection_id: 0usize,
+            pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
     }
@@ -222,6 +227,7 @@ impl TransportNew for TcpTransport {
         let (socket_address, peer) = Self::get_socket_address(&address)?;
         let connection_id = self.next_connection_id();
 
+        self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::open_connection(context, connection_id, socket_address, peer)
                 .await
@@ -262,9 +268,25 @@ impl TransportNew for TcpTransport {
 
                             return Ok(NewTransportEvent::ConnectionEstablished { peer, address })
                         }
-                        Err(err) => {
-                            // TODO: if we were the dialer, return error
-                            // TODO: return more comprehensive error context if the connection fails
+                        Err(error) => {
+                            match error.connection_id {
+                                Some(connection_id) => match self.pending_dials.remove(&connection_id) {
+                                    Some(address) => {
+                                        return Ok(NewTransportEvent::DialFailure {
+                                            address,
+                                            error: error.error,
+                                        })
+                                    }
+                                    None => tracing::debug!(
+                                        target: LOG_TARGET,
+                                        ?error,
+                                        "failed to establish connection"
+                                    ),
+                                },
+                                None => {
+                                    tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
+                                }
+                            }
                         }
                     }
                 }
@@ -277,8 +299,11 @@ impl TransportNew for TcpTransport {
 mod tests {
     use super::*;
     use crate::{
-        new_config::Litep2pConfigBuilder, protocol::Libp2pProtocol, types::protocol::ProtocolName,
+        new_config::Litep2pConfigBuilder,
+        protocol::{libp2p::new_ping::Config as PingConfig, Libp2pProtocol},
+        types::protocol::ProtocolName,
     };
+    use tokio::sync::mpsc::channel;
 
     #[test]
     fn parse_multiaddresses() {
@@ -318,129 +343,129 @@ mod tests {
         .is_err());
     }
 
-    // // build two connected peers
-    // async fn build_two_connected_peers() -> (TcpConnection, TcpConnection) {
-    //     let _ = tracing_subscriber::fmt()
-    //         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-    //         .try_init();
-
-    //     let keypair1 = Keypair::generate();
-    //     let mut config = Litep2pConfigBuilder::new()
-    //         .with_keypair(keypair1.clone())
-    //         .with_tcp(TransportConfig {
-    //             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-    //         })
-    //         .build();
-    //     config.protocols = vec![ProtocolName::from("/notification/1")];
-
-    //     let mut transport1 = TcpTransport::new(config).await.unwrap();
-
-    //     let keypair2 = Keypair::generate();
-    //     let mut config = Litep2pConfigBuilder::new()
-    //         .with_keypair(keypair2.clone())
-    //         .with_tcp(TransportConfig {
-    //             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-    //         })
-    //         .build();
-    //     config.protocols = vec![
-    //         ProtocolName::from("/notification/1"),
-    //         ProtocolName::from("/notification/2"),
-    //     ];
-    //     let mut transport2 = TcpTransport::new(config).await.unwrap();
-
-    //     let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public().clone()));
-    //     let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public().clone()));
-
-    //     tracing::info!(target: LOG_TARGET, "peer1 {peer1}, peer2 {peer2}");
-
-    //     let listen_address = TransportNew::listen_address(&transport1);
-    //     let _ = transport2.open_connection(listen_address).unwrap();
-
-    //     let (res1, res2) = tokio::join!(transport1.next_connection(), transport2.next_connection());
-    //     (res1.unwrap(), res2.unwrap())
-    // }
-
     #[tokio::test]
     async fn connect_and_accept_works() {
-        // let (mut stream1, mut stream2) = build_two_connected_peers().await;
-        // let substream = stream1.open_substream(ProtocolName::from("/notification/1"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
-        // let mut stream1_res = None;
-        // let mut stream2_res = None;
+        let keypair1 = Keypair::generate();
+        let (tx1, rx1) = channel(64);
+        let context1 = TransportContext {
+            keypair: keypair1.clone(),
+            protocols: HashMap::from_iter([(ProtocolName::from("/notif/1"), tx1)]),
+        };
+        let transport_config1 = TransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        };
 
-        // loop {
-        //     tokio::select! {
-        //         event = stream1.next_substream() => match event {
-        //             Ok(stream) => {
-        //                 stream1_res = Some(stream);
-        //             }
-        //             _ => panic!("error 1"),
-        //         },
-        //         event = stream2.next_substream() => match event {
-        //             Ok(stream) => {
-        //                 stream2_res = Some(stream);
-        //             }
-        //             _ => panic!("error 1"),
-        //         }
-        //     }
+        let mut transport1 = TcpTransport::new(context1, transport_config1)
+            .await
+            .unwrap();
 
-        //     if stream2_res.is_some() && stream1_res.is_some() {
-        //         break;
-        //     }
-        // }
-    }
+        let keypair2 = Keypair::generate();
+        let (tx2, rx2) = channel(64);
+        let context2 = TransportContext {
+            keypair: keypair2.clone(),
+            protocols: HashMap::from_iter([(ProtocolName::from("/notif/1"), tx2)]),
+        };
+        let transport_config2 = TransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        };
 
-    #[tokio::test]
-    async fn protocol_not_supported() {
-        // let (mut stream1, mut stream2) = build_two_connected_peers().await;
-        // let substream = stream2.open_substream(ProtocolName::from("/notification/2"));
+        let mut transport2 = TcpTransport::new(context2, transport_config2)
+            .await
+            .unwrap();
 
-        // let mut stream1_res = None;
+        let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public().clone()));
+        let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public().clone()));
 
-        // loop {
-        //     tokio::select! {
-        //         event = stream1.next_substream() => match event {
-        //             Ok(stream) => {
-        //                 stream1_res = Some(stream);
-        //             }
-        //             err => panic!("error 1 {err:?}"),
-        //         },
-        //         event = stream2.next_substream() => match event {
-        //             Err(err) => {
-        //                 break
-        //             }
-        //             Ok(_) => panic!("should not succeed"),
-        //         }
-        //     }
-        // }
+        let listen_address = TransportNew::listen_address(&transport1);
+        let _ = transport2.open_connection(listen_address).unwrap();
+        let (res1, res2) = tokio::join!(transport1.next_event(), transport2.next_event());
+
+        assert!(std::matches!(
+            res1,
+            Ok(NewTransportEvent::ConnectionEstablished { .. })
+        ));
+        assert!(std::matches!(
+            res2,
+            Ok(NewTransportEvent::ConnectionEstablished { .. })
+        ));
     }
 
     #[tokio::test]
     async fn dial_failure() {
-        //     let _ = tracing_subscriber::fmt()
-        //         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        //         .try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
-        //     let keypair = Keypair::generate();
-        //     let mut config = Litep2pConfigBuilder::new()
-        //         .with_keypair(keypair)
-        //         .with_tcp(TransportConfig {
-        //             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-        //         })
-        //         .build();
-        //     config.protocols = vec![ProtocolName::from("/notification/1")];
+        let keypair1 = Keypair::generate();
+        let (tx1, rx1) = channel(64);
+        let context1 = TransportContext {
+            keypair: keypair1.clone(),
+            protocols: HashMap::from_iter([(ProtocolName::from("/notif/1"), tx1)]),
+        };
+        let transport_config1 = TransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        };
 
-        //     let mut transport = TcpTransport::new(config).await.unwrap();
-        //     let _ = transport
-        //         .open_connection("/ip6/::1/tcp/1".parse().unwrap())
-        //         .unwrap();
+        let mut transport1 = TcpTransport::new(context1, transport_config1)
+            .await
+            .unwrap();
 
-        //     let TcpError {
-        //         error,
-        //         connection_id,
-        //     } = transport.next_connection().await.unwrap_err();
+        let keypair2 = Keypair::generate();
+        let (tx2, rx2) = channel(64);
+        let context2 = TransportContext {
+            keypair: keypair2.clone(),
+            protocols: HashMap::from_iter([(ProtocolName::from("/notif/1"), tx2)]),
+        };
+        let transport_config2 = TransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        };
 
-        //     assert_eq!(connection_id, Some(0));
-        //     std::matches!(error, Error::IoError(io::ErrorKind::ConnectionRefused));
+        let mut transport2 = TcpTransport::new(context2, transport_config2)
+            .await
+            .unwrap();
+
+        let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public().clone()));
+        let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public().clone()));
+
+        tracing::info!(target: LOG_TARGET, "peer1 {peer1}, peer2 {peer2}");
+
+        // let listen_address = TransportNew::listen_address(&transport1);
+        let _ = transport2
+            .open_connection("/ip6/::1/tcp/1".parse().unwrap())
+            .unwrap();
+
+        // spawn the other conection in the background as it won't return anything
+        tokio::spawn(async move {
+            loop {
+                let _ = transport1.next_event().await;
+            }
+        });
+
+        assert!(std::matches!(
+            transport2.next_event().await,
+            Ok(NewTransportEvent::DialFailure { .. })
+        ));
     }
+
+    #[tokio::test]
+    async fn multistream_select_not_supported() {}
+
+    #[tokio::test]
+    async fn yamux_not_supported() {}
+
+    #[tokio::test]
+    async fn noise_not_supported() {}
+
+    #[tokio::test]
+    async fn multistream_select_timeout() {}
+
+    #[tokio::test]
+    async fn yamux_timeout() {}
+
+    #[tokio::test]
+    async fn noise_timeout() {}
 }
