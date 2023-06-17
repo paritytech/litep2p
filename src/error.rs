@@ -99,7 +99,7 @@ pub enum SubstreamError {
 #[derive(Debug, thiserror::Error)]
 pub enum NegotiationError {
     #[error("multistream-select error: `{0:?}`")]
-    MultistreamSelectError(multistream_select::NegotiationError),
+    MultistreamSelectError(crate::multistream_select::NegotiationError),
     #[error("multistream-select error: `{0:?}`")]
     SnowError(snow::Error),
     #[error("Connection closed while negotiating")]
@@ -137,8 +137,8 @@ impl From<io::Error> for Error {
     }
 }
 
-impl From<multistream_select::NegotiationError> for Error {
-    fn from(error: multistream_select::NegotiationError) -> Error {
+impl From<crate::multistream_select::NegotiationError> for Error {
+    fn from(error: crate::multistream_select::NegotiationError) -> Error {
         Error::NegotiationError(NegotiationError::MultistreamSelectError(error))
     }
 }

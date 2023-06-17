@@ -66,26 +66,6 @@
 //! [`dialer_select_proto`](self::dialer_select_proto) and the documentation
 //! of [`Version::V1Lazy`] for further details.
 //!
-//! ## Examples
-//!
-//! For a dialer:
-//!
-//! ```no_run
-//! use async_std::net::TcpStream;
-//! use multistream_select::{dialer_select_proto, Version};
-//! use futures::prelude::*;
-//!
-//! async_std::task::block_on(async move {
-//!     let socket = TcpStream::connect("127.0.0.1:10333").await.unwrap();
-//!
-//!     let protos = vec![b"/echo/1.0.0", b"/echo/2.5.0"];
-//!     let (protocol, _io) = dialer_select_proto(socket, protos, Version::V1).await.unwrap();
-//!
-//!     println!("Negotiated protocol: {:?}", protocol);
-//!     // You can now use `_io` to communicate with the remote.
-//! });
-//! ```
-//!
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
@@ -95,10 +75,10 @@ mod listener_select;
 mod negotiated;
 mod protocol;
 
-pub use self::dialer_select::{dialer_select_proto, DialerSelectFuture};
-pub use self::listener_select::{listener_select_proto, ListenerSelectFuture};
-pub use self::negotiated::{Negotiated, NegotiatedComplete, NegotiationError};
-pub use self::protocol::ProtocolError;
+pub use crate::multistream_select::dialer_select::{dialer_select_proto, DialerSelectFuture};
+pub use crate::multistream_select::listener_select::{listener_select_proto, ListenerSelectFuture};
+pub use crate::multistream_select::negotiated::{Negotiated, NegotiatedComplete, NegotiationError};
+pub use crate::multistream_select::protocol::ProtocolError;
 
 /// Supported multistream-select versions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

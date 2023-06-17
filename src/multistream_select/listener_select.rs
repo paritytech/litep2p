@@ -21,8 +21,10 @@
 //! Protocol negotiation strategies for the peer acting as the listener
 //! in a multistream-select protocol negotiation.
 
-use crate::protocol::{HeaderLine, Message, MessageIO, Protocol, ProtocolError};
-use crate::{Negotiated, NegotiationError};
+use crate::multistream_select::protocol::{
+    HeaderLine, Message, MessageIO, Protocol, ProtocolError,
+};
+use crate::multistream_select::{Negotiated, NegotiationError};
 
 use futures::prelude::*;
 use smallvec::SmallVec;
@@ -33,6 +35,8 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+const LOG_TARGET: &str = "multistream-select";
 
 /// Returns a `Future` that negotiates a protocol on the given I/O stream
 /// for a peer acting as the _listener_ (or _responder_).
@@ -52,7 +56,8 @@ where
         .filter_map(|n| match Protocol::try_from(n.as_ref()) {
             Ok(p) => Some((n, p)),
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
+                    target: LOG_TARGET,
                     "Listener: Ignoring invalid protocol: {} due to {}",
                     String::from_utf8_lossy(n.as_ref()),
                     e
@@ -186,7 +191,8 @@ where
                                 // the dialer also raises `NegotiationError::Failed` when finally
                                 // reading the `N/A` response.
                                 if let ProtocolError::InvalidMessage = &err {
-                                    log::trace!(
+                                    tracing::trace!(
+                                        target: LOG_TARGET,
                                         "Listener: Negotiation failed with invalid \
                                         message after protocol rejection."
                                     );
@@ -194,7 +200,8 @@ where
                                 }
                                 if let ProtocolError::IoError(e) = &err {
                                     if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                                        log::trace!(
+                                        tracing::trace!(
+                                            target: LOG_TARGET,
                                             "Listener: Negotiation failed with EOF \
                                             after protocol rejection."
                                         );
@@ -228,10 +235,10 @@ where
                             });
 
                             let message = if protocol.is_some() {
-                                log::debug!("Listener: confirming protocol: {}", p);
+                                tracing::debug!("Listener: confirming protocol: {}", p);
                                 Message::Protocol(p.clone())
                             } else {
-                                log::debug!(
+                                tracing::debug!(
                                     "Listener: rejecting protocol: {}",
                                     String::from_utf8_lossy(p.as_ref())
                                 );
@@ -290,7 +297,7 @@ where
                             // Otherwise expect to receive another message.
                             match protocol {
                                 Some(protocol) => {
-                                    log::debug!(
+                                    tracing::debug!(
                                         "Listener: sent confirmed protocol: {}",
                                         String::from_utf8_lossy(protocol.as_ref())
                                     );

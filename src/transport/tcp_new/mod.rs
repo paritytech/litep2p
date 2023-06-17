@@ -26,6 +26,7 @@ use crate::{
         PublicKey,
     },
     error::{AddressError, Error, SubstreamError},
+    multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     new::{Litep2pContext, TransportContext},
     new_config::Config,
     peer_id::PeerId,
@@ -47,7 +48,6 @@ use futures::{
     AsyncRead, AsyncWrite,
 };
 use multiaddr::{Multiaddr, Protocol};
-use multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{instrument, Level};

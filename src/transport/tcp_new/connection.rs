@@ -26,6 +26,7 @@ use crate::{
         PublicKey,
     },
     error::{AddressError, Error, SubstreamError},
+    multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     new::TransportContext,
     new_config::Config,
     peer_id::PeerId,
@@ -48,7 +49,6 @@ use futures::{
     AsyncRead, AsyncWrite,
 };
 use multiaddr::{Multiaddr, Protocol};
-use multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc::Receiver,

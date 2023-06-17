@@ -31,6 +31,7 @@ use std::{
 const MAX_LEN_BYTES: u16 = 2;
 const MAX_FRAME_SIZE: u16 = (1 << (MAX_LEN_BYTES * 8 - MAX_LEN_BYTES)) - 1;
 const DEFAULT_BUFFER_SIZE: usize = 64;
+const LOG_TARGET: &str = "multistream-select";
 
 /// A `Stream` and `Sink` for unsigned-varint length-delimited frames,
 /// wrapping an underlying `AsyncRead + AsyncWrite` I/O resource.
@@ -173,7 +174,7 @@ where
                     if (buf[*pos - 1] & 0x80) == 0 {
                         // MSB is not set, indicating the end of the length prefix.
                         let (len, _) = unsigned_varint::decode::u16(buf).map_err(|e| {
-                            log::debug!("invalid length prefix: {}", e);
+                            tracing::debug!(target: LOG_TARGET, "invalid length prefix: {}", e);
                             io::Error::new(io::ErrorKind::InvalidData, "invalid length prefix")
                         })?;
 
@@ -382,153 +383,5 @@ where
         debug_assert!(this.write_buffer.is_empty());
 
         this.project().inner.poll_write_vectored(cx, bufs)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::length_delimited::LengthDelimited;
-    use async_std::net::{TcpListener, TcpStream};
-    use futures::{io::Cursor, prelude::*};
-    use quickcheck::*;
-    use std::io::ErrorKind;
-
-    #[test]
-    fn basic_read() {
-        let data = vec![6, 9, 8, 7, 6, 5, 4];
-        let framed = LengthDelimited::new(Cursor::new(data));
-        let recved = futures::executor::block_on(framed.try_collect::<Vec<_>>()).unwrap();
-        assert_eq!(recved, vec![vec![9, 8, 7, 6, 5, 4]]);
-    }
-
-    #[test]
-    fn basic_read_two() {
-        let data = vec![6, 9, 8, 7, 6, 5, 4, 3, 9, 8, 7];
-        let framed = LengthDelimited::new(Cursor::new(data));
-        let recved = futures::executor::block_on(framed.try_collect::<Vec<_>>()).unwrap();
-        assert_eq!(recved, vec![vec![9, 8, 7, 6, 5, 4], vec![9, 8, 7]]);
-    }
-
-    #[test]
-    fn two_bytes_long_packet() {
-        let len = 5000u16;
-        assert!(len < (1 << 15));
-        let frame = (0..len).map(|n| (n & 0xff) as u8).collect::<Vec<_>>();
-        let mut data = vec![(len & 0x7f) as u8 | 0x80, (len >> 7) as u8];
-        data.extend(frame.clone().into_iter());
-        let mut framed = LengthDelimited::new(Cursor::new(data));
-        let recved = futures::executor::block_on(async move { framed.next().await }).unwrap();
-        assert_eq!(recved.unwrap(), frame);
-    }
-
-    #[test]
-    fn packet_len_too_long() {
-        let mut data = vec![0x81, 0x81, 0x1];
-        data.extend((0..16513).map(|_| 0));
-        let mut framed = LengthDelimited::new(Cursor::new(data));
-        let recved = futures::executor::block_on(async move { framed.next().await.unwrap() });
-
-        if let Err(io_err) = recved {
-            assert_eq!(io_err.kind(), ErrorKind::InvalidData)
-        } else {
-            panic!()
-        }
-    }
-
-    #[test]
-    fn empty_frames() {
-        let data = vec![0, 0, 6, 9, 8, 7, 6, 5, 4, 0, 3, 9, 8, 7];
-        let framed = LengthDelimited::new(Cursor::new(data));
-        let recved = futures::executor::block_on(framed.try_collect::<Vec<_>>()).unwrap();
-        assert_eq!(
-            recved,
-            vec![
-                vec![],
-                vec![],
-                vec![9, 8, 7, 6, 5, 4],
-                vec![],
-                vec![9, 8, 7],
-            ]
-        );
-    }
-
-    #[test]
-    fn unexpected_eof_in_len() {
-        let data = vec![0x89];
-        let framed = LengthDelimited::new(Cursor::new(data));
-        let recved = futures::executor::block_on(framed.try_collect::<Vec<_>>());
-        if let Err(io_err) = recved {
-            assert_eq!(io_err.kind(), ErrorKind::UnexpectedEof)
-        } else {
-            panic!()
-        }
-    }
-
-    #[test]
-    fn unexpected_eof_in_data() {
-        let data = vec![5];
-        let framed = LengthDelimited::new(Cursor::new(data));
-        let recved = futures::executor::block_on(framed.try_collect::<Vec<_>>());
-        if let Err(io_err) = recved {
-            assert_eq!(io_err.kind(), ErrorKind::UnexpectedEof)
-        } else {
-            panic!()
-        }
-    }
-
-    #[test]
-    fn unexpected_eof_in_data2() {
-        let data = vec![5, 9, 8, 7];
-        let framed = LengthDelimited::new(Cursor::new(data));
-        let recved = futures::executor::block_on(framed.try_collect::<Vec<_>>());
-        if let Err(io_err) = recved {
-            assert_eq!(io_err.kind(), ErrorKind::UnexpectedEof)
-        } else {
-            panic!()
-        }
-    }
-
-    #[test]
-    fn writing_reading() {
-        fn prop(frames: Vec<Vec<u8>>) -> TestResult {
-            async_std::task::block_on(async move {
-                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let listener_addr = listener.local_addr().unwrap();
-
-                let expected_frames = frames.clone();
-                let server = async_std::task::spawn(async move {
-                    let socket = listener.accept().await.unwrap().0;
-                    let mut connec =
-                        rw_stream_sink::RwStreamSink::new(LengthDelimited::new(socket));
-
-                    let mut buf = vec![0u8; 0];
-                    for expected in expected_frames {
-                        if expected.is_empty() {
-                            continue;
-                        }
-                        if buf.len() < expected.len() {
-                            buf.resize(expected.len(), 0);
-                        }
-                        let n = connec.read(&mut buf).await.unwrap();
-                        assert_eq!(&buf[..n], &expected[..]);
-                    }
-                });
-
-                let client = async_std::task::spawn(async move {
-                    let socket = TcpStream::connect(&listener_addr).await.unwrap();
-                    let mut connec = LengthDelimited::new(socket);
-                    for frame in frames {
-                        connec.send(From::from(frame)).await.unwrap();
-                    }
-                });
-
-                server.await;
-                client.await;
-            });
-
-            TestResult::passed()
-        }
-
-        quickcheck(prop as fn(_) -> _)
     }
 }

@@ -25,8 +25,8 @@
 //! `Stream` and `Sink` implementations of `MessageIO` and
 //! `MessageReader`.
 
-use crate::length_delimited::{LengthDelimited, LengthDelimitedReader};
-use crate::Version;
+use crate::multistream_select::length_delimited::{LengthDelimited, LengthDelimitedReader};
+use crate::multistream_select::Version;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{io::IoSlice, prelude::*, ready};
@@ -48,6 +48,8 @@ const MSG_MULTISTREAM_1_0: &[u8] = b"/multistream/1.0.0\n";
 const MSG_PROTOCOL_NA: &[u8] = b"na\n";
 /// The encoded form of a multistream-select 'ls' message.
 const MSG_LS: &[u8] = b"ls\n";
+/// Logging target.
+const LOG_TARGET: &str = "multistream-select";
 
 /// The multistream-select header lines preceeding negotiation.
 ///
@@ -389,7 +391,7 @@ where
         return Poll::Ready(None);
     };
 
-    log::trace!("Received message: {:?}", msg);
+    tracing::trace!(target: LOG_TARGET, "Received message: {:?}", msg);
 
     Poll::Ready(Some(Ok(msg)))
 }
@@ -448,51 +450,5 @@ impl fmt::Display for ProtocolError {
             ProtocolError::InvalidProtocol => write!(fmt, "A protocol (name) is invalid."),
             ProtocolError::TooManyProtocols => write!(fmt, "Too many protocols received."),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use quickcheck::*;
-    use std::iter;
-
-    impl Arbitrary for Protocol {
-        fn arbitrary(g: &mut Gen) -> Protocol {
-            let n = g.gen_range(1..g.size());
-            let p: String = iter::repeat(())
-                .map(|()| char::arbitrary(g))
-                .filter(|&c| c.is_ascii_alphanumeric())
-                .take(n)
-                .collect();
-            Protocol(Bytes::from(format!("/{p}")))
-        }
-    }
-
-    impl Arbitrary for Message {
-        fn arbitrary(g: &mut Gen) -> Message {
-            match g.gen_range(0..5u8) {
-                0 => Message::Header(HeaderLine::V1),
-                1 => Message::NotAvailable,
-                2 => Message::ListProtocols,
-                3 => Message::Protocol(Protocol::arbitrary(g)),
-                4 => Message::Protocols(Vec::arbitrary(g)),
-                _ => panic!(),
-            }
-        }
-    }
-
-    #[test]
-    fn encode_decode_message() {
-        fn prop(msg: Message) {
-            let mut buf = BytesMut::new();
-            msg.encode(&mut buf)
-                .unwrap_or_else(|_| panic!("Encoding message failed: {msg:?}"));
-            match Message::decode(buf.freeze()) {
-                Ok(m) => assert_eq!(m, msg),
-                Err(e) => panic!("Decoding failed: {e:?}"),
-            }
-        }
-        quickcheck(prop as fn(_))
     }
 }

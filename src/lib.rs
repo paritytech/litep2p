@@ -63,6 +63,7 @@ pub mod types;
 
 mod connection;
 mod error;
+mod multistream_select;
 mod peer_id;
 
 // TODO: move code from `TcpTransport` to here

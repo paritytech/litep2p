@@ -20,8 +20,10 @@
 
 //! Protocol negotiation strategies for the peer acting as the dialer.
 
-use crate::protocol::{HeaderLine, Message, MessageIO, Protocol, ProtocolError};
-use crate::{Negotiated, NegotiationError, Version};
+use crate::multistream_select::protocol::{
+    HeaderLine, Message, MessageIO, Protocol, ProtocolError,
+};
+use crate::multistream_select::{Negotiated, NegotiationError, Version};
 
 use futures::prelude::*;
 use std::{
@@ -30,6 +32,8 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+const LOG_TARGET: &str = "multistream-select";
 
 /// Returns a `Future` that negotiates a protocol on the given I/O stream
 /// for a peer acting as the _dialer_ (or _initiator_).
@@ -131,7 +135,7 @@ where
                     if let Err(err) = Pin::new(&mut io).start_send(Message::Protocol(p.clone())) {
                         return Poll::Ready(Err(From::from(err)));
                     }
-                    log::debug!("Dialer: Proposed protocol: {}", p);
+                    tracing::debug!(target: LOG_TARGET, "Dialer: Proposed protocol: {}", p);
 
                     if this.protocols.peek().is_some() {
                         *this.state = State::FlushProtocol { io, protocol }
@@ -143,7 +147,11 @@ where
                             // the dialer supports for this negotiation. Notably,
                             // the dialer expects a regular `V1` response.
                             Version::V1Lazy => {
-                                log::debug!("Dialer: Expecting proposed protocol: {}", p);
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    "Dialer: Expecting proposed protocol: {}",
+                                    p
+                                );
                                 let hl = HeaderLine::from(Version::V1Lazy);
                                 let io = Negotiated::expecting(io.into_reader(), p, Some(hl));
                                 return Poll::Ready(Ok((protocol, io)));
@@ -180,12 +188,17 @@ where
                             *this.state = State::AwaitProtocol { io, protocol };
                         }
                         Message::Protocol(ref p) if p.as_ref() == protocol.as_ref() => {
-                            log::debug!("Dialer: Received confirmation for protocol: {}", p);
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                "Dialer: Received confirmation for protocol: {}",
+                                p
+                            );
                             let io = Negotiated::completed(io.into_inner());
                             return Poll::Ready(Ok((protocol, io)));
                         }
                         Message::NotAvailable => {
-                            log::debug!(
+                            tracing::debug!(
+                                target: LOG_TARGET,
                                 "Dialer: Received rejection of protocol: {}",
                                 String::from_utf8_lossy(protocol.as_ref())
                             );

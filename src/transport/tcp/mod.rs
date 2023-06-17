@@ -38,6 +38,7 @@ use crate::{
         PublicKey,
     },
     error::{AddressError, Error, SubstreamError},
+    multistream_select::{dialer_select_proto, listener_select_proto, Version},
     peer_id::PeerId,
     transport::{
         tcp::types::*, Connection, Direction, Transport, TransportEvent, TransportService,
@@ -52,7 +53,6 @@ use futures::{
     FutureExt, Stream, StreamExt,
 };
 use multiaddr::{Multiaddr, Protocol};
-use multistream_select::{dialer_select_proto, listener_select_proto, Version};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc::{channel, Receiver, Sender},

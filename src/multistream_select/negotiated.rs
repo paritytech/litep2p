@@ -18,7 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::protocol::{HeaderLine, Message, MessageReader, Protocol, ProtocolError};
+use crate::multistream_select::protocol::{
+    HeaderLine, Message, MessageReader, Protocol, ProtocolError,
+};
 
 use futures::{
     io::{IoSlice, IoSliceMut},
@@ -32,6 +34,8 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+const LOG_TARGET: &str = "multistream-select";
 
 /// An I/O stream that has settled on an (application-layer) protocol to use.
 ///
@@ -178,7 +182,11 @@ impl<TInner> Negotiated<TInner> {
 
                     if let Message::Protocol(p) = &msg {
                         if p.as_ref() == protocol.as_ref() {
-                            log::debug!("Negotiated: Received confirmation for protocol: {}", p);
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                "Negotiated: Received confirmation for protocol: {}",
+                                p
+                            );
                             *this.state = State::Completed {
                                 io: io.into_inner(),
                             };
