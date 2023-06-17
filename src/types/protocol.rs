@@ -18,10 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::sync::Arc;
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 /// Protocol name.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum ProtocolName {
     Static(&'static str),
     Allocated(Arc<String>),
@@ -55,3 +58,17 @@ impl std::ops::Deref for ProtocolName {
         }
     }
 }
+
+impl Hash for ProtocolName {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (self as &str).hash(state)
+    }
+}
+
+impl PartialEq for ProtocolName {
+    fn eq(&self, other: &Self) -> bool {
+        (self as &str) == (other as &str)
+    }
+}
+
+impl Eq for ProtocolName {}
