@@ -26,7 +26,7 @@ use crate::{
     DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{AsyncReadExt, AsyncWriteExt, Stream};
+use futures::{AsyncReadExt, AsyncWriteExt, SinkExt, Stream, StreamExt};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -104,6 +104,8 @@ impl Ping {
 
     /// Start [`Ping`] event loop.
     pub async fn run(mut self) {
+        tracing::debug!(target: LOG_TARGET, "starting ping event loop");
+
         while let Some(event) = self.rx.recv().await {
             match event {
                 ConnectionEvent::ConnectionEstablished { peer, connection } => {
@@ -114,9 +116,35 @@ impl Ping {
                     tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
                     self.peers.remove(&peer);
                 }
-                ConnectionEvent::SubstreamOpened { peer, substream } => {
+                ConnectionEvent::SubstreamOpened {
+                    peer,
+                    mut substream,
+                } => {
                     tracing::trace!(target: LOG_TARGET, ?peer, "substream opened");
-                    // TODO: handle ping
+
+                    // TODO: don't block here
+                    match substream.next().await {
+                        Some(Ok(ping)) => {
+                            if let Err(error) = substream.send(ping).await {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    "failed to write value back to sender"
+                                );
+                            }
+                        }
+                        Some(Err(error)) => tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?error,
+                            "error while reading from the substream",
+                        ),
+                        None => tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            "substream closed unexpectedly"
+                        ),
+                    }
                 }
                 ConnectionEvent::SubstreamOpenFailure { peer, error } => {
                     tracing::debug!(
