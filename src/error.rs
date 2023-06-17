@@ -24,7 +24,7 @@
 // TODO: clean up all these errors into something coherent
 // TODO: move `NegotiationError` under `SubstreamError`
 
-use crate::peer_id::PeerId;
+use crate::{peer_id::PeerId, types::protocol::ProtocolName};
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::{Multihash, MultihashGeneric};
@@ -68,6 +68,8 @@ pub enum Error {
     NotSupported(String),
     #[error("Other error occurred: `{0}`")]
     Other(String),
+    #[error("Protocol already exists: `{0:?}`")]
+    ProtocolAlreadyExists(ProtocolName),
 }
 
 #[derive(Debug, thiserror::Error)]

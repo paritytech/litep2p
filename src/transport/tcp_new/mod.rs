@@ -26,7 +26,7 @@ use crate::{
         PublicKey,
     },
     error::{AddressError, Error, SubstreamError},
-    new::Litep2pContext,
+    new::{Litep2pContext, TransportContext},
     new_config::Config,
     peer_id::PeerId,
     transport::{
@@ -103,8 +103,8 @@ impl TransportError for TcpError {
 /// TCP transport.
 #[derive(Debug)]
 pub struct TcpTransport {
-    /// Configuration.
-    config: Config,
+    /// Transport context.
+    context: TransportContext,
 
     /// TCP listener.
     listener: TcpListener,
@@ -190,27 +190,24 @@ impl TransportNew for TcpTransport {
     type Connection = TcpConnection;
 
     /// Create new [`TcpTransport`].
-    async fn new(context: Litep2pContext, config: Self::Config) -> crate::Result<Self> {
-        // let transport_config = config.tcp().as_ref().expect("tcp configuration to exist");
+    async fn new(context: TransportContext, config: Self::Config) -> crate::Result<Self> {
+        tracing::info!(
+            target: LOG_TARGET,
+            listen_address = ?config.listen_address,
+            "start tcp transport",
+        );
 
-        // tracing::info!(
-        //     target: LOG_TARGET,
-        //     listen_address = ?transport_config.listen_address,
-        //     "start tcp transport",
-        // );
+        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
+        let listener = TcpListener::bind(listen_address).await?;
+        let listen_address = listener.local_addr()?;
 
-        // let (listen_address, _) = Self::get_socket_address(&transport_config.listen_address)?;
-        // let listener = TcpListener::bind(listen_address).await?;
-        // let listen_address = listener.local_addr()?;
-
-        // Ok(Self {
-        //     config,
-        //     listener,
-        //     listen_address,
-        //     next_connection_id: 0usize,
-        //     pending_connections: FuturesUnordered::new(),
-        // })
-        todo!();
+        Ok(Self {
+            context,
+            listener,
+            listen_address,
+            next_connection_id: 0usize,
+            pending_connections: FuturesUnordered::new(),
+        })
     }
 
     /// Get assigned listen address.
@@ -222,7 +219,7 @@ impl TransportNew for TcpTransport {
     fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize> {
         tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
-        let config = self.config.clone();
+        let config = self.context.clone();
         let (socket_address, peer) = Self::get_socket_address(&address)?;
         let connection_id = self.next_connection_id();
 
@@ -241,7 +238,7 @@ impl TransportNew for TcpTransport {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
-                        let config = self.config.clone();
+                        let config = self.context.clone();
                         let connection_id = self.next_connection_id();
 
                         self.pending_connections.push(Box::pin(async move {

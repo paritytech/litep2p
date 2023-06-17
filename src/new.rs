@@ -23,7 +23,10 @@ use crate::{
     error::Error,
     new_config::{Config, Litep2pConfig},
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ProtocolContext},
+    protocol::{
+        notification_new::{types::Config as NotificationConfig, NotificationProtocol},
+        ConnectionEvent, ProtocolContext,
+    },
     transport::{tcp_new::TcpTransport, ConnectionNew, TransportError, TransportNew},
     types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE, LOG_TARGET,
@@ -74,9 +77,6 @@ pub struct Litep2p {
     /// Local peer ID.
     local_peer_id: PeerId,
 
-    // Litep2p configuration.
-    config: Litep2pConfig,
-
     /// TCP transport.
     tcp: TcpTransport,
 
@@ -94,14 +94,55 @@ pub struct Litep2pContext {
     keypair: Keypair,
 }
 
-impl Litep2p {
-    /// Create new [`Litep2p`].
-    pub async fn new(config: Litep2pConfig) -> crate::Result<Litep2p> {
-        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair().public()));
-        let inner_config = Config::from(&config);
+/// Transport context.
+#[derive(Debug, Clone)]
+pub struct TransportContext {
+    /// Enabled protocols.
+    pub protocols: HashMap<ProtocolName, Sender<ConnectionEvent>>,
 
-        // TODO: go through all notification protocols and start the protocol runners
-        //       passing in the command the notification config
+    /// Keypair.
+    pub keypair: Keypair,
+}
+
+impl TransportContext {
+    /// Create new [`TransportContext`].
+    pub fn new(keypair: Keypair) -> Self {
+        Self {
+            protocols: HashMap::new(),
+            keypair,
+        }
+    }
+
+    /// Add new protocol.
+    pub fn add_protocol(
+        &mut self,
+        protocol: ProtocolName,
+        tx: Sender<ConnectionEvent>,
+    ) -> crate::Result<()> {
+        match self.protocols.insert(protocol.clone(), tx) {
+            Some(_) => Err(Error::ProtocolAlreadyExists(protocol)),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Litep2p {
+    fn initialize_notification_protocol() -> (ProtocolName, Sender<ConnectionEvent>) {
+        todo!();
+    }
+
+    /// Create new [`Litep2p`].
+    pub async fn new(mut config: Litep2pConfig) -> crate::Result<Litep2p> {
+        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
+        let mut transport_ctx = TransportContext::new(config.keypair.clone());
+
+        for (name, config) in config.notification_protocols.into_iter() {
+            // TODO: specify some other channel size
+            let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+
+            transport_ctx.add_protocol(name, tx);
+            tokio::spawn(async move { NotificationProtocol::new(rx, config).run().await });
+        }
 
         // TODO: go through all request-response protocols and start the protocol runners
         //       passing in the command the notification config
@@ -110,18 +151,14 @@ impl Litep2p {
 
         // TODO: check if identify is enabled and if so, start identify event loop
 
-        // TODO: for each protocol, return a handle which allows transports to send events to them
-        //       and pass these protocol handles to the transport along with other context
-
         // enable tcp transport if the config exists
-        let tcp = match inner_config.tcp() {
-            Some(_) => <TcpTransport as TransportNew>::new(inner_config).await?,
+        let tcp = match config.tcp.take() {
+            Some(config) => <TcpTransport as TransportNew>::new(transport_ctx, config).await?,
             None => panic!("tcp not enabled"),
         };
 
         Ok(Self {
             tcp,
-            config,
             local_peer_id,
             pending_connections: HashMap::new(),
         })
@@ -233,12 +270,38 @@ mod tests {
         error::Error,
         new::{Litep2p, Litep2pEvent, SupportedProtocol},
         new_config::{Litep2pConfig, Litep2pConfigBuilder},
-        transport::tcp_new::config::TransportConfig,
+        protocol::notification_new::types::Config as NotificationConfig,
+        transport::tcp_new::config::TransportConfig as TcpTransportConfig,
         types::protocol::ProtocolName,
     };
 
     #[tokio::test]
-    async fn initialize_litep2p() {}
+    async fn initialize_litep2p() {
+        let (config1, _service1) = NotificationConfig::new(
+            ProtocolName::from("/notificaton/1"),
+            1337usize,
+            vec![1, 2, 3, 4],
+            Vec::new(),
+        );
+        let (config2, _service2) = NotificationConfig::new(
+            ProtocolName::from("/notificaton/2"),
+            1337usize,
+            vec![1, 2, 3, 4],
+            Vec::new(),
+        );
+
+        let mut config = Litep2pConfigBuilder::new()
+            .with_tcp(TcpTransportConfig {
+                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            })
+            .with_notification_protocol(config1)
+            .with_notification_protocol(config2)
+            .build();
+
+        println!("{config:#?}");
+
+        let litep2p = Litep2p::new(config).await.unwrap();
+    }
 
     // // generate config for testing
     // fn generate_config(protocols: Vec<ProtocolName>) -> Litep2pConfig {

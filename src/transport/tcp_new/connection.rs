@@ -26,6 +26,7 @@ use crate::{
         PublicKey,
     },
     error::{AddressError, Error, SubstreamError},
+    new::TransportContext,
     new_config::Config,
     peer_id::PeerId,
     protocol::{ProtocolContext, ProtocolEvent},
@@ -70,7 +71,7 @@ pub struct TcpConnection {
     connection_id: usize,
 
     /// Configuration.
-    config: Config,
+    context: TransportContext,
 
     /// Yamux connection.
     connection: yamux::ControlledConnection<Encrypted<Compat<TcpStream>>>,
@@ -94,7 +95,6 @@ pub struct TcpConnection {
 impl fmt::Debug for TcpConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TcpConnection")
-            .field("config", &self.config)
             .field("peer", &self.peer)
             .field("next_substream_id", &self.next_substream_id)
             .finish()
@@ -105,7 +105,7 @@ impl TcpConnection {
     /// Open connection to remote peer at `address`.
     pub async fn open_connection(
         connection_id: usize,
-        config: Config,
+        context: TransportContext,
         address: SocketAddr,
         peer: Option<PeerId>,
     ) -> crate::Result<Self> {
@@ -116,9 +116,9 @@ impl TcpConnection {
             "open connection to remote peer",
         );
 
-        let noise_config = NoiseConfiguration::new(config.keypair(), Role::Dialer);
+        let noise_config = NoiseConfiguration::new(&context.keypair, Role::Dialer);
         let stream = TcpStream::connect(address).await?;
-        Self::negotiate_connection(stream, connection_id, config, noise_config, address).await
+        Self::negotiate_connection(stream, connection_id, context, noise_config, address).await
     }
 
     /// Open substream for `protocol`.
@@ -159,13 +159,13 @@ impl TcpConnection {
     pub async fn accept_connection(
         stream: TcpStream,
         connection_id: usize,
-        config: Config,
+        context: TransportContext,
         address: SocketAddr,
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
-        let noise_config = NoiseConfiguration::new(config.keypair(), Role::Listener);
-        Self::negotiate_connection(stream, connection_id, config, noise_config, address).await
+        let noise_config = NoiseConfiguration::new(&context.keypair, Role::Listener);
+        Self::negotiate_connection(stream, connection_id, context, noise_config, address).await
     }
 
     /// Accept substream.
@@ -217,7 +217,7 @@ impl TcpConnection {
     async fn negotiate_connection(
         stream: TcpStream,
         connection_id: usize,
-        config: Config,
+        context: TransportContext,
         noise_config: NoiseConfiguration,
         address: SocketAddr,
     ) -> crate::Result<Self> {
@@ -255,7 +255,7 @@ impl TcpConnection {
 
         Ok(Self {
             peer,
-            config,
+            context,
             control,
             connection,
             connection_id,
@@ -349,7 +349,7 @@ impl ConnectionNew for TcpConnection {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
                         let substream = self.next_substream_id();
-                        let protocols = self.config.protocols().clone();
+                        let protocols = self.context.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {
                             Self::accept_substream(stream, substream, protocols).await
