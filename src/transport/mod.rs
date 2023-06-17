@@ -19,11 +19,12 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    config::{Config, TransportConfig},
+    config::TransportConfig,
     crypto::{ed25519::Keypair, noise::NoiseConfiguration},
     error::Error,
-    new_config::Litep2pConfig,
+    new_config::Config,
     peer_id::PeerId,
+    protocol::ProtocolContext,
     types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
 };
 
@@ -33,7 +34,7 @@ use futures::{
     Sink, Stream,
 };
 use multiaddr::Multiaddr;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::fmt::Debug;
 
@@ -123,7 +124,7 @@ pub trait NewTransportService: Send {
 // TODO: introduce error type?
 // TODO: introduce `Substream` trait?
 #[async_trait::async_trait]
-pub trait ConnectionNew: Send + 'static {
+pub trait ConnectionNew: Send + Unpin + 'static {
     type Substream: Debug + AsyncRead + AsyncWrite + Unpin;
 
     /// Get remote peer ID.
@@ -135,17 +136,8 @@ pub trait ConnectionNew: Send + 'static {
     /// Remote peer's address.
     fn remote_address(&self) -> &Multiaddr;
 
-    /// Open substream for `protocol`.
-    ///
-    /// Substream is opened and negotiated in the background and the result is
-    /// polled using [`Connection::next_substream()`].
-    ///
-    /// Returns a substream ID which the caller can associate with the result
-    /// returned from [`Connection::next_substream()`].
-    fn open_substream(&mut self, protocol: ProtocolName) -> usize;
-
-    /// Poll next substream.
-    async fn next_substream(&mut self) -> crate::Result<Self::Substream>;
+    /// Start connection event loop.
+    async fn start(self, protocol_info: ProtocolContext) -> crate::Result<()>;
 }
 
 /// Trait which allows `litep2p` to associate dial failures to opened connections.
@@ -165,7 +157,7 @@ pub trait TransportNew {
     type Connection: ConnectionNew;
 
     /// Create new [`Transport`] object.
-    async fn new(config: Litep2pConfig) -> crate::Result<Self>
+    async fn new(config: Config) -> crate::Result<Self>
     where
         Self: Sized;
 

@@ -19,14 +19,14 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    config::{Config, Role},
+    config::Role,
     crypto::{
         ed25519::Keypair,
         noise::{self, Encrypted, NoiseConfiguration},
         PublicKey,
     },
     error::{AddressError, Error, SubstreamError},
-    new_config::Litep2pConfig,
+    new_config::Config,
     peer_id::PeerId,
     transport::{
         tcp_new::{
@@ -103,7 +103,7 @@ impl TransportError for TcpError {
 #[derive(Debug)]
 pub struct TcpTransport {
     /// Configuration.
-    config: Litep2pConfig,
+    config: Config,
 
     /// TCP listener.
     listener: TcpListener,
@@ -189,7 +189,7 @@ impl TransportNew for TcpTransport {
     type Connection = TcpConnection;
 
     /// Create new [`TcpTransport`].
-    async fn new(config: Litep2pConfig) -> crate::Result<Self> {
+    async fn new(config: Config) -> crate::Result<Self> {
         let transport_config = config.tcp().as_ref().expect("tcp configuration to exist");
 
         tracing::info!(

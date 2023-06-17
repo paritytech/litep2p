@@ -20,7 +20,7 @@
 
 use crate::{
     crypto::ed25519::Keypair,
-    protocol::{notification_new, request_response_new, Protocol},
+    protocol::{notification_new, request_response_new},
     transport::tcp_new::config,
     types::protocol::ProtocolName,
 };

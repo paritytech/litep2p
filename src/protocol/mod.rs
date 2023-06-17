@@ -207,15 +207,15 @@ pub enum ProtocolEvent {
 
 /// Supported protocol information.
 ///
-/// Each connection gets a copy of [`ProtocolInfo`] which allows it to interact
+/// Each connection gets a copy of [`ProtocolContext`] which allows it to interact
 /// directly with installed protocols.
-pub struct ProtocolInfo {
+pub struct ProtocolContext {
     protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
     rx: Receiver<ProtocolEvent>,
 }
 
-impl ProtocolInfo {
-    /// Create new [`ProtocolInfo`].
+impl ProtocolContext {
+    /// Create new [`ProtocolContext`].
     pub fn new(
         protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
         rx: Receiver<ProtocolEvent>,

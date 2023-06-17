@@ -23,7 +23,7 @@ use crate::{
     error::Error,
     new_config::{Config, Litep2pConfig},
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ProtocolContext, ProtocolInfo},
+    protocol::{ConnectionEvent, ProtocolContext},
     transport::{tcp_new::TcpTransport, ConnectionNew, TransportError, TransportNew},
     types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE, LOG_TARGET,
@@ -82,6 +82,15 @@ pub struct Litep2p {
 
     /// Pending connections.
     pending_connections: HashMap<usize, Multiaddr>,
+}
+
+/// Litep2p context.
+pub(crate) struct Litep2pContext {
+    /// Enabled protocols.
+    protocols: HashMap<ProtocolName, ProtocolContext>,
+
+    /// Keypair.
+    keypair: Keypair,
 }
 
 impl Litep2p {

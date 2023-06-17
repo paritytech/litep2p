@@ -28,7 +28,7 @@ use crate::{
     error::{AddressError, Error, SubstreamError},
     new_config::Config,
     peer_id::PeerId,
-    protocol::{ProtocolEvent, ProtocolInfo},
+    protocol::{ProtocolContext, ProtocolEvent},
     substream::SubstreamSet,
     transport::{
         tcp_new::{
@@ -343,7 +343,7 @@ impl ConnectionNew for TcpConnection {
     }
 
     /// Start connection event loop.
-    async fn start(mut self, mut protocol_info: ProtocolInfo) -> crate::Result<()> {
+    async fn start(mut self, mut protocol_info: ProtocolContext) -> crate::Result<()> {
         loop {
             tokio::select! {
                 substream = self.connection.next() => match substream {
