@@ -21,7 +21,6 @@
 use crate::{
     peer_id::PeerId,
     substream::{Substream, SubstreamSet},
-    transport::ConnectionNew,
     types::protocol::ProtocolName,
 };
 

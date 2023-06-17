@@ -28,7 +28,9 @@ use crate::{
         notification_new::{types::Config as NotificationConfig, NotificationProtocol},
         ConnectionEvent, ProtocolContext,
     },
-    transport::{tcp_new::TcpTransport, ConnectionNew, TransportError, TransportNew},
+    transport::{
+        tcp_new::TcpTransport, NewTransportEvent as TransportEvent, TransportError, TransportNew,
+    },
     types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE, LOG_TARGET,
 };
@@ -240,45 +242,15 @@ impl Litep2p {
     pub async fn poll_next(&mut self) -> crate::Result<Litep2pEvent> {
         loop {
             tokio::select! {
-                event = self.tcp.next_connection() => match event {
-                    Ok(mut connection) => {
-                        let peer = *connection.peer_id();
-                        let address = self
-                            .pending_connections
-                            .remove(connection.connection_id())
-                            .map_or(connection.remote_address().clone(), |address| address);
-
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            remote_address = ?address,
-                            "connection established"
-                        );
-
-                        // TODO: fix
-                        // tokio::spawn(async move { if let Err(error) = connection.start(protocol_info).await {
-                        //     tracing::error!(target: LOG_TARGET, ?peer, "connection failure");
-                        // }});
+                event = self.tcp.next_event() => match event {
+                    Ok(TransportEvent::ConnectionEstablished { peer, address }) => {
                         return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
                     }
                     Err(error) => {
-                        tracing::debug!(target: LOG_TARGET, ?error, "failed to poll next connection");
-
-                        match error.connection_id() {
-                            Some(connection_id) => match self.pending_connections.remove(&connection_id) {
-                                Some(address) => {
-                                    return Ok(Litep2pEvent::DialFailure {
-                                        address,
-                                        error: error.into_error(),
-                                    });
-                                }
-                                None => panic!("dial failed but there is no pending connection"),
-                            },
-                            None => {
-                                debug_assert!(false);
-                                return Err(error.into_error())
-                            }
-                        }
+                        panic!("tcp transport failed: {error:?}");
+                    }
+                    event => {
+                        tracing::info!(target: LOG_TARGET, ?event, "unhandle event from tcp");
                     }
                 }
             }

@@ -22,6 +22,7 @@
 
 use crate::{
     error::Error,
+    new::TransportContext,
     peer_id::PeerId,
     substream::{RawSubstream, Substream},
     transport::{Connection, TransportEvent},
@@ -31,7 +32,7 @@ use crate::{
 use futures::Stream;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::mpsc::{Receiver, Sender},
+    sync::mpsc::{channel, Receiver, Sender},
 };
 use tokio_util::codec::Framed;
 
@@ -167,7 +168,7 @@ pub enum ConnectionEvent {
         peer: PeerId,
 
         /// Handle for communicating with the connection.
-        connection: Sender<NewProtocolName>,
+        connection: Sender<ProtocolEvent>,
     },
 
     /// Connection closed.
@@ -211,17 +212,32 @@ pub enum ProtocolEvent {
 /// directly with installed protocols.
 #[derive(Debug)]
 pub struct ProtocolContext {
-    protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
+    pub protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
     rx: Receiver<ProtocolEvent>,
 }
 
 impl ProtocolContext {
-    /// Create new [`ProtocolContext`].
-    pub fn new(
-        protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
-        rx: Receiver<ProtocolEvent>,
-    ) -> Self {
-        Self { protocols, rx }
+    /// Create new [`ProtocolContext`] and transfer `ConnectionEstablished` to all installed protocols.
+    pub async fn from_transport_context(
+        peer: PeerId,
+        context: TransportContext,
+    ) -> crate::Result<Self> {
+        let (tx, rx) = channel(64);
+
+        // TODO: this is kind of ugly
+        for (_, sender) in &context.protocols {
+            sender
+                .send(ConnectionEvent::ConnectionEstablished {
+                    peer,
+                    connection: tx.clone(),
+                })
+                .await?;
+        }
+
+        Ok(Self {
+            rx,
+            protocols: context.protocols,
+        })
     }
 
     /// Report to `protocol` that substream was opened for `peer`.

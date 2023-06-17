@@ -34,7 +34,7 @@ use crate::{
             config::TransportConfig,
             connection::{Substream, TcpConnection},
         },
-        Connection, ConnectionNew, Direction, Transport, TransportError, TransportEvent,
+        Connection, Direction, NewTransportEvent, Transport, TransportError, TransportEvent,
         TransportNew, TransportService,
     },
     types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
@@ -187,7 +187,6 @@ impl TcpTransport {
 impl TransportNew for TcpTransport {
     type Error = TcpError;
     type Config = TransportConfig;
-    type Connection = TcpConnection;
 
     /// Create new [`TcpTransport`].
     async fn new(context: TransportContext, config: Self::Config) -> crate::Result<Self> {
@@ -219,12 +218,12 @@ impl TransportNew for TcpTransport {
     fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize> {
         tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
-        let config = self.context.clone();
+        let context = self.context.clone();
         let (socket_address, peer) = Self::get_socket_address(&address)?;
         let connection_id = self.next_connection_id();
 
         self.pending_connections.push(Box::pin(async move {
-            TcpConnection::open_connection(connection_id, config, socket_address, peer)
+            TcpConnection::open_connection(context, connection_id, socket_address, peer)
                 .await
                 .map_err(|error| TcpError::new(error, Some(connection_id)))
         }));
@@ -233,16 +232,16 @@ impl TransportNew for TcpTransport {
     }
 
     /// Poll next connection from [`TcpTransport`].
-    async fn next_connection(&mut self) -> Result<Self::Connection, TcpError> {
+    async fn next_event(&mut self) -> Result<NewTransportEvent, TcpError> {
         loop {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
-                        let config = self.context.clone();
+                        let context = self.context.clone();
                         let connection_id = self.next_connection_id();
 
                         self.pending_connections.push(Box::pin(async move {
-                            TcpConnection::accept_connection(connection, connection_id, config, address)
+                            TcpConnection::accept_connection(context, connection, connection_id, address)
                                 .await
                                 .map_err(|error| TcpError::new(error, Some(connection_id)))
                         }));
@@ -250,7 +249,24 @@ impl TransportNew for TcpTransport {
                     Err(err) => return Err(TcpError::new(err.into(), None)),
                 },
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
-                    return connection
+                    match connection {
+                        Ok(connection) => {
+                            let peer = *connection.peer();
+                            let address = connection.address().clone();
+
+                            tokio::spawn(async move {
+                                if let Err(error) = connection.start().await {
+                                    tracing::error!(target: LOG_TARGET, ?peer, "connection failure");
+                                }
+                            });
+
+                            return Ok(NewTransportEvent::ConnectionEstablished { peer, address })
+                        }
+                        Err(err) => {
+                            // TODO: if we were the dialer, return error
+                            // TODO: return more comprehensive error context if the connection fails
+                        }
+                    }
                 }
             }
         }

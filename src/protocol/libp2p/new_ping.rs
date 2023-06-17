@@ -20,7 +20,7 @@
 
 use crate::{
     peer_id::PeerId,
-    protocol::ConnectionEvent,
+    protocol::{ConnectionEvent, ProtocolEvent},
     substream::{Substream, SubstreamSet},
     types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE,
@@ -88,7 +88,7 @@ pub struct Ping {
     tx: Sender<PingEvent>,
 
     /// Connected peers.
-    peers: HashMap<PeerId, Sender<ProtocolName>>,
+    peers: HashMap<PeerId, Sender<ProtocolEvent>>,
 }
 
 impl Ping {

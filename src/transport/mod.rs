@@ -122,24 +122,24 @@ pub trait NewTransportService: Send {
     async fn next_connection(&mut self);
 }
 
-// TODO: introduce error type?
-// TODO: introduce `Substream` trait?
-#[async_trait::async_trait]
-pub trait ConnectionNew: Send + Unpin + 'static {
-    type Substream: Debug + AsyncRead + AsyncWrite + Unpin;
+// // TODO: introduce error type?
+// // TODO: introduce `Substream` trait?
+// #[async_trait::async_trait]
+// pub trait ConnectionNew: Send + Unpin + 'static {
+//     type Substream: Debug + AsyncRead + AsyncWrite + Unpin;
 
-    /// Get remote peer ID.
-    fn peer_id(&self) -> &PeerId;
+//     /// Get remote peer ID.
+//     fn peer_id(&self) -> &PeerId;
 
-    /// Get connection ID.
-    fn connection_id(&self) -> &usize;
+//     /// Get connection ID.
+//     fn connection_id(&self) -> &usize;
 
-    /// Remote peer's address.
-    fn remote_address(&self) -> &Multiaddr;
+//     /// Remote peer's address.
+//     fn remote_address(&self) -> &Multiaddr;
 
-    /// Start connection event loop.
-    async fn start(self, protocol_info: ProtocolContext) -> crate::Result<()>;
-}
+//     /// Start connection event loop.
+//     async fn start(self, protocol_info: ProtocolContext) -> crate::Result<()>;
+// }
 
 /// Trait which allows `litep2p` to associate dial failures to opened connections.
 pub trait TransportError {
@@ -150,12 +150,33 @@ pub trait TransportError {
     fn into_error(self) -> Error;
 }
 
+/// Events emitted by the underlying transport.
+#[derive(Debug)]
+pub enum NewTransportEvent {
+    ConnectionEstablished {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Remote address.
+        address: Multiaddr,
+    },
+
+    ConnectionClosed {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
+    DialFailure {
+        /// Peer ID.
+        peer: Multiaddr,
+    },
+}
+
 // TODO: introduce error type?
 #[async_trait::async_trait]
 pub trait TransportNew {
     type Config: Debug;
-    type Error: TransportError;
-    type Connection: ConnectionNew;
+    type Error: TransportError; // TODO: is this really necessary?
 
     /// Create new [`Transport`] object.
     async fn new(context: TransportContext, config: Self::Config) -> crate::Result<Self>
@@ -171,5 +192,5 @@ pub trait TransportNew {
     fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize>;
 
     /// Poll next connection.
-    async fn next_connection(&mut self) -> Result<Self::Connection, Self::Error>;
+    async fn next_event(&mut self) -> Result<NewTransportEvent, Self::Error>;
 }

@@ -33,8 +33,8 @@ use crate::{
     substream::SubstreamSet,
     transport::{
         tcp_new::{
-            config::TransportConfig, socket_addr_to_multi_addr, Connection, ConnectionNew,
-            Direction, Transport, LOG_TARGET,
+            config::TransportConfig, socket_addr_to_multi_addr, Connection, Direction, Transport,
+            LOG_TARGET,
         },
         TransportEvent, TransportNew, TransportService,
     },
@@ -65,13 +65,15 @@ use std::{
     pin::Pin,
 };
 
+// TODO: introduce `NegotiatingConnection` to clean up this code a bit?
+
 /// TCP connection.
 pub struct TcpConnection {
     /// Connection ID.
     connection_id: usize,
 
-    /// Configuration.
-    context: TransportContext,
+    /// Protocol context.
+    context: ProtocolContext,
 
     /// Yamux connection.
     connection: yamux::ControlledConnection<Encrypted<Compat<TcpStream>>>,
@@ -104,8 +106,8 @@ impl fmt::Debug for TcpConnection {
 impl TcpConnection {
     /// Open connection to remote peer at `address`.
     pub async fn open_connection(
-        connection_id: usize,
         context: TransportContext,
+        connection_id: usize,
         address: SocketAddr,
         peer: Option<PeerId>,
     ) -> crate::Result<Self> {
@@ -157,9 +159,9 @@ impl TcpConnection {
 
     /// Accept a new connection.
     pub async fn accept_connection(
+        context: TransportContext,
         stream: TcpStream,
         connection_id: usize,
-        context: TransportContext,
         address: SocketAddr,
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
@@ -252,6 +254,7 @@ impl TcpConnection {
         let connection =
             yamux::Connection::new(stream.inner(), yamux::Config::default(), role.into());
         let (control, mut connection) = yamux::Control::new(connection);
+        let context = ProtocolContext::from_transport_context(peer, context).await?;
 
         Ok(Self {
             peer,
@@ -271,8 +274,83 @@ impl TcpConnection {
         self.next_substream_id += 1;
         substream
     }
+
+    /// Get remote peer ID.
+    pub(crate) fn peer(&self) -> &PeerId {
+        &self.peer
+    }
+
+    /// Get remote address.
+    pub(crate) fn address(&self) -> &Multiaddr {
+        &self.address
+    }
+
+    /// Start connection event loop.
+    pub(crate) async fn start(mut self) -> crate::Result<()> {
+        loop {
+            tokio::select! {
+                substream = self.connection.next() => match substream {
+                    Some(Ok(stream)) => {
+                        let substream = self.next_substream_id();
+                        let protocols = self.context.protocols.keys().cloned().collect();
+
+                        self.pending_substreams.push(Box::pin(async move {
+                            Self::accept_substream(stream, substream, protocols).await
+                        }));
+                    },
+                    Some(Err(error)) => {
+                        tracing::error!(target: LOG_TARGET, ?error, "failed to poll inbound substream");
+                        return Err(Error::SubstreamError(SubstreamError::YamuxError(error)));
+                    }
+                    None => return Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
+                },
+                substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
+                    match substream {
+                        Err(error) => tracing::debug!(target: LOG_TARGET, ?error, "failed to negotiate substream"),
+                        Ok(substream) => {
+                            let protocol = substream.protocol.clone();
+                            let substream = FuturesAsyncReadCompatExt::compat(substream);
+
+                            if let Err(error) = self.context
+                                .report_substream_open(protocol, self.peer, substream)
+                                .await
+                            {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    ?error,
+                                    "failed to register opened substream to protocol"
+                                );
+                            }
+                        }
+                    }
+                }
+                protocol = self.context.poll_next() => match protocol {
+                    Some(ProtocolEvent::OpenSubstream { protocol }) => {
+                        let mut control = self.control.clone();
+                        let substream = self.next_substream_id();
+
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?protocol,
+                            substream_id = substream,
+                            "open substream"
+                        );
+
+                        self.pending_substreams.push(Box::pin(async move {
+                            Self::open_substream(control, substream, protocol).await
+                        }));
+                    }
+                    None => {
+                        tracing::error!(target: LOG_TARGET, "protocols have exited, shutting down connection");
+                        return Ok(())
+                    }
+                }
+            }
+        }
+    }
 }
 
+// TODO: this is not needed anymore
 #[derive(Debug)]
 pub struct Substream {
     /// Substream ID.
@@ -320,89 +398,5 @@ impl AsyncWrite for Substream {
     ) -> std::task::Poll<io::Result<()>> {
         let mut inner = Pin::into_inner(self);
         Pin::new(&mut inner.io).poll_close(cx)
-    }
-}
-
-#[async_trait::async_trait]
-impl ConnectionNew for TcpConnection {
-    type Substream = Substream;
-
-    /// Get remote peer ID.
-    fn peer_id(&self) -> &PeerId {
-        &self.peer
-    }
-
-    /// Get connection ID.
-    fn connection_id(&self) -> &usize {
-        &self.connection_id
-    }
-
-    /// Remote peer's address.
-    fn remote_address(&self) -> &Multiaddr {
-        &self.address
-    }
-
-    /// Start connection event loop.
-    async fn start(mut self, mut protocol_info: ProtocolContext) -> crate::Result<()> {
-        loop {
-            tokio::select! {
-                substream = self.connection.next() => match substream {
-                    Some(Ok(stream)) => {
-                        let substream = self.next_substream_id();
-                        let protocols = self.context.protocols.keys().cloned().collect();
-
-                        self.pending_substreams.push(Box::pin(async move {
-                            Self::accept_substream(stream, substream, protocols).await
-                        }));
-                    },
-                    Some(Err(error)) => {
-                        tracing::error!(target: LOG_TARGET, ?error, "failed to poll inbound substream");
-                        return Err(Error::SubstreamError(SubstreamError::YamuxError(error)));
-                    }
-                    None => return Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
-                },
-                substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
-                    match substream {
-                        Err(error) => tracing::debug!(target: LOG_TARGET, ?error, "failed to negotiate substream"),
-                        Ok(substream) => {
-                            let protocol = substream.protocol.clone();
-                            let substream = FuturesAsyncReadCompatExt::compat(substream);
-
-                            if let Err(error) = protocol_info
-                                .report_substream_open(protocol, self.peer, substream)
-                                .await
-                            {
-                                tracing::error!(
-                                    target: LOG_TARGET,
-                                    ?error,
-                                    "failed to register opened substream to protocol"
-                                );
-                            }
-                        }
-                    }
-                }
-                protocol = protocol_info.poll_next() => match protocol {
-                    Some(ProtocolEvent::OpenSubstream { protocol }) => {
-                        let mut control = self.control.clone();
-                        let substream = self.next_substream_id();
-
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?protocol,
-                            substream_id = substream,
-                            "open substream"
-                        );
-
-                        self.pending_substreams.push(Box::pin(async move {
-                            Self::open_substream(control, substream, protocol).await
-                        }));
-                    }
-                    None => {
-                        tracing::error!(target: LOG_TARGET, "protocols have exited, shutting down connection");
-                        return Ok(())
-                    }
-                }
-            }
-        }
     }
 }
