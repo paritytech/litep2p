@@ -27,37 +27,37 @@ use std::{
     task::{Context, Poll},
 };
 
-mockall::mock! {
-    #[derive(Debug)]
-    pub Substream {}
+// mockall::mock! {
+//     #[derive(Debug)]
+//     pub Substream {}
 
-    impl Substream for Substream {
-        fn protocol(&self) -> &ProtocolName;
-    }
+//     impl Substream for Substream {
+//         fn protocol(&self) -> &ProtocolName;
+//     }
 
-     impl Sink<bytes::Bytes> for Substream {
-        type Error = ();
-        fn poll_ready<'a>(
-            self: Pin<&mut Self>,
-            cx: &mut Context<'a>
-        ) -> Poll<Result<(), ()>>;
-        fn start_send(self: Pin<&mut Self>, item: bytes::Bytes) -> Result<(), ()>;
-        fn poll_flush<'a>(
-            self: Pin<&mut Self>,
-            cx: &mut Context<'a>
-        ) -> Poll<Result<(), ()>>;
-        fn poll_close<'a>(
-            self: Pin<&mut Self>,
-            cx: &mut Context<'a>
-        ) -> Poll<Result<(), ()>>;
-    }
+//      impl Sink<bytes::Bytes> for Substream {
+//         type Error = ();
+//         fn poll_ready<'a>(
+//             self: Pin<&mut Self>,
+//             cx: &mut Context<'a>
+//         ) -> Poll<Result<(), ()>>;
+//         fn start_send(self: Pin<&mut Self>, item: bytes::Bytes) -> Result<(), ()>;
+//         fn poll_flush<'a>(
+//             self: Pin<&mut Self>,
+//             cx: &mut Context<'a>
+//         ) -> Poll<Result<(), ()>>;
+//         fn poll_close<'a>(
+//             self: Pin<&mut Self>,
+//             cx: &mut Context<'a>
+//         ) -> Poll<Result<(), ()>>;
+//     }
 
-    impl Stream for Substream {
-        type Item = ();
+//     impl Stream for Substream {
+//         type Item = ();
 
-        fn poll_next<'a>(
-            self: Pin<&mut Self>,
-            cx: &mut Context<'a>
-        ) -> Poll<Option<()>>;
-    }
-}
+//         fn poll_next<'a>(
+//             self: Pin<&mut Self>,
+//             cx: &mut Context<'a>
+//         ) -> Poll<Option<()>>;
+//     }
+// }

@@ -209,6 +209,7 @@ pub enum ProtocolEvent {
 ///
 /// Each connection gets a copy of [`ProtocolContext`] which allows it to interact
 /// directly with installed protocols.
+#[derive(Debug)]
 pub struct ProtocolContext {
     protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
     rx: Receiver<ProtocolEvent>,

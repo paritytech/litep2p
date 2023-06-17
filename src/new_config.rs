@@ -160,26 +160,15 @@ impl From<&Litep2pConfig> for Config {
 #[derive(Debug)]
 pub struct Litep2pConfig {
     // TCP transport configuration.
-    tcp: Option<config::TransportConfig>,
+    pub(crate) tcp: Option<config::TransportConfig>,
 
     /// Keypair.
-    keypair: Keypair,
+    pub(crate) keypair: Keypair,
 
     /// Notification protocols.
-    notification_protocols: HashMap<ProtocolName, notification_new::types::Config>,
+    pub(crate) notification_protocols: HashMap<ProtocolName, notification_new::types::Config>,
 
     /// Request-response protocols.
-    request_response_protocols: HashMap<ProtocolName, request_response_new::types::Config>,
-}
-
-impl Litep2pConfig {
-    /// Get keypair.
-    pub fn keypair(&self) -> &Keypair {
-        &self.keypair
-    }
-
-    /// Get TCP transport configuration.
-    pub fn tcp(&self) -> &Option<config::TransportConfig> {
-        &self.tcp
-    }
+    pub(crate) request_response_protocols:
+        HashMap<ProtocolName, request_response_new::types::Config>,
 }
