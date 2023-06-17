@@ -205,7 +205,7 @@ impl Litep2p {
     ///
     /// If the transport specified by `address` is not supported, an error is returned.
     /// The connection is established in the background and its result is reported through
-    /// [`Litep2p::poll_next()`].
+    /// [`Litep2p::next_event()`].
     pub fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
         let mut protocol_stack = address.protocol_stack();
 
@@ -239,7 +239,7 @@ impl Litep2p {
     }
 
     /// Poll next event.
-    pub async fn poll_next(&mut self) -> crate::Result<Litep2pEvent> {
+    pub async fn next_event(&mut self) -> crate::Result<Litep2pEvent> {
         loop {
             tokio::select! {
                 event = self.tcp.next_event() => match event {
@@ -340,7 +340,7 @@ mod tests {
         let address = litep2p2.listen_address(SupportedProtocol::Tcp).unwrap();
         litep2p1.connect(address).unwrap();
 
-        let (res1, res2) = tokio::join!(litep2p1.poll_next(), litep2p2.poll_next());
+        let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
 
         assert!(std::matches!(
             res1,
@@ -367,12 +367,12 @@ mod tests {
 
         tokio::spawn(async move {
             loop {
-                let _ = litep2p2.poll_next().await;
+                let _ = litep2p2.next_event().await;
             }
         });
 
         assert!(std::matches!(
-            litep2p1.poll_next().await,
+            litep2p1.next_event().await,
             Ok(Litep2pEvent::DialFailure { .. })
         ));
     }

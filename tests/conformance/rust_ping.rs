@@ -91,7 +91,7 @@ async fn libp2p_dials() {
 
     tokio::spawn(async move {
         loop {
-            let _ = litep2p.poll_next().await;
+            let _ = litep2p.next_event().await;
         }
     });
 
