@@ -20,7 +20,7 @@
 
 use crate::{
     peer_id::PeerId,
-    protocol::{Codec, Protocol, ProtocolBuilder, SubstreamService},
+    protocol::ConnectionEvent,
     substream::{Substream, SubstreamSet},
     types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE,
@@ -36,98 +36,55 @@ use std::collections::HashMap;
 const LOG_TARGET: &str = "ipfs::ping";
 
 /// IPFS Ping protocol name as a string.
-pub const PROTOCOL_STRING: &str = "/ipfs/ping/1.0.0";
-
-/// IPFS Ping protocol name.
-pub const PROTOCOL_NAME: ProtocolName = ProtocolName::from_static_str(PROTOCOL_STRING);
+pub const PROTOCOL_NAME: &str = "/ipfs/ping/1.0.0";
 
 /// Size for `/ipfs/ping/1.0.0` payloads.
 const PING_PAYLOAD_SIZE: usize = 32;
 
-struct PingBuilder {
-    event_tx: Sender<PingEvent>,
-}
+/// Ping configuration.
+pub struct Config {}
 
-impl PingBuilder {
-    /// Create new [`PingBuilder`].
-    pub fn new() -> (Self, Box<dyn Stream<Item = PingEvent> + Send>) {
-        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
-
-        (Self { event_tx }, Box::new(ReceiverStream::new(event_rx)))
-    }
-}
-
-impl ProtocolBuilder for PingBuilder {
-    type Protocol = Ping;
-
-    /// Get protocol name.
-    fn protocol_name(&self) -> &ProtocolName {
-        return &PROTOCOL_NAME;
-    }
-
-    /// Build `Protocol`.
-    fn build(self, service: Sender<()>) -> Self::Protocol {
-        let PingBuilder { event_tx } = self;
-
-        Ping {
-            event_tx,
-            service,
-            peers: HashMap::new(),
-        }
+impl Config {
+    /// Create new [`PingConfig`].
+    pub fn new() -> Self {
+        Self {}
     }
 }
 
 #[derive(Debug)]
-enum PingEvent {}
+pub enum PingEvent {}
 
-struct Ping {
-    /// Connected peers.
-    peers: HashMap<PeerId, ()>,
+struct Ping {}
 
-    ///
-    event_tx: Sender<PingEvent>,
-
-    // TODO: this is used to open substreams
-    service: Sender<()>,
-}
-
-impl Ping {}
-
-#[async_trait::async_trait]
-impl Protocol for Ping {
-    type Event = PingEvent;
-
-    /// Start the protocol runner.
-    async fn run(mut self) {
-        tracing::debug!(target: LOG_TARGET, "starting ping event loop");
-
-        todo!();
+impl Ping {
+    fn new() -> Self {
+        Self {}
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::substream::mock::MockSubstream;
-    use futures::Sink;
-    use std::{
-        pin::Pin,
-        task::{Context, Poll},
-        time::Duration,
-    };
-    use tokio::sync::mpsc;
-
-    #[tokio::test]
-    async fn initialize_ping() {
-        tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init()
-            .expect("to succeed");
-
-        // let (ping, event_stream) = PingBuilder::<MockSubstream>::new();
-        // let (tx, rx) = mpsc::channel(64);
-        // let (ping, tx_conn) = ping.build(tx);
-        // tokio::spawn(ping.run());
-        // tokio::time::sleep(Duration::from_secs(2)).await;
+    async fn run(mut self) {
+        while let Some(event) = todo!() {
+            match event {
+                ConnectionEvent::ConnectionEstablished { peer, connection } => {
+                    tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
+                    // TODO: store peer information
+                }
+                ConnectionEvent::ConnectionClosed { peer } => {
+                    tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
+                    // TODO: remove peer information
+                }
+                ConnectionEvent::SubstreamOpened { peer, substream } => {
+                    tracing::trace!(target: LOG_TARGET, ?peer, "substream opened");
+                    // TODO: handle ping
+                }
+                ConnectionEvent::SubstreamOpenFailure { peer, error } => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?error,
+                        "failed to open substream"
+                    );
+                }
+            }
+        }
     }
 }

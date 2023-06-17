@@ -23,13 +23,17 @@
 use crate::{
     error::Error,
     peer_id::PeerId,
-    substream::Substream,
+    substream::{RawSubstream, Substream},
     transport::{Connection, TransportEvent},
     types::protocol::ProtocolName as NewProtocolName,
 };
 
 use futures::Stream;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync::mpsc::{Receiver, Sender},
+};
+use tokio_util::codec::Framed;
 
 use std::{
     collections::HashMap,
@@ -155,39 +159,23 @@ pub enum ExecutionEvent<S: Substream> {
     },
 }
 
-#[async_trait::async_trait]
-pub trait SubstreamService {
-    /// Open substream.
-    async fn open_subtream(&mut self, peer: PeerId) -> crate::Result<()>;
-
-    /// Poll next event from the execution context.
-    async fn next_event<S: Substream>(&mut self) -> Option<ExecutionEvent<S>>;
-}
-
-pub trait Codec {}
-pub type EventStream = ();
-
-/// TODO: documentation
-pub trait ProtocolBuilder {
-    type Protocol: Protocol;
-
-    /// Get protocol name.
-    fn protocol_name(&self) -> NewProtocolName;
-
-    /// Build `Protocol`.
-    fn build(self, sender: Sender<()>) -> Self::Protocol;
-}
-
-#[async_trait::async_trait]
-pub trait Protocol {
-    type Event: Debug;
-
-    /// Start the protocol runner.
-    async fn run(self);
-}
-
 /// Events emitted by a connection to protocols.
 pub enum ConnectionEvent {
+    /// Connection established to `peer`.
+    ConnectionEstablished {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Handle for communicating with the connection.
+        connection: Sender<NewProtocolName>,
+    },
+
+    /// Connection closed.
+    ConnectionClosed {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
     /// Substream opened for `peer`.
     SubstreamOpened {
         /// Peer ID.
@@ -226,17 +214,24 @@ impl ProtocolInfo {
     }
 
     /// Report to `protocol` that substream was opened for `peer`.
-    pub async fn report_substream_open(
+    pub async fn report_substream_open<R: RawSubstream>(
         &mut self,
         protocol: NewProtocolName,
         peer: PeerId,
-        substream: Box<dyn Substream>,
+        substream: R,
     ) -> crate::Result<()> {
         match self.protocols.get_mut(&protocol) {
-            Some(sender) => sender
-                .send(ConnectionEvent::SubstreamOpened { peer, substream })
-                .await
-                .map_err(From::from),
+            Some(sender) => {
+                let substream = Box::new(Framed::new(
+                    substream,
+                    crate::codec::identity::Identity::<32> {}, // TODO: this should be specified by the protocol
+                ));
+
+                sender
+                    .send(ConnectionEvent::SubstreamOpened { peer, substream })
+                    .await
+                    .map_err(From::from)
+            }
             None => Err(Error::ProtocolNotSupported(protocol.to_string())),
         }
     }
