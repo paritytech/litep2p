@@ -251,7 +251,7 @@ impl ProtocolContext {
             Some(sender) => {
                 let substream = Box::new(Framed::new(
                     substream,
-                    crate::codec::identity::Identity::<32> {}, // TODO: this should be specified by the protocol
+                    crate::codec::identity::Identity::new(32), // TODO: this should be specified by the protocol
                 ));
 
                 sender

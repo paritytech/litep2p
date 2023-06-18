@@ -26,9 +26,18 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
 #[derive(Debug)]
-pub struct Identity<const N: usize> {}
+pub struct Identity {
+    payload_len: usize,
+}
 
-impl<const N: usize> Decoder for Identity<N> {
+impl Identity {
+    /// Create new [`Identity`] codec.
+    pub fn new(payload_len: usize) -> Self {
+        Self { payload_len }
+    }
+}
+
+impl Decoder for Identity {
     type Item = Bytes;
     type Error = Error;
 
@@ -37,11 +46,11 @@ impl<const N: usize> Decoder for Identity<N> {
             return Ok(None);
         }
 
-        Ok(Some(src.split_to(N).freeze()))
+        Ok(Some(src.split_to(self.payload_len).freeze()))
     }
 }
 
-impl<const N: usize> Encoder<Bytes> for Identity<N> {
+impl Encoder<Bytes> for Identity {
     type Error = Error;
 
     fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
