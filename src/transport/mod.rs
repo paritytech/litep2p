@@ -25,7 +25,7 @@ use crate::{
     new::TransportContext,
     new_config::Config,
     peer_id::PeerId,
-    protocol::ProtocolContext,
+    protocol::ProtocolSet,
     types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
 };
 
@@ -138,7 +138,7 @@ pub trait NewTransportService: Send {
 //     fn remote_address(&self) -> &Multiaddr;
 
 //     /// Start connection event loop.
-//     async fn start(self, protocol_info: ProtocolContext) -> crate::Result<()>;
+//     async fn start(self, protocol_info: ProtocolSet) -> crate::Result<()>;
 // }
 
 /// Trait which allows `litep2p` to associate dial failures to opened connections.

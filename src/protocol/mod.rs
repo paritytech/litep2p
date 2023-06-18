@@ -208,16 +208,16 @@ pub enum ProtocolEvent {
 
 /// Supported protocol information.
 ///
-/// Each connection gets a copy of [`ProtocolContext`] which allows it to interact
+/// Each connection gets a copy of [`ProtocolSet`] which allows it to interact
 /// directly with installed protocols.
 #[derive(Debug)]
-pub struct ProtocolContext {
+pub struct ProtocolSet {
     pub protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
     rx: Receiver<ProtocolEvent>,
 }
 
-impl ProtocolContext {
-    /// Create new [`ProtocolContext`] and transfer `ConnectionEstablished` to all installed protocols.
+impl ProtocolSet {
+    /// Create new [`ProtocolSet`] and transfer `ConnectionEstablished` to all installed protocols.
     pub async fn from_transport_context(
         peer: PeerId,
         context: TransportContext,

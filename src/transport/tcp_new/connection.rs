@@ -30,7 +30,7 @@ use crate::{
     new::TransportContext,
     new_config::Config,
     peer_id::PeerId,
-    protocol::{ProtocolContext, ProtocolEvent},
+    protocol::{ProtocolEvent, ProtocolSet},
     substream::SubstreamSet,
     transport::{
         tcp_new::{
@@ -73,7 +73,7 @@ pub struct TcpConnection {
     connection_id: usize,
 
     /// Protocol context.
-    context: ProtocolContext,
+    context: ProtocolSet,
 
     /// Yamux connection.
     connection: yamux::ControlledConnection<Encrypted<Compat<TcpStream>>>,
@@ -254,7 +254,7 @@ impl TcpConnection {
         let connection =
             yamux::Connection::new(stream.inner(), yamux::Config::default(), role.into());
         let (control, mut connection) = yamux::Control::new(connection);
-        let context = ProtocolContext::from_transport_context(peer, context).await?;
+        let context = ProtocolSet::from_transport_context(peer, context).await?;
 
         Ok(Self {
             peer,

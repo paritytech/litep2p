@@ -26,7 +26,7 @@ use crate::{
     protocol::{
         libp2p::new_ping::Ping,
         notification_new::{types::Config as NotificationConfig, NotificationProtocol},
-        ConnectionEvent, ProtocolContext,
+        ConnectionEvent, ProtocolSet,
     },
     transport::{
         tcp_new::TcpTransport, NewTransportEvent as TransportEvent, TransportError, TransportNew,
