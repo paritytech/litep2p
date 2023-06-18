@@ -21,6 +21,7 @@
 //! Protocol-related defines.
 
 use crate::{
+    codec::Codec,
     error::Error,
     new::TransportContext,
     peer_id::PeerId,
@@ -47,6 +48,7 @@ pub mod notification_new;
 pub mod request_response;
 pub mod request_response_new;
 
+// TODO: remove
 /// Commands sent by different protocols to `Litep2p`.
 #[derive(Debug)]
 pub enum TransportCommand {
@@ -60,6 +62,7 @@ pub enum TransportCommand {
     },
 }
 
+// TODO: remove
 #[derive(Debug, Clone)]
 pub enum ProtocolName {
     /// Static protocol name.
@@ -78,6 +81,7 @@ impl From<&'static str> for ProtocolName {
     }
 }
 
+// TODO: remove
 /// Libp2p protocol configuration.
 #[derive(Debug)]
 pub struct Libp2pProtocol {
@@ -85,6 +89,7 @@ pub struct Libp2pProtocol {
     name: ProtocolName,
 }
 
+// TODO: remove
 impl Libp2pProtocol {
     /// Create new [`Libp2pProtocol`].
     pub fn new(name: ProtocolName) -> Self {
@@ -103,6 +108,7 @@ impl Libp2pProtocol {
     }
 }
 
+// TODO: remove
 /// Notification protocol configuration.
 #[derive(Debug)]
 pub struct NotificationProtocol {
@@ -110,6 +116,7 @@ pub struct NotificationProtocol {
     name: ProtocolName,
 }
 
+// TODO: remove
 impl NotificationProtocol {
     /// Create new [`NotificationProtocol`].
     pub fn new(name: ProtocolName) -> Self {
@@ -127,6 +134,7 @@ impl NotificationProtocol {
     }
 }
 
+// TODO: remove
 /// Events received from connections that relevant to the execution of a user protocol.
 pub enum ExecutionEvent<S: Substream> {
     /// Connection established to remote peer.
@@ -225,6 +233,7 @@ impl ProtocolSet {
         let (tx, rx) = channel(64);
 
         // TODO: this is kind of ugly
+        // TODO: backpressure?
         for (_, sender) in &context.protocols {
             sender
                 .send(ConnectionEvent::ConnectionEstablished {

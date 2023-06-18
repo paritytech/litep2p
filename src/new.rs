@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    codec::Codec,
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
     new_config::{Config, Litep2pConfig},
@@ -26,7 +27,7 @@ use crate::{
     protocol::{
         libp2p::new_ping::Ping,
         notification_new::{types::Config as NotificationConfig, NotificationProtocol},
-        ConnectionEvent, ProtocolSet,
+        ConnectionEvent, ProtocolEvent, ProtocolSet,
     },
     transport::{
         tcp_new::TcpTransport, NewTransportEvent as TransportEvent, TransportError, TransportNew,
@@ -39,7 +40,7 @@ use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::mpsc::{channel, Sender},
+    sync::mpsc::{channel, Receiver, Sender},
 };
 use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
@@ -97,6 +98,32 @@ pub struct TransportContext {
     pub keypair: Keypair,
 }
 
+pub struct ConnectionService {
+    rx: Receiver<ConnectionEvent>,
+    peers: HashMap<PeerId, Sender<ProtocolEvent>>,
+}
+
+impl ConnectionService {
+    /// Create new [`ConnectionService`].
+    pub fn new() -> (Self, Sender<ConnectionEvent>) {
+        // TODO: maybe specify some other channel size
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+
+        (
+            Self {
+                rx,
+                peers: HashMap::new(),
+            },
+            tx,
+        )
+    }
+
+    /// Get next event from the transport.
+    pub async fn next_event(&mut self) -> Option<ConnectionEvent> {
+        self.rx.recv().await
+    }
+}
+
 impl TransportContext {
     /// Create new [`TransportContext`].
     pub fn new(keypair: Keypair) -> Self {
@@ -107,23 +134,17 @@ impl TransportContext {
     }
 
     /// Add new protocol.
-    pub fn add_protocol(
-        &mut self,
-        protocol: ProtocolName,
-        tx: Sender<ConnectionEvent>,
-    ) -> crate::Result<()> {
+    pub fn add_protocol(&mut self, protocol: ProtocolName) -> crate::Result<ConnectionService> {
+        let (service, tx) = ConnectionService::new();
+
         match self.protocols.insert(protocol.clone(), tx) {
             Some(_) => Err(Error::ProtocolAlreadyExists(protocol)),
-            None => Ok(()),
+            None => Ok(service),
         }
     }
 }
 
 impl Litep2p {
-    fn initialize_notification_protocol() -> (ProtocolName, Sender<ConnectionEvent>) {
-        todo!();
-    }
-
     /// Create new [`Litep2p`].
     pub async fn new(mut config: Litep2pConfig) -> crate::Result<Litep2p> {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
@@ -137,11 +158,8 @@ impl Litep2p {
                 "enable notification protocol",
             );
 
-            // TODO: specify some other channel size
-            let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
-
-            transport_ctx.add_protocol(name, tx);
-            tokio::spawn(async move { NotificationProtocol::new(rx, config).run().await });
+            let service = transport_ctx.add_protocol(name)?;
+            tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
         }
 
         // start ping protocol event loop if enabled
@@ -152,17 +170,12 @@ impl Litep2p {
                 "enable ping protocol",
             );
 
-            // TODO: specify some other channel size
-            let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
-
-            transport_ctx.add_protocol(config.protocol.clone(), tx);
-            tokio::spawn(async move { Ping::new(rx, config).run().await });
+            let service = transport_ctx.add_protocol(config.protocol.clone())?;
+            tokio::spawn(async move { Ping::new(service, config).run().await });
         }
 
         // TODO: go through all request-response protocols and start the protocol runners
         //       passing in the command the notification config
-
-        // TODO: check if ping is enabled and if so, start ping event loop
 
         // TODO: check if identify is enabled and if so, start identify event loop
 

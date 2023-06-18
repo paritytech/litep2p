@@ -18,20 +18,20 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::protocol::ConnectionEvent;
+use crate::{new::ConnectionService, protocol::ConnectionEvent};
 
 use tokio::sync::mpsc::Receiver;
 
 pub mod types;
 
 pub struct NotificationProtocol {
-    /// RX channel for listening to command events from transports.
-    rx: Receiver<ConnectionEvent>,
+    /// Connection service.
+    service: ConnectionService,
 }
 
 impl NotificationProtocol {
-    pub fn new(rx: Receiver<ConnectionEvent>, config: types::Config) -> Self {
-        Self { rx }
+    pub fn new(service: ConnectionService, config: types::Config) -> Self {
+        Self { service }
     }
 
     pub async fn run(self) {

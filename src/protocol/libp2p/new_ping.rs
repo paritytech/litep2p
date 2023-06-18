@@ -19,6 +19,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    codec::{identity::Identity, Codec},
+    error::Error,
+    new::ConnectionService,
     peer_id::PeerId,
     protocol::{ConnectionEvent, ProtocolEvent},
     substream::{Substream, SubstreamSet},
@@ -31,6 +34,8 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::collections::HashMap;
+
+// TODO: there is too much boilerplate, proc-macro?
 
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::ping";
@@ -51,7 +56,7 @@ pub struct Config {
     max_failures: usize,
 
     /// TX channel for sending events to the user protocol.
-    tx: Sender<PingEvent>,
+    tx_event: Sender<PingEvent>,
 }
 
 impl Config {
@@ -59,15 +64,15 @@ impl Config {
     ///
     /// Returns a config that is given to `Litep2pConfig` and an event stream for ping events.
     pub fn new(max_failures: usize) -> (Self, Box<dyn Stream<Item = PingEvent> + Send>) {
-        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
         (
             Self {
-                tx,
+                tx_event,
                 max_failures,
                 protocol: ProtocolName::from(PROTOCOL_NAME),
             },
-            Box::new(ReceiverStream::new(rx)),
+            Box::new(ReceiverStream::new(rx_event)),
         )
     }
 }
@@ -81,8 +86,8 @@ pub struct Ping {
     /// Maximum failures before the peer is considered unreachable.
     max_failures: usize,
 
-    /// RX channel for receiving connection events from transports.
-    rx: Receiver<ConnectionEvent>,
+    // Connection service.
+    service: ConnectionService,
 
     /// TX channel for sending events to the user protocol.
     tx: Sender<PingEvent>,
@@ -93,10 +98,10 @@ pub struct Ping {
 
 impl Ping {
     /// Create new [`Ping`].
-    pub fn new(rx: Receiver<ConnectionEvent>, config: Config) -> Self {
+    pub fn new(service: ConnectionService, config: Config) -> Self {
         Self {
-            rx,
-            tx: config.tx,
+            service,
+            tx: config.tx_event,
             peers: HashMap::new(),
             max_failures: config.max_failures,
         }
@@ -106,7 +111,7 @@ impl Ping {
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting ping event loop");
 
-        while let Some(event) = self.rx.recv().await {
+        while let Some(event) = self.service.next_event().await {
             match event {
                 ConnectionEvent::ConnectionEstablished { peer, connection } => {
                     tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
