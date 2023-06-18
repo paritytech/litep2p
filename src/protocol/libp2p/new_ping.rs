@@ -97,7 +97,7 @@ pub struct Ping {
 }
 
 impl Ping {
-    /// Create new [`Ping`].
+    /// Create new [`Ping`] protocol.
     pub fn new(service: ConnectionService, config: Config) -> Self {
         Self {
             service,

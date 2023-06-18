@@ -24,6 +24,7 @@ pub use crate::protocol::libp2p::{
 
 pub mod bitswap;
 pub mod identify;
+pub mod identify_new;
 pub mod kad;
 pub mod new_ping;
 pub mod ping;
