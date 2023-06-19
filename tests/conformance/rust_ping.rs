@@ -27,7 +27,7 @@ use libp2p::{
 };
 use litep2p::{
     crypto::ed25519::Keypair,
-    new::{Litep2p, SupportedProtocol},
+    new::Litep2p,
     new_config::Litep2pConfigBuilder,
     protocol::libp2p::new_ping::{Config as PingConfig, PingEvent},
     transport::tcp_new::config::TransportConfig as TcpTransportConfig,
@@ -85,7 +85,7 @@ async fn libp2p_dials() {
 
     let mut libp2p = initialize_libp2p();
     let (mut litep2p, _ping_event_stream) = initialize_litep2p().await;
-    let address = litep2p.listen_address(SupportedProtocol::Tcp).unwrap();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
 
     libp2p.dial(address).unwrap();
 

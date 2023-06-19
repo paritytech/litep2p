@@ -71,11 +71,6 @@ pub enum Litep2pEvent {
     },
 }
 
-/// Protocols supported by litep2p.
-pub enum SupportedProtocol {
-    Tcp,
-}
-
 /// [`Litep2p`] object.
 pub struct Litep2p {
     /// Local peer ID.
@@ -83,6 +78,9 @@ pub struct Litep2p {
 
     /// TCP transport.
     tcp: TcpTransport,
+
+    /// Listen addresses.
+    listen_addresses: Vec<Multiaddr>,
 
     /// Pending connections.
     pending_connections: HashMap<usize, Multiaddr>,
@@ -184,10 +182,12 @@ impl Litep2p {
             Some(config) => <TcpTransport as TransportNew>::new(transport_ctx, config).await?,
             None => panic!("tcp not enabled"),
         };
+        let listen_addresses = vec![tcp.listen_address().clone()];
 
         Ok(Self {
             tcp,
             local_peer_id,
+            listen_addresses,
             pending_connections: HashMap::new(),
         })
     }
@@ -198,10 +198,8 @@ impl Litep2p {
     }
 
     /// Get listen address for protocol.
-    pub fn listen_address(&self, protocol: SupportedProtocol) -> crate::Result<Multiaddr> {
-        match protocol {
-            SupportedProtocol::Tcp => Ok(self.tcp.listen_address()),
-        }
+    pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
+        self.listen_addresses.iter()
     }
 
     /// Attempt to connect to peer at `address`.
@@ -269,7 +267,7 @@ mod tests {
     use crate::{
         crypto::ed25519::Keypair,
         error::Error,
-        new::{Litep2p, Litep2pEvent, SupportedProtocol},
+        new::{Litep2p, Litep2pEvent},
         new_config::{Litep2pConfig, Litep2pConfigBuilder},
         protocol::{
             libp2p::new_ping::{Config as PingConfig, PingEvent},
@@ -340,7 +338,7 @@ mod tests {
         let mut litep2p1 = Litep2p::new(config1).await.unwrap();
         let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
-        let address = litep2p2.listen_address(SupportedProtocol::Tcp).unwrap();
+        let address = litep2p2.listen_addresses().next().unwrap().clone();
         litep2p1.connect(address).unwrap();
 
         let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
