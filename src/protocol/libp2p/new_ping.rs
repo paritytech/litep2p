@@ -35,8 +35,6 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use std::collections::HashMap;
 
-// TODO: there is too much boilerplate, proc-macro?
-
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::ping";
 
@@ -107,6 +105,53 @@ impl Ping {
         }
     }
 
+    /// Connection established to remote peer.
+    fn on_connection_established(&mut self, peer: PeerId, connection: Sender<ProtocolEvent>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
+        self.peers.insert(peer, connection);
+    }
+
+    /// Connection closed to remote peer.
+    fn on_connection_closed(&mut self, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
+        self.peers.remove(&peer);
+    }
+
+    /// Substream opened to remote peer.
+    async fn on_substream_opened(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "substream opened");
+
+        // TODO: don't block here
+        match substream.next().await {
+            Some(Ok(ping)) => {
+                if let Err(error) = substream.send(ping).await {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        "failed to write value back to sender"
+                    );
+                }
+            }
+            Some(Err(error)) => tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                ?error,
+                "error while reading from the substream",
+            ),
+            None => tracing::debug!(target: LOG_TARGET, ?peer, "substream closed unexpectedly"),
+        }
+    }
+
+    /// Failed to open substream to remote peer.
+    fn on_substream_open_failure(&mut self, peer: PeerId, error: Error) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?error,
+            "failed to open substream"
+        );
+    }
+
     /// Start [`Ping`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting ping event loop");
@@ -114,50 +159,16 @@ impl Ping {
         while let Some(event) = self.service.next_event().await {
             match event {
                 ConnectionEvent::ConnectionEstablished { peer, connection } => {
-                    tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
-                    self.peers.insert(peer, connection);
+                    self.on_connection_established(peer, connection)
                 }
                 ConnectionEvent::ConnectionClosed { peer } => {
-                    tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
-                    self.peers.remove(&peer);
+                    self.on_connection_closed(peer);
                 }
-                ConnectionEvent::SubstreamOpened {
-                    peer,
-                    mut substream,
-                } => {
-                    tracing::trace!(target: LOG_TARGET, ?peer, "substream opened");
-
-                    // TODO: don't block here
-                    match substream.next().await {
-                        Some(Ok(ping)) => {
-                            if let Err(error) = substream.send(ping).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    "failed to write value back to sender"
-                                );
-                            }
-                        }
-                        Some(Err(error)) => tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?error,
-                            "error while reading from the substream",
-                        ),
-                        None => tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            "substream closed unexpectedly"
-                        ),
-                    }
+                ConnectionEvent::SubstreamOpened { peer, substream } => {
+                    self.on_substream_opened(peer, substream).await;
                 }
                 ConnectionEvent::SubstreamOpenFailure { peer, error } => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?error,
-                        "failed to open substream"
-                    );
+                    self.on_substream_open_failure(peer, error);
                 }
             }
         }
