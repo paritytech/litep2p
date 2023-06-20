@@ -162,6 +162,7 @@ impl Identify {
                 }
                 ConnectionEvent::SubstreamOpened {
                     peer,
+                    protocol,
                     mut substream,
                 } => {
                     tracing::trace!(target: LOG_TARGET, ?peer, "substream opened");

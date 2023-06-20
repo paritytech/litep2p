@@ -38,4 +38,15 @@ yamux = "0.11.0"
 zeroize = "1.5.7"
 
 [dev-dependencies]
-libp2p = { version = "0.51.3", features = ["tokio", "dns", "macros", "mplex", "noise", "ping", "tcp", "websocket", "yamux"] }
+libp2p = { version = "0.51.3", features = [
+    "tokio",
+    "dns",
+    "identify",
+    "macros",
+    "mplex",
+    "noise",
+    "ping",
+    "tcp",
+    "websocket",
+    "yamux"
+]}

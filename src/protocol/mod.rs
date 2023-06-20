@@ -190,6 +190,15 @@ pub enum ConnectionEvent {
         /// Peer ID.
         peer: PeerId,
 
+        /// Protocol name.
+        ///
+        /// One protocol handler may handle multiple sub-protocols (such as `/ipfs/identify/1.0.0`
+        /// and `/ipfs/identify/push/1.0.0`) or the it may have aliases which should be handled by
+        /// the same protocol handler. When the substream is sent from transpor to the protocol
+        /// handler, the protocol name that was used to negotiate the substream is also sent so
+        /// the protocol can handle the substream appropriately.
+        protocol: NewProtocolName,
+
         /// Substream.
         substream: Box<dyn Substream>,
     },
@@ -266,7 +275,11 @@ impl ProtocolSet {
                 };
 
                 info.tx
-                    .send(ConnectionEvent::SubstreamOpened { peer, substream })
+                    .send(ConnectionEvent::SubstreamOpened {
+                        peer,
+                        protocol: protocol.clone(),
+                        substream,
+                    })
                     .await
                     .map_err(From::from)
             }

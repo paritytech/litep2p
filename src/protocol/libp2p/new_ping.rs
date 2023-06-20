@@ -169,7 +169,9 @@ impl Ping {
                 ConnectionEvent::ConnectionClosed { peer } => {
                     self.on_connection_closed(peer);
                 }
-                ConnectionEvent::SubstreamOpened { peer, substream } => {
+                ConnectionEvent::SubstreamOpened {
+                    peer, substream, ..
+                } => {
                     self.on_substream_opened(peer, substream).await;
                 }
                 ConnectionEvent::SubstreamOpenFailure { peer, error } => {
