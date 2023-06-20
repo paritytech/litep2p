@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::Codec,
+    codec::{Codec, ProtocolCodec},
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
     new_config::{Config, Litep2pConfig},
@@ -86,16 +86,6 @@ pub struct Litep2p {
     pending_connections: HashMap<usize, Multiaddr>,
 }
 
-/// Transport context.
-#[derive(Debug, Clone)]
-pub struct TransportContext {
-    /// Enabled protocols.
-    pub protocols: HashMap<ProtocolName, Sender<ConnectionEvent>>,
-
-    /// Keypair.
-    pub keypair: Keypair,
-}
-
 pub struct ConnectionService {
     rx: Receiver<ConnectionEvent>,
     peers: HashMap<PeerId, Sender<ProtocolEvent>>,
@@ -122,6 +112,27 @@ impl ConnectionService {
     }
 }
 
+// TODO: move to protocol
+/// Protocol information.
+#[derive(Debug, Clone)]
+pub struct ProtocolInfo {
+    /// TX channel for sending connection events to the protocol.
+    pub tx: Sender<ConnectionEvent>,
+
+    /// Codec used by the protocol.
+    pub codec: ProtocolCodec,
+}
+
+/// Transport context.
+#[derive(Debug, Clone)]
+pub struct TransportContext {
+    /// Enabled protocols.
+    pub protocols: HashMap<ProtocolName, ProtocolInfo>,
+
+    /// Keypair.
+    pub keypair: Keypair,
+}
+
 impl TransportContext {
     /// Create new [`TransportContext`].
     pub fn new(keypair: Keypair) -> Self {
@@ -132,10 +143,17 @@ impl TransportContext {
     }
 
     /// Add new protocol.
-    pub fn add_protocol(&mut self, protocol: ProtocolName) -> crate::Result<ConnectionService> {
+    pub fn add_protocol(
+        &mut self,
+        protocol: ProtocolName,
+        codec: ProtocolCodec,
+    ) -> crate::Result<ConnectionService> {
         let (service, tx) = ConnectionService::new();
 
-        match self.protocols.insert(protocol.clone(), tx) {
+        match self
+            .protocols
+            .insert(protocol.clone(), ProtocolInfo { tx, codec })
+        {
             Some(_) => Err(Error::ProtocolAlreadyExists(protocol)),
             None => Ok(service),
         }
@@ -156,8 +174,8 @@ impl Litep2p {
                 "enable notification protocol",
             );
 
-            let service = transport_ctx.add_protocol(name)?;
-            tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
+            // let service = transport_ctx.add_protocol(name)?;
+            // tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
         }
 
         // start ping protocol event loop if enabled
@@ -168,7 +186,8 @@ impl Litep2p {
                 "enable ping protocol",
             );
 
-            let service = transport_ctx.add_protocol(config.protocol.clone())?;
+            let service =
+                transport_ctx.add_protocol(config.protocol.clone(), config.codec.clone())?;
             tokio::spawn(async move { Ping::new(service, config).run().await });
         }
 

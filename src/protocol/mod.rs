@@ -21,9 +21,9 @@
 //! Protocol-related defines.
 
 use crate::{
-    codec::Codec,
+    codec::{identity::Identity, Codec, ProtocolCodec},
     error::Error,
-    new::TransportContext,
+    new::{ProtocolInfo, TransportContext},
     peer_id::PeerId,
     substream::{RawSubstream, Substream},
     transport::{Connection, TransportEvent},
@@ -220,7 +220,7 @@ pub enum ProtocolEvent {
 /// directly with installed protocols.
 #[derive(Debug)]
 pub struct ProtocolSet {
-    pub protocols: HashMap<NewProtocolName, Sender<ConnectionEvent>>,
+    pub protocols: HashMap<NewProtocolName, ProtocolInfo>,
     rx: Receiver<ProtocolEvent>,
 }
 
@@ -236,6 +236,7 @@ impl ProtocolSet {
         // TODO: backpressure?
         for (_, sender) in &context.protocols {
             sender
+                .tx
                 .send(ConnectionEvent::ConnectionEstablished {
                     peer,
                     connection: tx.clone(),
@@ -257,13 +258,14 @@ impl ProtocolSet {
         substream: R,
     ) -> crate::Result<()> {
         match self.protocols.get_mut(&protocol) {
-            Some(sender) => {
-                let substream = Box::new(Framed::new(
-                    substream,
-                    crate::codec::identity::Identity::new(32), // TODO: this should be specified by the protocol
-                ));
+            Some(info) => {
+                let substream: Box<dyn Substream> = match info.codec {
+                    ProtocolCodec::Identity(payload_size) => {
+                        Box::new(Framed::new(substream, Identity::new(payload_size)))
+                    }
+                };
 
-                sender
+                info.tx
                     .send(ConnectionEvent::SubstreamOpened { peer, substream })
                     .await
                     .map_err(From::from)
@@ -280,7 +282,8 @@ impl ProtocolSet {
         error: Error,
     ) -> crate::Result<()> {
         match self.protocols.get_mut(&protocol) {
-            Some(sender) => sender
+            Some(info) => info
+                .tx
                 .send(ConnectionEvent::SubstreamOpenFailure { peer, error })
                 .await
                 .map_err(From::from),

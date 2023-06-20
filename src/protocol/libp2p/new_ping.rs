@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::{identity::Identity, Codec},
+    codec::{identity::Identity, Codec, ProtocolCodec},
     error::Error,
     new::ConnectionService,
     peer_id::PeerId,
@@ -45,10 +45,14 @@ pub const PROTOCOL_NAME: &str = "/ipfs/ping/1.0.0";
 const PING_PAYLOAD_SIZE: usize = 32;
 
 /// Ping configuration.
+// TODO: figure out a better abstraction for protocol configs
 #[derive(Debug)]
 pub struct Config {
     /// Protocol name.
     pub(crate) protocol: ProtocolName,
+
+    /// Codec used by the protocol.
+    pub(crate) codec: ProtocolCodec,
 
     /// Maximum failures before the peer is considered unreachable.
     max_failures: usize,
@@ -69,6 +73,7 @@ impl Config {
                 tx_event,
                 max_failures,
                 protocol: ProtocolName::from(PROTOCOL_NAME),
+                codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
             },
             Box::new(ReceiverStream::new(rx_event)),
         )

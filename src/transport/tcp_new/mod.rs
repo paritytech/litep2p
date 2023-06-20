@@ -299,6 +299,8 @@ impl TransportNew for TcpTransport {
 mod tests {
     use super::*;
     use crate::{
+        codec::ProtocolCodec,
+        new::ProtocolInfo,
         new_config::Litep2pConfigBuilder,
         protocol::{libp2p::new_ping::Config as PingConfig, Libp2pProtocol},
         types::protocol::ProtocolName,
@@ -353,7 +355,13 @@ mod tests {
         let (tx1, rx1) = channel(64);
         let context1 = TransportContext {
             keypair: keypair1.clone(),
-            protocols: HashMap::from_iter([(ProtocolName::from("/notif/1"), tx1)]),
+            protocols: HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolInfo {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                },
+            )]),
         };
         let transport_config1 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
@@ -367,7 +375,13 @@ mod tests {
         let (tx2, rx2) = channel(64);
         let context2 = TransportContext {
             keypair: keypair2.clone(),
-            protocols: HashMap::from_iter([(ProtocolName::from("/notif/1"), tx2)]),
+            protocols: HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolInfo {
+                    tx: tx2,
+                    codec: ProtocolCodec::Identity(32),
+                },
+            )]),
         };
         let transport_config2 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
@@ -404,7 +418,13 @@ mod tests {
         let (tx1, rx1) = channel(64);
         let context1 = TransportContext {
             keypair: keypair1.clone(),
-            protocols: HashMap::from_iter([(ProtocolName::from("/notif/1"), tx1)]),
+            protocols: HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolInfo {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                },
+            )]),
         };
         let transport_config1 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
@@ -418,7 +438,13 @@ mod tests {
         let (tx2, rx2) = channel(64);
         let context2 = TransportContext {
             keypair: keypair2.clone(),
-            protocols: HashMap::from_iter([(ProtocolName::from("/notif/1"), tx2)]),
+            protocols: HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolInfo {
+                    tx: tx2,
+                    codec: ProtocolCodec::Identity(32),
+                },
+            )]),
         };
         let transport_config2 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
