@@ -139,37 +139,38 @@ impl IpfsIdentify {
             .expect("`msg` to have enough capacity");
 
         // why is this using unsigned-varint?
-        let mut decoder = Framed::new(substream, UviBytes::<bytes::Bytes>::default());
-        decoder.send(BytesMut::from(&msg[..]).into()).await.unwrap();
+        // let mut decoder = Framed::new(substream, UviBytes::<bytes::Bytes>::default());
+        // decoder.send(BytesMut::from(&msg[..]).into()).await.unwrap();
+        todo!();
     }
 
     /// Handle outbound query by reading the remote node's information.
     async fn handle_outbound_query(&mut self, peer: PeerId, substream: Box<dyn Connection>) {
         tracing::trace!(target: LOG_TARGET, "handle outbound stream");
 
-        // why is this using unsigned-varint?
-        let mut decoder = Framed::new(substream, UviBytes::<bytes::Bytes>::default());
-        let payload = decoder.next().await.unwrap().unwrap().freeze();
+        // // why is this using unsigned-varint?
+        // let mut decoder = Framed::new(substream, UviBytes::<bytes::Bytes>::default());
+        // let payload = decoder.next().await.unwrap().unwrap().freeze();
 
-        match identify_schema::Identify::decode(payload.to_vec().as_slice()) {
-            Ok(identify) => {
-                let _ = self
-                    .event_tx
-                    .send(Libp2pProtocolEvent::Identify(
-                        IdentifyEvent::PeerIdentified {
-                            peer,
-                            supported_protocols: HashSet::from_iter(identify.protocols),
-                        },
-                    ))
-                    .await;
-            }
-            Err(err) => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    "failed to parse `Identify` from response"
-                );
-            }
-        }
+        // match identify_schema::Identify::decode(payload.to_vec().as_slice()) {
+        //     Ok(identify) => {
+        //         let _ = self
+        //             .event_tx
+        //             .send(Libp2pProtocolEvent::Identify(
+        //                 IdentifyEvent::PeerIdentified {
+        //                     peer,
+        //                     supported_protocols: HashSet::from_iter(identify.protocols),
+        //                 },
+        //             ))
+        //             .await;
+        //     }
+        //     Err(err) => {
+        //         tracing::error!(
+        //             target: LOG_TARGET,
+        //             "failed to parse `Identify` from response"
+        //         );
+        //     }
+        // }
     }
 
     /// [`IpfsIdentify`] event loop.

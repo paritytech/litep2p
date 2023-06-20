@@ -33,10 +33,6 @@ use litep2p::{
     transport::tcp_new::config::TransportConfig as TcpTransportConfig,
 };
 
-/// Our network behaviour.
-///
-/// For illustrative purposes, this includes the [`KeepAlive`](keep_alive::Behaviour) behaviour so a continuous sequence of
-/// pings can be observed.
 #[derive(NetworkBehaviour, Default)]
 struct Behaviour {
     keep_alive: keep_alive::Behaviour,

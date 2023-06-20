@@ -129,7 +129,7 @@ impl Ping {
         // TODO: don't block here
         match substream.next().await {
             Some(Ok(ping)) => {
-                if let Err(error) = substream.send(ping).await {
+                if let Err(error) = substream.send(ping.into()).await {
                     tracing::debug!(
                         target: LOG_TARGET,
                         ?peer,

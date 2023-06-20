@@ -26,6 +26,7 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 use std::sync::Arc;
 
 pub mod identity;
+pub mod unsigned_varint;
 
 // TODO: documentation
 pub trait Codec: Encoder<Bytes, Error = Error> + Decoder<Item = Bytes, Error = Error> {}
@@ -36,4 +37,7 @@ impl<T: Encoder<Bytes, Error = Error> + Decoder<Item = Bytes, Error = Error>> Co
 pub enum ProtocolCodec {
     /// Identity codec where the argument denotes the payload size.
     Identity(usize),
+
+    /// Unsigned varint.
+    UnsignedVarint,
 }

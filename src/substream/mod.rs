@@ -20,7 +20,7 @@
 
 use crate::{error::Error, peer_id::PeerId, types::protocol::ProtocolName};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -41,14 +41,14 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static> RawSubstream fo
 
 /// Trait which describes the behavior of a substream.
 pub trait Substream:
-    Debug + Stream<Item = crate::Result<Bytes>> + Sink<Bytes, Error = Error> + Send + Unpin + 'static
+    Debug + Stream<Item = crate::Result<BytesMut>> + Sink<Bytes, Error = Error> + Send + Unpin + 'static
 {
 }
 
 /// Blanket implementation for [`Substream`].
 impl<
         T: Debug
-            + Stream<Item = crate::Result<Bytes>>
+            + Stream<Item = crate::Result<BytesMut>>
             + Sink<Bytes, Error = Error>
             + Send
             + Unpin

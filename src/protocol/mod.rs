@@ -21,7 +21,7 @@
 //! Protocol-related defines.
 
 use crate::{
-    codec::{identity::Identity, Codec, ProtocolCodec},
+    codec::{identity::Identity, unsigned_varint::UnsignedVarint, Codec, ProtocolCodec},
     error::Error,
     new::{ProtocolInfo, TransportContext},
     peer_id::PeerId,
@@ -36,6 +36,7 @@ use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 use tokio_util::codec::Framed;
+use unsigned_varint::codec::UviBytes;
 
 use std::{
     collections::HashMap,
@@ -271,6 +272,9 @@ impl ProtocolSet {
                 let substream: Box<dyn Substream> = match info.codec {
                     ProtocolCodec::Identity(payload_size) => {
                         Box::new(Framed::new(substream, Identity::new(payload_size)))
+                    }
+                    ProtocolCodec::UnsignedVarint => {
+                        Box::new(Framed::new(substream, UnsignedVarint::new()))
                     }
                 };
 

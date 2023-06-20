@@ -18,44 +18,51 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-//! Identity codec that reads/writes `N` bytes from/to source/sink.
-
 use crate::error::Error;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, Framed};
+use unsigned_varint::codec::UviBytes;
 
-#[derive(Debug)]
-pub struct Identity {
-    payload_len: usize,
+use std::fmt;
+
+pub struct UnsignedVarint {
+    codec: UviBytes<bytes::Bytes>,
 }
 
-impl Identity {
-    /// Create new [`Identity`] codec.
-    pub fn new(payload_len: usize) -> Self {
-        Self { payload_len }
+impl fmt::Debug for UnsignedVarint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnsignedVarint").finish()
     }
 }
 
-impl Decoder for Identity {
+impl UnsignedVarint {
+    /// Create new [`UnsignedVarint`] codec.
+    pub fn new() -> Self {
+        Self {
+            codec: UviBytes::<Bytes>::default(),
+        }
+    }
+}
+
+impl Decoder for UnsignedVarint {
     type Item = BytesMut;
     type Error = Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if src.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(src.split_to(self.payload_len)))
+        self.codec.decode(src).map_err(From::from)
     }
 }
 
-impl Encoder<Bytes> for Identity {
+impl Encoder<Bytes> for UnsignedVarint {
     type Error = Error;
 
     fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
-        // TODO: verify that `item` is `N` bytes long
-        dst.put_slice(item.as_ref());
-        Ok(())
+        self.codec.encode(item, dst).map_err(From::from)
+        // self.codec.
+        // todo!();
+        // // TODO: verify that `item` is `N` bytes long
+        // dst.put_slice(item.as_ref());
+        // Ok(())
     }
 }
