@@ -302,7 +302,7 @@ impl TcpConnection {
                         }
                     }
                 }
-                protocol = self.context.poll_next() => match protocol {
+                protocol = self.context.next_event() => match protocol {
                     Some(ProtocolEvent::OpenSubstream { protocol }) => {
                         let control = self.control.clone();
                         let substream = self.next_substream_id();

@@ -182,7 +182,7 @@ impl ProtocolSet {
     }
 
     /// Poll next substream open query from one of the installed protocols.
-    pub async fn poll_next(&mut self) -> Option<ProtocolEvent> {
+    pub async fn next_event(&mut self) -> Option<ProtocolEvent> {
         self.rx.recv().await
     }
 }
