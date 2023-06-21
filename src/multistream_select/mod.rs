@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(unused)]
+
 //! # Multistream-select Protocol Negotiation
 //!
 //! This crate implements the `multistream-select` protocol, which is the protocol

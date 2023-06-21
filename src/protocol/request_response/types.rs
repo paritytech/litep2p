@@ -38,19 +38,19 @@ pub enum InnerRequestResponseEvent {}
 pub enum RequestResponseCommand {}
 
 pub struct RequestResponseHandle<R: Encode + Send> {
-    event_rx: Receiver<InnerRequestResponseEvent>,
-    command_tx: Sender<RequestResponseCommand>,
+    _event_rx: Receiver<InnerRequestResponseEvent>,
+    _command_tx: Sender<RequestResponseCommand>,
     _marker: std::marker::PhantomData<R>,
 }
 
 impl<R: Encode + Send> RequestResponseHandle<R> {
     pub fn new(
-        event_rx: Receiver<InnerRequestResponseEvent>,
-        command_tx: Sender<RequestResponseCommand>,
+        _event_rx: Receiver<InnerRequestResponseEvent>,
+        _command_tx: Sender<RequestResponseCommand>,
     ) -> Self {
         Self {
-            event_rx,
-            command_tx,
+            _event_rx,
+            _command_tx,
             _marker: Default::default(),
         }
     }
@@ -60,7 +60,7 @@ impl<R: Encode + Send> RequestResponseHandle<R> {
 impl<R: Encode + Send> RequestResponseService for RequestResponseHandle<R> {
     type Request = R;
 
-    fn send_request(&mut self, peer: usize, request: Self::Request) -> usize {
+    fn send_request(&mut self, _peer: usize, _request: Self::Request) -> usize {
         todo!();
     }
 
@@ -73,30 +73,31 @@ impl<R: Encode + Send> RequestResponseService for RequestResponseHandle<R> {
 #[derive(Debug)]
 pub struct Config {
     protocol_name: ProtocolName,
-    max_slots: usize,
-    event_tx: Sender<InnerRequestResponseEvent>,
-    command_rx: Receiver<RequestResponseCommand>,
+    _max_slots: usize,
+    _event_tx: Sender<InnerRequestResponseEvent>,
+    _command_rx: Receiver<RequestResponseCommand>,
 }
 
 impl Config {
     /// Create new [`Config`].
     pub fn new<R: Encode + Send>(
-        protocol_name: ProtocolName,
-        max_slots: usize,
+        _protocol_name: ProtocolName,
+        _max_slots: usize,
     ) -> (Self, Box<dyn RequestResponseService<Request = R>>) {
-        let (event_tx, event_rx) = channel(64);
-        let (command_tx, command_rx) = channel(64);
-        let handle = RequestResponseHandle::<R>::new(event_rx, command_tx);
+        let (_event_tx, event_rx) = channel(64);
+        let (command_tx, _command_rx) = channel(64);
+        let _handle = RequestResponseHandle::<R>::new(event_rx, command_tx);
 
-        (
-            Self {
-                protocol_name,
-                max_slots,
-                event_tx,
-                command_rx,
-            },
-            todo!(),
-        )
+        // (
+        //     Self {
+        //         protocol_name,
+        //         _max_slots,
+        //         _event_tx,
+        //         _command_rx,
+        //     },
+        //     todo!(),
+        // )
+        todo!();
     }
 
     /// Get protocol name.

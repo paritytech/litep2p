@@ -19,17 +19,17 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::{identity::Identity, Codec, ProtocolCodec},
+    codec::ProtocolCodec,
     error::Error,
     peer_id::PeerId,
     protocol::{ConnectionEvent, ProtocolEvent},
-    substream::{Substream, SubstreamSet},
+    substream::Substream,
     types::protocol::ProtocolName,
     ConnectionService, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{AsyncReadExt, AsyncWriteExt, SinkExt, Stream, StreamExt};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use futures::{SinkExt, Stream, StreamExt};
+use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::collections::HashMap;
@@ -86,13 +86,13 @@ pub enum PingEvent {}
 /// Ping protocol.
 pub struct Ping {
     /// Maximum failures before the peer is considered unreachable.
-    max_failures: usize,
+    _max_failures: usize,
 
     // Connection service.
     service: ConnectionService,
 
     /// TX channel for sending events to the user protocol.
-    tx: Sender<PingEvent>,
+    _tx: Sender<PingEvent>,
 
     /// Connected peers.
     peers: HashMap<PeerId, Sender<ProtocolEvent>>,
@@ -103,9 +103,9 @@ impl Ping {
     pub fn new(service: ConnectionService, config: Config) -> Self {
         Self {
             service,
-            tx: config.tx_event,
+            _tx: config.tx_event,
             peers: HashMap::new(),
-            max_failures: config.max_failures,
+            _max_failures: config.max_failures,
         }
     }
 
@@ -132,6 +132,7 @@ impl Ping {
                     tracing::debug!(
                         target: LOG_TARGET,
                         ?peer,
+                        ?error,
                         "failed to write value back to sender"
                     );
                 }

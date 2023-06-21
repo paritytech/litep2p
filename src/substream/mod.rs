@@ -18,10 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{error::Error, peer_id::PeerId, types::protocol::ProtocolName};
+use crate::{error::Error, peer_id::PeerId};
 
 use bytes::{Bytes, BytesMut};
-use futures::{Sink, SinkExt, Stream};
+use futures::{Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use std::{
@@ -66,19 +66,6 @@ impl<S: Substream> SubstreamSet<S> {
     pub fn new() -> Self {
         Self {
             substreams: HashMap::new(),
-        }
-    }
-}
-
-impl<S: Substream> SubstreamSet<S> {
-    // TODO: rewrite this
-    async fn send_notification(&mut self, peer: PeerId, data: Bytes) -> Result<(), ()> {
-        match self.substreams.get_mut(&peer) {
-            Some(substream) => {
-                substream.send(data).await;
-                Ok(())
-            }
-            None => Err(()),
         }
     }
 }

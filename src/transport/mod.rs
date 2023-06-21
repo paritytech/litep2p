@@ -18,42 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    crypto::{ed25519::Keypair, noise::NoiseConfiguration},
-    error::Error,
-    peer_id::PeerId,
-    protocol::ProtocolSet,
-    types::protocol::ProtocolName,
-    TransportContext,
-};
+use crate::{error::Error, peer_id::PeerId, TransportContext};
 
-use futures::{
-    future::BoxFuture,
-    io::{AsyncRead, AsyncWrite},
-    Sink, Stream,
-};
 use multiaddr::Multiaddr;
-use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::fmt::Debug;
 
 pub mod tcp;
-
-#[async_trait::async_trait]
-pub trait TransportService: Send {
-    /// Open connection to remote peer.
-    ///
-    /// Negotiate `noise`, perform the Noise handshake, negotiate `yamux` and return TODO
-    async fn open_connection(&mut self, address: Multiaddr);
-
-    /// Close connection to remote peer.
-    async fn close_connection(&mut self, peer: PeerId);
-
-    /// Open substream to remote `peer` for `protocol`.
-    ///
-    /// The substream is closed by dropping the sink received in [`Litep2p::SubstreamOpened`] message.
-    async fn next_connection(&mut self);
-}
 
 /// Trait which allows `litep2p` to associate dial failures to opened connections.
 pub trait TransportError {

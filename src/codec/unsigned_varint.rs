@@ -20,8 +20,8 @@
 
 use crate::error::Error;
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use tokio_util::codec::{Decoder, Encoder, Framed};
+use bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Decoder, Encoder};
 use unsigned_varint::codec::UviBytes;
 
 use std::fmt;
@@ -59,10 +59,5 @@ impl Encoder<Bytes> for UnsignedVarint {
 
     fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
         self.codec.encode(item, dst).map_err(From::from)
-        // self.codec.
-        // todo!();
-        // // TODO: verify that `item` is `N` bytes long
-        // dst.put_slice(item.as_ref());
-        // Ok(())
     }
 }

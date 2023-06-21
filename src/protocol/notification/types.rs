@@ -43,21 +43,21 @@ pub enum NotificationCommand {
     },
 }
 
-///
+// TODO: documentation
 pub struct NotificationHandle {
-    event_rx: Receiver<NotificationEvent>,
-    command_tx: Sender<NotificationCommand>,
+    _event_rx: Receiver<NotificationEvent>,
+    _command_tx: Sender<NotificationCommand>,
 }
 
 impl NotificationHandle {
     /// Create new [`NotificationHandle`].
     pub fn new(
-        event_rx: Receiver<NotificationEvent>,
-        command_tx: Sender<NotificationCommand>,
+        _event_rx: Receiver<NotificationEvent>,
+        _command_tx: Sender<NotificationCommand>,
     ) -> Self {
         Self {
-            event_rx,
-            command_tx,
+            _event_rx,
+            _command_tx,
         }
     }
 }
@@ -65,7 +65,7 @@ impl NotificationHandle {
 #[async_trait::async_trait]
 impl NotificationService for NotificationHandle {
     /// Open substream to peer.
-    fn open_substream(&self, peer: usize) {
+    fn open_substream(&self, _peer: usize) {
         todo!();
     }
 
@@ -82,41 +82,41 @@ pub struct Config {
     protocol_name: ProtocolName,
 
     /// Maximum notification size.
-    max_notification_size: usize,
+    _max_notification_size: usize,
 
     /// Handshake bytes.
-    handshake: Vec<u8>,
+    _handshake: Vec<u8>,
 
     /// Protocol aliases.
-    protocol_aliases: Vec<ProtocolName>,
+    _protocol_aliases: Vec<ProtocolName>,
 
     /// TX channel passed to the protocol used for sending events.
-    event_tx: Sender<NotificationEvent>,
+    _event_tx: Sender<NotificationEvent>,
 
     /// RX channel passed to the protocol used for receiving commands.
-    command_rx: Receiver<NotificationCommand>,
+    _command_rx: Receiver<NotificationCommand>,
 }
 
 impl Config {
     /// Create new [`Config`].
     pub fn new(
         protocol_name: ProtocolName,
-        max_notification_size: usize,
-        handshake: Vec<u8>,
-        protocol_aliases: Vec<ProtocolName>,
+        _max_notification_size: usize,
+        _handshake: Vec<u8>,
+        _protocol_aliases: Vec<ProtocolName>,
     ) -> (Self, Box<dyn NotificationService>) {
-        let (event_tx, event_rx) = channel(64);
-        let (command_tx, command_rx) = channel(64);
+        let (_event_tx, event_rx) = channel(64);
+        let (command_tx, _command_rx) = channel(64);
         let handle = NotificationHandle::new(event_rx, command_tx);
 
         (
             Self {
                 protocol_name,
-                max_notification_size,
-                handshake,
-                protocol_aliases,
-                event_tx,
-                command_rx,
+                _max_notification_size,
+                _handshake,
+                _protocol_aliases,
+                _event_tx,
+                _command_rx,
             },
             Box::new(handle),
         )

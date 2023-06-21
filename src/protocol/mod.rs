@@ -21,7 +21,7 @@
 //! Protocol-related defines.
 
 use crate::{
-    codec::{identity::Identity, unsigned_varint::UnsignedVarint, Codec, ProtocolCodec},
+    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     error::Error,
     peer_id::PeerId,
     substream::{RawSubstream, Substream},
@@ -29,18 +29,10 @@ use crate::{
     ProtocolInfo, TransportContext,
 };
 
-use futures::Stream;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::mpsc::{channel, Receiver, Sender},
-};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_util::codec::Framed;
-use unsigned_varint::codec::UviBytes;
 
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-};
+use std::{collections::HashMap, fmt::Debug};
 
 pub mod libp2p;
 pub mod notification;

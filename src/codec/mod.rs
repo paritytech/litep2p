@@ -21,9 +21,7 @@
 use crate::error::Error;
 
 use bytes::Bytes;
-use tokio_util::codec::{Decoder, Encoder, Framed};
-
-use std::sync::Arc;
+use tokio_util::codec::{Decoder, Encoder};
 
 pub mod identity;
 pub mod unsigned_varint;

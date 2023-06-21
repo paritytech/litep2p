@@ -28,8 +28,6 @@ use crate::{
     types::protocol::ProtocolName,
 };
 
-use multiaddr::Multiaddr;
-
 use std::collections::HashMap;
 
 /// Connection role.
@@ -141,7 +139,7 @@ impl Litep2pConfigBuilder {
             ping: self.ping.take(),
             identify: self.identify.take(),
             notification_protocols: self.notification_protocols,
-            request_response_protocols: self.request_response_protocols,
+            _request_response_protocols: self.request_response_protocols,
         }
     }
 }
@@ -164,5 +162,5 @@ pub struct Litep2pConfig {
     pub(crate) notification_protocols: HashMap<ProtocolName, notification::types::Config>,
 
     /// Request-response protocols.
-    pub(crate) request_response_protocols: HashMap<ProtocolName, request_response::types::Config>,
+    pub(crate) _request_response_protocols: HashMap<ProtocolName, request_response::types::Config>,
 }

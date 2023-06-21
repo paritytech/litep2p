@@ -19,41 +19,25 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    config::Role,
-    crypto::{
-        ed25519::Keypair,
-        noise::{self, Encrypted, NoiseConfiguration},
-        PublicKey,
-    },
-    error::{AddressError, Error, SubstreamError},
-    multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
+    error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
-        tcp::{
-            config::TransportConfig,
-            connection::{Substream, TcpConnection},
-        },
-        Transport, TransportError, TransportEvent, TransportService,
+        tcp::{config::TransportConfig, connection::TcpConnection},
+        Transport, TransportError, TransportEvent,
     },
-    types::protocol::ProtocolName,
-    TransportContext, DEFAULT_CHANNEL_SIZE,
+    TransportContext,
 };
 
 use futures::{
     future::BoxFuture,
     stream::{FuturesUnordered, StreamExt},
-    AsyncRead, AsyncWrite,
 };
 use multiaddr::{Multiaddr, Protocol};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-use tracing::{instrument, Level};
+use tokio::net::TcpListener;
 
 use std::{
     collections::HashMap,
-    io,
     net::{IpAddr, SocketAddr},
-    pin::Pin,
 };
 
 mod connection;
@@ -114,7 +98,7 @@ pub struct TcpTransport {
     next_connection_id: usize,
 
     /// Pending dials.
-    pending_dials: HashMap<usize, (Multiaddr)>,
+    pending_dials: HashMap<usize, Multiaddr>,
 
     /// Pending connections.
     pending_connections: FuturesUnordered<BoxFuture<'static, Result<TcpConnection, TcpError>>>,
@@ -259,7 +243,7 @@ impl Transport for TcpTransport {
 
                             tokio::spawn(async move {
                                 if let Err(error) = connection.start().await {
-                                    tracing::error!(target: LOG_TARGET, ?peer, "connection failure");
+                                    tracing::error!(target: LOG_TARGET, ?peer, ?error, "connection failure");
                                 }
                             });
 
@@ -296,8 +280,10 @@ impl Transport for TcpTransport {
 mod tests {
     use super::*;
     use crate::{
-        codec::ProtocolCodec, config::Litep2pConfigBuilder,
-        protocol::libp2p::ping::Config as PingConfig, types::protocol::ProtocolName, ProtocolInfo,
+        codec::ProtocolCodec,
+        crypto::{ed25519::Keypair, PublicKey},
+        types::protocol::ProtocolName,
+        ProtocolInfo,
     };
     use tokio::sync::mpsc::channel;
 
@@ -346,7 +332,7 @@ mod tests {
             .try_init();
 
         let keypair1 = Keypair::generate();
-        let (tx1, rx1) = channel(64);
+        let (tx1, _rx1) = channel(64);
         let context1 = TransportContext {
             keypair: keypair1.clone(),
             protocols: HashMap::from_iter([(
@@ -366,7 +352,7 @@ mod tests {
             .unwrap();
 
         let keypair2 = Keypair::generate();
-        let (tx2, rx2) = channel(64);
+        let (tx2, _rx2) = channel(64);
         let context2 = TransportContext {
             keypair: keypair2.clone(),
             protocols: HashMap::from_iter([(
@@ -385,8 +371,10 @@ mod tests {
             .await
             .unwrap();
 
-        let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public().clone()));
-        let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public().clone()));
+        let _peer1: PeerId =
+            PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public().clone()));
+        let _peer2: PeerId =
+            PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public().clone()));
 
         let listen_address = Transport::listen_address(&transport1);
         let _ = transport2.open_connection(listen_address).unwrap();
@@ -409,7 +397,7 @@ mod tests {
             .try_init();
 
         let keypair1 = Keypair::generate();
-        let (tx1, rx1) = channel(64);
+        let (tx1, _rx1) = channel(64);
         let context1 = TransportContext {
             keypair: keypair1.clone(),
             protocols: HashMap::from_iter([(
@@ -429,7 +417,7 @@ mod tests {
             .unwrap();
 
         let keypair2 = Keypair::generate();
-        let (tx2, rx2) = channel(64);
+        let (tx2, _rx2) = channel(64);
         let context2 = TransportContext {
             keypair: keypair2.clone(),
             protocols: HashMap::from_iter([(

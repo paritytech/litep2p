@@ -19,22 +19,20 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::{identity::Identity, Codec, ProtocolCodec},
-    crypto::{ed25519::Keypair, PublicKey},
+    codec::ProtocolCodec,
+    crypto::PublicKey,
     error::Error,
     peer_id::PeerId,
     protocol::{ConnectionEvent, ProtocolEvent},
-    substream::{Substream, SubstreamSet},
+    substream::Substream,
     types::protocol::ProtocolName,
     ConnectionService, DEFAULT_CHANNEL_SIZE,
 };
 
-use asynchronous_codec::{Framed, FramedParts};
-use bytes::BytesMut;
-use futures::{AsyncReadExt, AsyncWriteExt, SinkExt, Stream, StreamExt};
+use futures::{SinkExt, Stream};
 use multiaddr::Multiaddr;
 use prost::Message;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::collections::{HashMap, HashSet};
@@ -50,7 +48,7 @@ pub const PUSH_PROTOCOL_NAME: &str = "/ipfs/id/push/1.0.0";
 
 /// Size for `/ipfs/ping/1.0.0` payloads.
 // TODO: what is the max size?
-const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
+const _IDENTIFY_PAYLOAD_SIZE: usize = 4096;
 
 mod identify_schema {
     include!(concat!(env!("OUT_DIR"), "/identify.rs"));
@@ -117,7 +115,7 @@ pub struct Identify {
     service: ConnectionService,
 
     /// TX channel for sending events to the user protocol.
-    tx: Sender<IdentifyEvent>,
+    _tx: Sender<IdentifyEvent>,
 
     /// Connected peers.
     peers: HashMap<PeerId, Sender<ProtocolEvent>>,
@@ -137,7 +135,7 @@ impl Identify {
     pub fn new(service: ConnectionService, config: Config) -> Self {
         Self {
             service,
-            tx: config.tx_event,
+            _tx: config.tx_event,
             peers: HashMap::new(),
             public: config.public.expect("public key to be supplied"),
             listen_addresses: config.listen_addresses,
@@ -236,7 +234,7 @@ impl Identify {
                 ConnectionEvent::SubstreamOpened {
                     peer,
                     protocol,
-                    mut substream,
+                    substream,
                 } => {
                     self.on_substream_opened(peer, protocol, substream).await;
                 }

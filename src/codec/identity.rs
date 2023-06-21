@@ -22,8 +22,8 @@
 
 use crate::error::Error;
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use tokio_util::codec::{Decoder, Encoder, Framed};
+use bytes::{BufMut, Bytes, BytesMut};
+use tokio_util::codec::{Decoder, Encoder};
 
 #[derive(Debug)]
 pub struct Identity {

@@ -36,7 +36,7 @@ use futures::{
     ready, AsyncReadExt, AsyncWriteExt, FutureExt,
 };
 use prost::Message;
-use snow::{params::NoiseParams, Builder, Error, HandshakeState, TransportState};
+use snow::{Builder, Error, HandshakeState, TransportState};
 
 use std::{io, pin::Pin, task::Poll};
 
@@ -86,7 +86,7 @@ impl NoiseConfiguration {
             .expect("keypair generation to succeed");
         let static_key = dh_keypair.private;
 
-        let mut noise = match role {
+        let noise = match role {
             Role::Dialer => builder
                 .local_private_key(&static_key)
                 .build_initiator()
@@ -206,8 +206,8 @@ enum ReadState {
 #[derive(Debug)]
 enum WriteState {
     Ready,
-    WriteLen { buf: [u8; 2], off: usize },
-    WriteData { len: usize, off: usize },
+    _WriteLen { buf: [u8; 2], off: usize },
+    _WriteData { len: usize, off: usize },
 }
 
 // TODO: documentation
@@ -231,7 +231,7 @@ struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin, T: Unpin> {
     read_state: ReadState,
 
     /// Write state of the stream.
-    write_state: WriteState,
+    _write_state: WriteState,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin, T: Unpin> NoiseSocket<S, T> {
@@ -243,7 +243,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Unpin> NoiseSocket<S, T> {
             read_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
             decrypt_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
             read_state: ReadState::Ready,
-            write_state: WriteState::Ready,
+            _write_state: WriteState::Ready,
         }
     }
 }
@@ -391,11 +391,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
                     todo!();
                     // return Poll::Ready(None);
                 }
-                ReadState::Eof(Err(())) => {
-                    tracing::trace!(target: LOG_TARGET, "read: eof (unexpected)");
-                    todo!();
-                    // return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())));
-                }
                 ReadState::DecErr => {
                     tracing::trace!(target: LOG_TARGET, "read: decryption error");
                     todo!();
@@ -412,21 +407,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        let mut this = Pin::into_inner(self);
+        let this = Pin::into_inner(self);
         this.write_buffer
             .resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
 
         match this.noise.write_message(&buf, &mut this.write_buffer) {
             Ok(nwritten) => {
-                tracing::span!(
+                tracing::trace!(
                     target: LOG_TARGET,
-                    tracing::Level::TRACE,
-                    "write: send data"
-                )
-                .enter();
-                tracing::event!(
-                    target: LOG_TARGET,
-                    tracing::Level::TRACE,
                     size = ?nwritten,
                     "write: send message",
                 );
@@ -436,8 +424,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
                     buffer =? this.write_buffer[..nwritten],
                 );
 
-                Pin::new(&mut this.io).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
-                Pin::new(&mut this.io).poll_write(cx, &this.write_buffer[..nwritten]);
+                let _ = Pin::new(&mut this.io).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
+                let _ = Pin::new(&mut this.io).poll_write(cx, &this.write_buffer[..nwritten]);
 
                 return Poll::Ready(Ok(buf.len()));
             }
@@ -498,7 +486,7 @@ pub struct Encrypted<S: AsyncRead + AsyncWrite + Unpin> {
     read_state: ReadState,
 
     /// Write state of the stream.
-    write_state: WriteState,
+    _write_state: WriteState,
 }
 
 // TODO: optimize
@@ -612,11 +600,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Encrypted<S> {
                     todo!();
                     // return Poll::Ready(None);
                 }
-                ReadState::Eof(Err(())) => {
-                    tracing::trace!(target: LOG_TARGET, "read: eof (unexpected)");
-                    todo!();
-                    // return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())));
-                }
                 ReadState::DecErr => {
                     tracing::trace!(target: LOG_TARGET, "read: decryption error");
                     todo!();
@@ -634,32 +617,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Encrypted<S> {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        let mut this = Pin::into_inner(self);
+        let this = Pin::into_inner(self);
         this.write_buffer
             .resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
 
         match this.noise.write_message(&buf, &mut this.write_buffer) {
             Ok(nwritten) => {
-                tracing::span!(
+                tracing::trace!(
                     target: LOG_TARGET,
-                    tracing::Level::TRACE,
-                    "write: send data"
-                )
-                .enter();
-                tracing::event!(
-                    target: LOG_TARGET,
-                    tracing::Level::TRACE,
                     size = ?nwritten,
                     "write: send message",
                 );
-                tracing::event!(
+                tracing::trace!(
                     target: LOG_TARGET_MSG,
-                    tracing::Level::TRACE,
                     buffer =? this.write_buffer[..nwritten],
                 );
 
-                Pin::new(&mut this.socket).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
-                Pin::new(&mut this.socket).poll_write(cx, &this.write_buffer[..nwritten]);
+                let _ =
+                    Pin::new(&mut this.socket).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
+                let _ = Pin::new(&mut this.socket).poll_write(cx, &this.write_buffer[..nwritten]);
 
                 return Poll::Ready(Ok(buf.len()));
             }
@@ -719,7 +695,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
             read_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
             decrypt_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
             read_state: ReadState::Ready,
-            write_state: WriteState::Ready,
+            _write_state: WriteState::Ready,
         },
         peer,
     ))
@@ -739,7 +715,7 @@ mod tests {
             .try_init();
 
         let keypair1 = Keypair::generate();
-        let keypair2 = Keypair::generate();
+        let _keypair2 = Keypair::generate();
 
         let listener = TcpListener::bind("[::1]:0".parse::<SocketAddr>().unwrap())
             .await
@@ -767,7 +743,7 @@ mod tests {
         // verify the connection works by reading a string
         let mut buf = vec![0u8; 512];
         let sent = res1.0.write(b"hello, world").await.unwrap();
-        let read = res2.0.read_exact(&mut buf[..sent]).await.unwrap();
+        let _read = res2.0.read_exact(&mut buf[..sent]).await.unwrap();
 
         assert_eq!(std::str::from_utf8(&buf[..sent]), Ok("hello, world"),);
     }

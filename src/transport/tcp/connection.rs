@@ -20,22 +20,14 @@
 
 use crate::{
     config::Role,
-    crypto::{
-        ed25519::Keypair,
-        noise::{self, Encrypted, NoiseConfiguration},
-        PublicKey,
-    },
-    error::{AddressError, Error, SubstreamError},
+    crypto::noise::{self, Encrypted, NoiseConfiguration},
+    error::{Error, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{ProtocolEvent, ProtocolSet},
-    substream::SubstreamSet,
-    transport::{
-        tcp::{config::TransportConfig, socket_addr_to_multi_addr, LOG_TARGET},
-        Transport, TransportService,
-    },
+    transport::tcp::{socket_addr_to_multi_addr, LOG_TARGET},
     types::protocol::ProtocolName,
-    TransportContext, DEFAULT_CHANNEL_SIZE,
+    TransportContext,
 };
 
 use futures::{
@@ -43,29 +35,20 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
     AsyncRead, AsyncWrite,
 };
-use multiaddr::{Multiaddr, Protocol};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::mpsc::Receiver,
-};
+use multiaddr::Multiaddr;
+use tokio::net::TcpStream;
 use tokio_util::compat::{
-    Compat, FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt, TokioAsyncReadCompatExt,
-    TokioAsyncWriteCompatExt,
+    Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt,
 };
-use tracing::{instrument, Level};
 
-use std::{
-    fmt, io,
-    net::{IpAddr, SocketAddr},
-    pin::Pin,
-};
+use std::{fmt, io, net::SocketAddr, pin::Pin};
 
 // TODO: introduce `NegotiatingConnection` to clean up this code a bit?
 
 /// TCP connection.
 pub struct TcpConnection {
     /// Connection ID.
-    connection_id: usize,
+    _connection_id: usize,
 
     /// Protocol context.
     context: ProtocolSet,
@@ -147,7 +130,7 @@ impl TcpConnection {
 
         Ok(Substream {
             io: io.inner(),
-            substream,
+            _substream: substream,
             protocol,
         })
     }
@@ -167,7 +150,7 @@ impl TcpConnection {
 
     /// Accept substream.
     pub async fn accept_substream(
-        mut stream: yamux::Stream,
+        stream: yamux::Stream,
         substream: usize,
         protocols: Vec<ProtocolName>,
     ) -> crate::Result<Substream> {
@@ -187,7 +170,7 @@ impl TcpConnection {
 
         Ok(Substream {
             io: io.inner(),
-            substream,
+            _substream: substream,
             protocol,
         })
     }
@@ -200,7 +183,7 @@ impl TcpConnection {
     ) -> crate::Result<(Negotiated<S>, ProtocolName)> {
         tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
 
-        let (protocol, mut socket) = match role {
+        let (protocol, socket) = match role {
             Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await?,
             Role::Listener => listener_select_proto(stream, protocols).await?,
         };
@@ -248,7 +231,7 @@ impl TcpConnection {
 
         let connection =
             yamux::Connection::new(stream.inner(), yamux::Config::default(), role.into());
-        let (control, mut connection) = yamux::Control::new(connection);
+        let (control, connection) = yamux::Control::new(connection);
         let context = ProtocolSet::from_transport_context(peer, context).await?;
 
         Ok(Self {
@@ -256,7 +239,7 @@ impl TcpConnection {
             context,
             control,
             connection,
-            connection_id,
+            _connection_id: connection_id,
             next_substream_id: 0usize,
             pending_substreams: FuturesUnordered::new(),
             address: socket_addr_to_multi_addr(&address),
@@ -321,7 +304,7 @@ impl TcpConnection {
                 }
                 protocol = self.context.poll_next() => match protocol {
                     Some(ProtocolEvent::OpenSubstream { protocol }) => {
-                        let mut control = self.control.clone();
+                        let control = self.control.clone();
                         let substream = self.next_substream_id();
 
                         tracing::trace!(
@@ -349,7 +332,7 @@ impl TcpConnection {
 #[derive(Debug)]
 pub struct Substream {
     /// Substream ID.
-    substream: usize,
+    _substream: usize,
 
     /// Protocol name.
     protocol: ProtocolName,
@@ -364,7 +347,7 @@ impl AsyncRead for Substream {
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        let mut inner = Pin::into_inner(self);
+        let inner = Pin::into_inner(self);
         Pin::new(&mut inner.io).poll_read(cx, buf)
     }
 }
@@ -375,7 +358,7 @@ impl AsyncWrite for Substream {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        let mut inner = Pin::into_inner(self);
+        let inner = Pin::into_inner(self);
         Pin::new(&mut inner.io).poll_write(cx, &buf)
     }
 
@@ -383,7 +366,7 @@ impl AsyncWrite for Substream {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        let mut inner = Pin::into_inner(self);
+        let inner = Pin::into_inner(self);
         Pin::new(&mut inner.io).poll_flush(cx)
     }
 
@@ -391,7 +374,7 @@ impl AsyncWrite for Substream {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        let mut inner = Pin::into_inner(self);
+        let inner = Pin::into_inner(self);
         Pin::new(&mut inner.io).poll_close(cx)
     }
 }

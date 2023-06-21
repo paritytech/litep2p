@@ -26,7 +26,7 @@
 
 use crate::{peer_id::PeerId, types::protocol::ProtocolName};
 
-use multiaddr::{Multiaddr, Protocol};
+use multiaddr::Multiaddr;
 use multihash::{Multihash, MultihashGeneric};
 
 use std::{
@@ -120,11 +120,6 @@ pub enum NotificationError {
     NotificationStreamClosed(PeerId),
 }
 
-// TODO: ???
-pub enum RequestResponseError {
-    Canceled,
-}
-
 impl From<MultihashGeneric<64>> for Error {
     fn from(hash: MultihashGeneric<64>) -> Self {
         Error::ParseError(ParseError::InvalidMultihash(hash))
@@ -175,13 +170,6 @@ pub struct DecodingError {
 }
 
 impl DecodingError {
-    pub(crate) fn missing_feature(feature_name: &'static str) -> Self {
-        Self {
-            msg: format!("cargo feature `{feature_name}` is not enabled"),
-            source: None,
-        }
-    }
-
     pub(crate) fn failed_to_parse<E, S>(what: &'static str, source: S) -> Self
     where
         E: error::Error + Send + Sync + 'static,
@@ -209,13 +197,6 @@ impl DecodingError {
     pub(crate) fn unknown_key_type(key_type: i32) -> Self {
         Self {
             msg: format!("unknown key-type {key_type}"),
-            source: None,
-        }
-    }
-
-    pub(crate) fn decoding_unsupported(key_type: &'static str) -> Self {
-        Self {
-            msg: format!("decoding {key_type} key from Protobuf is unsupported"),
             source: None,
         }
     }

@@ -17,35 +17,25 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
-#![allow(unused)]
 
 use crate::{
-    codec::{Codec, ProtocolCodec},
+    codec::ProtocolCodec,
     config::Litep2pConfig,
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
     peer_id::PeerId,
     protocol::{
         libp2p::{identify::Identify, ping::Ping},
-        notification::{types::Config as NotificationConfig, NotificationProtocol},
-        ConnectionEvent, ProtocolEvent, ProtocolSet,
+        ConnectionEvent, ProtocolEvent,
     },
-    transport::{tcp::TcpTransport, Transport, TransportError, TransportEvent},
+    transport::{tcp::TcpTransport, Transport, TransportEvent},
     types::protocol::ProtocolName,
 };
 
-use futures::{stream::FuturesUnordered, Stream, StreamExt};
-use multiaddr::{Multiaddr, Protocol};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::mpsc::{channel, Receiver, Sender},
-};
-use tokio_stream::{wrappers::ReceiverStream, StreamMap};
+use multiaddr::Multiaddr;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-};
+use std::collections::HashMap;
 
 pub mod codec;
 pub mod config;
@@ -55,7 +45,6 @@ pub mod substream;
 pub mod transport;
 pub mod types;
 
-mod connection;
 mod error;
 mod multistream_select;
 mod peer_id;
@@ -108,7 +97,7 @@ pub struct Litep2p {
 
 pub struct ConnectionService {
     rx: Receiver<ConnectionEvent>,
-    peers: HashMap<PeerId, Sender<ProtocolEvent>>,
+    _peers: HashMap<PeerId, Sender<ProtocolEvent>>,
 }
 
 impl ConnectionService {
@@ -120,7 +109,7 @@ impl ConnectionService {
         (
             Self {
                 rx,
-                peers: HashMap::new(),
+                _peers: HashMap::new(),
             },
             tx,
         )
@@ -185,11 +174,11 @@ impl Litep2p {
     pub async fn new(mut config: Litep2pConfig) -> crate::Result<Litep2p> {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
         let mut transport_ctx = TransportContext::new(config.keypair.clone());
-        let mut listen_addresses = Vec::new();
+        let listen_addresses = Vec::new();
         let mut protocols = Vec::new();
 
         // start notification protocol event loops
-        for (name, config) in config.notification_protocols.into_iter() {
+        for (name, _config) in config.notification_protocols.into_iter() {
             tracing::debug!(
                 target: LOG_TARGET,
                 protocol = ?name,
@@ -328,7 +317,6 @@ mod tests {
     use crate::{
         config::{Litep2pConfig, Litep2pConfigBuilder},
         crypto::ed25519::Keypair,
-        error::Error,
         protocol::{
             libp2p::ping::{Config as PingConfig, PingEvent},
             notification::types::Config as NotificationConfig,
@@ -357,9 +345,9 @@ mod tests {
             vec![1, 2, 3, 4],
             Vec::new(),
         );
-        let (ping_config, ping_event_stream) = PingConfig::new(3);
+        let (ping_config, _ping_event_stream) = PingConfig::new(3);
 
-        let mut config = Litep2pConfigBuilder::new()
+        let config = Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             })
@@ -368,7 +356,7 @@ mod tests {
             .with_ipfs_ping(ping_config)
             .build();
 
-        let litep2p = Litep2p::new(config).await.unwrap();
+        let _litep2p = Litep2p::new(config).await.unwrap();
     }
 
     // generate config for testing
@@ -394,8 +382,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (config1, ping_event_stream1) = generate_config();
-        let (config2, ping_event_stream2) = generate_config();
+        let (config1, _ping_event_stream1) = generate_config();
+        let (config2, _ping_event_stream2) = generate_config();
         let mut litep2p1 = Litep2p::new(config1).await.unwrap();
         let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
@@ -420,8 +408,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (config1, ping_event_stream1) = generate_config();
-        let (config2, ping_event_stream2) = generate_config();
+        let (config1, _ping_event_stream1) = generate_config();
+        let (config2, _ping_event_stream2) = generate_config();
         let mut litep2p1 = Litep2p::new(config1).await.unwrap();
         let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
