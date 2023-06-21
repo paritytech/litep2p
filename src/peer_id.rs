@@ -19,6 +19,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(clippy::wrong_self_convention)]
+
 use crate::crypto::PublicKey;
 
 use multiaddr::{Multiaddr, Protocol};

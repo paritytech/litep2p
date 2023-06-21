@@ -19,6 +19,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(clippy::large_enum_variant)]
+
 use futures::{Stream, StreamExt};
 use libp2p::{
     identify, identity, ping,
@@ -140,7 +142,7 @@ async fn libp2p_dials() {
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-                assert!(false, "failed to receive identify in time");
+                panic!("failed to receive identify in time");
             }
         }
     }

@@ -45,6 +45,12 @@ impl UnsignedVarint {
     }
 }
 
+impl Default for UnsignedVarint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Decoder for UnsignedVarint {
     type Item = BytesMut;
     type Error = Error;

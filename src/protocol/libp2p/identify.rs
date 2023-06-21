@@ -206,7 +206,7 @@ impl Identify {
             .expect("`msg` to have enough capacity");
 
         // TODO: this is not good
-        let _ = substream.send(msg.into()).await.unwrap();
+        let _ = substream.send(msg.into()).await;
     }
 
     /// Failed to open substream to remote peer.

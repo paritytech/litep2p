@@ -376,7 +376,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
                 ReadState::ReadBuffered { ref mut unread } => {
                     let amount = std::cmp::min(buf.len(), unread.len());
                     let new = unread.split_off(amount);
-                    buf[..amount].copy_from_slice(&unread);
+                    buf[..amount].copy_from_slice(unread);
 
                     if new.is_empty() {
                         this.read_state = ReadState::Ready
@@ -411,7 +411,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
         this.write_buffer
             .resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
 
-        match this.noise.write_message(&buf, &mut this.write_buffer) {
+        match this.noise.write_message(buf, &mut this.write_buffer) {
             Ok(nwritten) => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -427,11 +427,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
                 let _ = Pin::new(&mut this.io).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
                 let _ = Pin::new(&mut this.io).poll_write(cx, &this.write_buffer[..nwritten]);
 
-                return Poll::Ready(Ok(buf.len()));
+                Poll::Ready(Ok(buf.len()))
             }
             Err(error) => {
                 tracing::error!(target: LOG_TARGET, ?error, "write: encryption error");
-                return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                Poll::Ready(Err(io::ErrorKind::InvalidData.into()))
             }
         }
     }
@@ -585,7 +585,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Encrypted<S> {
                 ReadState::ReadBuffered { ref mut unread } => {
                     let amount = std::cmp::min(buf.len(), unread.len());
                     let new = unread.split_off(amount);
-                    buf[..amount].copy_from_slice(&unread);
+                    buf[..amount].copy_from_slice(unread);
 
                     if new.is_empty() {
                         this.read_state = ReadState::Ready
@@ -621,7 +621,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Encrypted<S> {
         this.write_buffer
             .resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
 
-        match this.noise.write_message(&buf, &mut this.write_buffer) {
+        match this.noise.write_message(buf, &mut this.write_buffer) {
             Ok(nwritten) => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -637,11 +637,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Encrypted<S> {
                     Pin::new(&mut this.socket).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
                 let _ = Pin::new(&mut this.socket).poll_write(cx, &this.write_buffer[..nwritten]);
 
-                return Poll::Ready(Ok(buf.len()));
+                Poll::Ready(Ok(buf.len()))
             }
             Err(error) => {
                 tracing::error!(target: LOG_TARGET, ?error, "write: encryption error");
-                return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                Poll::Ready(Err(io::ErrorKind::InvalidData.into()))
             }
         }
     }
@@ -674,14 +674,14 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
 
     let peer = match role {
         Role::Dialer => {
-            socket.write(&[]).await?;
+            let _ = socket.write(&[]).await?;
             let read = socket.read(&mut buf).await?;
-            socket.write(&config.payload).await?;
+            let _ = socket.write(&config.payload).await?;
             parse_peer_id(&buf[..read])?
         }
         Role::Listener => {
-            socket.read(&mut buf).await?;
-            socket.write(&config.payload).await?;
+            let _ = socket.read(&mut buf).await?;
+            let _ = socket.write(&config.payload).await?;
             let read = socket.read(&mut buf).await?;
             parse_peer_id(&buf[..read])?
         }
@@ -743,7 +743,7 @@ mod tests {
         // verify the connection works by reading a string
         let mut buf = vec![0u8; 512];
         let sent = res1.0.write(b"hello, world").await.unwrap();
-        let _read = res2.0.read_exact(&mut buf[..sent]).await.unwrap();
+        res2.0.read_exact(&mut buf[..sent]).await.unwrap();
 
         assert_eq!(std::str::from_utf8(&buf[..sent]), Ok("hello, world"),);
     }

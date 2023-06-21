@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 #![allow(unused)]
+#![allow(clippy::derivable_impls)]
 
 //! # Multistream-select Protocol Negotiation
 //!

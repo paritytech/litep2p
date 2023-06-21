@@ -208,7 +208,7 @@ impl Transport for TcpTransport {
         let (socket_address, peer) = Self::get_socket_address(&address)?;
         let connection_id = self.next_connection_id();
 
-        self.pending_dials.insert(connection_id, address.clone());
+        self.pending_dials.insert(connection_id, address);
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::open_connection(context, connection_id, socket_address, peer)
                 .await
@@ -371,10 +371,8 @@ mod tests {
             .await
             .unwrap();
 
-        let _peer1: PeerId =
-            PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public().clone()));
-        let _peer2: PeerId =
-            PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public().clone()));
+        let _peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
+        let _peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
 
         let listen_address = Transport::listen_address(&transport1);
         let _ = transport2.open_connection(listen_address).unwrap();
@@ -436,8 +434,8 @@ mod tests {
             .await
             .unwrap();
 
-        let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public().clone()));
-        let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public().clone()));
+        let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
+        let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
 
         tracing::info!(target: LOG_TARGET, "peer1 {peer1}, peer2 {peer2}");
 

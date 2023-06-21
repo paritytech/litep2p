@@ -115,7 +115,7 @@ impl ProtocolSet {
 
         // TODO: this is kind of ugly
         // TODO: backpressure?
-        for (_, sender) in &context.protocols {
+        for sender in context.protocols.values() {
             sender
                 .tx
                 .send(ConnectionEvent::ConnectionEstablished {

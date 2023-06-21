@@ -359,7 +359,7 @@ impl AsyncWrite for Substream {
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
         let inner = Pin::into_inner(self);
-        Pin::new(&mut inner.io).poll_write(cx, &buf)
+        Pin::new(&mut inner.io).poll_write(cx, buf)
     }
 
     fn poll_flush(

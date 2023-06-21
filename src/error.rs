@@ -19,6 +19,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(clippy::enum_variant_names)]
+
 //! Errors during identity key operations.
 
 // TODO: clean up all these errors into something coherent

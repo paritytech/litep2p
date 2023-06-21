@@ -103,7 +103,7 @@ async fn libp2p_dials() {
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-                assert!(false, "failed to receive ping in time");
+                panic!("failed to receive ping in time");
             }
         }
     }

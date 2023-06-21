@@ -70,6 +70,12 @@ impl<S: Substream> SubstreamSet<S> {
     }
 }
 
+impl<S: Substream> Default for SubstreamSet<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<S: Substream> Stream for SubstreamSet<S> {
     type Item = (PeerId, S::Item);
 

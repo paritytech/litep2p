@@ -232,7 +232,7 @@ impl Litep2p {
             Some(config) => <TcpTransport as Transport>::new(transport_ctx, config).await?,
             None => panic!("tcp not enabled"),
         };
-        let listen_addresses = vec![tcp.listen_address().clone()];
+        let listen_addresses = vec![tcp.listen_address()];
 
         Ok(Self {
             tcp,
@@ -284,7 +284,8 @@ impl Litep2p {
                     ?protocol,
                     "invalid protocol, expected `tcp`"
                 );
-                return Err(Error::TransportNotSupported(address));
+
+                Err(Error::TransportNotSupported(address))
             }
         }
     }

@@ -40,9 +40,9 @@ pub enum Role {
     Listener,
 }
 
-impl Into<yamux::Mode> for Role {
-    fn into(self) -> yamux::Mode {
-        match self {
+impl From<Role> for yamux::Mode {
+    fn from(value: Role) -> Self {
+        match value {
             Role::Dialer => yamux::Mode::Client,
             Role::Listener => yamux::Mode::Server,
         }
@@ -68,6 +68,12 @@ pub struct Litep2pConfigBuilder {
 
     /// Request-response protocols.
     request_response_protocols: HashMap<ProtocolName, request_response::types::Config>,
+}
+
+impl Default for Litep2pConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Litep2pConfigBuilder {
