@@ -22,12 +22,11 @@ use crate::{
     codec::{identity::Identity, Codec, ProtocolCodec},
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
-    new::ConnectionService,
     peer_id::PeerId,
     protocol::{ConnectionEvent, ProtocolEvent},
     substream::{Substream, SubstreamSet},
     types::protocol::ProtocolName,
-    DEFAULT_CHANNEL_SIZE,
+    ConnectionService, DEFAULT_CHANNEL_SIZE,
 };
 
 use asynchronous_codec::{Framed, FramedParts};

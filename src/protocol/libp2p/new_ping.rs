@@ -21,12 +21,11 @@
 use crate::{
     codec::{identity::Identity, Codec, ProtocolCodec},
     error::Error,
-    new::ConnectionService,
     peer_id::PeerId,
     protocol::{ConnectionEvent, ProtocolEvent},
     substream::{Substream, SubstreamSet},
     types::protocol::ProtocolName,
-    DEFAULT_CHANNEL_SIZE,
+    ConnectionService, DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{AsyncReadExt, AsyncWriteExt, SinkExt, Stream, StreamExt};

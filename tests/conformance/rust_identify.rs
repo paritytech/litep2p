@@ -27,13 +27,13 @@ use libp2p::{
 };
 use litep2p::{
     crypto::ed25519::Keypair,
-    new::Litep2p,
     new_config::Litep2pConfigBuilder,
     protocol::libp2p::{
         identify_new::{Config as IdentifyConfig, IdentifyEvent},
         new_ping::{Config as PingConfig, PingEvent},
     },
     transport::tcp_new::config::TransportConfig as TcpTransportConfig,
+    Litep2p,
 };
 
 // We create a custom network behaviour that combines gossipsub, ping and identify.

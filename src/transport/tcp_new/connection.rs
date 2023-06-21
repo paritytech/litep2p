@@ -27,7 +27,6 @@ use crate::{
     },
     error::{AddressError, Error, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
-    new::TransportContext,
     peer_id::PeerId,
     protocol::{ProtocolEvent, ProtocolSet},
     substream::SubstreamSet,
@@ -39,7 +38,7 @@ use crate::{
         TransportEvent, TransportNew, TransportService,
     },
     types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
-    DEFAULT_CHANNEL_SIZE,
+    TransportContext, DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{

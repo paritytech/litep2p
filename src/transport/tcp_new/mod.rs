@@ -27,7 +27,6 @@ use crate::{
     },
     error::{AddressError, Error, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
-    new::TransportContext,
     peer_id::PeerId,
     transport::{
         tcp_new::{
@@ -38,7 +37,7 @@ use crate::{
         TransportNew, TransportService,
     },
     types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
-    DEFAULT_CHANNEL_SIZE,
+    TransportContext, DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{
@@ -299,10 +298,10 @@ mod tests {
     use super::*;
     use crate::{
         codec::ProtocolCodec,
-        new::ProtocolInfo,
         new_config::Litep2pConfigBuilder,
         protocol::{libp2p::new_ping::Config as PingConfig, Libp2pProtocol},
         types::protocol::ProtocolName,
+        ProtocolInfo,
     };
     use tokio::sync::mpsc::channel;
 

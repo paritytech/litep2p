@@ -1,4 +1,3 @@
-// Copyright 2020 Parity Technologies (UK) Ltd.
 // Copyright 2023 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -18,33 +17,32 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
-
 #![allow(unused)]
 
 use crate::{
-    config::{LiteP2pConfiguration, TransportConfig},
+    codec::{Codec, ProtocolCodec},
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
+    new_config::Litep2pConfig,
     peer_id::PeerId,
     protocol::{
-        libp2p::{identify, ping, Libp2pProtocolEvent},
-        notification::NotificationProtocolConfig,
-        request_response::RequestResponseProtocolConfig,
+        libp2p::{identify_new::Identify, new_ping::Ping},
+        notification_new::{types::Config as NotificationConfig, NotificationProtocol},
+        ConnectionEvent, ProtocolEvent, ProtocolSet,
     },
-    transport::{tcp::TcpTransport, Connection, Transport, TransportEvent},
-    types::{ConnectionId, ProtocolId, RequestId},
+    transport::{
+        tcp_new::TcpTransport, NewTransportEvent as TransportEvent, TransportError, TransportNew,
+    },
+    types::protocol::ProtocolName,
 };
 
-use futures::{Stream, StreamExt};
-use identify::IdentifyEvent;
+use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use protocol::TransportCommand;
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{mpsc, oneshot},
+    sync::mpsc::{channel, Receiver, Sender},
 };
 use tokio_stream::{wrappers::ReceiverStream, StreamMap};
-use transport::{Direction, TransportService};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -54,7 +52,6 @@ use std::{
 pub mod codec;
 pub mod config;
 pub mod crypto;
-pub mod new;
 pub mod new_config;
 pub mod protocol;
 pub mod substream;
@@ -66,9 +63,6 @@ mod error;
 mod multistream_select;
 mod peer_id;
 
-// TODO: move code from `TcpTransport` to here
-// TODO: remove unwraps
-
 /// Public result type used by the crate.
 pub type Result<T> = std::result::Result<T, error::Error>;
 
@@ -78,197 +72,187 @@ const LOG_TARGET: &str = "litep2p";
 /// Default channel size.
 const DEFAULT_CHANNEL_SIZE: usize = 64usize;
 
-struct ConnectionContext {
-    _connection: ConnectionId,
-}
-
-struct RequestContext {
-    _peer: PeerId,
-}
-
-/// Validation result for inbound substream.
-#[derive(Debug)]
-pub enum ValidationResult {
-    /// Accept the inbound substream.
-    Accept,
-
-    /// Reject the inbound substream.
-    Reject,
-}
-
+/// Litep2p events.
 #[derive(Debug)]
 pub enum Litep2pEvent {
-    /// Connection established.
-    ConnectionEstablished(PeerId),
-
-    /// Connection closed.
-    ConnectionClosed(PeerId),
-
-    /// Peer identified.
-    PeerIdentified {
+    /// Connection established to peer.
+    ConnectionEstablished {
         /// Remote peer ID.
         peer: PeerId,
 
-        /// Supported protocols.
-        supported_protocols: HashSet<String>,
+        /// Remote address.
+        address: Multiaddr,
     },
 
-    /// Dial failure for outbound connection.
-    DialFailure(Multiaddr),
+    /// Failed to dial peer.
+    DialFailure {
+        /// Address of the peer.
+        address: Multiaddr,
 
-    /// Inbound and unvalidated substream received.
-    InboundSubstream(String, PeerId, Vec<u8>, oneshot::Sender<ValidationResult>),
-
-    /// Substream opened
-    SubstreamOpened(String, PeerId, ()),
+        /// Dial error.
+        error: Error,
+    },
 }
 
-struct PeerContext {
-    /// Protocols supported by the remote peer.
-    protocols: HashSet<String>,
+/// [`Litep2p`] object.
+pub struct Litep2p {
+    /// Local peer ID.
+    local_peer_id: PeerId,
+
+    /// TCP transport.
+    tcp: TcpTransport,
+
+    /// Listen addresses.
+    listen_addresses: Vec<Multiaddr>,
+
+    /// Pending connections.
+    pending_connections: HashMap<usize, Multiaddr>,
 }
 
-impl Default for PeerContext {
-    fn default() -> Self {
-        PeerContext {
-            protocols: Default::default(),
-        }
+pub struct ConnectionService {
+    rx: Receiver<ConnectionEvent>,
+    peers: HashMap<PeerId, Sender<ProtocolEvent>>,
+}
+
+impl ConnectionService {
+    /// Create new [`ConnectionService`].
+    pub fn new() -> (Self, Sender<ConnectionEvent>) {
+        // TODO: maybe specify some other channel size
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+
+        (
+            Self {
+                rx,
+                peers: HashMap::new(),
+            },
+            tx,
+        )
+    }
+
+    /// Get next event from the transport.
+    pub async fn next_event(&mut self) -> Option<ConnectionEvent> {
+        self.rx.recv().await
     }
 }
 
-// TODO: the storing of these handles can be greatly simplified
-/// [`Litep2p`] object.
-pub struct Litep2p {
-    /// Enable transports.
-    tranports: HashMap<&'static str, Box<dyn TransportService>>,
+// TODO: move to protocol
+/// Protocol information.
+#[derive(Debug, Clone)]
+pub struct ProtocolInfo {
+    /// TX channel for sending connection events to the protocol.
+    pub tx: Sender<ConnectionEvent>,
 
-    /// RX channel for events received from enabled transports.
-    transport_rx: mpsc::Receiver<TransportEvent>,
-
-    /// RX channel for receiving events from libp2p standard protocols.
-    libp2p_rx: mpsc::Receiver<Libp2pProtocolEvent>,
-
-    /// TX channels for communicating with libp2p standard protocols.
-    libp2p_tx: HashMap<String, mpsc::Sender<TransportEvent>>,
-
-    /// Channels for receiving commands from request-response protocols.
-    request_response_commands: StreamMap<String, ReceiverStream<TransportCommand>>,
-
-    /// Request-response handles.
-    request_response_handles: HashMap<String, mpsc::Sender<TransportEvent>>,
-
-    /// Channels for receiving commands from request-response protocols.
-    notification_commands: StreamMap<String, ReceiverStream<TransportCommand>>,
-
-    /// Request-response handles.
-    notification_handles: HashMap<String, mpsc::Sender<TransportEvent>>,
-
-    /// Connected peers.
-    peers: HashMap<PeerId, PeerContext>,
-
-    /// Listen addresses.
-    listen_addresses: HashSet<Multiaddr>,
-
-    /// Local peer ID.
-    local_peer_id: PeerId,
+    /// Codec used by the protocol.
+    pub codec: ProtocolCodec,
 }
 
-struct Litep2pBuilder {}
+/// Transport context.
+#[derive(Debug, Clone)]
+pub struct TransportContext {
+    /// Enabled protocols.
+    pub protocols: HashMap<ProtocolName, ProtocolInfo>,
 
-impl Litep2pBuilder {
-    pub fn new() -> Self {
-        Self {}
+    /// Keypair.
+    pub keypair: Keypair,
+}
+
+impl TransportContext {
+    /// Create new [`TransportContext`].
+    pub fn new(keypair: Keypair) -> Self {
+        Self {
+            protocols: HashMap::new(),
+            keypair,
+        }
+    }
+
+    /// Add new protocol.
+    pub fn add_protocol(
+        &mut self,
+        protocol: ProtocolName,
+        codec: ProtocolCodec,
+    ) -> crate::Result<ConnectionService> {
+        let (service, tx) = ConnectionService::new();
+
+        match self
+            .protocols
+            .insert(protocol.clone(), ProtocolInfo { tx, codec })
+        {
+            Some(_) => Err(Error::ProtocolAlreadyExists(protocol)),
+            None => Ok(service),
+        }
     }
 }
 
 impl Litep2p {
     /// Create new [`Litep2p`].
-    // TODO: this code is absolutely hideous
-    pub async fn new(config: LiteP2pConfiguration) -> crate::Result<Litep2p> {
-        let LiteP2pConfiguration {
-            listen_addresses,
-            notification_protocols,
-            request_response_protocols,
-        } = config;
+    pub async fn new(mut config: Litep2pConfig) -> crate::Result<Litep2p> {
+        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
+        let mut transport_ctx = TransportContext::new(config.keypair.clone());
+        let mut listen_addresses = Vec::new();
+        let mut protocols = Vec::new();
 
-        // assert!(config.listen_addresses().count() == 1);
-        let keypair = Keypair::generate();
-        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        // start notification protocol event loops
+        for (name, config) in config.notification_protocols.into_iter() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?name,
+                "enable notification protocol",
+            );
+            protocols.push(name);
 
-        tracing::debug!(target: LOG_TARGET, "local peer id: {local_peer_id}");
+            // TODO: fix
+            // let service = transport_ctx.add_protocol(name)?;
+            // tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
+        }
 
-        // initialize protocols
-        let mut protocols = vec![
-            ping::PROTOCOL_NAME.to_owned(),
-            identify::PROTOCOL_NAME.to_owned(),
-        ];
+        // TODO: go through all request-response protocols and start the protocol runners
+        //       passing in the command the notification config
 
-        // initialize notification protocols
-        let (notification_command_receivers, notification_handles): (Vec<_>, HashMap<_, _>) =
-            notification_protocols
-                .into_iter()
-                .map(|config| {
-                    let NotificationProtocolConfig { protocol, tx, rx } = config;
-                    protocols.push(protocol.clone());
+        // start ping protocol event loop if enabled
+        if let Some(ping_config) = config.ping.take() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?ping_config.protocol,
+                "enable ipfs ping protocol",
+            );
+            protocols.push(ping_config.protocol.clone());
 
-                    ((protocol.clone(), ReceiverStream::new(rx)), (protocol, tx))
-                })
-                .unzip();
+            let service = transport_ctx
+                .add_protocol(ping_config.protocol.clone(), ping_config.codec.clone())?;
+            tokio::spawn(async move { Ping::new(service, ping_config).run().await });
+        }
 
-        // initialize request-response protocols
-        let (command_receivers, request_response_handles): (Vec<_>, HashMap<_, _>) =
-            request_response_protocols
-                .into_iter()
-                .map(|config| {
-                    let RequestResponseProtocolConfig { protocol, tx, rx } = config;
-                    protocols.push(protocol.clone());
+        if let Some(mut identify_config) = config.identify.take() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?identify_config.protocol,
+                "enable ipfs identify protocol",
+            );
+            protocols.push(identify_config.protocol.clone());
 
-                    ((protocol.clone(), ReceiverStream::new(rx)), (protocol, tx))
-                })
-                .unzip();
+            let service = transport_ctx.add_protocol(
+                identify_config.protocol.clone(),
+                identify_config.codec.clone(),
+            )?;
+            identify_config.public = Some(PublicKey::Ed25519(config.keypair.public()));
+            identify_config.listen_addresses = listen_addresses;
+            identify_config.protocols = protocols;
 
-        // initialize libp2p standard protocols
-        let (libp2p_tx, libp2p_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
+            tokio::spawn(async move { Identify::new(service, identify_config).run().await });
+        }
 
-        let ping = ping::IpfsPing::start(libp2p_tx.clone());
-        let identify = identify::IpfsIdentify::start(
-            PublicKey::Ed25519(keypair.public()),
-            listen_addresses.clone(),
-            protocols.clone(),
-            libp2p_tx.clone(),
-        );
-
-        // initialize transports
-        let (transport_tx, transport_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
-
-        let handle = TcpTransport::start(
-            &keypair,
-            TransportConfig::new(
-                // TODO: what is this?
-                listen_addresses.iter().next().unwrap().clone(),
-                protocols,
-                vec![],
-                40_000,
-            ),
-            transport_tx,
-        )
-        .await?;
+        // enable tcp transport if the config exists
+        let tcp = match config.tcp.take() {
+            Some(config) => <TcpTransport as TransportNew>::new(transport_ctx, config).await?,
+            None => panic!("tcp not enabled"),
+        };
+        let listen_addresses = vec![tcp.listen_address().clone()];
 
         Ok(Self {
+            tcp,
             local_peer_id,
-            tranports: HashMap::from([("tcp", handle)]),
-            transport_rx,
-            libp2p_rx,
-            libp2p_tx: HashMap::from([
-                (String::from(ping::PROTOCOL_NAME), ping),
-                (String::from(identify::PROTOCOL_NAME), identify),
-            ]),
-            peers: HashMap::new(),
-            request_response_commands: StreamMap::from_iter(command_receivers),
-            request_response_handles,
-            notification_commands: StreamMap::from_iter(notification_command_receivers),
-            notification_handles,
-            listen_addresses: HashSet::from_iter(listen_addresses),
+            listen_addresses,
+            pending_connections: HashMap::new(),
         })
     }
 
@@ -277,327 +261,184 @@ impl Litep2p {
         &self.local_peer_id
     }
 
-    /// Open connection to remote peer at `address`.
+    /// Get listen address for protocol.
+    pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
+        self.listen_addresses.iter()
+    }
+
+    /// Attempt to connect to peer at `address`.
     ///
-    /// Connection is opened and negotiated in the background and the result is
-    /// indicated to the caller through [`Litep2pEvent::ConnectionEstablished`]/[`Litep2pEvent::DialFailure`]
-    pub async fn open_connection(&mut self, address: Multiaddr) -> crate::Result<()> {
-        tracing::debug!(
-            target: LOG_TARGET,
-            ?address,
-            "establish outbound connection"
-        );
+    /// If the transport specified by `address` is not supported, an error is returned.
+    /// The connection is established in the background and its result is reported through
+    /// [`Litep2p::next_event()`].
+    pub fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
+        let mut protocol_stack = address.protocol_stack();
 
-        if self.listen_addresses.contains(&address) {
-            return Err(Error::CannotDialSelf(address));
-        }
-
-        self.tranports
-            .get_mut("tcp")
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-            .open_connection(address)
-            .await;
-
-        Ok(())
-    }
-
-    /// Close connection to remote `peer`.
-    pub async fn close_connection(&mut self, peer: PeerId) {
-        tracing::debug!(target: LOG_TARGET, ?peer, "close connection");
-
-        self.tranports
-            .get_mut("tcp")
-            .unwrap()
-            .close_connection(peer)
-            .await;
-    }
-
-    /// Open notification substream to remote `peer` for `protocol`.
-    ///
-    /// This function doesn't block but starts the substream opening procedure.
-    /// The result of the operation is polled through [`Litep2p::next_event()`] which returns
-    /// [`Litep2p::SubstreamOpened`] on success and [`Litep2pEvent::SubstreamOpenFailure`] on failure.
-    ///
-    /// The substream is closed by dropping the sink received in [`Litep2p::SubstreamOpened`] message.
-    pub async fn open_notification_substream(
-        &mut self,
-        protocol: String,
-        peer: PeerId,
-        handshake: Vec<u8>,
-    ) -> crate::Result<()> {
-        tracing::debug!(
-            target: LOG_TARGET,
-            ?protocol,
-            ?peer,
-            ?handshake,
-            "open notification substream"
-        );
-
-        // verify that peer exists and supports the protocol
-        if !self
-            .peers
-            .get(&peer)
-            .ok_or(Error::PeerDoesntExist(peer))?
-            .protocols
-            .contains(&protocol)
-        {
-            return Err(Error::ProtocolNotSupported(protocol));
-        }
-
-        Ok(())
-    }
-
-    /// Send request over `protocol` to remote peer and return `oneshot::mpsc::Receiver` which can be
-    /// polled for the response.
-    pub async fn send_request(
-        &mut self,
-        protocol: String,
-        peer: PeerId,
-        request: Vec<u8>,
-    ) -> crate::Result<()> {
-        tracing::debug!(
-            target: LOG_TARGET,
-            ?protocol,
-            ?peer,
-            ?request,
-            "send request"
-        );
-
-        // verify that peer exists and supports the protocol
-        if !self
-            .peers
-            .get(&peer)
-            .ok_or(Error::PeerDoesntExist(peer))?
-            .protocols
-            .contains(&protocol)
-        {
-            return Err(Error::ProtocolNotSupported(protocol));
-        }
-
-        Ok(())
-    }
-
-    /// Handle open substreamed.
-    async fn on_substream_opened(
-        &mut self,
-        protocol: &String,
-        peer: PeerId,
-        direction: Direction,
-        substream: Box<dyn Connection>,
-    ) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
-
-        if let Some(tx) = self.libp2p_tx.get_mut(protocol) {
-            return tx
-                .send(TransportEvent::SubstreamOpened(
-                    protocol.clone(),
-                    peer,
-                    direction,
-                    substream,
-                ))
-                .await
-                .map_err(From::from);
-        }
-
-        if let Some(tx) = self.request_response_handles.get_mut(protocol) {
-            return tx
-                .send(TransportEvent::SubstreamOpened(
-                    protocol.clone(),
-                    peer,
-                    direction,
-                    substream,
-                ))
-                .await
-                .map_err(From::from);
-        }
-
-        if let Some(tx) = self.notification_handles.get_mut(protocol) {
-            tracing::info!(target: LOG_TARGET, "notification substream opened");
-            return tx
-                .send(TransportEvent::SubstreamOpened(
-                    protocol.clone(),
-                    peer,
-                    direction,
-                    substream,
-                ))
-                .await
-                .map_err(From::from);
-        }
-
-        Ok(())
-    }
-
-    /// Handle closed substream.
-    async fn on_substream_closed(&mut self, protocol: &String, peer: PeerId) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream closed");
-
-        if let Some(tx) = self.libp2p_tx.get_mut(protocol) {
-            return tx
-                .send(TransportEvent::SubstreamClosed(protocol.clone(), peer))
-                .await
-                .map_err(From::from);
-        }
-
-        // TODO: if `protocol` is a user-installed notification protocol,
-        //       send the closing information to protocol handler
-        // TODO: if `protocol` is a user-isntalled request-response protocol,
-        //       send the information (what exactly??) to request handler
-        //         - if waiting for response, request is refused
-        //         - if waiting request to be sent, request was cancelled
-
-        Ok(())
-    }
-
-    async fn on_identify_event(&mut self, event: IdentifyEvent) -> Option<Litep2pEvent> {
-        tracing::trace!(target: LOG_TARGET, ?event, "handle identify event");
-
-        match event {
-            IdentifyEvent::OpenSubstream { peer } => {
-                self.tranports
-                    .get_mut("tcp")
-                    .unwrap()
-                    .open_substream(identify::PROTOCOL_NAME.to_owned(), peer, vec![])
-                    .await;
-                None
+        match protocol_stack.next() {
+            Some("ip4") | Some("ip6") => {}
+            transport => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?transport,
+                    "invalid transport, expected `ip4`/`ip6`"
+                );
+                return Err(Error::TransportNotSupported(address));
             }
-            IdentifyEvent::PeerIdentified {
-                peer,
-                supported_protocols,
-            } => match self.peers.get_mut(&peer) {
-                Some(context) => {
-                    context.protocols.union(&supported_protocols);
-                    Some(Litep2pEvent::PeerIdentified {
-                        peer,
-                        supported_protocols,
-                    })
-                }
-                None => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?supported_protocols,
-                        "peer information received from non-existent peer"
-                    );
-                    None
-                }
-            },
-            _ => todo!(),
         }
-    }
 
-    // Handle command received from one of the `RequestResponseService`s.
-    async fn on_request_response_command(&mut self, command: TransportCommand) {
-        match command {
-            TransportCommand::OpenSubstream { peer, protocol } => {
-                self.tranports
-                    .get_mut("tcp")
-                    .unwrap()
-                    .open_substream(protocol, peer, vec![])
-                    .await;
+        match protocol_stack.next() {
+            Some("tcp") => {
+                let connection_id = self.tcp.open_connection(address.clone())?;
+                self.pending_connections.insert(connection_id, address);
+                Ok(())
+            }
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid protocol, expected `tcp`"
+                );
+                return Err(Error::TransportNotSupported(address));
             }
         }
     }
 
-    // Handle command received from one of the `NotificationService`s.
-    async fn on_notification_command(&mut self, command: TransportCommand) {
-        match command {
-            TransportCommand::OpenSubstream { peer, protocol } => {
-                self.tranports
-                    .get_mut("tcp")
-                    .unwrap()
-                    .open_substream(protocol, peer, vec![])
-                    .await;
-            }
-        }
-    }
-
-    /// Event loop for [`Litep2p`].
+    /// Poll next event.
     pub async fn next_event(&mut self) -> crate::Result<Litep2pEvent> {
         loop {
             tokio::select! {
-                event = self.transport_rx.recv() => match event {
-                    Some(TransportEvent::SubstreamOpened(protocol, peer, direction, substream)) => {
-                        if let Err(err) = self.on_substream_opened(&protocol, peer, direction, substream).await {
-                            tracing::error!(
-                                target: LOG_TARGET,
-                                ?protocol,
-                                ?peer,
-                                "failed to notify protocol that a substream was opened",
-                            );
-                            return Err(err);
-                        }
+                event = self.tcp.next_event() => match event {
+                    Ok(TransportEvent::ConnectionEstablished { peer, address }) => {
+                        return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
                     }
-                    Some(TransportEvent::SubstreamClosed(protocol, peer)) => {
-                        if let Err(err) = self.on_substream_closed(&protocol, peer).await {
-                            tracing::error!(
-                                target: LOG_TARGET,
-                                ?protocol,
-                                ?peer,
-                                "failed to notify protocol that a substream was closed",
-                            );
-                            return Err(err);
-                        }
+                    Ok(TransportEvent::DialFailure { error, address }) => {
+                        return Ok(Litep2pEvent::DialFailure { address, error })
                     }
-                    Some(TransportEvent::ConnectionEstablished(peer)) => {
-                        // TODO: this needs some more thought lol
-                        self.peers.insert(peer, Default::default());
-                        let _ = self
-                            .libp2p_tx
-                            .get_mut(&identify::PROTOCOL_NAME.to_owned())
-                            .unwrap()
-                            .send(TransportEvent::ConnectionEstablished(peer))
-                            .await;
-                        return Ok(Litep2pEvent::ConnectionEstablished(peer));
+                    Err(error) => {
+                        panic!("tcp transport failed: {error:?}");
                     }
-                    Some(TransportEvent::ConnectionClosed(peer)) => {
-                        return Ok(Litep2pEvent::ConnectionClosed(peer));
-                    }
-                    Some(TransportEvent::DialFailure(address)) => {
-                        return Ok(Litep2pEvent::DialFailure(address));
-                    }
-                    Some(TransportEvent::SubstreamOpenFailure(protocol, peer, error)) => {
-                        tracing::error!(target: LOG_TARGET, ?peer, ?protocol, ?error, "substream open failure");
-                        // return Ok(Litep2pEvent::SubstreamOpenFailure(protocol, peer, error));
-                        // todo!();
-                        // tracing::error!(target: LOG_TARGET, "channel to transports shut down");
-                        // return Err(Error::EssentialTaskClosed);
-                    }
-                    None => {
-                        tracing::error!(target: LOG_TARGET, "channel to transports shut down");
-                        return Err(Error::EssentialTaskClosed);
-                    }
-                },
-                event = self.libp2p_rx.recv() => match event {
-                    Some(Libp2pProtocolEvent::Identify(event)) => if let Some(event) = self.on_identify_event(event).await {
-                        return Ok(event)
-                    }
-                    event => tracing::warn!("ignore event {event:?}"),
-                },
-                command = self.request_response_commands.next(), if !self.request_response_commands.is_empty() => {
-                    match command {
-                        Some((_, command)) => self.on_request_response_command(command).await,
-                        None => {
-                            tracing::error!(
-                                target: LOG_TARGET,
-                                "handles to request-response protocols dropped"
-                            );
-                            return Err(Error::EssentialTaskClosed);
-                        }
-                    }
-                }
-                command = self.notification_commands.next(), if !self.notification_commands.is_empty() => {
-                    match command {
-                        Some((_, command)) => self.on_notification_command(command).await,
-                        None => {
-                            tracing::error!(
-                                target: LOG_TARGET,
-                                "handles to notification protocols dropped"
-                            );
-                            return Err(Error::EssentialTaskClosed);
-                        }
+                    event => {
+                        tracing::info!(target: LOG_TARGET, ?event, "unhandle event from tcp");
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        crypto::ed25519::Keypair,
+        error::Error,
+        new_config::{Litep2pConfig, Litep2pConfigBuilder},
+        protocol::{
+            libp2p::new_ping::{Config as PingConfig, PingEvent},
+            notification_new::types::Config as NotificationConfig,
+        },
+        transport::tcp_new::config::TransportConfig as TcpTransportConfig,
+        types::protocol::ProtocolName,
+        Litep2p, Litep2pEvent,
+    };
+    use futures::Stream;
+
+    #[tokio::test]
+    async fn initialize_litep2p() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (config1, _service1) = NotificationConfig::new(
+            ProtocolName::from("/notificaton/1"),
+            1337usize,
+            vec![1, 2, 3, 4],
+            Vec::new(),
+        );
+        let (config2, _service2) = NotificationConfig::new(
+            ProtocolName::from("/notificaton/2"),
+            1337usize,
+            vec![1, 2, 3, 4],
+            Vec::new(),
+        );
+        let (ping_config, ping_event_stream) = PingConfig::new(3);
+
+        let mut config = Litep2pConfigBuilder::new()
+            .with_tcp(TcpTransportConfig {
+                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            })
+            .with_notification_protocol(config1)
+            .with_notification_protocol(config2)
+            .with_ipfs_ping(ping_config)
+            .build();
+
+        let litep2p = Litep2p::new(config).await.unwrap();
+    }
+
+    // generate config for testing
+    fn generate_config() -> (Litep2pConfig, Box<dyn Stream<Item = PingEvent> + Send>) {
+        let keypair = Keypair::generate();
+        let (ping_config, ping_event_stream) = PingConfig::new(3);
+
+        (
+            Litep2pConfigBuilder::new()
+                .with_keypair(keypair)
+                .with_tcp(TcpTransportConfig {
+                    listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+                })
+                .with_ipfs_ping(ping_config)
+                .build(),
+            ping_event_stream,
+        )
+    }
+
+    #[tokio::test]
+    async fn two_litep2ps_work() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (config1, ping_event_stream1) = generate_config();
+        let (config2, ping_event_stream2) = generate_config();
+        let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+        let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+        let address = litep2p2.listen_addresses().next().unwrap().clone();
+        litep2p1.connect(address).unwrap();
+
+        let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
+
+        assert!(std::matches!(
+            res1,
+            Ok(Litep2pEvent::ConnectionEstablished { .. })
+        ));
+        assert!(std::matches!(
+            res2,
+            Ok(Litep2pEvent::ConnectionEstablished { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn dial_failure() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (config1, ping_event_stream1) = generate_config();
+        let (config2, ping_event_stream2) = generate_config();
+        let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+        let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+        litep2p1.connect("/ip6/::1/tcp/1".parse().unwrap()).unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let _ = litep2p2.next_event().await;
+            }
+        });
+
+        assert!(std::matches!(
+            litep2p1.next_event().await,
+            Ok(Litep2pEvent::DialFailure { .. })
+        ));
     }
 }

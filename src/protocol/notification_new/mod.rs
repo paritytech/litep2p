@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{new::ConnectionService, protocol::ConnectionEvent};
+use crate::{protocol::ConnectionEvent, ConnectionService};
 
 use tokio::sync::mpsc::Receiver;
 

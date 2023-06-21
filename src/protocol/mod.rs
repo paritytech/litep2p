@@ -23,11 +23,11 @@
 use crate::{
     codec::{identity::Identity, unsigned_varint::UnsignedVarint, Codec, ProtocolCodec},
     error::Error,
-    new::{ProtocolInfo, TransportContext},
     peer_id::PeerId,
     substream::{RawSubstream, Substream},
     transport::{Connection, TransportEvent},
     types::protocol::ProtocolName as NewProtocolName,
+    ProtocolInfo, TransportContext,
 };
 
 use futures::Stream;

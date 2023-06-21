@@ -22,10 +22,10 @@ use crate::{
     config::TransportConfig,
     crypto::{ed25519::Keypair, noise::NoiseConfiguration},
     error::Error,
-    new::TransportContext,
     peer_id::PeerId,
     protocol::ProtocolSet,
     types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
+    TransportContext,
 };
 
 use futures::{
