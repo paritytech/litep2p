@@ -18,17 +18,17 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::ConnectionService;
+use crate::TransportService;
 
 pub mod types;
 
 pub struct NotificationProtocol {
-    /// Connection service.
-    _service: ConnectionService,
+    /// Transport service.
+    _service: TransportService,
 }
 
 impl NotificationProtocol {
-    pub fn new(_service: ConnectionService, _config: types::Config) -> Self {
+    pub fn new(_service: TransportService, _config: types::Config) -> Self {
         Self { _service }
     }
 

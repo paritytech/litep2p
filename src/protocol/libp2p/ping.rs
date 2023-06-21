@@ -22,10 +22,10 @@ use crate::{
     codec::ProtocolCodec,
     error::Error,
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ProtocolEvent},
+    protocol::{ConnectionEvent, ConnectionService},
     substream::Substream,
     types::protocol::ProtocolName,
-    ConnectionService, DEFAULT_CHANNEL_SIZE,
+    TransportService, DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{SinkExt, Stream, StreamExt};
@@ -89,18 +89,18 @@ pub struct Ping {
     _max_failures: usize,
 
     // Connection service.
-    service: ConnectionService,
+    service: TransportService,
 
     /// TX channel for sending events to the user protocol.
     _tx: Sender<PingEvent>,
 
     /// Connected peers.
-    peers: HashMap<PeerId, Sender<ProtocolEvent>>,
+    peers: HashMap<PeerId, ConnectionService>,
 }
 
 impl Ping {
     /// Create new [`Ping`] protocol.
-    pub fn new(service: ConnectionService, config: Config) -> Self {
+    pub fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
             _tx: config.tx_event,
@@ -110,7 +110,7 @@ impl Ping {
     }
 
     /// Connection established to remote peer.
-    fn on_connection_established(&mut self, peer: PeerId, connection: Sender<ProtocolEvent>) {
+    fn on_connection_established(&mut self, peer: PeerId, connection: ConnectionService) {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
         self.peers.insert(peer, connection);
     }
@@ -163,8 +163,8 @@ impl Ping {
 
         while let Some(event) = self.service.next_event().await {
             match event {
-                ConnectionEvent::ConnectionEstablished { peer, connection } => {
-                    self.on_connection_established(peer, connection)
+                ConnectionEvent::ConnectionEstablished { peer, service } => {
+                    self.on_connection_established(peer, service)
                 }
                 ConnectionEvent::ConnectionClosed { peer } => {
                     self.on_connection_closed(peer);

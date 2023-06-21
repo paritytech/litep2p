@@ -26,7 +26,7 @@ use crate::{
     peer_id::PeerId,
     substream::{RawSubstream, Substream},
     types::protocol::ProtocolName,
-    ProtocolInfo, TransportContext,
+    ProtocolInfo, TransportContext, DEFAULT_CHANNEL_SIZE,
 };
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -48,7 +48,7 @@ pub enum ConnectionEvent {
         peer: PeerId,
 
         /// Handle for communicating with the connection.
-        connection: Sender<ProtocolEvent>,
+        service: ConnectionService,
     },
 
     /// Connection closed.
@@ -111,12 +111,57 @@ pub enum ProtocolEvent {
     },
 }
 
+/// Service provided to protocols by the transport protocol.
+#[derive(Clone)]
+pub struct ConnectionService {
+    /// TX channel for sending events to transport.
+    tx: Sender<ProtocolEvent>,
+
+    /// Next ephemeral substream ID.
+    next_substream_id: usize,
+}
+
+impl ConnectionService {
+    /// Create new [`ConnectionService`].
+    pub fn new() -> (Self, Receiver<ProtocolEvent>) {
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+
+        (
+            Self {
+                tx,
+                next_substream_id: 0usize,
+            },
+            rx,
+        )
+    }
+
+    /// Get next ephemeral substream ID.
+    fn next_substream_id(&mut self) -> usize {
+        let substream_id = self.next_substream_id;
+        self.next_substream_id += 1;
+        substream_id
+    }
+
+    /// Open substream to remote peer over `protocol`.
+    pub async fn open_substream(&mut self, protocol: ProtocolName) -> crate::Result<usize> {
+        let substream_id = self.next_substream_id();
+        self.tx
+            .send(ProtocolEvent::OpenSubstream {
+                protocol,
+                substream_id,
+            })
+            .await?;
+        Ok(substream_id)
+    }
+}
+
 /// Supported protocol information.
 ///
 /// Each connection gets a copy of [`ProtocolSet`] which allows it to interact
 /// directly with installed protocols.
 #[derive(Debug)]
 pub struct ProtocolSet {
+    // TODO: why is this pub?
     pub protocols: HashMap<ProtocolName, ProtocolInfo>,
     rx: Receiver<ProtocolEvent>,
 }
@@ -127,7 +172,7 @@ impl ProtocolSet {
         peer: PeerId,
         context: TransportContext,
     ) -> crate::Result<Self> {
-        let (tx, rx) = channel(64);
+        let (service, rx) = ConnectionService::new();
 
         // TODO: this is kind of ugly
         // TODO: backpressure?
@@ -136,7 +181,7 @@ impl ProtocolSet {
                 .tx
                 .send(ConnectionEvent::ConnectionEstablished {
                     peer,
-                    connection: tx.clone(),
+                    service: service.clone(),
                 })
                 .await?;
         }

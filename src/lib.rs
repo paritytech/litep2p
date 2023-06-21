@@ -95,12 +95,12 @@ pub struct Litep2p {
     pending_connections: HashMap<usize, Multiaddr>,
 }
 
-pub struct ConnectionService {
+pub struct TransportService {
     rx: Receiver<ConnectionEvent>,
     _peers: HashMap<PeerId, Sender<ProtocolEvent>>,
 }
 
-impl ConnectionService {
+impl TransportService {
     /// Create new [`ConnectionService`].
     pub fn new() -> (Self, Sender<ConnectionEvent>) {
         // TODO: maybe specify some other channel size
@@ -156,8 +156,8 @@ impl TransportContext {
         &mut self,
         protocol: ProtocolName,
         codec: ProtocolCodec,
-    ) -> crate::Result<ConnectionService> {
-        let (service, tx) = ConnectionService::new();
+    ) -> crate::Result<TransportService> {
+        let (service, tx) = TransportService::new();
 
         match self
             .protocols
