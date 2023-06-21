@@ -18,30 +18,5 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-pub use crate::protocol::libp2p::{
-    bitswap::BitswapEvent, identify::IdentifyEvent, kad::KademliaEvent, ping::PingEvent,
-};
-
-pub mod bitswap;
 pub mod identify;
-pub mod identify_new;
-pub mod kad;
-pub mod new_ping;
 pub mod ping;
-
-// TODO: remove this eventually
-/// Events emitted by libp2p standard protocols.
-#[derive(Debug)]
-pub enum Libp2pProtocolEvent {
-    /// Ping events.
-    Bitswap(BitswapEvent),
-
-    /// Identify events.
-    Identify(IdentifyEvent),
-
-    /// Kademlia events.
-    Kademlia(KademliaEvent),
-
-    /// Ping events.
-    Ping(PingEvent),
-}

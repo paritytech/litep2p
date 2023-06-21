@@ -21,18 +21,16 @@
 
 use crate::{
     codec::{Codec, ProtocolCodec},
+    config::Litep2pConfig,
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
-    new_config::Litep2pConfig,
     peer_id::PeerId,
     protocol::{
-        libp2p::{identify_new::Identify, new_ping::Ping},
-        notification_new::{types::Config as NotificationConfig, NotificationProtocol},
+        libp2p::{identify::Identify, ping::Ping},
+        notification::{types::Config as NotificationConfig, NotificationProtocol},
         ConnectionEvent, ProtocolEvent, ProtocolSet,
     },
-    transport::{
-        tcp_new::TcpTransport, NewTransportEvent as TransportEvent, TransportError, TransportNew,
-    },
+    transport::{tcp::TcpTransport, Transport, TransportError, TransportEvent},
     types::protocol::ProtocolName,
 };
 
@@ -52,7 +50,6 @@ use std::{
 pub mod codec;
 pub mod config;
 pub mod crypto;
-pub mod new_config;
 pub mod protocol;
 pub mod substream;
 pub mod transport;
@@ -243,7 +240,7 @@ impl Litep2p {
 
         // enable tcp transport if the config exists
         let tcp = match config.tcp.take() {
-            Some(config) => <TcpTransport as TransportNew>::new(transport_ctx, config).await?,
+            Some(config) => <TcpTransport as Transport>::new(transport_ctx, config).await?,
             None => panic!("tcp not enabled"),
         };
         let listen_addresses = vec![tcp.listen_address().clone()];
@@ -329,14 +326,14 @@ impl Litep2p {
 #[cfg(test)]
 mod tests {
     use crate::{
+        config::{Litep2pConfig, Litep2pConfigBuilder},
         crypto::ed25519::Keypair,
         error::Error,
-        new_config::{Litep2pConfig, Litep2pConfigBuilder},
         protocol::{
-            libp2p::new_ping::{Config as PingConfig, PingEvent},
-            notification_new::types::Config as NotificationConfig,
+            libp2p::ping::{Config as PingConfig, PingEvent},
+            notification::types::Config as NotificationConfig,
         },
-        transport::tcp_new::config::TransportConfig as TcpTransportConfig,
+        transport::tcp::config::TransportConfig as TcpTransportConfig,
         types::protocol::ProtocolName,
         Litep2p, Litep2pEvent,
     };

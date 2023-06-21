@@ -31,13 +31,10 @@ use crate::{
     protocol::{ProtocolEvent, ProtocolSet},
     substream::SubstreamSet,
     transport::{
-        tcp_new::{
-            config::TransportConfig, socket_addr_to_multi_addr, Connection, Direction, Transport,
-            LOG_TARGET,
-        },
-        TransportEvent, TransportNew, TransportService,
+        tcp::{config::TransportConfig, socket_addr_to_multi_addr, LOG_TARGET},
+        Transport, TransportService,
     },
-    types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
+    types::protocol::ProtocolName,
     TransportContext, DEFAULT_CHANNEL_SIZE,
 };
 
@@ -196,7 +193,7 @@ impl TcpConnection {
     }
 
     /// Negotiate protocol.
-    async fn negotiate_protocol<S: Connection>(
+    async fn negotiate_protocol<S: AsyncRead + AsyncWrite + Unpin>(
         stream: S,
         role: &Role,
         protocols: Vec<&str>,
@@ -241,7 +238,7 @@ impl TcpConnection {
         );
 
         // perform noise handshake
-        let (stream, peer) = noise::handshake_new(stream.inner(), noise_config).await?;
+        let (stream, peer) = noise::handshake(stream.inner(), noise_config).await?;
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
         let stream: Encrypted<Compat<TcpStream>> = stream;
 

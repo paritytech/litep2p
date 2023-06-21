@@ -19,12 +19,11 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    config::TransportConfig,
     crypto::{ed25519::Keypair, noise::NoiseConfiguration},
     error::Error,
     peer_id::PeerId,
     protocol::ProtocolSet,
-    types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},
+    types::protocol::ProtocolName,
     TransportContext,
 };
 
@@ -39,41 +38,6 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use std::fmt::Debug;
 
 pub mod tcp;
-pub mod tcp_new;
-
-// TODO: only return opaque connection object
-// TODO: add muxer only on upper level
-// TODO: move substream events away from here
-
-// TODO: protocols for substream events
-/// Supported transport types.
-pub enum TransportType {
-    /// TCP.
-    Tcp(Multiaddr),
-}
-
-pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static {}
-
-impl<T: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static> Connection for T {}
-
-#[derive(Debug)]
-pub enum Direction {
-    /// Substream is inbound
-    Inbound,
-    /// Substream is outbound
-    Outbound,
-}
-
-/// Events emitted by the underlying transport.
-#[derive(Debug)]
-pub enum TransportEvent {
-    SubstreamOpened(String, PeerId, Direction, Box<dyn Connection>),
-    SubstreamClosed(String, PeerId),
-    ConnectionEstablished(PeerId),
-    ConnectionClosed(PeerId),
-    DialFailure(Multiaddr),
-    SubstreamOpenFailure(String, PeerId, Error),
-}
 
 #[async_trait::async_trait]
 pub trait TransportService: Send {
@@ -88,57 +52,8 @@ pub trait TransportService: Send {
     /// Open substream to remote `peer` for `protocol`.
     ///
     /// The substream is closed by dropping the sink received in [`Litep2p::SubstreamOpened`] message.
-    // TODO: remove
-    async fn open_substream(&mut self, protocol: String, peer: PeerId, handshake: Vec<u8>);
-}
-
-// TODO: make this into a poll so backpressure can be signaled easily
-
-#[async_trait::async_trait]
-pub trait Transport {
-    /// Start the underlying transport listener and return a handle which allows `litep2p` to
-    // interact with the transport.
-    async fn start(
-        keypair: &Keypair,
-        config: TransportConfig,
-        tx: Sender<TransportEvent>,
-    ) -> crate::Result<Box<dyn TransportService>>;
-}
-
-#[async_trait::async_trait]
-pub trait NewTransportService: Send {
-    /// Open connection to remote peer.
-    ///
-    /// Negotiate `noise`, perform the Noise handshake, negotiate `yamux` and return TODO
-    async fn open_connection(&mut self, address: Multiaddr);
-
-    /// Close connection to remote peer.
-    async fn close_connection(&mut self, peer: PeerId);
-
-    /// Open substream to remote `peer` for `protocol`.
-    ///
-    /// The substream is closed by dropping the sink received in [`Litep2p::SubstreamOpened`] message.
     async fn next_connection(&mut self);
 }
-
-// // TODO: introduce error type?
-// // TODO: introduce `Substream` trait?
-// #[async_trait::async_trait]
-// pub trait ConnectionNew: Send + Unpin + 'static {
-//     type Substream: Debug + AsyncRead + AsyncWrite + Unpin;
-
-//     /// Get remote peer ID.
-//     fn peer_id(&self) -> &PeerId;
-
-//     /// Get connection ID.
-//     fn connection_id(&self) -> &usize;
-
-//     /// Remote peer's address.
-//     fn remote_address(&self) -> &Multiaddr;
-
-//     /// Start connection event loop.
-//     async fn start(self, protocol_info: ProtocolSet) -> crate::Result<()>;
-// }
 
 /// Trait which allows `litep2p` to associate dial failures to opened connections.
 pub trait TransportError {
@@ -151,7 +66,7 @@ pub trait TransportError {
 
 /// Events emitted by the underlying transport.
 #[derive(Debug)]
-pub enum NewTransportEvent {
+pub enum TransportEvent {
     ConnectionEstablished {
         /// Peer ID.
         peer: PeerId,
@@ -174,9 +89,8 @@ pub enum NewTransportEvent {
     },
 }
 
-// TODO: introduce error type?
 #[async_trait::async_trait]
-pub trait TransportNew {
+pub trait Transport {
     type Config: Debug;
     type Error: TransportError; // TODO: is this really necessary?
 
@@ -194,5 +108,5 @@ pub trait TransportNew {
     fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize>;
 
     /// Poll next connection.
-    async fn next_event(&mut self) -> Result<NewTransportEvent, Self::Error>;
+    async fn next_event(&mut self) -> Result<TransportEvent, Self::Error>;
 }

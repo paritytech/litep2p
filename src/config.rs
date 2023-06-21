@@ -21,14 +21,16 @@
 use crate::{
     crypto::ed25519::Keypair,
     protocol::{
-        notification::NotificationProtocolConfig, request_response::RequestResponseProtocolConfig,
-        Libp2pProtocol, NotificationProtocol,
+        libp2p::{identify, ping},
+        notification, request_response,
     },
-    transport::tcp_new::config,
-    types::{self, protocol::ProtocolName},
+    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    types::protocol::ProtocolName,
 };
 
 use multiaddr::Multiaddr;
+
+use std::collections::HashMap;
 
 /// Connection role.
 #[derive(Debug, Copy, Clone)]
@@ -49,134 +51,118 @@ impl Into<yamux::Mode> for Role {
     }
 }
 
-pub struct LiteP2pConfiguration {
-    /// Listening addresses.
-    pub(crate) listen_addresses: Vec<Multiaddr>,
+#[derive(Debug)]
+pub struct Litep2pConfigBuilder {
+    // TCP transport configuration.
+    tcp: Option<TcpTransportConfig>,
+
+    /// Keypair.
+    keypair: Option<Keypair>,
+
+    /// Ping protocol config.
+    ping: Option<ping::Config>,
+
+    /// Identify protocol config.
+    identify: Option<identify::Config>,
 
     /// Notification protocols.
-    pub(crate) notification_protocols: Vec<NotificationProtocolConfig>,
+    notification_protocols: HashMap<ProtocolName, notification::types::Config>,
 
     /// Request-response protocols.
-    pub(crate) request_response_protocols: Vec<RequestResponseProtocolConfig>,
+    request_response_protocols: HashMap<ProtocolName, request_response::types::Config>,
 }
 
-impl LiteP2pConfiguration {
-    pub fn new(
-        listen_addresses: Vec<Multiaddr>,
-        notification_protocols: Vec<NotificationProtocolConfig>,
-        request_response_protocols: Vec<RequestResponseProtocolConfig>,
-    ) -> Self {
+impl Litep2pConfigBuilder {
+    /// Create new empty [`LiteP2pConfigBuilder`].
+    pub fn new() -> Self {
         Self {
-            listen_addresses,
-            notification_protocols,
-            request_response_protocols,
-        }
-    }
-}
-
-// Transport configuration.
-#[derive(Debug)]
-pub struct TransportConfig {
-    /// Listening address for the transport.
-    listen_address: Multiaddr,
-
-    // /// Supported request-response protocols.
-    // libp2p_protocols: Vec<Libp2pProtocol>,
-    libp2p_protocols: Vec<String>,
-
-    /// Supported notification protocols.
-    notification_protocols: Vec<NotificationProtocol>,
-
-    /// Maximum number of allowed connections:
-    max_connections: usize,
-}
-
-impl TransportConfig {
-    /// Create new [`TransportConfig`].
-    pub fn new(
-        listen_address: Multiaddr,
-        libp2p_protocols: Vec<String>,
-        notification_protocols: Vec<NotificationProtocol>,
-        max_connections: usize,
-    ) -> Self {
-        Self {
-            listen_address,
-            libp2p_protocols,
-            notification_protocols,
-            max_connections,
+            tcp: None,
+            keypair: None,
+            ping: None,
+            identify: None,
+            notification_protocols: HashMap::new(),
+            request_response_protocols: HashMap::new(),
         }
     }
 
-    /// Get listen address.
-    pub fn listen_address(&self) -> &Multiaddr {
-        &self.listen_address
+    /// Add TCP transport configuration.
+    pub fn with_tcp(mut self, config: TcpTransportConfig) -> Self {
+        self.tcp = Some(config);
+        self
     }
 
-    /// Get libp2p address.
-    // pub fn libp2p_protocols(&self) -> impl Iterator<Item = &Libp2pProtocol> {
-    pub fn libp2p_protocols(&self) -> impl Iterator<Item = &String> {
-        self.libp2p_protocols.iter()
+    /// Add keypair.
+    pub fn with_keypair(mut self, keypair: Keypair) -> Self {
+        self.keypair = Some(keypair);
+        self
     }
 
-    /// Get notification address.
-    pub fn notification_protocols(&self) -> impl Iterator<Item = &NotificationProtocol> {
-        self.notification_protocols.iter()
+    /// Install notification protocol.
+    pub fn with_notification_protocol(mut self, config: notification::types::Config) -> Self {
+        self.notification_protocols
+            .insert(config.protocol_name().clone(), config);
+        self
     }
 
-    /// Get the number of maximum open connections.
-    pub fn max_connections(&self) -> usize {
-        self.max_connections
-    }
-}
-
-/// Litep2p configuration.
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// Keypair.
-    keypair: Keypair,
-
-    /// Supported protocols.
-    protocols: Vec<ProtocolName>,
-}
-
-impl Config {
-    pub fn new(keypair: Keypair, protocols: Vec<ProtocolName>) -> Self {
-        Self { keypair, protocols }
+    /// Enable IPFS Ping protocol.
+    pub fn with_ipfs_ping(mut self, config: ping::Config) -> Self {
+        self.ping = Some(config);
+        self
     }
 
-    /// Get keypair.
-    pub fn keypair(&self) -> &Keypair {
-        &self.keypair
+    /// Enable IPFS Identify protocol.
+    pub fn with_ipfs_identify(mut self, config: identify::Config) -> Self {
+        self.identify = Some(config);
+        self
     }
 
-    /// Get protocols.
-    pub fn protocols(&self) -> &Vec<ProtocolName> {
-        &self.protocols
+    /// Install request-response protocol.
+    pub fn with_request_response_protocol(
+        mut self,
+        config: request_response::types::Config,
+    ) -> Self {
+        self.request_response_protocols
+            .insert(config.protocol_name().clone(), config);
+        self
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::crypto::ed25519::Keypair;
+    /// Build [`Litep2pConfig`].
+    ///
+    /// Generates a default keypair if user didn't provide one.
+    pub fn build(mut self) -> Litep2pConfig {
+        let keypair = match self.keypair {
+            Some(keypair) => keypair,
+            None => Keypair::generate(),
+        };
 
-    #[test]
-    fn collect_protocols() {
-        let keypair = Keypair::generate();
-        let config = Config::new(
+        Litep2pConfig {
             keypair,
-            vec![
-                ProtocolName::from("/notification/1"),
-                ProtocolName::from("/notification/2"),
-            ],
-        );
-
-        let protocols: Vec<ProtocolName> = config.protocols().clone();
-        let protocols = protocols
-            .iter()
-            .map(|protocol| &**protocol)
-            .collect::<Vec<&str>>();
-
-        println!("{protocols:?}");
+            tcp: self.tcp.take(),
+            ping: self.ping.take(),
+            identify: self.identify.take(),
+            notification_protocols: self.notification_protocols,
+            request_response_protocols: self.request_response_protocols,
+        }
     }
+}
+
+#[derive(Debug)]
+pub struct Litep2pConfig {
+    // TCP transport configuration.
+    pub(crate) tcp: Option<TcpTransportConfig>,
+
+    /// Keypair.
+    pub(crate) keypair: Keypair,
+
+    /// Ping protocol configuration, if enabled.
+    pub(crate) ping: Option<ping::Config>,
+
+    /// Identify protocol configuration, if enabled.
+    pub(crate) identify: Option<identify::Config>,
+
+    /// Notification protocols.
+    pub(crate) notification_protocols: HashMap<ProtocolName, notification::types::Config>,
+
+    /// Request-response protocols.
+    pub(crate) request_response_protocols: HashMap<ProtocolName, request_response::types::Config>,
 }

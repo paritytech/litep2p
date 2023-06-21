@@ -19,95 +19,162 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::Libp2pProtocolEvent,
-    transport::{Connection, TransportEvent},
-    DEFAULT_CHANNEL_SIZE,
+    codec::{identity::Identity, Codec, ProtocolCodec},
+    error::Error,
+    peer_id::PeerId,
+    protocol::{ConnectionEvent, ProtocolEvent},
+    substream::{Substream, SubstreamSet},
+    types::protocol::ProtocolName,
+    ConnectionService, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{AsyncReadExt, AsyncWriteExt};
+use futures::{AsyncReadExt, AsyncWriteExt, SinkExt, Stream, StreamExt};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_stream::wrappers::ReceiverStream;
+
+use std::collections::HashMap;
 
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::ping";
 
-/// IPFS Identify protocol name
+/// IPFS Ping protocol name as a string.
 pub const PROTOCOL_NAME: &str = "/ipfs/ping/1.0.0";
 
 /// Size for `/ipfs/ping/1.0.0` payloads.
 const PING_PAYLOAD_SIZE: usize = 32;
 
-/// Events emitted by [`IpfsPing`].
+/// Ping configuration.
+// TODO: figure out a better abstraction for protocol configs
+#[derive(Debug)]
+pub struct Config {
+    /// Protocol name.
+    pub(crate) protocol: ProtocolName,
+
+    /// Codec used by the protocol.
+    pub(crate) codec: ProtocolCodec,
+
+    /// Maximum failures before the peer is considered unreachable.
+    max_failures: usize,
+
+    /// TX channel for sending events to the user protocol.
+    tx_event: Sender<PingEvent>,
+}
+
+impl Config {
+    /// Create new [`PingConfig`].
+    ///
+    /// Returns a config that is given to `Litep2pConfig` and an event stream for ping events.
+    pub fn new(max_failures: usize) -> (Self, Box<dyn Stream<Item = PingEvent> + Send>) {
+        let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
+
+        (
+            Self {
+                tx_event,
+                max_failures,
+                protocol: ProtocolName::from(PROTOCOL_NAME),
+                codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
+            },
+            Box::new(ReceiverStream::new(rx_event)),
+        )
+    }
+}
+
+/// Events emitted by the ping protocol.
 #[derive(Debug)]
 pub enum PingEvent {}
 
-/// IPFS Ping protocol handler.
-pub struct IpfsPing {
-    /// TX channel for sending `Libp2pProtocolEvent`s.
-    event_tx: Sender<Libp2pProtocolEvent>,
+/// Ping protocol.
+pub struct Ping {
+    /// Maximum failures before the peer is considered unreachable.
+    max_failures: usize,
 
-    /// RX channel for receiving `TransportEvent`s.
-    transport_rx: Receiver<TransportEvent>,
+    // Connection service.
+    service: ConnectionService,
 
-    /// Read buffer for incoming messages.
-    read_buffer: Vec<u8>,
+    /// TX channel for sending events to the user protocol.
+    tx: Sender<PingEvent>,
+
+    /// Connected peers.
+    peers: HashMap<PeerId, Sender<ProtocolEvent>>,
 }
 
-impl IpfsPing {
-    /// Create new [`IpfsPing`] object and start its event loop.
-    pub fn start(event_tx: Sender<Libp2pProtocolEvent>) -> Sender<TransportEvent> {
-        let (transport_tx, transport_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let ping = Self {
-            event_tx,
-            transport_rx,
-            read_buffer: vec![0u8; PING_PAYLOAD_SIZE],
-        };
-
-        tokio::spawn(ping.run());
-        transport_tx
+impl Ping {
+    /// Create new [`Ping`] protocol.
+    pub fn new(service: ConnectionService, config: Config) -> Self {
+        Self {
+            service,
+            tx: config.tx_event,
+            peers: HashMap::new(),
+            max_failures: config.max_failures,
+        }
     }
 
-    /// [`IpfsPing`] event loop.
-    async fn run(mut self) {
-        tracing::debug!(target: LOG_TARGET, "start ipfs ping event loop");
+    /// Connection established to remote peer.
+    fn on_connection_established(&mut self, peer: PeerId, connection: Sender<ProtocolEvent>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
+        self.peers.insert(peer, connection);
+    }
 
-        while let Some(event) = self.transport_rx.recv().await {
-            match event {
-                TransportEvent::SubstreamOpened(protocol, peer, direction, mut substream) => {
-                    tracing::trace!(
+    /// Connection closed to remote peer.
+    fn on_connection_closed(&mut self, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
+        self.peers.remove(&peer);
+    }
+
+    /// Substream opened to remote peer.
+    async fn on_substream_opened(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "substream opened");
+
+        // TODO: don't block here
+        match substream.next().await {
+            Some(Ok(ping)) => {
+                if let Err(error) = substream.send(ping.into()).await {
+                    tracing::debug!(
                         target: LOG_TARGET,
                         ?peer,
-                        ?direction,
-                        "ipfs ping substream opened"
+                        "failed to write value back to sender"
                     );
-
-                    match substream.read_exact(&mut self.read_buffer[..]).await {
-                        Ok(_) => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                data = ?&self.read_buffer[..],
-                                "ping payload read from substream"
-                            );
-
-                            if let Err(err) = substream.write(&self.read_buffer).await {
-                                tracing::trace!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    "failed to write data to substream"
-                                );
-                            }
-                        }
-                        Err(err) => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                "failed to read data from substream"
-                            );
-                        }
-                    }
                 }
-                event => {
-                    tracing::info!(target: LOG_TARGET, ?event, "ignoring `TransportEvent`");
+            }
+            Some(Err(error)) => tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                ?error,
+                "error while reading from the substream",
+            ),
+            None => tracing::debug!(target: LOG_TARGET, ?peer, "substream closed unexpectedly"),
+        }
+    }
+
+    /// Failed to open substream to remote peer.
+    fn on_substream_open_failure(&mut self, peer: PeerId, error: Error) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?error,
+            "failed to open substream"
+        );
+    }
+
+    /// Start [`Ping`] event loop.
+    pub async fn run(mut self) {
+        tracing::debug!(target: LOG_TARGET, "starting ping event loop");
+
+        while let Some(event) = self.service.next_event().await {
+            match event {
+                ConnectionEvent::ConnectionEstablished { peer, connection } => {
+                    self.on_connection_established(peer, connection)
+                }
+                ConnectionEvent::ConnectionClosed { peer } => {
+                    self.on_connection_closed(peer);
+                }
+                ConnectionEvent::SubstreamOpened {
+                    peer, substream, ..
+                } => {
+                    self.on_substream_opened(peer, substream).await;
+                }
+                ConnectionEvent::SubstreamOpenFailure { peer, error } => {
+                    self.on_substream_open_failure(peer, error);
                 }
             }
         }

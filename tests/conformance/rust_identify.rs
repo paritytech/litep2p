@@ -26,13 +26,13 @@ use libp2p::{
     PeerId, Swarm,
 };
 use litep2p::{
+    config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    new_config::Litep2pConfigBuilder,
     protocol::libp2p::{
-        identify_new::{Config as IdentifyConfig, IdentifyEvent},
-        new_ping::{Config as PingConfig, PingEvent},
+        identify::{Config as IdentifyConfig, IdentifyEvent},
+        ping::{Config as PingConfig, PingEvent},
     },
-    transport::tcp_new::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p,
 };
 

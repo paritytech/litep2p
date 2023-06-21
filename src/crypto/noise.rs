@@ -29,7 +29,6 @@ use crate::{
     crypto::{ed25519::Keypair, PublicKey},
     error,
     peer_id::PeerId,
-    transport::Connection,
 };
 
 use futures::{
@@ -477,40 +476,6 @@ fn parse_peer_id(buf: &[u8]) -> crate::Result<PeerId> {
     }
 }
 
-/// Perform Noise handshake.
-pub async fn handshake(
-    io: impl Connection,
-    config: NoiseConfiguration,
-) -> crate::Result<(impl Connection, PeerId)> {
-    tracing::trace!(target: LOG_TARGET, ?config, "start noise handshake");
-
-    let role = config.role;
-    let mut socket = NoiseSocket::new(io, NoiseHandshakeState(config.noise));
-    let mut buf = vec![0u8; 2048];
-
-    let peer = match role {
-        Role::Dialer => {
-            socket.write(&[]).await?;
-            let read = socket.read(&mut buf).await?;
-            socket.write(&config.payload).await?;
-            parse_peer_id(&buf[..read])?
-        }
-        Role::Listener => {
-            socket.read(&mut buf).await?;
-            socket.write(&config.payload).await?;
-            let read = socket.read(&mut buf).await?;
-            parse_peer_id(&buf[..read])?
-        }
-    };
-
-    let io = NoiseSocket::new(
-        socket.io,
-        NoiseTransportState(socket.noise.into_transport_mode()?),
-    );
-
-    Ok((io, peer))
-}
-
 /// Noise-encrypted connection.
 #[derive(Debug)]
 pub struct Encrypted<S: AsyncRead + AsyncWrite + Unpin> {
@@ -721,7 +686,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Encrypted<S> {
 }
 
 /// Perform Noise handshake.
-pub async fn handshake_new<S: AsyncRead + AsyncWrite + Unpin>(
+pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     io: S,
     config: NoiseConfiguration,
 ) -> crate::Result<(Encrypted<S>, PeerId)> {

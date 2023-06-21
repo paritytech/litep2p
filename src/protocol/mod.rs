@@ -25,8 +25,7 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     substream::{RawSubstream, Substream},
-    transport::{Connection, TransportEvent},
-    types::protocol::ProtocolName as NewProtocolName,
+    types::protocol::ProtocolName,
     ProtocolInfo, TransportContext,
 };
 
@@ -45,131 +44,9 @@ use std::{
 
 pub mod libp2p;
 pub mod notification;
-pub mod notification_new;
 pub mod request_response;
-pub mod request_response_new;
 
 const LOG_TARGET: &str = "protocol";
-
-// TODO: remove
-/// Commands sent by different protocols to `Litep2p`.
-#[derive(Debug)]
-pub enum TransportCommand {
-    /// Open substream to remote peer.
-    OpenSubstream {
-        /// Protocol.
-        protocol: String,
-
-        /// Remote peer ID.
-        peer: PeerId,
-    },
-}
-
-// TODO: remove
-#[derive(Debug, Clone)]
-pub enum ProtocolName {
-    /// Static protocol name.
-    Static(&'static str),
-}
-
-impl Display for ProtocolName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
-impl From<&'static str> for ProtocolName {
-    fn from(value: &'static str) -> Self {
-        ProtocolName::Static(value)
-    }
-}
-
-// TODO: remove
-/// Libp2p protocol configuration.
-#[derive(Debug)]
-pub struct Libp2pProtocol {
-    /// Protocol name.
-    name: ProtocolName,
-}
-
-// TODO: remove
-impl Libp2pProtocol {
-    /// Create new [`Libp2pProtocol`].
-    pub fn new(name: ProtocolName) -> Self {
-        Self { name }
-    }
-
-    /// Get the name of the protocol.
-    pub fn name(&self) -> &ProtocolName {
-        &self.name
-    }
-
-    /// Get the name as `String`.
-    pub fn to_string(&self) -> String {
-        println!("convert {} to string", self.name);
-        self.name.to_string()
-    }
-}
-
-// TODO: remove
-/// Notification protocol configuration.
-#[derive(Debug)]
-pub struct NotificationProtocol {
-    /// Protocol name.
-    name: ProtocolName,
-}
-
-// TODO: remove
-impl NotificationProtocol {
-    /// Create new [`NotificationProtocol`].
-    pub fn new(name: ProtocolName) -> Self {
-        Self { name }
-    }
-
-    /// Get the name of the protocol.
-    pub fn name(&self) -> &ProtocolName {
-        &self.name
-    }
-
-    /// Get the name as `String`.
-    pub fn to_string(&self) -> String {
-        self.name.to_string()
-    }
-}
-
-// TODO: remove
-/// Events received from connections that relevant to the execution of a user protocol.
-pub enum ExecutionEvent<S: Substream> {
-    /// Connection established to remote peer.
-    ConnectionEstablished {
-        /// Peer ID.
-        peer: PeerId,
-    },
-
-    /// Connection closed to remote peer.
-    ConnectionClosed {
-        /// Peer ID.
-        peer: PeerId,
-    },
-
-    /// Substream opened to remote peer.
-    SubstreamOpened {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Opened substream.
-        substream: S,
-    },
-
-    /// Failed to open substream.
-    SubstreamOpenFailure {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Error that occurred.
-        error: Error,
-    },
-}
 
 /// Events emitted by a connection to protocols.
 pub enum ConnectionEvent {
@@ -200,7 +77,7 @@ pub enum ConnectionEvent {
         /// the same protocol handler. When the substream is sent from transpor to the protocol
         /// handler, the protocol name that was used to negotiate the substream is also sent so
         /// the protocol can handle the substream appropriately.
-        protocol: NewProtocolName,
+        protocol: ProtocolName,
 
         /// Substream.
         substream: Box<dyn Substream>,
@@ -222,7 +99,7 @@ pub enum ProtocolEvent {
     /// Open substream.
     OpenSubstream {
         /// Protocol name.
-        protocol: NewProtocolName,
+        protocol: ProtocolName,
     },
 }
 
@@ -232,7 +109,7 @@ pub enum ProtocolEvent {
 /// directly with installed protocols.
 #[derive(Debug)]
 pub struct ProtocolSet {
-    pub protocols: HashMap<NewProtocolName, ProtocolInfo>,
+    pub protocols: HashMap<ProtocolName, ProtocolInfo>,
     rx: Receiver<ProtocolEvent>,
 }
 
@@ -265,7 +142,7 @@ impl ProtocolSet {
     /// Report to `protocol` that substream was opened for `peer`.
     pub async fn report_substream_open<R: RawSubstream>(
         &mut self,
-        protocol: NewProtocolName,
+        protocol: ProtocolName,
         peer: PeerId,
         substream: R,
     ) -> crate::Result<()> {
@@ -298,7 +175,7 @@ impl ProtocolSet {
     /// Report to `protocol` that connection failed to open substream for `peer`.
     pub async fn report_substream_open_failure(
         &mut self,
-        protocol: NewProtocolName,
+        protocol: ProtocolName,
         peer: PeerId,
         error: Error,
     ) -> crate::Result<()> {
