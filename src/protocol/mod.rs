@@ -117,22 +117,21 @@ pub struct ConnectionService {
     /// TX channel for sending events to transport.
     tx: Sender<ProtocolEvent>,
 
+    /// Protocol name.
+    protocol: ProtocolName,
+
     /// Next ephemeral substream ID.
     next_substream_id: usize,
 }
 
 impl ConnectionService {
     /// Create new [`ConnectionService`].
-    pub fn new() -> (Self, Receiver<ProtocolEvent>) {
-        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
-
-        (
-            Self {
-                tx,
-                next_substream_id: 0usize,
-            },
-            rx,
-        )
+    pub fn new(protocol: ProtocolName, tx: Sender<ProtocolEvent>) -> Self {
+        Self {
+            tx,
+            protocol,
+            next_substream_id: 0usize,
+        }
     }
 
     /// Get next ephemeral substream ID.
@@ -143,11 +142,11 @@ impl ConnectionService {
     }
 
     /// Open substream to remote peer over `protocol`.
-    pub async fn open_substream(&mut self, protocol: ProtocolName) -> crate::Result<usize> {
+    pub async fn open_substream(&mut self) -> crate::Result<usize> {
         let substream_id = self.next_substream_id();
         self.tx
             .send(ProtocolEvent::OpenSubstream {
-                protocol,
+                protocol: self.protocol.clone(),
                 substream_id,
             })
             .await?;
@@ -172,16 +171,16 @@ impl ProtocolSet {
         peer: PeerId,
         context: TransportContext,
     ) -> crate::Result<Self> {
-        let (service, rx) = ConnectionService::new();
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
         // TODO: this is kind of ugly
         // TODO: backpressure?
-        for sender in context.protocols.values() {
+        for (protocol, sender) in &context.protocols {
             sender
                 .tx
                 .send(ConnectionEvent::ConnectionEstablished {
                     peer,
-                    service: service.clone(),
+                    service: ConnectionService::new(protocol.clone(), tx.clone()),
                 })
                 .await?;
         }
