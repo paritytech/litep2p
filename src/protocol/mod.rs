@@ -71,6 +71,12 @@ pub enum ConnectionEvent {
         /// the protocol can handle the substream appropriately.
         protocol: ProtocolName,
 
+        /// Substream ID.
+        ///
+        /// Either allocated by the protocol for outbound substreams or by the transport for inbound
+        /// substream.
+        substream_id: usize,
+
         /// Substream.
         substream: Box<dyn Substream>,
     },
@@ -92,6 +98,16 @@ pub enum ProtocolEvent {
     OpenSubstream {
         /// Protocol name.
         protocol: ProtocolName,
+
+        /// Substream ID.
+        ///
+        /// Protocol allocates an ephemeral ID for outbound substreams which allows it to track
+        /// the state of its pending substream. The ID is given back to protocol in
+        ///  [`TransportEvent::SubstreamOpened`]/[`TransportEvent::SubstreamOpenFailure`].
+        ///
+        /// This allows the protocol to distinguish inbound substreams from outbound substreams
+        /// and associate incoming substreams with whatever logic it has.
+        substream_id: usize,
     },
 }
 
@@ -134,8 +150,9 @@ impl ProtocolSet {
     /// Report to `protocol` that substream was opened for `peer`.
     pub async fn report_substream_open<R: RawSubstream>(
         &mut self,
-        protocol: ProtocolName,
         peer: PeerId,
+        protocol: ProtocolName,
+        substream_id: usize,
         substream: R,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
@@ -155,6 +172,7 @@ impl ProtocolSet {
                     .send(ConnectionEvent::SubstreamOpened {
                         peer,
                         protocol: protocol.clone(),
+                        substream_id,
                         substream,
                     })
                     .await

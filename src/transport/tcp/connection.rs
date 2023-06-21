@@ -104,24 +104,29 @@ impl TcpConnection {
     /// Open substream for `protocol`.
     pub async fn open_substream(
         mut control: yamux::Control,
-        substream: usize,
+        substream_id: usize,
         protocol: ProtocolName,
     ) -> crate::Result<Substream> {
-        tracing::debug!(target: LOG_TARGET, ?substream, ?protocol, "open substream");
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?protocol,
+            ?substream_id,
+            "open substream"
+        );
 
         let stream = match control.open_stream().await {
             Ok(stream) => {
-                tracing::trace!(target: LOG_TARGET, ?substream, "substream opened");
+                tracing::trace!(target: LOG_TARGET, ?substream_id, "substream opened");
                 stream
             }
             Err(error) => {
                 tracing::debug!(
                     target: LOG_TARGET,
-                    ?substream,
+                    ?substream_id,
                     ?error,
                     "failed to open substream"
                 );
-                return Err(Error::YamuxError(substream, error));
+                return Err(Error::YamuxError(substream_id, error));
             }
         };
 
@@ -130,7 +135,7 @@ impl TcpConnection {
 
         Ok(Substream {
             io: io.inner(),
-            _substream: substream,
+            substream_id,
             protocol,
         })
     }
@@ -151,10 +156,14 @@ impl TcpConnection {
     /// Accept substream.
     pub async fn accept_substream(
         stream: yamux::Stream,
-        substream: usize,
+        substream_id: usize,
         protocols: Vec<ProtocolName>,
     ) -> crate::Result<Substream> {
-        tracing::trace!(target: LOG_TARGET, ?substream, "accept inbound substream");
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?substream_id,
+            "accept inbound substream"
+        );
 
         let protocols = protocols
             .iter()
@@ -164,13 +173,13 @@ impl TcpConnection {
 
         tracing::trace!(
             target: LOG_TARGET,
-            ?substream,
+            ?substream_id,
             "substream accepted and negotiated"
         );
 
         Ok(Substream {
             io: io.inner(),
-            _substream: substream,
+            substream_id,
             protocol,
         })
     }
@@ -278,19 +287,23 @@ impl TcpConnection {
                     },
                     Some(Err(error)) => {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to poll inbound substream");
+                        // TODO: this is probably not correct
                         return Err(Error::SubstreamError(SubstreamError::YamuxError(error)));
                     }
+                    // TODO: this is probably not correct
                     None => return Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
                     match substream {
+                        // TODO: return error to protocol
                         Err(error) => tracing::debug!(target: LOG_TARGET, ?error, "failed to negotiate substream"),
                         Ok(substream) => {
                             let protocol = substream.protocol.clone();
+                            let substream_id = substream.substream_id.clone();
                             let substream = FuturesAsyncReadCompatExt::compat(substream);
 
                             if let Err(error) = self.context
-                                .report_substream_open(protocol, self.peer, substream)
+                                .report_substream_open(self.peer, protocol, substream_id, substream)
                                 .await
                             {
                                 tracing::error!(
@@ -303,19 +316,18 @@ impl TcpConnection {
                     }
                 }
                 protocol = self.context.next_event() => match protocol {
-                    Some(ProtocolEvent::OpenSubstream { protocol }) => {
+                    Some(ProtocolEvent::OpenSubstream { protocol, substream_id }) => {
                         let control = self.control.clone();
-                        let substream = self.next_substream_id();
 
                         tracing::trace!(
                             target: LOG_TARGET,
                             ?protocol,
-                            substream_id = substream,
+                            ?substream_id,
                             "open substream"
                         );
 
                         self.pending_substreams.push(Box::pin(async move {
-                            Self::open_substream(control, substream, protocol).await
+                            Self::open_substream(control, substream_id, protocol).await
                         }));
                     }
                     None => {
@@ -332,7 +344,7 @@ impl TcpConnection {
 #[derive(Debug)]
 pub struct Substream {
     /// Substream ID.
-    _substream: usize,
+    substream_id: usize,
 
     /// Protocol name.
     protocol: ProtocolName,

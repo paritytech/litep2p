@@ -234,6 +234,7 @@ impl Identify {
                 ConnectionEvent::SubstreamOpened {
                     peer,
                     protocol,
+                    substream_id: _,
                     substream,
                 } => {
                     self.on_substream_opened(peer, protocol, substream).await;
