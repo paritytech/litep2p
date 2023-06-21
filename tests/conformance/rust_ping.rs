@@ -40,7 +40,7 @@ struct Behaviour {
 }
 
 // initialize litep2p with ping support
-async fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send>) {
+async fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
     let keypair = Keypair::generate();
     let (ping_config, ping_event_stream) = PingConfig::new(3);
     let litep2p = Litep2p::new(
@@ -80,7 +80,7 @@ async fn libp2p_dials() {
         .try_init();
 
     let mut libp2p = initialize_libp2p();
-    let (mut litep2p, _ping_event_stream) = initialize_litep2p().await;
+    let (mut litep2p, mut ping_event_stream) = initialize_litep2p().await;
     let address = litep2p.listen_addresses().next().unwrap().clone();
 
     libp2p.dial(address).unwrap();
@@ -91,6 +91,9 @@ async fn libp2p_dials() {
         }
     });
 
+    let mut libp2p_done = false;
+    let mut litep2p_done = false;
+
     loop {
         tokio::select! {
             event = libp2p.select_next_some() => {
@@ -98,8 +101,21 @@ async fn libp2p_dials() {
                     SwarmEvent::NewListenAddr { address, .. } => {
                         tracing::info!("Listening on {address:?}")
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::Ping(_)) => break,
+                    SwarmEvent::Behaviour(BehaviourEvent::Ping(_)) => {
+                        libp2p_done = true;
+
+                        if libp2p_done && litep2p_done {
+                            break
+                        }
+                    }
                     _ => {}
+                }
+            }
+            _event = ping_event_stream.next() => {
+                litep2p_done = true;
+
+                if libp2p_done && litep2p_done {
+                    break
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
