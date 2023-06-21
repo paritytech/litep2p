@@ -22,7 +22,7 @@ use crate::{
     codec::{Codec, ProtocolCodec},
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
-    new_config::{Config, Litep2pConfig},
+    new_config::Litep2pConfig,
     peer_id::PeerId,
     protocol::{
         libp2p::new_ping::Ping,

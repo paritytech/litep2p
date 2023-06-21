@@ -23,7 +23,6 @@ use crate::{
     crypto::{ed25519::Keypair, noise::NoiseConfiguration},
     error::Error,
     new::TransportContext,
-    new_config::Config,
     peer_id::PeerId,
     protocol::ProtocolSet,
     types::{protocol::ProtocolName, ProtocolId, ProtocolType, RequestId, SubstreamId},

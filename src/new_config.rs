@@ -113,61 +113,6 @@ impl Litep2pConfigBuilder {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Config {
-    // TCP transport configuration.
-    tcp: Option<config::TransportConfig>,
-
-    /// Keypair.
-    keypair: Keypair,
-
-    /// Enabled protocols.
-    protocols: Vec<ProtocolName>,
-}
-
-// TODO: remove this and introduce some context object instead
-impl Config {
-    /// Get keypair.
-    pub fn keypair(&self) -> &Keypair {
-        &self.keypair
-    }
-
-    /// Get TCP transport configuration.
-    pub fn tcp(&self) -> &Option<config::TransportConfig> {
-        &self.tcp
-    }
-
-    /// Get a list of enabled protocols.
-    pub fn protocols(&self) -> &Vec<ProtocolName> {
-        &self.protocols
-    }
-}
-
-impl From<&Litep2pConfig> for Config {
-    fn from(config: &Litep2pConfig) -> Self {
-        let protocols = {
-            let mut protocols = Vec::new();
-
-            config
-                .notification_protocols
-                .iter()
-                .for_each(|(name, _)| protocols.push(name.clone()));
-            config
-                .request_response_protocols
-                .iter()
-                .for_each(|(name, _)| protocols.push(name.clone()));
-
-            protocols
-        };
-
-        Self {
-            keypair: config.keypair.clone(),
-            tcp: config.tcp.clone(),
-            protocols,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Litep2pConfig {
     // TCP transport configuration.
