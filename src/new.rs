@@ -25,7 +25,7 @@ use crate::{
     new_config::Litep2pConfig,
     peer_id::PeerId,
     protocol::{
-        libp2p::new_ping::Ping,
+        libp2p::{identify_new::Identify, new_ping::Ping},
         notification_new::{types::Config as NotificationConfig, NotificationProtocol},
         ConnectionEvent, ProtocolEvent, ProtocolSet,
     },
@@ -165,6 +165,8 @@ impl Litep2p {
     pub async fn new(mut config: Litep2pConfig) -> crate::Result<Litep2p> {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
         let mut transport_ctx = TransportContext::new(config.keypair.clone());
+        let mut listen_addresses = Vec::new();
+        let mut protocols = Vec::new();
 
         // start notification protocol event loops
         for (name, config) in config.notification_protocols.into_iter() {
@@ -173,28 +175,48 @@ impl Litep2p {
                 protocol = ?name,
                 "enable notification protocol",
             );
+            protocols.push(name);
 
+            // TODO: fix
             // let service = transport_ctx.add_protocol(name)?;
             // tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
-        }
-
-        // start ping protocol event loop if enabled
-        if let Some(config) = config.ping.take() {
-            tracing::debug!(
-                target: LOG_TARGET,
-                protocol = ?config.protocol,
-                "enable ping protocol",
-            );
-
-            let service =
-                transport_ctx.add_protocol(config.protocol.clone(), config.codec.clone())?;
-            tokio::spawn(async move { Ping::new(service, config).run().await });
         }
 
         // TODO: go through all request-response protocols and start the protocol runners
         //       passing in the command the notification config
 
-        // TODO: check if identify is enabled and if so, start identify event loop
+        // start ping protocol event loop if enabled
+        if let Some(ping_config) = config.ping.take() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?ping_config.protocol,
+                "enable ipfs ping protocol",
+            );
+            protocols.push(ping_config.protocol.clone());
+
+            let service = transport_ctx
+                .add_protocol(ping_config.protocol.clone(), ping_config.codec.clone())?;
+            tokio::spawn(async move { Ping::new(service, ping_config).run().await });
+        }
+
+        if let Some(mut identify_config) = config.identify.take() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?identify_config.protocol,
+                "enable ipfs identify protocol",
+            );
+            protocols.push(identify_config.protocol.clone());
+
+            let service = transport_ctx.add_protocol(
+                identify_config.protocol.clone(),
+                identify_config.codec.clone(),
+            )?;
+            identify_config.public = Some(PublicKey::Ed25519(config.keypair.public()));
+            identify_config.listen_addresses = listen_addresses;
+            identify_config.protocols = protocols;
+
+            tokio::spawn(async move { Identify::new(service, identify_config).run().await });
+        }
 
         // enable tcp transport if the config exists
         let tcp = match config.tcp.take() {
@@ -323,7 +345,7 @@ mod tests {
             })
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
-            .with_ping_protocol(ping_config)
+            .with_ipfs_ping(ping_config)
             .build();
 
         let litep2p = Litep2p::new(config).await.unwrap();
@@ -340,7 +362,7 @@ mod tests {
                 .with_tcp(TcpTransportConfig {
                     listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
                 })
-                .with_ping_protocol(ping_config)
+                .with_ipfs_ping(ping_config)
                 .build(),
             ping_event_stream,
         )

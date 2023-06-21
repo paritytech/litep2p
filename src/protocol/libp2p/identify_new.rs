@@ -19,8 +19,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::{identity::Identity, Codec},
+    codec::{identity::Identity, Codec, ProtocolCodec},
     crypto::{ed25519::Keypair, PublicKey},
+    error::Error,
     new::ConnectionService,
     peer_id::PeerId,
     protocol::{ConnectionEvent, ProtocolEvent},
@@ -36,11 +37,6 @@ use multiaddr::Multiaddr;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
-use unsigned_varint::{
-    codec::UviBytes,
-    decode::{self, Error},
-    encode,
-};
 
 use std::collections::{HashMap, HashSet};
 
@@ -67,17 +63,20 @@ pub struct Config {
     /// Protocol name.
     pub(crate) protocol: ProtocolName,
 
+    /// Codec used by the protocol.
+    pub(crate) codec: ProtocolCodec,
+
     /// TX channel for sending events to the user protocol.
     tx_event: Sender<IdentifyEvent>,
 
     // Public key of the local node, filled by `Litep2p`.
-    public: Option<PublicKey>,
+    pub(crate) public: Option<PublicKey>,
 
     /// Listen addresses of the local node, filled by `Litep2p`.
-    listen_addresses: Vec<Multiaddr>,
+    pub(crate) listen_addresses: Vec<Multiaddr>,
 
     /// Protocols supported by the local node, filled by `Litep2p`.
-    protocols: Vec<String>,
+    pub(crate) protocols: Vec<ProtocolName>,
 }
 
 impl Config {
@@ -90,10 +89,11 @@ impl Config {
         (
             Self {
                 tx_event,
-                protocol: ProtocolName::from(PROTOCOL_NAME),
                 public: None,
+                codec: ProtocolCodec::UnsignedVarint,
                 listen_addresses: Vec::new(),
                 protocols: Vec::new(),
+                protocol: ProtocolName::from(PROTOCOL_NAME),
             },
             Box::new(ReceiverStream::new(rx_event)),
         )
@@ -124,7 +124,7 @@ pub struct Identify {
     peers: HashMap<PeerId, Sender<ProtocolEvent>>,
 
     // Public key of the local node, filled by `Litep2p`.
-    public: Option<PublicKey>,
+    public: PublicKey,
 
     /// Listen addresses of the local node, filled by `Litep2p`.
     listen_addresses: Vec<Multiaddr>,
@@ -140,95 +140,57 @@ impl Identify {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            public: config.public,
+            public: config.public.expect("public key to be supplied"),
             listen_addresses: config.listen_addresses,
-            protocols: config.protocols,
+            protocols: config
+                .protocols
+                .iter()
+                .map(|protocol| protocol.to_string())
+                .collect(),
         }
     }
 
-    /// Start [`Identify`] event loop.
-    pub async fn run(mut self) {
-        tracing::debug!(target: LOG_TARGET, "starting ping event loop");
-
-        while let Some(event) = self.service.next_event().await {
-            match event {
-                ConnectionEvent::ConnectionEstablished { peer, connection } => {
-                    tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
-                    self.peers.insert(peer, connection);
-                }
-                ConnectionEvent::ConnectionClosed { peer } => {
-                    tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
-                    self.peers.remove(&peer);
-                }
-                ConnectionEvent::SubstreamOpened {
-                    peer,
-                    protocol,
-                    mut substream,
-                } => {
-                    tracing::trace!(target: LOG_TARGET, ?peer, "substream opened");
-                    // TODO: handle open substream
-                }
-                ConnectionEvent::SubstreamOpenFailure { peer, error } => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?error,
-                        "failed to open substream"
-                    );
-                }
-            }
-        }
-    }
-}
-
-/*
-pub struct IpfsIdentify {
-    /// TX channel for sending `Libp2pProtocolEvent`s.
-    event_tx: Sender<Libp2pProtocolEvent>,
-
-    /// RX channel for receiving `TransportEvent`s.
-    transport_rx: Receiver<TransportEvent>,
-
-    /// Read buffer for incoming messages.
-    read_buffer: Vec<u8>,
-
-    /// Public key of the local node.
-    public: PublicKey,
-
-    /// Listen addresses of the local node.
-    listen_addresses: Vec<Multiaddr>,
-
-    /// Protocols supported by the local node.
-    protocols: Vec<String>,
-}
-
-impl IpfsIdentify {
-    /// Create new [`IpfsPing`] object and start its event loop.
-    pub fn start(
-        public: PublicKey,
-        listen_addresses: Vec<Multiaddr>,
-        protocols: Vec<String>,
-        event_tx: Sender<Libp2pProtocolEvent>,
-    ) -> Sender<TransportEvent> {
-        let (transport_tx, transport_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let identify = Self {
-            public,
-            listen_addresses,
-            protocols,
-            event_tx,
-            transport_rx,
-            read_buffer: vec![0u8; IDENTIFY_PAYLOAD_SIZE],
-        };
-
-        tokio::spawn(identify.run());
-        transport_tx
+    /// Connection established to remote peer.
+    fn on_connection_established(&mut self, peer: PeerId, connection: Sender<ProtocolEvent>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
+        self.peers.insert(peer, connection);
     }
 
-    /// Handle inbound query by answering to it with local node's information.
-    async fn handle_inbound_query(&mut self, substream: Box<dyn Connection>) {
-        tracing::trace!(target: LOG_TARGET, "handle inbound stream");
+    /// Connection closed to remote peer.
+    fn on_connection_closed(&mut self, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
+        self.peers.remove(&peer);
+    }
 
-        // TODO: fill with proper info
+    /// Substream opened to remote peer.
+    async fn on_substream_opened(
+        &mut self,
+        peer: PeerId,
+        protocol: ProtocolName,
+        mut substream: Box<dyn Substream>,
+    ) {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?protocol, "substream opened");
+
+        // match identify_schema::Identify::decode(payload.to_vec().as_slice()) {
+        //     Ok(identify) => {
+        //         let _ = self
+        //             .event_tx
+        //             .send(Libp2pProtocolEvent::Identify(
+        //                 IdentifyEvent::PeerIdentified {
+        //                     peer,
+        //                     supported_protocols: HashSet::from_iter(identify.protocols),
+        //                 },
+        //             ))
+        //             .await;
+        //     }
+        //     Err(err) => {
+        //         tracing::error!(
+        //             target: LOG_TARGET,
+        //             "failed to parse `Identify` from response"
+        //         );
+        //     }
+        // }
+
         let identify = identify_schema::Identify {
             protocol_version: None,
             agent_version: None,
@@ -246,75 +208,43 @@ impl IpfsIdentify {
             .encode(&mut msg)
             .expect("`msg` to have enough capacity");
 
-        // why is this using unsigned-varint?
-        let mut decoder = Framed::new(substream, UviBytes::<bytes::Bytes>::default());
-        decoder.send(BytesMut::from(&msg[..]).into()).await.unwrap();
+        // TODO: this is not good
+        let _ = substream.send(msg.into()).await.unwrap();
     }
 
-    /// Handle outbound query by reading the remote node's information.
-    async fn handle_outbound_query(&mut self, peer: PeerId, substream: Box<dyn Connection>) {
-        tracing::trace!(target: LOG_TARGET, "handle outbound stream");
-
-        // why is this using unsigned-varint?
-        let mut decoder = Framed::new(substream, UviBytes::<bytes::Bytes>::default());
-        let payload = decoder.next().await.unwrap().unwrap().freeze();
-
-        match identify_schema::Identify::decode(payload.to_vec().as_slice()) {
-            Ok(identify) => {
-                let _ = self
-                    .event_tx
-                    .send(Libp2pProtocolEvent::Identify(
-                        IdentifyEvent::PeerIdentified {
-                            peer,
-                            supported_protocols: HashSet::from_iter(identify.protocols),
-                        },
-                    ))
-                    .await;
-            }
-            Err(err) => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    "failed to parse `Identify` from response"
-                );
-            }
-        }
+    /// Failed to open substream to remote peer.
+    fn on_substream_open_failure(&mut self, peer: PeerId, error: Error) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?error,
+            "failed to open substream"
+        );
     }
 
-    /// [`IpfsIdentify`] event loop.
-    async fn run(mut self) {
-        tracing::debug!(target: LOG_TARGET, "start ipfs ping event loop");
+    /// Start [`Identify`] event loop.
+    pub async fn run(mut self) {
+        tracing::debug!(target: LOG_TARGET, "starting identify event loop");
 
-        while let Some(event) = self.transport_rx.recv().await {
+        while let Some(event) = self.service.next_event().await {
             match event {
-                TransportEvent::SubstreamOpened(protocol, peer, direction, mut substream) => {
-                    tracing::trace!(target: LOG_TARGET, ?peer, "ipfs identify substream opened");
-
-                    match direction {
-                        Direction::Outbound => self.handle_outbound_query(peer, substream).await,
-                        Direction::Inbound => self.handle_inbound_query(substream).await,
-                    }
+                ConnectionEvent::ConnectionEstablished { peer, connection } => {
+                    self.on_connection_established(peer, connection);
                 }
-                TransportEvent::ConnectionEstablished(peer) => {
-                    tracing::trace!(target: LOG_TARGET, target = ?peer, "initiate identify query");
-                    if let Err(err) = self
-                        .event_tx
-                        .send(Libp2pProtocolEvent::Identify(
-                            IdentifyEvent::OpenSubstream { peer },
-                        ))
-                        .await
-                    {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            "channel to `litep2p` closed, closing identify"
-                        );
-                        return;
-                    }
+                ConnectionEvent::ConnectionClosed { peer } => {
+                    self.on_connection_closed(peer);
                 }
-                event => {
-                    tracing::info!(target: LOG_TARGET, ?event, "ignoring `TransportEvent`");
+                ConnectionEvent::SubstreamOpened {
+                    peer,
+                    protocol,
+                    mut substream,
+                } => {
+                    self.on_substream_opened(peer, protocol, substream).await;
+                }
+                ConnectionEvent::SubstreamOpenFailure { peer, error } => {
+                    self.on_substream_open_failure(peer, error);
                 }
             }
         }
     }
 }
-*/

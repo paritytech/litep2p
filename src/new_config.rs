@@ -20,7 +20,10 @@
 
 use crate::{
     crypto::ed25519::Keypair,
-    protocol::{libp2p::new_ping, notification_new, request_response_new},
+    protocol::{
+        libp2p::{identify_new, new_ping},
+        notification_new, request_response_new,
+    },
     transport::tcp_new::config,
     types::protocol::ProtocolName,
 };
@@ -37,8 +40,11 @@ pub struct Litep2pConfigBuilder {
     /// Keypair.
     keypair: Option<Keypair>,
 
-    /// Ping protocol.
+    /// Ping protocol config.
     ping: Option<new_ping::Config>,
+
+    /// Identify protocol config.
+    identify: Option<identify_new::Config>,
 
     /// Notification protocols.
     notification_protocols: HashMap<ProtocolName, notification_new::types::Config>,
@@ -54,6 +60,7 @@ impl Litep2pConfigBuilder {
             tcp: None,
             keypair: None,
             ping: None,
+            identify: None,
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
         }
@@ -78,9 +85,15 @@ impl Litep2pConfigBuilder {
         self
     }
 
-    /// Enable ping protocol.
-    pub fn with_ping_protocol(mut self, config: new_ping::Config) -> Self {
+    /// Enable IPFS Ping protocol.
+    pub fn with_ipfs_ping(mut self, config: new_ping::Config) -> Self {
         self.ping = Some(config);
+        self
+    }
+
+    /// Enable IPFS Identify protocol.
+    pub fn with_ipfs_identify(mut self, config: identify_new::Config) -> Self {
+        self.identify = Some(config);
         self
     }
 
@@ -107,6 +120,7 @@ impl Litep2pConfigBuilder {
             keypair,
             tcp: self.tcp.take(),
             ping: self.ping.take(),
+            identify: self.identify.take(),
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
         }
@@ -123,6 +137,9 @@ pub struct Litep2pConfig {
 
     /// Ping protocol configuration, if enabled.
     pub(crate) ping: Option<new_ping::Config>,
+
+    /// Identify protocol configuration, if enabled.
+    pub(crate) identify: Option<identify_new::Config>,
 
     /// Notification protocols.
     pub(crate) notification_protocols: HashMap<ProtocolName, notification_new::types::Config>,

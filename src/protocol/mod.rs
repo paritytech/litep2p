@@ -49,6 +49,8 @@ pub mod notification_new;
 pub mod request_response;
 pub mod request_response_new;
 
+const LOG_TARGET: &str = "protocol";
+
 // TODO: remove
 /// Commands sent by different protocols to `Litep2p`.
 #[derive(Debug)]
@@ -267,6 +269,8 @@ impl ProtocolSet {
         peer: PeerId,
         substream: R,
     ) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
+
         match self.protocols.get_mut(&protocol) {
             Some(info) => {
                 let substream: Box<dyn Substream> = match info.codec {
