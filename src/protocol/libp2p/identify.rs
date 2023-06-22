@@ -169,6 +169,7 @@ impl Identify {
     /// Connection closed to remote peer.
     fn on_connection_closed(&mut self, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
+
         self.peers.remove(&peer);
     }
 
