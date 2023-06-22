@@ -23,7 +23,7 @@ use crate::{
     crypto::PublicKey,
     error::Error,
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ConnectionService},
+    protocol::{ConnectionEvent, ConnectionService, Direction},
     substream::Substream,
     types::protocol::ProtocolName,
     TransportService, DEFAULT_CHANNEL_SIZE,
@@ -234,11 +234,16 @@ impl Identify {
                 ConnectionEvent::SubstreamOpened {
                     peer,
                     protocol,
-                    substream_id: _,
+                    direction,
                     substream,
-                } => {
-                    self.on_substream_opened(peer, protocol, substream).await;
-                }
+                } => match direction {
+                    Direction::Inbound => {
+                        self.on_substream_opened(peer, protocol, substream).await;
+                    }
+                    Direction::Outbound(_substream_id) => {
+                        todo!();
+                    }
+                },
                 ConnectionEvent::SubstreamOpenFailure { peer, error } => {
                     self.on_substream_open_failure(peer, error);
                 }

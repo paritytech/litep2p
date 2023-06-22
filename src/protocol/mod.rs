@@ -40,6 +40,16 @@ pub mod request_response;
 
 const LOG_TARGET: &str = "protocol";
 
+/// Substream direction.
+#[derive(Debug, Copy, Clone)]
+pub enum Direction {
+    /// Substream was opened by the remote peer.
+    Inbound,
+
+    /// Substream was opened by the local peer.
+    Outbound(usize),
+}
+
 /// Events emitted by a connection to protocols.
 pub enum ConnectionEvent {
     /// Connection established to `peer`.
@@ -71,11 +81,15 @@ pub enum ConnectionEvent {
         /// the protocol can handle the substream appropriately.
         protocol: ProtocolName,
 
-        /// Substream ID.
+        /// Substream direction.
         ///
-        /// Either allocated by the protocol for outbound substreams or by the transport for inbound
-        /// substream.
-        substream_id: usize,
+        /// Informs the protocol whether the substream is inbound (opened by the remote node)
+        /// or outbound (opened by the local node). This allows the protocol to distinguish
+        /// between the two types of substreams and execute correct code for the substream.
+        ///
+        /// Outbound substreams also contain the substream ID which allows the protocol to
+        /// distinguish between different outbound substreams.
+        direction: Direction,
 
         /// Substream.
         substream: Box<dyn Substream>,
@@ -196,7 +210,7 @@ impl ProtocolSet {
         &mut self,
         peer: PeerId,
         protocol: ProtocolName,
-        substream_id: usize,
+        direction: Direction,
         substream: R,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
@@ -216,7 +230,7 @@ impl ProtocolSet {
                     .send(ConnectionEvent::SubstreamOpened {
                         peer,
                         protocol: protocol.clone(),
-                        substream_id,
+                        direction,
                         substream,
                     })
                     .await

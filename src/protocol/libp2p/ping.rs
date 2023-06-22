@@ -22,7 +22,7 @@ use crate::{
     codec::ProtocolCodec,
     error::Error,
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ConnectionService},
+    protocol::{ConnectionEvent, ConnectionService, Direction},
     substream::Substream,
     types::protocol::ProtocolName,
     TransportService, DEFAULT_CHANNEL_SIZE,
@@ -188,18 +188,8 @@ impl Ping {
     }
 
     /// Substream opened to remote peer.
-    async fn on_inbound_substream(
-        &mut self,
-        peer: PeerId,
-        substream_id: usize,
-        mut substream: Box<dyn Substream>,
-    ) {
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?peer,
-            ?substream_id,
-            "handle inbound substream"
-        );
+    async fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
         // TODO: don't block here
         match substream.next().await {
@@ -248,16 +238,20 @@ impl Ping {
                 ConnectionEvent::SubstreamOpened {
                     peer,
                     substream,
-                    substream_id,
+                    direction,
                     ..
-                } => match self.pending_outbound.remove(&substream_id) {
-                    Some(stored_peer) => {
-                        debug_assert!(peer == stored_peer);
-                        self.on_outbound_substream(peer, substream).await;
-                    }
-                    None => {
-                        self.on_inbound_substream(peer, substream_id, substream)
-                            .await
+                } => match direction {
+                    Direction::Inbound => self.on_inbound_substream(peer, substream).await,
+                    Direction::Outbound(substream_id) => {
+                        match self.pending_outbound.remove(&substream_id) {
+                            Some(stored_peer) => {
+                                debug_assert!(peer == stored_peer);
+                                self.on_outbound_substream(peer, substream).await;
+                            }
+                            None => {
+                                todo!("substream {substream_id} does not exist");
+                            }
+                        }
                     }
                 },
                 ConnectionEvent::SubstreamOpenFailure { peer, error } => {

@@ -26,7 +26,7 @@
 // TODO: clean up all these errors into something coherent
 // TODO: move `NegotiationError` under `SubstreamError`
 
-use crate::{peer_id::PeerId, types::protocol::ProtocolName};
+use crate::{peer_id::PeerId, protocol::Direction, types::protocol::ProtocolName};
 
 use multiaddr::Multiaddr;
 use multihash::{Multihash, MultihashGeneric};
@@ -64,8 +64,8 @@ pub enum Error {
     CannotDialSelf(Multiaddr),
     #[error("Transport not supported")]
     TransportNotSupported(Multiaddr),
-    #[error("Yamux error for substream `{0}`: `{1}`")]
-    YamuxError(usize, yamux::ConnectionError),
+    #[error("Yamux error for substream `{0:?}`: `{1}`")]
+    YamuxError(Direction, yamux::ConnectionError),
     #[error("Operation not supported: `{0}`")]
     NotSupported(String),
     #[error("Other error occurred: `{0}`")]
