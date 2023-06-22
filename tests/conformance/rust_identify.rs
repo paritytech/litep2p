@@ -139,7 +139,7 @@ async fn libp2p_dials() {
                     SwarmEvent::NewListenAddr { address, .. } => {
                         tracing::info!("Listening on {address:?}")
                     }
-                    SwarmEvent::Behaviour(MyBehaviourEvent::Ping(event)) => {},
+                    SwarmEvent::Behaviour(MyBehaviourEvent::Ping(_event)) => {},
                     SwarmEvent::Behaviour(MyBehaviourEvent::Identify(_event)) => {
                         libp2p_done = true;
 

@@ -26,7 +26,11 @@
 // TODO: clean up all these errors into something coherent
 // TODO: move `NegotiationError` under `SubstreamError`
 
-use crate::{peer_id::PeerId, protocol::Direction, types::protocol::ProtocolName};
+use crate::{
+    peer_id::PeerId,
+    protocol::Direction,
+    types::{protocol::ProtocolName, SubstreamId},
+};
 
 use multiaddr::Multiaddr;
 use multihash::{Multihash, MultihashGeneric};
@@ -96,6 +100,10 @@ pub enum SubstreamError {
     ConnectionClosed,
     #[error("yamux error: `{0}`")]
     YamuxError(yamux::ConnectionError),
+    #[error("Failed to read from substream, substream id `{0:?}`")]
+    ReadFailure(Option<SubstreamId>),
+    #[error("Failed to write to substream, substream id `{0:?}`")]
+    WriteFailure(Option<SubstreamId>),
 }
 
 #[derive(Debug, thiserror::Error)]

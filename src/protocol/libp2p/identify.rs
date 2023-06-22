@@ -21,7 +21,7 @@
 use crate::{
     codec::ProtocolCodec,
     crypto::PublicKey,
-    error::Error,
+    error::{Error, SubstreamError},
     peer_id::PeerId,
     protocol::{ConnectionEvent, ConnectionService, Direction},
     substream::Substream,
@@ -152,16 +152,18 @@ impl Identify {
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(&mut self, peer: PeerId, mut service: ConnectionService) {
+    async fn on_connection_established(
+        &mut self,
+        peer: PeerId,
+        mut service: ConnectionService,
+    ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-        match service.open_substream().await {
-            Ok(substream_id) => {
-                self.pending_outbound.insert(substream_id, peer);
-                self.peers.insert(peer, service);
-            }
-            Err(_) => tracing::debug!(target: LOG_TARGET, ?peer, "connection closed"),
-        }
+        let substream_id = service.open_substream().await?;
+        self.pending_outbound.insert(substream_id, peer);
+        self.peers.insert(peer, service);
+
+        Ok(())
     }
 
     /// Connection closed to remote peer.
@@ -176,7 +178,7 @@ impl Identify {
         peer: PeerId,
         protocol: ProtocolName,
         mut substream: Box<dyn Substream>,
-    ) {
+    ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
@@ -202,7 +204,7 @@ impl Identify {
             .expect("`msg` to have enough capacity");
 
         // TODO: this is not good
-        let _ = substream.send(msg.into()).await;
+        substream.send(msg.into()).await
     }
 
     /// Outbound substream opened.
@@ -212,44 +214,32 @@ impl Identify {
         protocol: ProtocolName,
         substream_id: SubstreamId,
         mut substream: Box<dyn Substream>,
-    ) {
+    ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
             ?protocol,
             ?substream_id,
-            "inbound substream opened"
+            "outbound substream opened"
         );
 
-        match substream.next().await {
-            Some(Ok(payload)) => {
-                match identify_schema::Identify::decode(payload.to_vec().as_slice()) {
-                    Ok(identify) => {
-                        // suppress error as the user may have intentionally dropped the event stream
-                        // which should not cause the the ping protocol to stop working.
-                        let _ = self
-                            .tx
-                            .send(IdentifyEvent::PeerIdentified {
-                                peer,
-                                supported_protocols: HashSet::from_iter(identify.protocols),
-                            })
-                            .await;
-                    }
-                    Err(error) => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?error,
-                            "failed to parse `Identify` from response"
-                        );
-                    }
-                }
-            }
-            Some(Err(error)) => {
-                tracing::error!(target: LOG_TARGET, ?error, "failed to read payload");
-                todo!();
-            }
-            None => {}
-        }
+        // TODO: not good, use `SubstreamSet`
+        let payload =
+            substream
+                .next()
+                .await
+                .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(Some(
+                    substream_id,
+                ))))??;
+
+        let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
+        self.tx
+            .send(IdentifyEvent::PeerIdentified {
+                peer,
+                supported_protocols: HashSet::from_iter(info.protocols),
+            })
+            .await
+            .map_err(From::from)
     }
 
     /// Failed to open substream to remote peer.
@@ -269,7 +259,14 @@ impl Identify {
         while let Some(event) = self.service.next_event().await {
             match event {
                 ConnectionEvent::ConnectionEstablished { peer, service } => {
-                    self.on_connection_established(peer, service).await;
+                    if let Err(error) = self.on_connection_established(peer, service).await {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?error,
+                            "failed to register peer"
+                        );
+                    }
                 }
                 ConnectionEvent::ConnectionClosed { peer } => {
                     self.on_connection_closed(peer);
@@ -281,11 +278,30 @@ impl Identify {
                     substream,
                 } => match direction {
                     Direction::Inbound => {
-                        self.on_inbound_substream(peer, protocol, substream).await;
+                        if let Err(error) =
+                            self.on_inbound_substream(peer, protocol, substream).await
+                        {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?error,
+                                "failed to handle inbound substream"
+                            );
+                        }
                     }
                     Direction::Outbound(substream_id) => {
-                        self.on_outbound_substream(peer, protocol, substream_id, substream)
-                            .await;
+                        if let Err(error) = self
+                            .on_outbound_substream(peer, protocol, substream_id, substream)
+                            .await
+                        {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?substream_id,
+                                ?error,
+                                "failed to handle outbound substream"
+                            );
+                        }
                     }
                 },
                 ConnectionEvent::SubstreamOpenFailure { peer, error } => {
