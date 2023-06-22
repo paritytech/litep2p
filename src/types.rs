@@ -19,3 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 pub mod protocol;
+
+/// Substream ID.
+pub type SubstreamId = usize;

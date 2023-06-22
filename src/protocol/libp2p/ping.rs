@@ -24,7 +24,7 @@ use crate::{
     peer_id::PeerId,
     protocol::{ConnectionEvent, ConnectionService, Direction},
     substream::Substream,
-    types::protocol::ProtocolName,
+    types::{protocol::ProtocolName, SubstreamId},
     TransportService, DEFAULT_CHANNEL_SIZE,
 };
 
@@ -113,7 +113,7 @@ pub struct Ping {
     peers: HashMap<PeerId, ConnectionService>,
 
     /// Pending outbound substreams.
-    pending_outbound: HashMap<usize, PeerId>, // TODO: does this really need to be a hashmap?
+    pending_outbound: HashMap<SubstreamId, PeerId>, // TODO: does this really need to be a hashmap?
 }
 
 impl Ping {

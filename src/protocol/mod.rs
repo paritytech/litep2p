@@ -25,7 +25,7 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     substream::{RawSubstream, Substream},
-    types::protocol::ProtocolName,
+    types::{protocol::ProtocolName, SubstreamId},
     ProtocolInfo, TransportContext, DEFAULT_CHANNEL_SIZE,
 };
 
@@ -47,7 +47,7 @@ pub enum Direction {
     Inbound,
 
     /// Substream was opened by the local peer.
-    Outbound(usize),
+    Outbound(SubstreamId),
 }
 
 /// Events emitted by a connection to protocols.
@@ -121,7 +121,7 @@ pub enum ProtocolEvent {
         ///
         /// This allows the protocol to distinguish inbound substreams from outbound substreams
         /// and associate incoming substreams with whatever logic it has.
-        substream_id: usize,
+        substream_id: SubstreamId,
     },
 }
 
@@ -135,7 +135,7 @@ pub struct ConnectionService {
     protocol: ProtocolName,
 
     /// Next ephemeral substream ID.
-    next_substream_id: usize,
+    next_substream_id: SubstreamId,
 }
 
 impl ConnectionService {
@@ -149,14 +149,14 @@ impl ConnectionService {
     }
 
     /// Get next ephemeral substream ID.
-    fn next_substream_id(&mut self) -> usize {
+    fn next_substream_id(&mut self) -> SubstreamId {
         let substream_id = self.next_substream_id;
         self.next_substream_id += 1;
         substream_id
     }
 
     /// Open substream to remote peer over `protocol`.
-    pub async fn open_substream(&mut self) -> crate::Result<usize> {
+    pub async fn open_substream(&mut self) -> crate::Result<SubstreamId> {
         let substream_id = self.next_substream_id();
         self.tx
             .send(ProtocolEvent::OpenSubstream {

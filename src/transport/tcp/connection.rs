@@ -26,7 +26,7 @@ use crate::{
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
     transport::tcp::{socket_addr_to_multi_addr, LOG_TARGET},
-    types::protocol::ProtocolName,
+    types::{protocol::ProtocolName, SubstreamId},
     TransportContext,
 };
 
@@ -63,7 +63,7 @@ pub struct TcpConnection {
     peer: PeerId,
 
     /// Next substream ID.
-    next_substream_id: usize,
+    next_substream_id: SubstreamId,
 
     /// Remote address.
     address: Multiaddr,
@@ -151,7 +151,7 @@ impl TcpConnection {
     /// Accept substream.
     pub async fn accept_substream(
         stream: yamux::Stream,
-        substream_id: usize,
+        substream_id: SubstreamId,
         protocols: Vec<ProtocolName>,
     ) -> crate::Result<Substream> {
         tracing::trace!(
