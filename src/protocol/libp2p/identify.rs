@@ -25,11 +25,11 @@ use crate::{
     peer_id::PeerId,
     protocol::{ConnectionEvent, ConnectionService, Direction},
     substream::Substream,
-    types::protocol::ProtocolName,
+    types::{protocol::ProtocolName, SubstreamId},
     TransportService, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{SinkExt, Stream};
+use futures::{SinkExt, Stream, StreamExt};
 use multiaddr::Multiaddr;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
@@ -80,7 +80,7 @@ impl Config {
     /// Create new [`IdentifyConfig`].
     ///
     /// Returns a config that is given to `Litep2pConfig` and an event stream for ping events.
-    pub fn new() -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send>) {
+    pub fn new() -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
         (
@@ -115,7 +115,7 @@ pub struct Identify {
     service: TransportService,
 
     /// TX channel for sending events to the user protocol.
-    _tx: Sender<IdentifyEvent>,
+    tx: Sender<IdentifyEvent>,
 
     /// Connected peers.
     peers: HashMap<PeerId, ConnectionService>,
@@ -128,6 +128,9 @@ pub struct Identify {
 
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,
+
+    /// Pending outbound substreams.
+    pending_outbound: HashMap<SubstreamId, PeerId>,
 }
 
 impl Identify {
@@ -135,10 +138,11 @@ impl Identify {
     pub fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
-            _tx: config.tx_event,
+            tx: config.tx_event,
             peers: HashMap::new(),
             public: config.public.expect("public key to be supplied"),
             listen_addresses: config.listen_addresses,
+            pending_outbound: HashMap::new(),
             protocols: config
                 .protocols
                 .iter()
@@ -148,9 +152,16 @@ impl Identify {
     }
 
     /// Connection established to remote peer.
-    fn on_connection_established(&mut self, peer: PeerId, connection: ConnectionService) {
+    async fn on_connection_established(&mut self, peer: PeerId, mut service: ConnectionService) {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
-        self.peers.insert(peer, connection);
+
+        match service.open_substream().await {
+            Ok(substream_id) => {
+                self.pending_outbound.insert(substream_id, peer);
+                self.peers.insert(peer, service);
+            }
+            Err(_) => tracing::debug!(target: LOG_TARGET, ?peer, "connection closed"),
+        }
     }
 
     /// Connection closed to remote peer.
@@ -159,34 +170,19 @@ impl Identify {
         self.peers.remove(&peer);
     }
 
-    /// Substream opened to remote peer.
-    async fn on_substream_opened(
+    /// Inbound substream opened.
+    async fn on_inbound_substream(
         &mut self,
         peer: PeerId,
         protocol: ProtocolName,
         mut substream: Box<dyn Substream>,
     ) {
-        tracing::trace!(target: LOG_TARGET, ?peer, ?protocol, "substream opened");
-
-        // match identify_schema::Identify::decode(payload.to_vec().as_slice()) {
-        //     Ok(identify) => {
-        //         let _ = self
-        //             .event_tx
-        //             .send(Libp2pProtocolEvent::Identify(
-        //                 IdentifyEvent::PeerIdentified {
-        //                     peer,
-        //                     supported_protocols: HashSet::from_iter(identify.protocols),
-        //                 },
-        //             ))
-        //             .await;
-        //     }
-        //     Err(err) => {
-        //         tracing::error!(
-        //             target: LOG_TARGET,
-        //             "failed to parse `Identify` from response"
-        //         );
-        //     }
-        // }
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?protocol,
+            "inbound substream opened"
+        );
 
         let identify = identify_schema::Identify {
             protocol_version: None,
@@ -209,6 +205,53 @@ impl Identify {
         let _ = substream.send(msg.into()).await;
     }
 
+    /// Outbound substream opened.
+    async fn on_outbound_substream(
+        &mut self,
+        peer: PeerId,
+        protocol: ProtocolName,
+        substream_id: SubstreamId,
+        mut substream: Box<dyn Substream>,
+    ) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?protocol,
+            ?substream_id,
+            "inbound substream opened"
+        );
+
+        match substream.next().await {
+            Some(Ok(payload)) => {
+                match identify_schema::Identify::decode(payload.to_vec().as_slice()) {
+                    Ok(identify) => {
+                        // suppress error as the user may have intentionally dropped the event stream
+                        // which should not cause the the ping protocol to stop working.
+                        let _ = self
+                            .tx
+                            .send(IdentifyEvent::PeerIdentified {
+                                peer,
+                                supported_protocols: HashSet::from_iter(identify.protocols),
+                            })
+                            .await;
+                    }
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?error,
+                            "failed to parse `Identify` from response"
+                        );
+                    }
+                }
+            }
+            Some(Err(error)) => {
+                tracing::error!(target: LOG_TARGET, ?error, "failed to read payload");
+                todo!();
+            }
+            None => {}
+        }
+    }
+
     /// Failed to open substream to remote peer.
     fn on_substream_open_failure(&mut self, peer: PeerId, error: Error) {
         tracing::debug!(
@@ -226,7 +269,7 @@ impl Identify {
         while let Some(event) = self.service.next_event().await {
             match event {
                 ConnectionEvent::ConnectionEstablished { peer, service } => {
-                    self.on_connection_established(peer, service);
+                    self.on_connection_established(peer, service).await;
                 }
                 ConnectionEvent::ConnectionClosed { peer } => {
                     self.on_connection_closed(peer);
@@ -238,10 +281,11 @@ impl Identify {
                     substream,
                 } => match direction {
                     Direction::Inbound => {
-                        self.on_substream_opened(peer, protocol, substream).await;
+                        self.on_inbound_substream(peer, protocol, substream).await;
                     }
-                    Direction::Outbound(_substream_id) => {
-                        todo!();
+                    Direction::Outbound(substream_id) => {
+                        self.on_outbound_substream(peer, protocol, substream_id, substream)
+                            .await;
                     }
                 },
                 ConnectionEvent::SubstreamOpenFailure { peer, error } => {
