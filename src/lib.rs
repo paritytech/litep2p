@@ -26,6 +26,7 @@ use crate::{
     peer_id::PeerId,
     protocol::{
         libp2p::{identify::Identify, ping::Ping},
+        request_response::RequestResponseProtocol,
         ConnectionEvent, ProtocolEvent,
     },
     transport::{tcp::TcpTransport, Transport, TransportEvent},
@@ -191,8 +192,18 @@ impl Litep2p {
             // tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
         }
 
-        // TODO: go through all request-response protocols and start the protocol runners
-        //       passing in the command the notification config
+        // start request-response protocol event loops
+        for (name, config) in config.request_response_protocols.into_iter() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?name,
+                "enable request-response protocol",
+            );
+            protocols.push(name.clone());
+
+            let service = transport_ctx.add_protocol(name, config.codec.clone())?;
+            tokio::spawn(async move { RequestResponseProtocol::new(service, config).run().await });
+        }
 
         // start ping protocol event loop if enabled
         if let Some(ping_config) = config.ping.take() {
