@@ -28,6 +28,7 @@ use crate::{
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 /// Request-response error.
+#[derive(Debug, Clone)]
 pub enum RequestResponseError {
     /// Request was rejected.
     Rejected,
@@ -37,7 +38,8 @@ pub enum RequestResponseError {
 }
 
 /// Request-response events.
-pub enum RequestReponseEvent {
+#[derive(Debug, Clone)]
+pub enum RequestResponseEvent {
     /// Request received from remote
     RequestReceived {
         /// Peer Id.
@@ -54,6 +56,9 @@ pub enum RequestReponseEvent {
     ResponseReceived {
         /// Peer Id.
         peer: PeerId,
+
+        /// Request ID.
+        request_id: RequestId,
 
         /// Received request.
         request: Vec<u8>,
@@ -72,46 +77,107 @@ pub enum RequestReponseEvent {
     },
 }
 
-pub enum InnerRequestResponseEvent {}
-pub enum RequestResponseCommand {}
+/// Request-response commands.
+pub(crate) enum RequestResponseCommand {
+    /// Send request to remote peer.
+    SendRequest {
+        /// Peer ID.
+        peer: PeerId,
 
+        /// Request ID.
+        ///
+        /// When a response is received or the request fails, the event contains this ID that
+        /// the user protocol can associate with the correct request.
+        ///
+        /// If the user protocol only has one active request per peer, this ID can be safely discarded.
+        request_id: RequestId,
+
+        /// Request.
+        request: Vec<u8>,
+    },
+
+    /// Send response.
+    SendResponse {
+        /// Request ID.
+        ///
+        /// This is the request ID that was received in [`RequestResponseEvent::RequestReceived`].
+        request_id: RequestId,
+
+        /// Response.
+        response: Vec<u8>,
+    },
+}
+
+/// Handle given to the user protocol which allows it to interact with the request-response protocol.
 pub struct RequestResponseHandle {
-    _event_rx: Receiver<InnerRequestResponseEvent>,
-    _command_tx: Sender<RequestResponseCommand>,
+    /// TX channel for sending commands to the request-response protocol.
+    event_rx: Receiver<RequestResponseEvent>,
+
+    /// RX channel for receiving events from the request-response protocol.
+    command_tx: Sender<RequestResponseCommand>,
+
+    /// Next ephemeral request ID.
+    next_request_id: RequestId,
 }
 
 impl RequestResponseHandle {
-    pub fn new(
-        _event_rx: Receiver<InnerRequestResponseEvent>,
-        _command_tx: Sender<RequestResponseCommand>,
+    /// Create new [`RequestResponseHandle`].
+    pub(crate) fn new(
+        event_rx: Receiver<RequestResponseEvent>,
+        command_tx: Sender<RequestResponseCommand>,
     ) -> Self {
         Self {
-            _event_rx,
-            _command_tx,
+            event_rx,
+            command_tx,
+            next_request_id: 0usize,
         }
+    }
+
+    /// Get next ephemeral request ID.
+    // TODO: make this a helper of `RequestId`.
+    fn next_request_id(&mut self) -> RequestId {
+        let request_id = self.next_request_id;
+        self.next_request_id += 1;
+
+        request_id
     }
 
     /// Send request to remote peer.
     pub async fn send_request(
         &mut self,
-        _peer: PeerId,
-        _request: Vec<u8>,
+        peer: PeerId,
+        request: Vec<u8>,
     ) -> crate::Result<RequestId> {
-        todo!();
+        let request_id = self.next_request_id();
+        self.command_tx
+            .send(RequestResponseCommand::SendRequest {
+                peer,
+                request_id,
+                request,
+            })
+            .await
+            .map(|_| request_id)
+            .map_err(From::from)
     }
 
     /// Send response to remote peer.
     pub async fn send_response(
         &mut self,
-        _request_id: RequestId,
-        _response: Vec<u8>,
+        request_id: RequestId,
+        response: Vec<u8>,
     ) -> crate::Result<()> {
-        todo!();
+        self.command_tx
+            .send(RequestResponseCommand::SendResponse {
+                request_id,
+                response,
+            })
+            .await
+            .map_err(From::from)
     }
 
     /// Poll next event from the request-response protocol.
-    pub async fn next_event(&mut self) -> Option<RequestReponseEvent> {
-        todo!();
+    pub async fn next_event(&mut self) -> Option<RequestResponseEvent> {
+        self.event_rx.recv().await
     }
 }
 
@@ -128,25 +194,25 @@ pub struct Config {
     pub(crate) _max_slots: usize,
 
     /// TX channel for sending events to the user protocol.
-    pub(crate) _event_tx: Sender<InnerRequestResponseEvent>,
+    pub(crate) event_tx: Sender<RequestResponseEvent>,
 
     /// RX channel for receiving commands from the user protocol.
-    pub(crate) _command_rx: Receiver<RequestResponseCommand>,
+    pub(crate) command_rx: Receiver<RequestResponseCommand>,
 }
 
 impl Config {
     /// Create new [`Config`].
     pub fn new(protocol_name: ProtocolName, _max_slots: usize) -> (Self, RequestResponseHandle) {
-        let (_event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let (command_tx, _command_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let handle = RequestResponseHandle::new(event_rx, command_tx);
 
         (
             Self {
                 protocol_name,
                 _max_slots,
-                _event_tx,
-                _command_rx,
+                event_tx,
+                command_rx,
                 codec: ProtocolCodec::UnsignedVarint,
             },
             handle,
@@ -154,6 +220,7 @@ impl Config {
     }
 
     /// Get protocol name.
+    // TODO: can this be removed?
     pub(crate) fn protocol_name(&self) -> &ProtocolName {
         &self.protocol_name
     }
