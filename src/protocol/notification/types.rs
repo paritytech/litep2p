@@ -22,17 +22,8 @@ use crate::{peer_id::PeerId, types::protocol::ProtocolName};
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotificationEvent {}
-
-#[async_trait::async_trait]
-pub trait NotificationService {
-    /// Open substream to peer.
-    fn open_substream(&self, peer: usize);
-
-    /// Poll next event from the protocol.
-    async fn next_event(&mut self) -> Option<NotificationEvent>;
-}
 
 /// Notification commands sent by the [`NotificationService`] to the protocol.
 pub enum NotificationCommand {
@@ -41,11 +32,20 @@ pub enum NotificationCommand {
         /// Peer ID.
         peer: PeerId,
     },
+
+    /// Set handshake.
+    SetHandshake {
+        /// Handshake.
+        handshake: Vec<u8>,
+    },
 }
 
-// TODO: documentation
+/// Handle allowing the user protocol to interact with this notification protocol.
 pub struct NotificationHandle {
+    /// RX channel for receiving events from the notification protocol.
     _event_rx: Receiver<NotificationEvent>,
+
+    /// TX channel for sending commands to the notification protocol.
     _command_tx: Sender<NotificationCommand>,
 }
 
@@ -60,12 +60,9 @@ impl NotificationHandle {
             _command_tx,
         }
     }
-}
 
-#[async_trait::async_trait]
-impl NotificationService for NotificationHandle {
     /// Open substream to peer.
-    fn open_substream(&self, _peer: usize) {
+    async fn open_substream(&self, _peer: usize) {
         todo!();
     }
 
@@ -104,7 +101,7 @@ impl Config {
         _max_notification_size: usize,
         _handshake: Vec<u8>,
         _protocol_aliases: Vec<ProtocolName>,
-    ) -> (Self, Box<dyn NotificationService>) {
+    ) -> (Self, NotificationHandle) {
         let (_event_tx, event_rx) = channel(64);
         let (command_tx, _command_rx) = channel(64);
         let handle = NotificationHandle::new(event_rx, command_tx);
@@ -118,7 +115,7 @@ impl Config {
                 _event_tx,
                 _command_rx,
             },
-            Box::new(handle),
+            handle,
         )
     }
 
