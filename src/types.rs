@@ -22,3 +22,6 @@ pub mod protocol;
 
 /// Substream ID.
 pub type SubstreamId = usize;
+
+/// Request ID.
+pub type RequestId = usize;
