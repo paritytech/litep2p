@@ -163,8 +163,9 @@ impl ConnectionService {
                 protocol: self.protocol.clone(),
                 substream_id,
             })
-            .await?;
-        Ok(substream_id)
+            .await
+            .map(|_| substream_id)
+            .map_err(From::from)
     }
 }
 

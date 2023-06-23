@@ -172,12 +172,14 @@ impl NotificationProtocol {
     /// Local node opened a substream to remote node.
     async fn on_outbound_substream(
         &mut self,
+        protocol: ProtocolName,
         peer: PeerId,
         substream_id: SubstreamId,
         mut substream: Box<dyn Substream>,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
+            ?protocol,
             ?peer,
             ?substream_id,
             "handle outbound substream",
@@ -220,7 +222,7 @@ impl NotificationProtocol {
                     // TODO: store `inbound` to substream set
                     self.event_tx
                         .send(NotificationEvent::NotificationStreamOpened {
-                            protocol: ProtocolName::from("/notif/1"),
+                            protocol,
                             peer,
                             handshake: handshake.unwrap().into(),
                         })
@@ -426,7 +428,7 @@ impl NotificationProtocol {
                         }
                         Direction::Outbound(substream_id) => {
                             if let Err(error) = self
-                                .on_outbound_substream(peer, substream_id, substream)
+                                .on_outbound_substream(protocol, peer, substream_id, substream)
                                 .await
                             {
                                 tracing::debug!(
