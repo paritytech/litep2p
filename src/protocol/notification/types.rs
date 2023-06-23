@@ -18,15 +18,67 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{peer_id::PeerId, types::protocol::ProtocolName};
+use crate::{
+    codec::ProtocolCodec, peer_id::PeerId, types::protocol::ProtocolName, DEFAULT_CHANNEL_SIZE,
+};
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
+/// Logging target for the file.
+const LOG_TARGET: &str = "notification::handle";
+
+/// Validation result.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NotificationEvent {}
+pub enum ValidationResult {
+    /// Accept the inbound substream.
+    Accept,
+
+    /// Reject the inbound substream.
+    Reject,
+}
+
+/// Notification events.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotificationEvent {
+    /// Validate substream.
+    ValidateSubstream {
+        /// Protocol name.
+        protocol: ProtocolName,
+
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Handshake.
+        handshake: Vec<u8>,
+    },
+
+    /// Notification stream opened.
+    NotificationStreamOpened {
+        /// Protocol name.
+        protocol: ProtocolName,
+
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Handshake.
+        handshake: Vec<u8>,
+    },
+
+    /// Notification stream closed.
+    NotificationStreamClosed {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
+    /// Failed to open notification stream.
+    NotificationStreamOpenFailure {
+        /// Peer ID.
+        peer: PeerId,
+    },
+}
 
 /// Notification commands sent by the [`NotificationService`] to the protocol.
-pub enum NotificationCommand {
+pub(crate) enum NotificationCommand {
     /// Open substream to peer.
     OpenSubstream {
         /// Peer ID.
@@ -38,37 +90,60 @@ pub enum NotificationCommand {
         /// Handshake.
         handshake: Vec<u8>,
     },
+
+    /// Send validation result for the inbound protocol.
+    SubstreamValidated {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Validation result.
+        result: ValidationResult,
+    },
 }
 
 /// Handle allowing the user protocol to interact with this notification protocol.
 pub struct NotificationHandle {
     /// RX channel for receiving events from the notification protocol.
-    _event_rx: Receiver<NotificationEvent>,
+    event_rx: Receiver<NotificationEvent>,
 
     /// TX channel for sending commands to the notification protocol.
-    _command_tx: Sender<NotificationCommand>,
+    command_tx: Sender<NotificationCommand>,
 }
 
 impl NotificationHandle {
     /// Create new [`NotificationHandle`].
-    pub fn new(
-        _event_rx: Receiver<NotificationEvent>,
-        _command_tx: Sender<NotificationCommand>,
+    pub(crate) fn new(
+        event_rx: Receiver<NotificationEvent>,
+        command_tx: Sender<NotificationCommand>,
     ) -> Self {
         Self {
-            _event_rx,
-            _command_tx,
+            event_rx,
+            command_tx,
         }
     }
 
     /// Open substream to peer.
-    async fn open_substream(&self, _peer: usize) {
-        todo!();
+    pub async fn open_substream(&self, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
+
+        let _ = self
+            .command_tx
+            .send(NotificationCommand::OpenSubstream { peer })
+            .await;
+    }
+
+    pub async fn send_validation_result(&self, peer: PeerId, result: ValidationResult) {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?result, "send validation result");
+
+        let _ = self
+            .command_tx
+            .send(NotificationCommand::SubstreamValidated { peer, result })
+            .await;
     }
 
     /// Poll next event from the protocol.
-    async fn next_event(&mut self) -> Option<NotificationEvent> {
-        todo!();
+    pub async fn next_event(&mut self) -> Option<NotificationEvent> {
+        self.event_rx.recv().await
     }
 }
 
@@ -76,22 +151,25 @@ impl NotificationHandle {
 #[derive(Debug)]
 pub struct Config {
     /// Protocol name.
-    protocol_name: ProtocolName,
+    pub(crate) protocol_name: ProtocolName,
+
+    /// Protocol codec.
+    pub(crate) codec: ProtocolCodec,
 
     /// Maximum notification size.
     _max_notification_size: usize,
 
     /// Handshake bytes.
-    _handshake: Vec<u8>,
+    pub(crate) handshake: Vec<u8>,
 
     /// Protocol aliases.
-    _protocol_aliases: Vec<ProtocolName>,
+    pub(crate) _protocol_aliases: Vec<ProtocolName>,
 
     /// TX channel passed to the protocol used for sending events.
-    _event_tx: Sender<NotificationEvent>,
+    pub(crate) event_tx: Sender<NotificationEvent>,
 
     /// RX channel passed to the protocol used for receiving commands.
-    _command_rx: Receiver<NotificationCommand>,
+    pub(crate) command_rx: Receiver<NotificationCommand>,
 }
 
 impl Config {
@@ -99,21 +177,22 @@ impl Config {
     pub fn new(
         protocol_name: ProtocolName,
         _max_notification_size: usize,
-        _handshake: Vec<u8>,
+        handshake: Vec<u8>,
         _protocol_aliases: Vec<ProtocolName>,
     ) -> (Self, NotificationHandle) {
-        let (_event_tx, event_rx) = channel(64);
-        let (command_tx, _command_rx) = channel(64);
+        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let handle = NotificationHandle::new(event_rx, command_tx);
 
         (
             Self {
                 protocol_name,
+                codec: ProtocolCodec::UnsignedVarint,
                 _max_notification_size,
-                _handshake,
+                handshake,
                 _protocol_aliases,
-                _event_tx,
-                _command_rx,
+                event_tx,
+                command_rx,
             },
             handle,
         )
