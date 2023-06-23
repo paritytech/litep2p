@@ -25,7 +25,7 @@ use futures::{Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     fmt::Debug,
     pin::Pin,
     task::{Context, Poll},
@@ -59,6 +59,12 @@ pub struct SubstreamSet<S: Substream> {
     substreams: HashMap<PeerId, S>,
 }
 
+impl<S: Substream> Default for SubstreamSet<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<S: Substream> SubstreamSet<S> {
     /// Create new [`SubstreamSet`].
     pub fn new() -> Self {
@@ -66,11 +72,23 @@ impl<S: Substream> SubstreamSet<S> {
             substreams: HashMap::new(),
         }
     }
-}
 
-impl<S: Substream> Default for SubstreamSet<S> {
-    fn default() -> Self {
-        Self::new()
+    /// Add new substream to the set.
+    pub fn insert(&mut self, peer: PeerId, substream: S) {
+        match self.substreams.entry(peer) {
+            Entry::Vacant(entry) => {
+                entry.insert(substream);
+            }
+            Entry::Occupied(_) => {
+                tracing::error!(?peer, "substream alraedy exists");
+                debug_assert!(false);
+            }
+        }
+    }
+
+    /// Remove substream from the set.
+    pub fn remove(&mut self, peer: &PeerId) -> Option<S> {
+        self.substreams.remove(peer)
     }
 }
 
@@ -78,7 +96,6 @@ impl<S: Substream> Stream for SubstreamSet<S> {
     type Item = (PeerId, S::Item);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // TODO: pin project?
         let inner = Pin::into_inner(self);
 
         for (peer, mut substream) in inner.substreams.iter_mut() {
