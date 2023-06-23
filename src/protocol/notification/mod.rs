@@ -291,7 +291,7 @@ impl NotificationProtocol {
                         .send(NotificationEvent::NotificationStreamOpened {
                             protocol,
                             peer,
-                            handshake: vec![1, 2, 3, 4],
+                            handshake: handshake.into(),
                         })
                         .await
                         .unwrap();
