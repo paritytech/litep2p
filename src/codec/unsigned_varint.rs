@@ -26,6 +26,7 @@ use unsigned_varint::codec::UviBytes;
 
 use std::fmt;
 
+#[derive(Default)]
 pub struct UnsignedVarint {
     codec: UviBytes<bytes::Bytes>,
 }
@@ -42,12 +43,6 @@ impl UnsignedVarint {
         Self {
             codec: UviBytes::<Bytes>::default(),
         }
-    }
-}
-
-impl Default for UnsignedVarint {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

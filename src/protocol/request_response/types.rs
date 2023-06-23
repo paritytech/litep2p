@@ -27,18 +27,24 @@ use crate::{
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
+/// Logging target for the file.
+const LOG_TARGET: &str = "request-response::handle";
+
 /// Request-response error.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestResponseError {
     /// Request was rejected.
     Rejected,
 
     /// Request timed out.
     Timeout,
+
+    /// Litep2p isn't connected to the peer.
+    NotConnected,
 }
 
 /// Request-response events.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestResponseEvent {
     /// Request received from remote
     RequestReceived {
@@ -61,7 +67,7 @@ pub enum RequestResponseEvent {
         request_id: RequestId,
 
         /// Received request.
-        request: Vec<u8>,
+        response: Vec<u8>,
     },
 
     /// Request failed.
@@ -148,6 +154,8 @@ impl RequestResponseHandle {
         peer: PeerId,
         request: Vec<u8>,
     ) -> crate::Result<RequestId> {
+        tracing::trace!(target: LOG_TARGET, ?peer, "send request to peer");
+
         let request_id = self.next_request_id();
         self.command_tx
             .send(RequestResponseCommand::SendRequest {
@@ -166,6 +174,8 @@ impl RequestResponseHandle {
         request_id: RequestId,
         response: Vec<u8>,
     ) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
+
         self.command_tx
             .send(RequestResponseCommand::SendResponse {
                 request_id,

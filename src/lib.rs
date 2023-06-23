@@ -179,13 +179,13 @@ impl Litep2p {
         let mut protocols = Vec::new();
 
         // start notification protocol event loops
-        for (name, _config) in config.notification_protocols.into_iter() {
+        for (protocol, _config) in config.notification_protocols.into_iter() {
             tracing::debug!(
                 target: LOG_TARGET,
-                protocol = ?name,
+                ?protocol,
                 "enable notification protocol",
             );
-            protocols.push(name);
+            protocols.push(protocol);
 
             // TODO: fix
             // let service = transport_ctx.add_protocol(name)?;
@@ -193,15 +193,15 @@ impl Litep2p {
         }
 
         // start request-response protocol event loops
-        for (name, config) in config.request_response_protocols.into_iter() {
+        for (protocol, config) in config.request_response_protocols.into_iter() {
             tracing::debug!(
                 target: LOG_TARGET,
-                protocol = ?name,
+                ?protocol,
                 "enable request-response protocol",
             );
-            protocols.push(name.clone());
+            protocols.push(protocol.clone());
 
-            let service = transport_ctx.add_protocol(name, config.codec.clone())?;
+            let service = transport_ctx.add_protocol(protocol, config.codec.clone())?;
             tokio::spawn(async move { RequestResponseProtocol::new(service, config).run().await });
         }
 
