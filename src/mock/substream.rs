@@ -18,6 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use crate::error::Error;
+
+use bytes::BytesMut;
 use futures::{Sink, Stream};
 
 use std::{
@@ -30,32 +33,32 @@ mockall::mock! {
     pub Substream {}
 
      impl Sink<bytes::Bytes> for Substream {
-        type Error = ();
+        type Error = Error;
 
         fn poll_ready<'a>(
             self: Pin<&mut Self>,
             cx: &mut Context<'a>
-        ) -> Poll<Result<(), ()>>;
+        ) -> Poll<Result<(), Error>>;
 
-        fn start_send(self: Pin<&mut Self>, item: bytes::Bytes) -> Result<(), ()>;
+        fn start_send(self: Pin<&mut Self>, item: bytes::Bytes) -> Result<(), Error>;
 
         fn poll_flush<'a>(
             self: Pin<&mut Self>,
             cx: &mut Context<'a>
-        ) -> Poll<Result<(), ()>>;
+        ) -> Poll<Result<(), Error>>;
 
         fn poll_close<'a>(
             self: Pin<&mut Self>,
             cx: &mut Context<'a>
-        ) -> Poll<Result<(), ()>>;
+        ) -> Poll<Result<(), Error>>;
     }
 
     impl Stream for Substream {
-        type Item = ();
+        type Item = crate::Result<BytesMut>;
 
         fn poll_next<'a>(
             self: Pin<&mut Self>,
             cx: &mut Context<'a>
-        ) -> Poll<Option<()>>;
+        ) -> Poll<Option<crate::Result<BytesMut>>>;
     }
 }

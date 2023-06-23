@@ -48,6 +48,7 @@ pub mod transport;
 pub mod types;
 
 mod error;
+mod mock;
 mod multistream_select;
 mod peer_id;
 
