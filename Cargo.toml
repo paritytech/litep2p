@@ -49,3 +49,6 @@ libp2p = { version = "0.51.3", features = [
     "websocket",
     "yamux"
 ]}
+
+[profile.release]
+debug = true
