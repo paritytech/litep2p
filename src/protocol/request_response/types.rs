@@ -18,32 +18,69 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::types::protocol::ProtocolName;
+use crate::{
+    codec::ProtocolCodec,
+    peer_id::PeerId,
+    types::{protocol::ProtocolName, RequestId},
+    DEFAULT_CHANNEL_SIZE,
+};
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-pub trait Encode {}
+/// Request-response error.
+pub enum RequestResponseError {
+    /// Request was rejected.
+    Rejected,
 
-pub enum RequestReponseEvent {}
+    /// Request timed out.
+    Timeout,
+}
 
-#[async_trait::async_trait]
-pub trait RequestResponseService {
-    type Request: Encode + Send;
+/// Request-response events.
+pub enum RequestReponseEvent {
+    /// Request received from remote
+    RequestReceived {
+        /// Peer Id.
+        peer: PeerId,
 
-    fn send_request(&mut self, peer: usize, request: Self::Request) -> usize;
-    async fn next_event(&mut self) -> Option<RequestReponseEvent>;
+        /// Request ID.
+        request_id: RequestId,
+
+        /// Received request.
+        request: Vec<u8>,
+    },
+
+    /// Response received.
+    ResponseReceived {
+        /// Peer Id.
+        peer: PeerId,
+
+        /// Received request.
+        request: Vec<u8>,
+    },
+
+    /// Request failed.
+    RequestFailed {
+        /// Peer Id.
+        peer: PeerId,
+
+        /// Request ID.
+        request_id: RequestId,
+
+        /// Request-response error.
+        error: RequestResponseError,
+    },
 }
 
 pub enum InnerRequestResponseEvent {}
 pub enum RequestResponseCommand {}
 
-pub struct RequestResponseHandle<R: Encode + Send> {
+pub struct RequestResponseHandle {
     _event_rx: Receiver<InnerRequestResponseEvent>,
     _command_tx: Sender<RequestResponseCommand>,
-    _marker: std::marker::PhantomData<R>,
 }
 
-impl<R: Encode + Send> RequestResponseHandle<R> {
+impl RequestResponseHandle {
     pub fn new(
         _event_rx: Receiver<InnerRequestResponseEvent>,
         _command_tx: Sender<RequestResponseCommand>,
@@ -51,20 +88,29 @@ impl<R: Encode + Send> RequestResponseHandle<R> {
         Self {
             _event_rx,
             _command_tx,
-            _marker: Default::default(),
         }
     }
-}
 
-#[async_trait::async_trait]
-impl<R: Encode + Send> RequestResponseService for RequestResponseHandle<R> {
-    type Request = R;
-
-    fn send_request(&mut self, _peer: usize, _request: Self::Request) -> usize {
+    /// Send request to remote peer.
+    pub async fn send_request(
+        &mut self,
+        _peer: PeerId,
+        _request: Vec<u8>,
+    ) -> crate::Result<RequestId> {
         todo!();
     }
 
-    async fn next_event(&mut self) -> Option<RequestReponseEvent> {
+    /// Send response to remote peer.
+    pub async fn send_response(
+        &mut self,
+        _request_id: RequestId,
+        _response: Vec<u8>,
+    ) -> crate::Result<()> {
+        todo!();
+    }
+
+    /// Poll next event from the request-response protocol.
+    pub async fn next_event(&mut self) -> Option<RequestReponseEvent> {
         todo!();
     }
 }
@@ -72,32 +118,39 @@ impl<R: Encode + Send> RequestResponseService for RequestResponseHandle<R> {
 /// Request-response configuration.
 #[derive(Debug)]
 pub struct Config {
+    /// Protocol name.
     protocol_name: ProtocolName,
-    _max_slots: usize,
-    _event_tx: Sender<InnerRequestResponseEvent>,
-    _command_rx: Receiver<RequestResponseCommand>,
+
+    /// Codec used by the protocol.
+    pub(crate) codec: ProtocolCodec,
+
+    /// Maximum slots allocated for inbound requests.
+    pub(crate) _max_slots: usize,
+
+    /// TX channel for sending events to the user protocol.
+    pub(crate) _event_tx: Sender<InnerRequestResponseEvent>,
+
+    /// RX channel for receiving commands from the user protocol.
+    pub(crate) _command_rx: Receiver<RequestResponseCommand>,
 }
 
 impl Config {
     /// Create new [`Config`].
-    pub fn new<R: Encode + Send>(
-        _protocol_name: ProtocolName,
-        _max_slots: usize,
-    ) -> (Self, Box<dyn RequestResponseService<Request = R>>) {
-        let (_event_tx, event_rx) = channel(64);
-        let (command_tx, _command_rx) = channel(64);
-        let _handle = RequestResponseHandle::<R>::new(event_rx, command_tx);
+    pub fn new(protocol_name: ProtocolName, _max_slots: usize) -> (Self, RequestResponseHandle) {
+        let (_event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (command_tx, _command_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let handle = RequestResponseHandle::new(event_rx, command_tx);
 
-        // (
-        //     Self {
-        //         protocol_name,
-        //         _max_slots,
-        //         _event_tx,
-        //         _command_rx,
-        //     },
-        //     todo!(),
-        // )
-        todo!();
+        (
+            Self {
+                protocol_name,
+                _max_slots,
+                _event_tx,
+                _command_rx,
+                codec: ProtocolCodec::UnsignedVarint,
+            },
+            handle,
+        )
     }
 
     /// Get protocol name.
