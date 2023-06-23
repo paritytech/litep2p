@@ -26,6 +26,7 @@ use crate::{
     peer_id::PeerId,
     protocol::{
         libp2p::{identify::Identify, ping::Ping},
+        notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
         ConnectionEvent, ProtocolEvent,
     },
@@ -179,17 +180,16 @@ impl Litep2p {
         let mut protocols = Vec::new();
 
         // start notification protocol event loops
-        for (protocol, _config) in config.notification_protocols.into_iter() {
+        for (protocol, config) in config.notification_protocols.into_iter() {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?protocol,
                 "enable notification protocol",
             );
-            protocols.push(protocol);
+            protocols.push(protocol.clone());
 
-            // TODO: fix
-            // let service = transport_ctx.add_protocol(name)?;
-            // tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
+            let service = transport_ctx.add_protocol(protocol, config.codec.clone())?;
+            tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
         }
 
         // start request-response protocol event loops
