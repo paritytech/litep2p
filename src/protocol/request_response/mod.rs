@@ -427,6 +427,11 @@ impl RequestResponseProtocol {
                                     "failed to send response"
                                 );
                             }
+                        },
+                        RequestResponseCommand::RejectRequest { request_id } => {
+                            tracing::trace!(target: LOG_TARGET, ?request_id, "reject request");
+
+                            self.pending_outbound_responses.remove(&request_id);
                         }
                     }
                 },

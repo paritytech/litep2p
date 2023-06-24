@@ -112,6 +112,12 @@ pub(crate) enum RequestResponseCommand {
         /// Response.
         response: Vec<u8>,
     },
+
+    /// Reject request.
+    RejectRequest {
+        /// Request ID.
+        request_id: RequestId,
+    },
 }
 
 /// Handle given to the user protocol which allows it to interact with the request-response protocol.
@@ -146,6 +152,16 @@ impl RequestResponseHandle {
         self.next_request_id += 1;
 
         request_id
+    }
+
+    /// Reject request.
+    pub async fn reject_request(&mut self, request_id: RequestId) {
+        tracing::trace!(target: LOG_TARGET, ?request_id, "reject request");
+
+        let _ = self
+            .command_tx
+            .send(RequestResponseCommand::RejectRequest { request_id })
+            .await;
     }
 
     /// Send request to remote peer.
