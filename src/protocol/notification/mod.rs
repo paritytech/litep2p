@@ -32,6 +32,7 @@ use crate::{
     TransportService,
 };
 
+use bytes::BytesMut;
 use futures::{
     channel::mpsc,
     stream::{select, Fuse, Select},
@@ -217,7 +218,8 @@ impl NotificationProtocol {
 
         // TODO: don't block here
         match substream.next().await {
-            Some(handshake) => match std::mem::replace(&mut context.state, PeerState::Poisoned) {
+            Some(Ok(handshake)) => match std::mem::replace(&mut context.state, PeerState::Poisoned)
+            {
                 PeerState::OutboundInitiated {
                     substream_id: stored_substream_id,
                 } => {
@@ -251,37 +253,29 @@ impl NotificationProtocol {
                         debug_assert!(false);
                     }
 
-                    // substream.flush().await.unwrap();
-                    // substream.send(vec![1, 1, 2, 2].into()).await.unwrap();
-
+                    // set state to open and inform the user protocol about the stream
                     context.state = PeerState::Open {
                         outbound: substream,
                     };
 
-                    // TODO: store `inbound` to substream set
-                    self.substreams.insert(peer, inbound);
-                    let (async_tx, async_rx) = mpsc::channel(8);
-                    let (sync_tx, sync_rx) = mpsc::channel(2048);
-                    let sink = select(async_rx.fuse(), sync_rx.fuse());
-                    self.receivers.insert(peer, sink);
-                    let sink = NotificationSink::new(sync_tx, async_tx);
-
-                    self.event_tx
-                        .send(InnerNotificationEvent::NotificationStreamOpened {
-                            protocol,
-                            peer,
-                            sink,
-                            handshake: handshake.unwrap().into(),
-                        })
+                    self.on_notification_stream_opened(peer, protocol, handshake, inbound)
                         .await
-                        .unwrap();
-                    Ok(())
                 }
                 state => {
                     tracing::error!(target: LOG_TARGET, "invalid state for {peer:?}: {state:?}");
                     Ok(())
                 }
             },
+            Some(Err(error)) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    ?peer,
+                    ?error,
+                    "failed to read handshake from inbound substream"
+                );
+                Err(Error::SubstreamError(SubstreamError::ConnectionClosed))
+            }
             None => {
                 let _ = self
                     .event_tx
@@ -330,27 +324,13 @@ impl NotificationProtocol {
                     Ok(())
                 }
                 PeerState::OutboundOpen { outbound } => {
-                    // TODO: handle error gracefuly
+                    // acknowledge substream by sending our handshake, set the state to open
+                    // and inform the user protocol about the stream
                     substream.send(self.handshake.clone().into()).await.unwrap();
-                    self.substreams.insert(peer, substream);
                     context.state = PeerState::Open { outbound };
-                    // TODO: handle error gracefuly
-                    let (async_tx, async_rx) = mpsc::channel(8);
-                    let (sync_tx, sync_rx) = mpsc::channel(2048);
-                    let sink = select(async_rx.fuse(), sync_rx.fuse());
-                    self.receivers.insert(peer, sink);
-                    let sink = NotificationSink::new(sync_tx, async_tx);
 
-                    self.event_tx
-                        .send(InnerNotificationEvent::NotificationStreamOpened {
-                            protocol,
-                            peer,
-                            sink,
-                            handshake: handshake.into(),
-                        })
+                    self.on_notification_stream_opened(peer, protocol, handshake, substream)
                         .await
-                        .unwrap();
-                    Ok(())
                 }
                 state => {
                     tracing::error!(target: LOG_TARGET, ?peer, ?state, "invalid state");
@@ -375,6 +355,56 @@ impl NotificationProtocol {
                     "read `None` from inbound substream"
                 );
                 Err(Error::SubstreamError(SubstreamError::ConnectionClosed))
+            }
+        }
+    }
+
+    /// Notification stream has been opened, initialize context for the stream and inform user.
+    ///
+    /// The peer must be in in state `PeerState::Open` as it indicates that both substreams
+    /// (inbound and oubound) are open. Other states are considered invalid state machine transitions.
+    async fn on_notification_stream_opened(
+        &mut self,
+        peer: PeerId,
+        protocol: ProtocolName,
+        handshake: BytesMut,
+        inbound: Box<dyn Substream>,
+    ) -> crate::Result<()> {
+        let Some(context) = self.peers.get_mut(&peer) else {
+            tracing::error!(target: LOG_TARGET, "invalid state: notification stream opened but peer doesn't exist");
+            debug_assert!(false);
+            return Err(Error::PeerDoesntExist(peer));
+        };
+
+        match &mut context.state {
+            PeerState::Open { .. } => {
+                let (async_tx, async_rx) = mpsc::channel(8);
+                let (sync_tx, sync_rx) = mpsc::channel(2048);
+                let notif_stream = select(async_rx.fuse(), sync_rx.fuse());
+                let sink = NotificationSink::new(sync_tx, async_tx);
+
+                self.substreams.insert(peer, inbound);
+                self.receivers.insert(peer, notif_stream);
+
+                // ignore error as the user protocol may have exited.
+                self.event_tx
+                    .send(InnerNotificationEvent::NotificationStreamOpened {
+                        protocol,
+                        peer,
+                        sink,
+                        handshake: handshake.into(),
+                    })
+                    .await
+                    .map_err(From::from)
+            }
+            _ => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    "invalid state: notification stream opened but peer doesn't exist"
+                );
+                debug_assert!(false);
+                // TODO: introduce new error
+                Ok(())
             }
         }
     }
