@@ -607,7 +607,16 @@ impl NotificationProtocol {
                 peer,
                 notification: message.freeze().into(),
             },
-            Err(_) => InnerNotificationEvent::NotificationStreamClosed { peer },
+            Err(_) => {
+                self.substreams.remove(&peer);
+                self.receivers.remove(&peer);
+                self.peers
+                    .get_mut(&peer)
+                    .expect("peer to exist since an event was received")
+                    .state = PeerState::Closed { pending_open: None };
+
+                InnerNotificationEvent::NotificationStreamClosed { peer }
+            }
         };
 
         self.event_tx.send(event).await.map_err(From::from)
