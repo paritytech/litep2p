@@ -18,7 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{error::Error, peer_id::PeerId};
+use crate::{
+    error::{Error, SubstreamError},
+    peer_id::PeerId,
+};
 
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, Stream};
@@ -114,7 +117,12 @@ impl<S: Substream> Stream for SubstreamSet<S> {
             match Pin::new(&mut substream).poll_next(cx) {
                 Poll::Pending => continue,
                 Poll::Ready(Some(data)) => return Poll::Ready(Some((*peer, data))),
-                Poll::Ready(None) => return Poll::Ready(None), // TODO: remove substream from `substreams`
+                Poll::Ready(None) => {
+                    return Poll::Ready(Some((
+                        *peer,
+                        Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
+                    )))
+                }
             }
         }
 
@@ -199,6 +207,36 @@ mod tests {
         assert_eq!(value.1.unwrap(), BytesMut::from(&b"world"[..]));
 
         assert!(futures::poll!(set.next()).is_pending());
+    }
+
+    #[tokio::test]
+    async fn substream_closed() {
+        let mut set = SubstreamSet::<Box<dyn Substream>>::new();
+
+        let peer = PeerId::random();
+        let mut substream = MockSubstream::new();
+        substream
+            .expect_poll_next()
+            .times(1)
+            .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
+        substream
+            .expect_poll_next()
+            .times(1)
+            .return_once(|_| Poll::Ready(None));
+        substream.expect_poll_next().returning(|_| Poll::Pending);
+        let substream = Box::new(substream);
+        set.insert(peer, substream);
+
+        let value = set.next().await.unwrap();
+        assert_eq!(value.0, peer);
+        assert_eq!(value.1.unwrap(), BytesMut::from(&b"hello"[..]));
+
+        match set.next().await {
+            Some((exited_peer, Err(Error::SubstreamError(SubstreamError::ConnectionClosed)))) => {
+                assert_eq!(peer, exited_peer);
+            }
+            _ => panic!("inavlid event received"),
+        }
     }
 
     #[tokio::test]
