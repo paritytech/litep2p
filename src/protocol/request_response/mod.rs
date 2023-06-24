@@ -28,11 +28,12 @@ use crate::{
         },
         ConnectionEvent, ConnectionService, Direction,
     },
-    substream::Substream,
+    substream::{Substream, SubstreamSet},
     types::{RequestId, SubstreamId},
     TransportService,
 };
 
+use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -92,8 +93,11 @@ pub(crate) struct RequestResponseProtocol {
     /// Pending outbound substreams, mapped from `SubstreamId` to `RequestId`.
     pending_outbound: HashMap<SubstreamId, RequestContext>,
 
-    /// Pending responses.
-    pending_responses: HashMap<RequestId, Box<dyn Substream>>,
+    /// Pending outbound responses.
+    pending_outbound_responses: HashMap<RequestId, Box<dyn Substream>>,
+
+    /// Pending inbound responses.
+    pending_inbound_responses: SubstreamSet<(PeerId, RequestId)>,
 
     /// TX channel for sending events to the user protocol.
     event_tx: Sender<RequestResponseEvent>,
@@ -117,7 +121,8 @@ impl RequestResponseProtocol {
             event_tx: config.event_tx,
             command_rx: config.command_rx,
             pending_outbound: HashMap::new(),
-            pending_responses: HashMap::new(),
+            pending_outbound_responses: HashMap::new(),
+            pending_inbound_responses: SubstreamSet::new(),
         }
     }
 
@@ -196,23 +201,11 @@ impl RequestResponseProtocol {
             "substream opened, send request",
         );
 
-        // TODO: don't block here
         let _ = substream.send(request.into()).await.unwrap();
-        let response = substream
-            .next()
-            .await
-            .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(None)))??
-            .freeze()
-            .to_vec();
+        self.pending_inbound_responses
+            .insert((peer, request_id), substream);
 
-        self.event_tx
-            .send(RequestResponseEvent::ResponseReceived {
-                peer,
-                request_id,
-                response,
-            })
-            .await
-            .map_err(From::from)
+        Ok(())
     }
 
     /// Remote opened a substream to local node.
@@ -246,7 +239,8 @@ impl RequestResponseProtocol {
             .map_err(From::from)
         {
             Ok(_) => {
-                self.pending_responses.insert(request_id, substream);
+                self.pending_outbound_responses
+                    .insert(request_id, substream);
                 Ok(())
             }
             Err(error) => Err(error),
@@ -318,12 +312,38 @@ impl RequestResponseProtocol {
             "send response to remote peer"
         );
 
-        match self.pending_responses.remove(&request_id) {
+        match self.pending_outbound_responses.remove(&request_id) {
             Some(mut substream) => substream.send(response.into()).await.map_err(From::from),
             None => {
                 return Err(Error::Other(format!("pending request doesn't exist")));
             }
         }
+    }
+
+    /// Handle substream event.
+    async fn on_substream_event(
+        &mut self,
+        peer: PeerId,
+        request_id: RequestId,
+        message: crate::Result<BytesMut>,
+    ) -> crate::Result<()> {
+        self.pending_inbound_responses.remove(&(peer, request_id));
+
+        let event = match message {
+            Ok(response) => RequestResponseEvent::ResponseReceived {
+                peer,
+                request_id,
+                response: response.freeze().into(),
+            },
+            // TODO: timeout vs rejected
+            Err(_error) => RequestResponseEvent::RequestFailed {
+                peer,
+                request_id,
+                error: RequestResponseError::Rejected,
+            },
+        };
+
+        self.event_tx.send(event).await.map_err(From::from)
     }
 
     /// Start [`RequestResponseProtocol`] event loop.
@@ -408,6 +428,13 @@ impl RequestResponseProtocol {
                                 );
                             }
                         }
+                    }
+                },
+                event = self.pending_inbound_responses.next(), if !self.pending_inbound_responses.is_empty() => {
+                    let ((peer, request_id), event) = event.expect("`SubstreamSet` to return `Some(..)`");
+
+                    if let Err(error) = self.on_substream_event(peer, request_id, event).await {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to handle substream event");
                     }
                 }
             }
