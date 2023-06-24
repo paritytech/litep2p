@@ -90,6 +90,16 @@ impl<S: Substream> SubstreamSet<S> {
     pub fn remove(&mut self, peer: &PeerId) -> Option<S> {
         self.substreams.remove(peer)
     }
+
+    /// Get length of the [`SubstreamSet`].
+    pub fn len(&self) -> usize {
+        self.substreams.len()
+    }
+
+    /// Return true if the [`SubstreamSet`] is empty.
+    pub fn is_empty(&mut self) -> bool {
+        self.substreams.len() == 0usize
+    }
 }
 
 impl<S: Substream> Stream for SubstreamSet<S> {
