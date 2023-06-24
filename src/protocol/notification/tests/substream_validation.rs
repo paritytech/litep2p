@@ -79,7 +79,7 @@ async fn substream_accepted() {
         .unwrap();
 
     match notif.peers.get(&peer).unwrap().state {
-        PeerState::Closed => {}
+        PeerState::Closed { .. } => {}
         _ => panic!("invalid state for peer"),
     }
 
@@ -145,7 +145,7 @@ async fn substream_rejected() {
         .unwrap();
 
     match notif.peers.get(&peer).unwrap().state {
-        PeerState::Closed => {}
+        PeerState::Closed { .. } => {}
         _ => panic!("invalid state for peer"),
     }
 
@@ -178,7 +178,7 @@ async fn substream_rejected() {
     assert!(receiver.try_recv().is_err());
 
     match notif.peers.get(&peer).unwrap().state {
-        PeerState::Closed => {}
+        PeerState::Closed { .. } => {}
         _ => panic!("invalid state for peer"),
     }
 }
@@ -205,7 +205,7 @@ async fn accept_fails_due_to_closed_substream() {
         .unwrap();
 
     match notif.peers.get(&peer).unwrap().state {
-        PeerState::Closed => {}
+        PeerState::Closed { .. } => {}
         _ => panic!("invalid state for peer"),
     }
 
@@ -239,7 +239,7 @@ async fn accept_fails_due_to_closed_substream() {
     assert!(receiver.try_recv().is_err());
 
     match notif.peers.get(&peer).unwrap().state {
-        PeerState::Closed => {}
+        PeerState::Closed { .. } => {}
         _ => panic!("invalid state for peer"),
     }
 }
@@ -274,7 +274,7 @@ async fn accept_fails_due_to_closed_connection() {
         .unwrap();
 
     match notif.peers.get(&peer).unwrap().state {
-        PeerState::Closed => {}
+        PeerState::Closed { .. } => {}
         _ => panic!("invalid state for peer"),
     }
 
@@ -309,7 +309,7 @@ async fn accept_fails_due_to_closed_connection() {
         .is_err());
 
     match notif.peers.get(&peer).unwrap().state {
-        PeerState::Closed => {}
+        PeerState::Closed { .. } => {}
         _ => panic!("invalid state for peer"),
     }
 }

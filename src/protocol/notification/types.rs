@@ -246,7 +246,7 @@ impl NotificationHandle {
 
     /// Close substream to peer.
     pub async fn close_substream(&self, peer: PeerId) {
-        tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
+        tracing::trace!(target: LOG_TARGET, ?peer, "close substream");
 
         let _ = self
             .command_tx
@@ -316,6 +316,7 @@ impl NotificationHandle {
                 })
             }
             InnerNotificationEvent::NotificationStreamClosed { peer } => {
+                self.peers.remove(&peer);
                 Some(NotificationEvent::NotificationStreamClosed { peer })
             }
             InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
