@@ -21,6 +21,7 @@
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
+    peer_id::PeerId,
     protocol::notification::types::{
         Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
     },
@@ -28,10 +29,6 @@ use litep2p::{
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent,
 };
-
-use tokio::time::sleep;
-
-use std::time::Duration;
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let address = litep2p2.listen_addresses().next().unwrap().clone();
@@ -345,4 +342,416 @@ async fn notification_stream_closed() {
         NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer1),
         _ => panic!("invalid event received"),
     }
+}
+
+#[tokio::test]
+async fn reconnect_after_disconnect() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config1)
+        .build();
+
+    let (notif_config2, mut handle2) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected and spawn the litep2p objects in the background
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await;
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2
+        .send_validation_result(peer1, ValidationResult::Accept)
+        .await;
+
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // close the substream
+    handle2.close_substream(peer1).await;
+
+    match handle1.next_event().await.unwrap() {
+        NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer2),
+        _ => panic!("invalid event received"),
+    }
+
+    // open the substream
+    handle2.open_substream(peer1).await;
+
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1
+        .send_validation_result(peer2, ValidationResult::Accept)
+        .await;
+
+    // verify that both peers get the open event
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // send notifications to verify that the connection works again
+    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]);
+    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]);
+
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer1,
+            notification: vec![1, 3, 3, 7],
+        }
+    );
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer2,
+            notification: vec![1, 3, 3, 8],
+        }
+    );
+}
+
+#[tokio::test]
+async fn set_new_handshake() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config1)
+        .build();
+
+    let (notif_config2, mut handle2) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected and spawn the litep2p objects in the background
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await;
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2
+        .send_validation_result(peer1, ValidationResult::Accept)
+        .await;
+
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // close the substream
+    handle2.close_substream(peer1).await;
+
+    match handle1.next_event().await.unwrap() {
+        NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer2),
+        _ => panic!("invalid event received"),
+    }
+
+    // set new handshakes and open the substream
+    handle1.set_handshake(vec![5, 5, 5, 5]).await;
+    handle2.set_handshake(vec![6, 6, 6, 6]).await;
+    handle2.open_substream(peer1).await;
+
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![6, 6, 6, 6],
+        }
+    );
+    handle1
+        .send_validation_result(peer2, ValidationResult::Accept)
+        .await;
+
+    // verify that both peers get the open event
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![5, 5, 5, 5],
+        }
+    );
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![6, 6, 6, 6],
+        }
+    );
+}
+
+#[tokio::test]
+async fn send_sync_notification_non_existent_peer() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config1)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    handle1.send_sync_notification(PeerId::random(), vec![1, 3, 3, 7]);
+}
+
+#[tokio::test]
+async fn send_async_notification_non_existent_peer() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config1)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    assert!(handle1
+        .send_async_notification(PeerId::random(), vec![1, 3, 3, 7])
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn try_to_connect_to_non_existent_peer() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config1)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    let peer = PeerId::random();
+    handle1.open_substream(peer).await;
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer,
+            error: NotificationError::NoConnection
+        }
+    );
+}
+
+#[tokio::test]
+async fn try_to_disconnect_to_non_existent_peer() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, handle1) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config1)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    handle1.close_substream(PeerId::random()).await;
 }
