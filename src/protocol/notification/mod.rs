@@ -141,7 +141,7 @@ pub struct NotificationProtocol {
     peers: HashMap<PeerId, PeerContext>,
 
     /// Open substreams.
-    substreams: SubstreamSet<Box<dyn Substream>>,
+    substreams: SubstreamSet<PeerId>,
 
     /// Receivers.
     receivers: StreamMap<PeerId, Select<ReceiverStream<Vec<u8>>, ReceiverStream<Vec<u8>>>>,

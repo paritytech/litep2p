@@ -18,10 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    error::{Error, SubstreamError},
-    peer_id::PeerId,
-};
+use crate::error::{Error, SubstreamError};
 
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, Stream};
@@ -30,6 +27,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use std::{
     collections::{hash_map::Entry, HashMap},
     fmt::Debug,
+    hash::Hash,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -58,18 +56,23 @@ impl<
 {
 }
 
+/// Substream set key.
+pub trait SubstreamSetKey: Hash + Unpin + Debug + PartialEq + Eq + Copy {}
+
+impl<K: Hash + Unpin + Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
+
 #[derive(Debug)]
-pub struct SubstreamSet<S: Substream> {
-    substreams: HashMap<PeerId, S>,
+pub struct SubstreamSet<K: SubstreamSetKey> {
+    substreams: HashMap<K, Box<dyn Substream>>,
 }
 
-impl<S: Substream> Default for SubstreamSet<S> {
+impl<K: SubstreamSetKey> Default for SubstreamSet<K> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S: Substream> SubstreamSet<S> {
+impl<K: SubstreamSetKey> SubstreamSet<K> {
     /// Create new [`SubstreamSet`].
     pub fn new() -> Self {
         Self {
@@ -78,21 +81,21 @@ impl<S: Substream> SubstreamSet<S> {
     }
 
     /// Add new substream to the set.
-    pub fn insert(&mut self, peer: PeerId, substream: S) {
-        match self.substreams.entry(peer) {
+    pub fn insert(&mut self, key: K, substream: Box<dyn Substream>) {
+        match self.substreams.entry(key) {
             Entry::Vacant(entry) => {
                 entry.insert(substream);
             }
             Entry::Occupied(_) => {
-                tracing::error!(?peer, "substream alraedy exists");
+                tracing::error!(?key, "substream alraedy exists");
                 debug_assert!(false);
             }
         }
     }
 
     /// Remove substream from the set.
-    pub fn remove(&mut self, peer: &PeerId) -> Option<S> {
-        self.substreams.remove(peer)
+    pub fn remove(&mut self, key: &K) -> Option<Box<dyn Substream>> {
+        self.substreams.remove(key)
     }
 
     /// Get length of the [`SubstreamSet`].
@@ -106,25 +109,25 @@ impl<S: Substream> SubstreamSet<S> {
     }
 
     /// Get mutable reference to stored substream.
-    pub fn get_mut(&mut self, peer: &PeerId) -> Option<&mut S> {
-        self.substreams.get_mut(peer)
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut Box<dyn Substream>> {
+        self.substreams.get_mut(key)
     }
 }
 
-impl<S: Substream> Stream for SubstreamSet<S> {
-    type Item = (PeerId, S::Item);
+impl<K: SubstreamSetKey> Stream for SubstreamSet<K> {
+    type Item = (K, <Box<dyn Substream> as Stream>::Item);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inner = Pin::into_inner(self);
 
         // TODO: poll the streams more randomly
-        for (peer, mut substream) in inner.substreams.iter_mut() {
+        for (key, mut substream) in inner.substreams.iter_mut() {
             match Pin::new(&mut substream).poll_next(cx) {
                 Poll::Pending => continue,
-                Poll::Ready(Some(data)) => return Poll::Ready(Some((*peer, data))),
+                Poll::Ready(Some(data)) => return Poll::Ready(Some((*key, data))),
                 Poll::Ready(None) => {
                     return Poll::Ready(Some((
-                        *peer,
+                        *key,
                         Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
                     )))
                 }
@@ -138,12 +141,12 @@ impl<S: Substream> Stream for SubstreamSet<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::substream::MockSubstream;
+    use crate::{mock::substream::MockSubstream, peer_id::PeerId};
     use futures::{SinkExt, StreamExt};
 
     #[test]
     fn add_substream() {
-        let mut set = SubstreamSet::<Box<dyn Substream>>::new();
+        let mut set = SubstreamSet::<PeerId>::new();
 
         let peer = PeerId::random();
         let substream = Box::new(MockSubstream::new());
@@ -158,7 +161,7 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn add_same_peer_twice() {
-        let mut set = SubstreamSet::<Box<dyn Substream>>::new();
+        let mut set = SubstreamSet::<PeerId>::new();
 
         let peer = PeerId::random();
         let substream1 = Box::new(MockSubstream::new());
@@ -170,7 +173,7 @@ mod tests {
 
     #[test]
     fn remove_substream() {
-        let mut set = SubstreamSet::<Box<dyn Substream>>::new();
+        let mut set = SubstreamSet::<PeerId>::new();
 
         let peer1 = PeerId::random();
         let substream1 = Box::new(MockSubstream::new());
@@ -187,7 +190,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_data_from_substream() {
-        let mut set = SubstreamSet::<Box<dyn Substream>>::new();
+        let mut set = SubstreamSet::<PeerId>::new();
 
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
@@ -216,7 +219,7 @@ mod tests {
 
     #[tokio::test]
     async fn substream_closed() {
-        let mut set = SubstreamSet::<Box<dyn Substream>>::new();
+        let mut set = SubstreamSet::<PeerId>::new();
 
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
@@ -250,7 +253,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let mut set = SubstreamSet::<Box<dyn Substream>>::new();
+        let mut set = SubstreamSet::<PeerId>::new();
 
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
@@ -295,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_data_from_two_substreams() {
-        let mut set = SubstreamSet::<Box<dyn Substream>>::new();
+        let mut set = SubstreamSet::<PeerId>::new();
 
         // prepare first substream
         let peer1 = PeerId::random();
