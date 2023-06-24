@@ -22,16 +22,23 @@ use crate::{
     error::{Error, SubstreamError},
     peer_id::PeerId,
     protocol::{
-        notification::types::{NotificationCommand, NotificationEvent, ValidationResult},
+        notification::types::{
+            InnerNotificationEvent, NotificationCommand, NotificationSink, ValidationResult,
+        },
         ConnectionEvent, ConnectionService, Direction,
     },
-    substream::Substream,
+    substream::{Substream, SubstreamSet},
     types::{protocol::ProtocolName, SubstreamId},
     TransportService,
 };
 
-use futures::{SinkExt, StreamExt};
+use futures::{
+    channel::mpsc,
+    stream::{select, Fuse, Select},
+    SinkExt, StreamExt,
+};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio_stream::StreamMap;
 
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -110,13 +117,20 @@ pub struct NotificationProtocol {
     handshake: Vec<u8>,
 
     /// TX channel passed to the protocol used for sending events.
-    event_tx: Sender<NotificationEvent>,
+    event_tx: Sender<InnerNotificationEvent>,
 
     /// RX channel passed to the protocol used for receiving commands.
     command_rx: Receiver<NotificationCommand>,
 
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
+
+    /// Open substreams.
+    substreams: SubstreamSet<Box<dyn Substream>>,
+
+    /// Receivers.
+    receivers:
+        StreamMap<PeerId, Select<Fuse<mpsc::Receiver<Vec<u8>>>, Fuse<mpsc::Receiver<Vec<u8>>>>>,
 }
 
 impl NotificationProtocol {
@@ -127,6 +141,8 @@ impl NotificationProtocol {
             handshake: config.handshake,
             event_tx: config.event_tx,
             command_rx: config.command_rx,
+            substreams: SubstreamSet::new(),
+            receivers: StreamMap::new(),
         }
     }
 
@@ -199,31 +215,62 @@ impl NotificationProtocol {
         // TODO: check if entry exists in `pending_outbound` for `substream_id`
         let _ = substream.send(self.handshake.clone().into()).await?;
 
-        tracing::info!(target: LOG_TARGET, "handshake sent to {peer}");
-
         // TODO: don't block here
         match substream.next().await {
             Some(handshake) => match std::mem::replace(&mut context.state, PeerState::Poisoned) {
-                PeerState::OutboundInitiated { substream_id } => {
-                    // TODO: verify that substream IDs match
+                PeerState::OutboundInitiated {
+                    substream_id: stored_substream_id,
+                } => {
+                    if substream_id != stored_substream_id {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?substream_id,
+                            ?stored_substream_id,
+                            "substream ID mismatch"
+                        );
+                        debug_assert!(false);
+                    }
+
                     context.state = PeerState::OutboundOpen {
                         outbound: substream,
                     };
+
                     Ok(())
                 }
                 PeerState::InboundOpenOutboundInitiated {
-                    substream_id,
+                    substream_id: stored_substream_id,
                     inbound,
                 } => {
-                    // TODO: verify that substream IDs match
+                    if substream_id != stored_substream_id {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?substream_id,
+                            ?stored_substream_id,
+                            "substream ID mismatch"
+                        );
+                        debug_assert!(false);
+                    }
+
+                    // substream.flush().await.unwrap();
+                    // substream.send(vec![1, 1, 2, 2].into()).await.unwrap();
+
                     context.state = PeerState::Open {
                         outbound: substream,
                     };
+
                     // TODO: store `inbound` to substream set
+                    self.substreams.insert(peer, inbound);
+                    let (async_tx, async_rx) = mpsc::channel(8);
+                    let (sync_tx, sync_rx) = mpsc::channel(2048);
+                    let sink = select(async_rx.fuse(), sync_rx.fuse());
+                    self.receivers.insert(peer, sink);
+                    let sink = NotificationSink::new(sync_tx, async_tx);
+
                     self.event_tx
-                        .send(NotificationEvent::NotificationStreamOpened {
+                        .send(InnerNotificationEvent::NotificationStreamOpened {
                             protocol,
                             peer,
+                            sink,
                             handshake: handshake.unwrap().into(),
                         })
                         .await
@@ -238,7 +285,7 @@ impl NotificationProtocol {
             None => {
                 let _ = self
                     .event_tx
-                    .send(NotificationEvent::NotificationStreamOpenFailure { peer })
+                    .send(InnerNotificationEvent::NotificationStreamOpenFailure { peer })
                     .await;
                 Err(Error::SubstreamError(SubstreamError::ConnectionClosed))
             }
@@ -273,7 +320,7 @@ impl NotificationProtocol {
                     // TODO: don't ignore error
                     let _ = self
                         .event_tx
-                        .send(NotificationEvent::ValidateSubstream {
+                        .send(InnerNotificationEvent::ValidateSubstream {
                             protocol,
                             peer,
                             handshake: handshake.into(),
@@ -285,14 +332,20 @@ impl NotificationProtocol {
                 PeerState::OutboundOpen { outbound } => {
                     // TODO: handle error gracefuly
                     substream.send(self.handshake.clone().into()).await.unwrap();
+                    self.substreams.insert(peer, substream);
                     context.state = PeerState::Open { outbound };
                     // TODO: handle error gracefuly
-                    tracing::info!(target: LOG_TARGET, "notification stream opened for {peer}");
+                    let (async_tx, async_rx) = mpsc::channel(8);
+                    let (sync_tx, sync_rx) = mpsc::channel(2048);
+                    let sink = select(async_rx.fuse(), sync_rx.fuse());
+                    self.receivers.insert(peer, sink);
+                    let sink = NotificationSink::new(sync_tx, async_tx);
 
                     self.event_tx
-                        .send(NotificationEvent::NotificationStreamOpened {
+                        .send(InnerNotificationEvent::NotificationStreamOpened {
                             protocol,
                             peer,
+                            sink,
                             handshake: handshake.into(),
                         })
                         .await
@@ -367,8 +420,8 @@ impl NotificationProtocol {
             None => Err(Error::PeerDoesntExist(peer)),
             Some(context) => match std::mem::replace(&mut context.state, PeerState::Poisoned) {
                 PeerState::InboundOpen { mut inbound } => {
-                    // TODO: handle error properly
-                    inbound.send(self.handshake.clone().into()).await.unwrap();
+                    // TODO: clean state properly if write/open fails
+                    inbound.send(self.handshake.clone().into()).await?;
                     let substream_id = context.service.open_substream().await?;
                     context.state = PeerState::InboundOpenOutboundInitiated {
                         substream_id,
@@ -472,6 +525,33 @@ impl NotificationProtocol {
                             }
                         }
                         _ => {}
+                    }
+                },
+                event = self.substreams.next() => {
+                    // TODO: check if `notification` is `None` and if so, remove peer and inform user protocol
+                    let (peer, notification) = event.expect("event from `SubstreamSet`");
+                    // TODO: handle error
+                    let notification = notification.unwrap().freeze().to_vec();
+                    // TODO: handle error
+                    self.event_tx.send(InnerNotificationEvent::NotificationReceived { peer, notification }).await.unwrap();
+                }
+                event = self.receivers.next(), if !self.receivers.is_empty() => match event {
+                    Some((peer, notification)) => {
+                        tracing::info!(target: LOG_TARGET, ?peer, "send notification to peer");
+
+                        match self.peers.get_mut(&peer) {
+                            Some(context) => match &mut context.state {
+                                PeerState::Open { outbound } => {
+                                    // TODO: handle error
+                                    let result = outbound.send(notification.into()).await;
+                                }
+                                state => tracing::error!(target: LOG_TARGET, ?state, "invalid state for peer"),
+                            }
+                            None => {} // TODO: handle error
+                        }
+                    }
+                    None => {
+                        tracing::info!(target: LOG_TARGET, "here");
                     }
                 }
             }

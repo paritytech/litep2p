@@ -19,13 +19,41 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::ProtocolCodec, peer_id::PeerId, types::protocol::ProtocolName, DEFAULT_CHANNEL_SIZE,
+    codec::ProtocolCodec, error::Error, peer_id::PeerId, types::protocol::ProtocolName,
+    DEFAULT_CHANNEL_SIZE,
 };
 
+use futures::channel::mpsc;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+use std::collections::HashMap;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "notification::handle";
+
+#[derive(Debug, Clone)]
+pub(crate) struct NotificationSink {
+    sync_tx: mpsc::Sender<Vec<u8>>,
+    async_tx: mpsc::Sender<Vec<u8>>,
+}
+
+impl NotificationSink {
+    /// Create new [`NotificationSink`].
+    pub(crate) fn new(sync_tx: mpsc::Sender<Vec<u8>>, async_tx: mpsc::Sender<Vec<u8>>) -> Self {
+        Self { async_tx, sync_tx }
+    }
+
+    /// Send notification to peer synchronously.
+    pub(crate) fn send_sync_notification(&mut self, notification: Vec<u8>) {
+        self.sync_tx.try_send(notification).unwrap();
+    }
+
+    /// Send notification to peer asynchronously.
+    pub(crate) async fn send_async_notification(&mut self, notification: Vec<u8>) {
+        // TODO: fix
+        self.async_tx.try_send(notification).unwrap();
+    }
+}
 
 /// Validation result.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +63,58 @@ pub enum ValidationResult {
 
     /// Reject the inbound substream.
     Reject,
+}
+
+/// Notification events.
+#[derive(Debug, Clone)]
+pub(crate) enum InnerNotificationEvent {
+    /// Validate substream.
+    ValidateSubstream {
+        /// Protocol name.
+        protocol: ProtocolName,
+
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Handshake.
+        handshake: Vec<u8>,
+    },
+
+    /// Notification stream opened.
+    NotificationStreamOpened {
+        /// Protocol name.
+        protocol: ProtocolName,
+
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Handshake.
+        handshake: Vec<u8>,
+
+        /// Notification sink.
+        sink: NotificationSink,
+    },
+
+    /// Notification stream closed.
+    NotificationStreamClosed {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
+    /// Failed to open notification stream.
+    NotificationStreamOpenFailure {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
+    /// Notification received.
+    NotificationReceived {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Notification.
+        notification: Vec<u8>,
+    },
 }
 
 /// Notification events.
@@ -75,12 +155,27 @@ pub enum NotificationEvent {
         /// Peer ID.
         peer: PeerId,
     },
+
+    /// Notification received.
+    NotificationReceived {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Notification.
+        notification: Vec<u8>,
+    },
 }
 
 /// Notification commands sent by the [`NotificationService`] to the protocol.
 pub(crate) enum NotificationCommand {
     /// Open substream to peer.
     OpenSubstream {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
+    /// Close substream to peer.
+    CloseSubstream {
         /// Peer ID.
         peer: PeerId,
     },
@@ -104,21 +199,25 @@ pub(crate) enum NotificationCommand {
 /// Handle allowing the user protocol to interact with this notification protocol.
 pub struct NotificationHandle {
     /// RX channel for receiving events from the notification protocol.
-    event_rx: Receiver<NotificationEvent>,
+    event_rx: Receiver<InnerNotificationEvent>,
 
     /// TX channel for sending commands to the notification protocol.
     command_tx: Sender<NotificationCommand>,
+
+    /// Peers.
+    peers: HashMap<PeerId, NotificationSink>,
 }
 
 impl NotificationHandle {
     /// Create new [`NotificationHandle`].
     pub(crate) fn new(
-        event_rx: Receiver<NotificationEvent>,
+        event_rx: Receiver<InnerNotificationEvent>,
         command_tx: Sender<NotificationCommand>,
     ) -> Self {
         Self {
             event_rx,
             command_tx,
+            peers: HashMap::new(),
         }
     }
 
@@ -132,6 +231,17 @@ impl NotificationHandle {
             .await;
     }
 
+    /// Close substream to peer.
+    pub async fn close_substream(&self, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
+
+        let _ = self
+            .command_tx
+            .send(NotificationCommand::CloseSubstream { peer })
+            .await;
+    }
+
+    /// Send validation result to `NotificationProtocol` for the inbound substream.
     pub async fn send_validation_result(&self, peer: PeerId, result: ValidationResult) {
         tracing::trace!(target: LOG_TARGET, ?peer, ?result, "send validation result");
 
@@ -141,9 +251,67 @@ impl NotificationHandle {
             .await;
     }
 
+    /// Send synchronous notification to user.
+    pub fn send_sync_notification(&mut self, peer: PeerId, notification: Vec<u8>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "send sync notification");
+
+        if let Some(sink) = self.peers.get_mut(&peer) {
+            sink.send_sync_notification(notification);
+        }
+    }
+
+    /// Send asynchronous notification to user.
+    pub async fn send_async_notification(
+        &mut self,
+        peer: PeerId,
+        notification: Vec<u8>,
+    ) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, ?peer, "send async notification");
+
+        match self.peers.get_mut(&peer) {
+            Some(sink) => {
+                sink.send_async_notification(notification).await;
+                Ok(())
+            }
+            None => Err(Error::PeerDoesntExist(peer)),
+        }
+    }
+
     /// Poll next event from the protocol.
     pub async fn next_event(&mut self) -> Option<NotificationEvent> {
-        self.event_rx.recv().await
+        match self.event_rx.recv().await? {
+            InnerNotificationEvent::ValidateSubstream {
+                protocol,
+                peer,
+                handshake,
+            } => Some(NotificationEvent::ValidateSubstream {
+                protocol,
+                peer,
+                handshake,
+            }),
+            InnerNotificationEvent::NotificationStreamOpened {
+                protocol,
+                peer,
+                handshake,
+                sink,
+            } => {
+                self.peers.insert(peer, sink);
+                Some(NotificationEvent::NotificationStreamOpened {
+                    protocol,
+                    peer,
+                    handshake,
+                })
+            }
+            InnerNotificationEvent::NotificationStreamClosed { peer } => {
+                Some(NotificationEvent::NotificationStreamClosed { peer })
+            }
+            InnerNotificationEvent::NotificationStreamOpenFailure { peer } => {
+                Some(NotificationEvent::NotificationStreamOpenFailure { peer })
+            }
+            InnerNotificationEvent::NotificationReceived { peer, notification } => {
+                Some(NotificationEvent::NotificationReceived { peer, notification })
+            }
+        }
     }
 }
 
@@ -166,7 +334,7 @@ pub struct Config {
     pub(crate) _protocol_aliases: Vec<ProtocolName>,
 
     /// TX channel passed to the protocol used for sending events.
-    pub(crate) event_tx: Sender<NotificationEvent>,
+    pub(crate) event_tx: Sender<InnerNotificationEvent>,
 
     /// RX channel passed to the protocol used for receiving commands.
     pub(crate) command_rx: Receiver<NotificationCommand>,

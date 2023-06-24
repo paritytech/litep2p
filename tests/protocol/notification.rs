@@ -97,7 +97,7 @@ async fn open_substreams() {
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
-    let _peer1 = *litep2p1.local_peer_id();
+    let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
 
     // wait until peers have connected and spawn the litep2p objects in the background
@@ -113,25 +113,50 @@ async fn open_substreams() {
 
     // open substream for `peer2` and accept it
     handle1.open_substream(peer2).await;
-    match handle2.next_event().await.unwrap() {
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
         NotificationEvent::ValidateSubstream {
-            protocol,
-            peer,
-            handshake,
-        } => {
-            assert_eq!(protocol, ProtocolName::from("/notif/1"));
-            assert_eq!(handshake, vec![1, 2, 3, 4]);
-
-            handle2
-                .send_validation_result(peer, ValidationResult::Accept)
-                .await;
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
         }
-        _ => panic!("invalid event received"),
-    }
+    );
+    handle2
+        .send_validation_result(peer1, ValidationResult::Accept)
+        .await;
 
-    let (res1, res2) = tokio::join!(handle1.next_event(), handle2.next_event());
-    let (res1, res2) = (res1.unwrap(), res2.unwrap());
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
 
-    tracing::error!(?res1);
-    tracing::error!(?res2);
+    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]);
+    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]);
+
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer1,
+            notification: vec![1, 3, 3, 7],
+        }
+    );
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer2,
+            notification: vec![1, 3, 3, 8],
+        }
+    );
 }
