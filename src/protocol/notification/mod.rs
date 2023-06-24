@@ -35,12 +35,11 @@ use crate::{
 
 use bytes::BytesMut;
 use futures::{
-    channel::mpsc,
-    stream::{select, Fuse, Select},
+    stream::{select, Select},
     SinkExt, StreamExt,
 };
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_stream::StreamMap;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -50,6 +49,12 @@ pub mod types;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "notification::protocol";
+
+/// Default channel size for synchronous notifications.
+const SYNC_CHANNEL_SIZE: usize = 2048;
+
+/// Default channel size for asynchronous notifications.
+const ASYNC_CHANNEL_SIZE: usize = 8;
 
 /// Peer state
 #[derive(Debug)]
@@ -139,8 +144,7 @@ pub struct NotificationProtocol {
     substreams: SubstreamSet<Box<dyn Substream>>,
 
     /// Receivers.
-    receivers:
-        StreamMap<PeerId, Select<Fuse<mpsc::Receiver<Vec<u8>>>, Fuse<mpsc::Receiver<Vec<u8>>>>>,
+    receivers: StreamMap<PeerId, Select<ReceiverStream<Vec<u8>>, ReceiverStream<Vec<u8>>>>,
 }
 
 impl NotificationProtocol {
@@ -415,9 +419,10 @@ impl NotificationProtocol {
 
         match &mut context.state {
             PeerState::Open { .. } => {
-                let (async_tx, async_rx) = mpsc::channel(8);
-                let (sync_tx, sync_rx) = mpsc::channel(2048);
-                let notif_stream = select(async_rx.fuse(), sync_rx.fuse());
+                let (async_tx, async_rx) = channel(ASYNC_CHANNEL_SIZE);
+                let (sync_tx, sync_rx) = channel(SYNC_CHANNEL_SIZE);
+                let notif_stream =
+                    select(ReceiverStream::new(async_rx), ReceiverStream::new(sync_rx));
                 let sink = NotificationSink::new(sync_tx, async_tx);
 
                 self.substreams.insert(peer, inbound);
@@ -729,7 +734,7 @@ impl NotificationProtocol {
                             Some(context) => match &mut context.state {
                                 PeerState::Open { outbound } => {
                                     // TODO: handle error
-                                    let result = outbound.send(notification.into()).await;
+                                    let _result = outbound.send(notification.into()).await;
                                 }
                                 state => tracing::error!(target: LOG_TARGET, ?state, "invalid state for peer"),
                             }

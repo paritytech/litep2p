@@ -23,7 +23,6 @@ use crate::{
     DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::channel::mpsc;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::collections::HashMap;
@@ -170,7 +169,7 @@ pub(crate) enum NotificationCommand {
     },
 
     /// Set handshake.
-    SetHandshake {
+    _SetHandshake {
         /// Handshake.
         handshake: Vec<u8>,
     },
@@ -187,13 +186,13 @@ pub(crate) enum NotificationCommand {
 
 #[derive(Debug, Clone)]
 pub(crate) struct NotificationSink {
-    sync_tx: mpsc::Sender<Vec<u8>>,
-    async_tx: mpsc::Sender<Vec<u8>>,
+    sync_tx: Sender<Vec<u8>>,
+    async_tx: Sender<Vec<u8>>,
 }
 
 impl NotificationSink {
     /// Create new [`NotificationSink`].
-    pub(crate) fn new(sync_tx: mpsc::Sender<Vec<u8>>, async_tx: mpsc::Sender<Vec<u8>>) -> Self {
+    pub(crate) fn new(sync_tx: Sender<Vec<u8>>, async_tx: Sender<Vec<u8>>) -> Self {
         Self { async_tx, sync_tx }
     }
 
