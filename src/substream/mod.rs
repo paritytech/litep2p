@@ -55,6 +55,7 @@ impl<
 {
 }
 
+#[derive(Debug)]
 pub struct SubstreamSet<S: Substream> {
     substreams: HashMap<PeerId, S>,
 }

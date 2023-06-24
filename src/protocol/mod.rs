@@ -106,7 +106,7 @@ pub enum ConnectionEvent {
 }
 
 /// Events emitted by the installed protocols to transport.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolEvent {
     /// Open substream.
     OpenSubstream {
@@ -126,7 +126,7 @@ pub enum ProtocolEvent {
 }
 
 /// Service provided to protocols by the transport protocol.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ConnectionService {
     /// TX channel for sending events to transport.
     tx: Sender<ProtocolEvent>,

@@ -98,6 +98,7 @@ pub struct Litep2p {
     pending_connections: HashMap<usize, Multiaddr>,
 }
 
+#[derive(Debug)]
 pub struct TransportService {
     rx: Receiver<ConnectionEvent>,
     _peers: HashMap<PeerId, Sender<ProtocolEvent>>,

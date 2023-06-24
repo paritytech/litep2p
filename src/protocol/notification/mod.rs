@@ -44,6 +44,8 @@ use tokio_stream::StreamMap;
 
 use std::collections::{hash_map::Entry, HashMap};
 
+#[cfg(test)]
+mod tests;
 pub mod types;
 
 /// Logging target for the file.
@@ -93,6 +95,7 @@ enum PeerState {
 }
 
 /// Peer context.
+#[derive(Debug)]
 struct PeerContext {
     /// Connection service.
     service: ConnectionService,
@@ -111,6 +114,7 @@ impl PeerContext {
     }
 }
 
+#[derive(Debug)]
 pub struct NotificationProtocol {
     /// Transport service.
     service: TransportService,
@@ -499,6 +503,7 @@ impl NotificationProtocol {
                     "invalid state for peer, ignoring validation result"
                 );
                 context.state = state;
+                debug_assert!(false);
                 // TODO: introduce new error for invalid state transition
                 Ok(())
             }
