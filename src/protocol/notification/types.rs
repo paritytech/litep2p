@@ -45,6 +45,9 @@ pub enum ValidationResult {
 pub enum NotificationError {
     /// Remote rejected the substream.
     Rejected,
+
+    /// Connection to peer doesn't exist.
+    NoConnection,
 }
 
 /// Notification events.

@@ -466,7 +466,18 @@ impl NotificationProtocol {
         tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
 
         match self.peers.get_mut(&peer) {
-            None => Err(Error::PeerDoesntExist(peer)),
+            None => {
+                tracing::debug!(target: LOG_TARGET, ?peer, "no open connection to peer");
+
+                let _ = self
+                    .event_tx
+                    .send(InnerNotificationEvent::NotificationStreamOpenFailure {
+                        peer,
+                        error: NotificationError::NoConnection,
+                    })
+                    .await;
+                Err(Error::PeerDoesntExist(peer))
+            }
             Some(context) => {
                 let substream_id = context.service.open_substream().await?;
                 context.state = PeerState::OutboundInitiated { substream_id };
