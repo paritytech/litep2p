@@ -23,6 +23,7 @@ pin-project = "1.1.0"
 prost = "0.11.8"
 protoc = "2.28.0"
 rand = { version = "0.7.0", features = ["getrandom"] }
+s2n-quic = "1.22.0"
 serde = "1.0.158"
 smallvec = "1.10.0"
 snow = "0.9.2"

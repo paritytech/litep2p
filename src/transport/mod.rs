@@ -24,6 +24,7 @@ use multiaddr::Multiaddr;
 
 use std::fmt::Debug;
 
+pub mod quic;
 pub mod tcp;
 
 /// Trait which allows `litep2p` to associate dial failures to opened connections.
