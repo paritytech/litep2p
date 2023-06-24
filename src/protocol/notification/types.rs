@@ -31,30 +31,6 @@ use std::collections::HashMap;
 /// Logging target for the file.
 const LOG_TARGET: &str = "notification::handle";
 
-#[derive(Debug, Clone)]
-pub(crate) struct NotificationSink {
-    sync_tx: mpsc::Sender<Vec<u8>>,
-    async_tx: mpsc::Sender<Vec<u8>>,
-}
-
-impl NotificationSink {
-    /// Create new [`NotificationSink`].
-    pub(crate) fn new(sync_tx: mpsc::Sender<Vec<u8>>, async_tx: mpsc::Sender<Vec<u8>>) -> Self {
-        Self { async_tx, sync_tx }
-    }
-
-    /// Send notification to peer synchronously.
-    pub(crate) fn send_sync_notification(&mut self, notification: Vec<u8>) {
-        self.sync_tx.try_send(notification).unwrap();
-    }
-
-    /// Send notification to peer asynchronously.
-    pub(crate) async fn send_async_notification(&mut self, notification: Vec<u8>) {
-        // TODO: fix
-        self.async_tx.try_send(notification).unwrap();
-    }
-}
-
 /// Validation result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationResult {
@@ -63,6 +39,13 @@ pub enum ValidationResult {
 
     /// Reject the inbound substream.
     Reject,
+}
+
+/// Notification error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotificationError {
+    /// Remote rejected the substream.
+    Rejected,
 }
 
 /// Notification events.
@@ -105,6 +88,9 @@ pub(crate) enum InnerNotificationEvent {
     NotificationStreamOpenFailure {
         /// Peer ID.
         peer: PeerId,
+
+        /// Error.
+        error: NotificationError,
     },
 
     /// Notification received.
@@ -154,6 +140,9 @@ pub enum NotificationEvent {
     NotificationStreamOpenFailure {
         /// Peer ID.
         peer: PeerId,
+
+        /// Error.
+        error: NotificationError,
     },
 
     /// Notification received.
@@ -194,6 +183,30 @@ pub(crate) enum NotificationCommand {
         /// Validation result.
         result: ValidationResult,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct NotificationSink {
+    sync_tx: mpsc::Sender<Vec<u8>>,
+    async_tx: mpsc::Sender<Vec<u8>>,
+}
+
+impl NotificationSink {
+    /// Create new [`NotificationSink`].
+    pub(crate) fn new(sync_tx: mpsc::Sender<Vec<u8>>, async_tx: mpsc::Sender<Vec<u8>>) -> Self {
+        Self { async_tx, sync_tx }
+    }
+
+    /// Send notification to peer synchronously.
+    pub(crate) fn send_sync_notification(&mut self, notification: Vec<u8>) {
+        self.sync_tx.try_send(notification).unwrap();
+    }
+
+    /// Send notification to peer asynchronously.
+    pub(crate) async fn send_async_notification(&mut self, notification: Vec<u8>) {
+        // TODO: fix
+        self.async_tx.try_send(notification).unwrap();
+    }
 }
 
 /// Handle allowing the user protocol to interact with this notification protocol.
@@ -305,8 +318,8 @@ impl NotificationHandle {
             InnerNotificationEvent::NotificationStreamClosed { peer } => {
                 Some(NotificationEvent::NotificationStreamClosed { peer })
             }
-            InnerNotificationEvent::NotificationStreamOpenFailure { peer } => {
-                Some(NotificationEvent::NotificationStreamOpenFailure { peer })
+            InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
+                Some(NotificationEvent::NotificationStreamOpenFailure { peer, error })
             }
             InnerNotificationEvent::NotificationReceived { peer, notification } => {
                 Some(NotificationEvent::NotificationReceived { peer, notification })
