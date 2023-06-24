@@ -104,6 +104,11 @@ impl<S: Substream> SubstreamSet<S> {
     pub fn is_empty(&mut self) -> bool {
         self.substreams.len() == 0usize
     }
+
+    /// Get mutable reference to stored substream.
+    pub fn get_mut(&mut self, peer: &PeerId) -> Option<&mut S> {
+        self.substreams.get_mut(peer)
+    }
 }
 
 impl<S: Substream> Stream for SubstreamSet<S> {
@@ -134,7 +139,7 @@ impl<S: Substream> Stream for SubstreamSet<S> {
 mod tests {
     use super::*;
     use crate::mock::substream::MockSubstream;
-    use futures::StreamExt;
+    use futures::{SinkExt, StreamExt};
 
     #[test]
     fn add_substream() {
@@ -237,6 +242,55 @@ mod tests {
             }
             _ => panic!("inavlid event received"),
         }
+    }
+
+    #[tokio::test]
+    async fn get_mut_substream() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let mut set = SubstreamSet::<Box<dyn Substream>>::new();
+
+        let peer = PeerId::random();
+        let mut substream = MockSubstream::new();
+        substream
+            .expect_poll_next()
+            .times(1)
+            .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
+        substream
+            .expect_poll_ready()
+            .times(1)
+            .return_once(|_| Poll::Ready(Ok(())));
+        substream
+            .expect_start_send()
+            .times(1)
+            .return_once(|_| Ok(()));
+        substream
+            .expect_poll_flush()
+            .times(1)
+            .return_once(|_| Poll::Ready(Ok(())));
+        substream
+            .expect_poll_next()
+            .times(1)
+            .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"world"[..])))));
+        substream.expect_poll_next().returning(|_| Poll::Pending);
+        let substream = Box::new(substream);
+        set.insert(peer, substream);
+
+        let value = set.next().await.unwrap();
+        assert_eq!(value.0, peer);
+        assert_eq!(value.1.unwrap(), BytesMut::from(&b"hello"[..]));
+
+        let substream = set.get_mut(&peer).unwrap();
+        substream.send(vec![1, 2, 3, 4].into()).await.unwrap();
+
+        let value = set.next().await.unwrap();
+        assert_eq!(value.0, peer);
+        assert_eq!(value.1.unwrap(), BytesMut::from(&b"world"[..]));
+
+        // try to get non-existent substream
+        assert!(set.get_mut(&PeerId::random()).is_none());
     }
 
     #[tokio::test]
