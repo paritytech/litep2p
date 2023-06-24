@@ -178,16 +178,28 @@ impl NotificationProtocol {
     }
 
     /// Connection closed to remote peer.
-    fn on_connection_closed(&mut self, peer: PeerId) {
+    async fn on_connection_closed(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection closed");
 
-        if let None = self.peers.remove(&peer) {
-            tracing::error!(
-                target: LOG_TARGET,
-                ?peer,
-                "state mismatch: peer doesn't exist"
-            );
-            debug_assert!(false);
+        match self.peers.remove(&peer) {
+            Some(_) => {
+                self.substreams.remove(&peer);
+                self.receivers.remove(&peer);
+
+                self.event_tx
+                    .send(InnerNotificationEvent::NotificationStreamClosed { peer })
+                    .await
+                    .map_err(From::from)
+            }
+            None => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    "state mismatch: peer doesn't exist"
+                );
+                debug_assert!(false);
+                Err(Error::PeerDoesntExist(peer))
+            }
         }
     }
 
@@ -528,7 +540,14 @@ impl NotificationProtocol {
                         }
                     }
                     Some(ConnectionEvent::ConnectionClosed { peer }) => {
-                        self.on_connection_closed(peer);
+                        if let Err(error) = self.on_connection_closed(peer).await {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?error,
+                                "failed to disconnect peer",
+                            );
+                        }
                     }
                     Some(ConnectionEvent::SubstreamOpened {
                         peer,
