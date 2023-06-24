@@ -169,7 +169,7 @@ pub(crate) enum NotificationCommand {
     },
 
     /// Set handshake.
-    _SetHandshake {
+    SetHandshake {
         /// Handshake.
         handshake: Vec<u8>,
     },
@@ -250,6 +250,16 @@ impl NotificationHandle {
         let _ = self
             .command_tx
             .send(NotificationCommand::CloseSubstream { peer })
+            .await;
+    }
+
+    /// Set new handshake.
+    pub async fn set_handshake(&mut self, handshake: Vec<u8>) {
+        tracing::trace!(target: LOG_TARGET, ?handshake, "set handshake");
+
+        let _ = self
+            .command_tx
+            .send(NotificationCommand::SetHandshake { handshake })
             .await;
     }
 

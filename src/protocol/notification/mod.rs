@@ -711,7 +711,9 @@ impl NotificationProtocol {
                                 );
                             }
                         }
-                        _ => {}
+                        NotificationCommand::SetHandshake { handshake } => {
+                            self.handshake = handshake;
+                        }
                     }
                 },
                 event = self.substreams.next(), if !self.substreams.is_empty() => {
