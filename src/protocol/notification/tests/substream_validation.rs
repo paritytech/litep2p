@@ -24,45 +24,18 @@ use crate::{
     peer_id::PeerId,
     protocol::{
         notification::{
-            types::{Config, NotificationEvent, NotificationHandle, ValidationResult},
-            NotificationProtocol, PeerContext, PeerState,
+            tests::{add_peer, make_notification_protocol},
+            types::{NotificationEvent, ValidationResult},
+            PeerContext, PeerState,
         },
-        ConnectionEvent, ConnectionService, ProtocolEvent,
+        ProtocolEvent,
     },
     types::protocol::ProtocolName,
-    TransportService,
 };
 
 use bytes::BytesMut;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::task::Poll;
-
-fn make_notification_protocol() -> (
-    NotificationProtocol,
-    NotificationHandle,
-    Sender<ConnectionEvent>,
-) {
-    let (service, sender) = TransportService::new();
-    let (config, handle) = Config::new(
-        ProtocolName::from("/notif/1"),
-        1024usize,
-        vec![1, 2, 3, 4],
-        Vec::new(),
-    );
-
-    (NotificationProtocol::new(service, config), handle, sender)
-}
-
-fn add_peer() -> (PeerId, ConnectionService, Receiver<ProtocolEvent>) {
-    let (tx, rx) = channel(64);
-
-    (
-        PeerId::random(),
-        ConnectionService::new(ProtocolName::from("/notif/1"), tx),
-        rx,
-    )
-}
 
 #[tokio::test]
 async fn non_existent_peer() {
