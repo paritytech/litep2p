@@ -22,8 +22,13 @@
 //!
 //! This module handles generation, signing, and verification of certificates.
 
-use libp2p_identity as identity;
-use libp2p_identity::PeerId;
+use crate::{
+    crypto::{ed25519::Keypair, PublicKey},
+    peer_id::PeerId,
+};
+
+// use libp2p_identity as identity;
+// use libp2p_identity::PeerId;
 use x509_parser::{prelude::*, signature_algorithm::SignatureAlgorithm};
 
 /// The libp2p Public Key Extension is a X.509 extension
@@ -45,7 +50,7 @@ static P2P_SIGNATURE_ALGORITHM: &rcgen::SignatureAlgorithm = &rcgen::PKCS_ECDSA_
 /// Generates a self-signed TLS certificate that includes a libp2p-specific
 /// certificate extension containing the public key of the given keypair.
 pub fn generate(
-    identity_keypair: &identity::Keypair,
+    identity_keypair: &Keypair,
 ) -> Result<(rustls::Certificate, rustls::PrivateKey), GenError> {
     // Keypair used to sign the certificate.
     // SHOULD NOT be related to the host's key.
@@ -99,7 +104,7 @@ pub struct P2pCertificate<'a> {
 /// and a signature performed using the private host key.
 #[derive(Debug)]
 pub struct P2pExtension {
-    public_key: identity::PublicKey,
+    public_key: PublicKey,
     /// This signature provides cryptographic proof that the peer was
     /// in possession of the private host key at the time the certificate was signed.
     signature: Vec<u8>,
@@ -159,7 +164,7 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
             //    required KeyType Type = 1;
             //    required bytes Data = 2;
             // }
-            let public_key = identity::PublicKey::from_protobuf_encoding(&public_key)
+            let public_key = PublicKey::from_protobuf_encoding(&public_key)
                 .map_err(|_| webpki::Error::UnknownIssuer)?;
             let ext = P2pExtension {
                 public_key,
@@ -191,7 +196,7 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
 }
 
 fn make_libp2p_extension(
-    identity_keypair: &identity::Keypair,
+    identity_keypair: &Keypair,
     certificate_keypair: &rcgen::KeyPair,
 ) -> Result<rcgen::CustomExtension, rcgen::RcgenError> {
     // The peer signs the concatenation of the string `libp2p-tls-handshake:`
@@ -202,9 +207,7 @@ fn make_libp2p_extension(
         msg.extend(P2P_SIGNING_PREFIX);
         msg.extend(certificate_keypair.public_key_der());
 
-        identity_keypair
-            .sign(&msg)
-            .map_err(|_| rcgen::RcgenError::RingUnspecified)?
+        identity_keypair.sign(&msg)
     };
 
     // The public host key and the signature are ANS.1-encoded
@@ -215,7 +218,9 @@ fn make_libp2p_extension(
     //    signature OCTET STRING
     // }
     let extension_content = {
-        let serialized_pubkey = identity_keypair.public().to_protobuf_encoding();
+        // TODO: this is ridiculous
+        let serialized_pubkey =
+            crate::crypto::PublicKey::Ed25519(identity_keypair.public()).to_protobuf_encoding();
         yasna::encode_der(&(serialized_pubkey, signature))
     };
 

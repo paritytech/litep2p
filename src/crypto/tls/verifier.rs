@@ -23,8 +23,8 @@
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates.
 
-use crate::certificate;
-use libp2p_identity::PeerId;
+use crate::{crypto::tls::certificate, peer_id::PeerId};
+
 use rustls::{
     cipher_suite::{
         TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384, TLS13_CHACHA20_POLY1305_SHA256,

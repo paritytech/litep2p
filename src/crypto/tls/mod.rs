@@ -24,15 +24,17 @@
 //! See <https://github.com/libp2p/specs/blob/master/tls/tls.md>.
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![allow(unused)]
+
+use crate::{crypto::ed25519::Keypair, peer_id::PeerId};
+
+use std::sync::Arc;
 
 pub mod certificate;
 mod upgrade;
 mod verifier;
 
-use libp2p_identity::Keypair;
-use libp2p_identity::PeerId;
-use std::sync::Arc;
-
+// TODO: remove maybe
 pub use futures_rustls::TlsStream;
 pub use upgrade::Config;
 pub use upgrade::UpgradeError;

@@ -26,7 +26,6 @@ protoc = "2.28.0"
 rand = { version = "0.7.0", features = ["getrandom"] }
 rcgen = "0.10.0"
 ring = "0.16.20"
-rustls = { version = "0.20.2", default-features = false }
 s2n-quic = "1.22.0"
 serde = "1.0.158"
 smallvec = "1.10.0"
@@ -45,6 +44,13 @@ yamux = "0.11.0"
 yasna = "0.5.0"
 zeroize = "1.5.7"
 
+# Exposed dependencies. Breaking changes to these are breaking changes to us.
+[dependencies.rustls]
+version = "0.20.7"
+default-features = false
+features = ["dangerous_configuration"] # Must enable this to allow for custom verification code.
+
+[dev-dependencies]
 [dev-dependencies]
 libp2p = { version = "0.51.3", features = [
     "tokio",
