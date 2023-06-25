@@ -134,25 +134,26 @@ impl Transport for QuicTransport {
     where
         Self: Sized,
     {
-        tracing::info!(
-            target: LOG_TARGET,
-            listen_address = ?config.listen_address,
-            "start quic transport",
-        );
+        todo!();
+        // tracing::info!(
+        //     target: LOG_TARGET,
+        //     listen_address = ?config.listen_address,
+        //     "start quic transport",
+        // );
 
-        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
+        // let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
 
-        let mut server = Server::builder()
-            .with_tls((CERT_PEM, KEY_PEM))?
-            .with_io(listen_address)?
-            .start()?;
-        let listen_address = server.local_addr()?;
+        // let mut server = Server::builder()
+        //     .with_tls((CERT_PEM, KEY_PEM))?
+        //     .with_io(listen_address)?
+        //     .start()?;
+        // let listen_address = server.local_addr()?;
 
-        Ok(Self {
-            server,
-            listen_address,
-            next_connection_id: 0usize,
-        })
+        // Ok(Self {
+        //     server,
+        //     listen_address,
+        //     next_connection_id: 0usize,
+        // })
     }
 
     /// Get assigned listen address.
@@ -163,7 +164,7 @@ impl Transport for QuicTransport {
     /// Try to open a connection to remote peer.
     ///
     /// The result is polled using [`Transport::next_connection()`].
-    fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize> {
+    fn open_connection(&mut self, _address: Multiaddr) -> crate::Result<usize> {
         todo!();
     }
 

@@ -23,6 +23,7 @@ use crate::{error::*, peer_id::*};
 
 pub mod ed25519;
 pub mod noise;
+pub mod tls;
 pub mod keys_proto {
     include!(concat!(env!("OUT_DIR"), "/keys_proto.rs"));
 }
