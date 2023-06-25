@@ -431,7 +431,9 @@ impl RequestResponseProtocol {
                         RequestResponseCommand::RejectRequest { request_id } => {
                             tracing::trace!(target: LOG_TARGET, ?request_id, "reject request");
 
-                            self.pending_outbound_responses.remove(&request_id);
+                            if let Some(mut substream) = self.pending_outbound_responses.remove(&request_id) {
+                                let _ = substream.close().await;
+                            }
                         }
                     }
                 },
