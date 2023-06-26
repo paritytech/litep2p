@@ -244,10 +244,10 @@ impl Identify {
     }
 
     /// Failed to open substream to remote peer.
-    fn on_substream_open_failure(&mut self, peer: PeerId, error: Error) {
+    fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
         tracing::debug!(
             target: LOG_TARGET,
-            ?peer,
+            ?substream,
             ?error,
             "failed to open substream"
         );
@@ -305,8 +305,8 @@ impl Identify {
                         }
                     }
                 },
-                ConnectionEvent::SubstreamOpenFailure { peer, error } => {
-                    self.on_substream_open_failure(peer, error);
+                ConnectionEvent::SubstreamOpenFailure { substream, error } => {
+                    self.on_substream_open_failure(substream, error);
                 }
             }
         }

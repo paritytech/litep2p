@@ -45,6 +45,31 @@ use std::{fmt, io, net::SocketAddr, pin::Pin};
 
 // TODO: introduce `NegotiatingConnection` to clean up this code a bit?
 
+/// TCP connection error.
+#[derive(Debug)]
+enum ConnectionError {
+    /// Timeout
+    Timeout {
+        /// Protocol.
+        protocol: Option<ProtocolName>,
+
+        /// Substream ID.
+        substream_id: Option<SubstreamId>,
+    },
+
+    /// Failed to negotiate connection/substream.
+    FailedToNegotiate {
+        /// Protocol.
+        protocol: Option<ProtocolName>,
+
+        /// Substream ID.
+        substream_id: Option<SubstreamId>,
+
+        /// Error.
+        error: Error,
+    },
+}
+
 /// TCP connection.
 pub struct TcpConnection {
     /// Connection ID.
@@ -69,7 +94,7 @@ pub struct TcpConnection {
     address: Multiaddr,
 
     /// Pending substreams.
-    pending_substreams: FuturesUnordered<BoxFuture<'static, crate::Result<Substream>>>,
+    pending_substreams: FuturesUnordered<BoxFuture<'static, Result<Substream, ConnectionError>>>,
 }
 
 impl fmt::Debug for TcpConnection {
@@ -277,7 +302,23 @@ impl TcpConnection {
                         let protocols = self.context.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {
-                            Self::accept_substream(stream, substream, protocols).await
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                Self::accept_substream(stream, substream, protocols),
+                            )
+                            .await
+                            {
+                                Ok(Ok(substream)) => Ok(substream),
+                                Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
+                                    protocol: None,
+                                    substream_id: None,
+                                    error,
+                                }),
+                                Err(_) => Err(ConnectionError::Timeout {
+                                    protocol: None,
+                                    substream_id: None
+                                }),
+                            }
                         }));
                     },
                     Some(Err(error)) => {
@@ -288,10 +329,42 @@ impl TcpConnection {
                     // TODO: this is probably not correct
                     None => return Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
                 },
+                // TODO: move this to a function
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
                     match substream {
                         // TODO: return error to protocol
-                        Err(error) => tracing::debug!(target: LOG_TARGET, ?error, "failed to negotiate substream"),
+                        Err(error) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to accept/open substream",
+                            );
+
+                            let (protocol, substream_id, error) = match error {
+                                ConnectionError::Timeout { protocol, substream_id } => {
+                                    (protocol, substream_id, Error::Timeout)
+                                }
+                                ConnectionError::FailedToNegotiate { protocol, substream_id, error } => {
+                                    (protocol, substream_id, error)
+                                }
+                            };
+
+                            match (protocol, substream_id) {
+                                (Some(protocol), Some(substream_id)) => {
+                                    if let Err(error) = self.context
+                                        .report_substream_open_failure(protocol, substream_id, error)
+                                        .await
+                                    {
+                                        tracing::error!(
+                                            target: LOG_TARGET,
+                                            ?error,
+                                            "failed to register opened substream to protocol"
+                                        );
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
                         Ok(substream) => {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
@@ -322,7 +395,23 @@ impl TcpConnection {
                         );
 
                         self.pending_substreams.push(Box::pin(async move {
-                            Self::open_substream(control, Direction::Outbound(substream_id), protocol).await
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                Self::open_substream(control, Direction::Outbound(substream_id), protocol.clone()),
+                            )
+                            .await
+                            {
+                                Ok(Ok(substream)) => Ok(substream),
+                                Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
+                                    protocol: Some(protocol),
+                                    substream_id: Some(substream_id),
+                                    error,
+                                }),
+                                Err(_) => Err(ConnectionError::Timeout {
+                                    protocol: Some(protocol),
+                                    substream_id: Some(substream_id)
+                                }),
+                            }
                         }));
                     }
                     None => {

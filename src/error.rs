@@ -76,6 +76,8 @@ pub enum Error {
     Other(String),
     #[error("Protocol already exists: `{0:?}`")]
     ProtocolAlreadyExists(ProtocolName),
+    #[error("Operation timed out")]
+    Timeout,
 }
 
 #[derive(Debug, thiserror::Error)]

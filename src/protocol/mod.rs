@@ -96,9 +96,11 @@ pub enum ConnectionEvent {
     },
 
     /// Failed to open substream.
+    ///
+    /// Substream failure are only reported for outbound substreams.
     SubstreamOpenFailure {
-        /// Peer Id.
-        peer: PeerId,
+        /// Substream ID.
+        substream: SubstreamId,
 
         /// Error.
         error: Error,
@@ -245,13 +247,13 @@ impl ProtocolSet {
     pub async fn report_substream_open_failure(
         &mut self,
         protocol: ProtocolName,
-        peer: PeerId,
+        substream: SubstreamId,
         error: Error,
     ) -> crate::Result<()> {
         match self.protocols.get_mut(&protocol) {
             Some(info) => info
                 .tx
-                .send(ConnectionEvent::SubstreamOpenFailure { peer, error })
+                .send(ConnectionEvent::SubstreamOpenFailure { substream, error })
                 .await
                 .map_err(From::from),
             None => Err(Error::ProtocolNotSupported(protocol.to_string())),
