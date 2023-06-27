@@ -43,6 +43,7 @@ use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
 use std::collections::{hash_map::Entry, HashMap};
 
+mod negotiation;
 #[cfg(test)]
 mod tests;
 pub mod types;
