@@ -187,6 +187,82 @@ pub(crate) enum NotificationCommand {
     },
 }
 
+#[derive(Debug)]
+pub(crate) struct NotificationEventHandle {
+    tx: Sender<InnerNotificationEvent>,
+}
+
+impl NotificationEventHandle {
+    /// Create new [`NotificationEventHandle`].
+    pub(crate) fn new(tx: Sender<InnerNotificationEvent>) -> Self {
+        Self { tx }
+    }
+
+    /// Validate inbound substream.
+    pub(crate) async fn report_inbound_substream(
+        &self,
+        protocol: ProtocolName,
+        peer: PeerId,
+        handshake: Vec<u8>,
+    ) {
+        let _ = self
+            .tx
+            .send(InnerNotificationEvent::ValidateSubstream {
+                protocol,
+                peer,
+                handshake,
+            })
+            .await;
+    }
+
+    /// Notification stream opened.
+    pub(crate) async fn report_notification_stream_opened(
+        &self,
+        protocol: ProtocolName,
+        peer: PeerId,
+        handshake: Vec<u8>,
+        sink: NotificationSink,
+    ) {
+        let _ = self
+            .tx
+            .send(InnerNotificationEvent::NotificationStreamOpened {
+                protocol,
+                peer,
+                handshake,
+                sink,
+            })
+            .await;
+    }
+
+    /// Notification stream closed.
+    pub(crate) async fn report_notification_stream_closed(&self, peer: PeerId) {
+        let _ = self
+            .tx
+            .send(InnerNotificationEvent::NotificationStreamClosed { peer })
+            .await;
+    }
+
+    /// Failed to open notification stream.
+    pub(crate) async fn report_notification_stream_open_failure(
+        &self,
+        peer: PeerId,
+        error: NotificationError,
+    ) {
+        let _ = self
+            .tx
+            .send(InnerNotificationEvent::NotificationStreamOpenFailure { peer, error })
+            .await;
+    }
+
+    /// Notification received.
+    pub(crate) async fn report_notification_received(&self, peer: PeerId, notification: Vec<u8>) {
+        let _ = self
+            .tx
+            .send(InnerNotificationEvent::NotificationReceived { peer, notification })
+            .await;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct NotificationSink {
     sync_tx: Sender<Vec<u8>>,
