@@ -641,6 +641,7 @@ impl NotificationProtocol {
                     "failed to negotiate outbound substream"
                 );
 
+                // TODO: set state properly
                 let _ = self.negotiation.remove_outbound(&peer);
                 return self
                     .event_handle
