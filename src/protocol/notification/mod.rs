@@ -722,6 +722,7 @@ impl NotificationProtocol {
                             }
                         }
                         NotificationCommand::SetHandshake { handshake } => {
+                            self.negotiation.set_handshake(handshake.clone());
                             self.handshake = handshake;
                         }
                     }

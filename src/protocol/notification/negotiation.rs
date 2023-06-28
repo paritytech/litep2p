@@ -18,11 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
 //! Implementation of the notification handshaking.
-
-// TODO: this code is so bad lol
 
 use crate::{
     error::{Error, SubstreamError},
@@ -37,6 +33,9 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+/// Logging target for the file.
+const LOG_TARGET: &str = "notification::negotiation";
 
 /// Substream direction.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -96,23 +95,52 @@ pub enum HandshakeEvent {
     },
 }
 
-/// Outbound substream's handshake state
+/// Events used by [`Negotiatio`] to communicate progress.
 #[derive(Debug)]
-enum OutboundHandshakeState {
-    SendHandshake,
-    SinkReady,
-    HandshakeSent,
-    ReadHandshake,
+pub enum InnerHandshakeEvent {
+    /// Outbound substream has been negotiated.
+    OutboundNegotiated {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Handshake.
+        handshake: Vec<u8>,
+    },
+
+    /// Inbound substream has been negotiated.
+    InboundNegotiated {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Handshake.
+        handshake: Vec<u8>,
+    },
+
+    InboundAccepted {
+        peer: PeerId,
+    },
+
+    /// Substream was closed while negotiating.
+    NegotiationError {
+        /// Peer ID.
+        peer: PeerId,
+    },
 }
 
-/// Inbound substream's handshake state
+/// Outbound substream's handshake state
 #[derive(Debug)]
-enum InboundHandshakeState {
-    ReadHandshake(Box<dyn Substream>),
-    SendHandshake(Box<dyn Substream>),
-    SinkReady(Box<dyn Substream>),
-    HandshakeSent(Box<dyn Substream>),
-    HandshakeFlushed(Box<dyn Substream>),
+enum HandshakeState {
+    /// Send handshake to remote peer.
+    SendHandshake,
+
+    /// Sink is ready for the handshake to be sent.
+    SinkReady,
+
+    /// Handshake has been sent.
+    HandshakeSent,
+
+    /// Read handshake from remote peer.
+    ReadHandshake,
 }
 
 /// Handshake service.
@@ -122,13 +150,10 @@ pub(crate) struct HandshakeService {
     handshake: Vec<u8>,
 
     /// Pending outbound substreams.
-    pending_outbound: HashMap<PeerId, (Box<dyn Substream>, OutboundHandshakeState)>,
-
-    /// Pending inbound substreams.
-    pending_inbound: HashMap<PeerId, (Box<dyn Substream>, InboundHandshakeState)>,
-
     /// Substreams:
-    substreams: HashMap<(PeerId, Direction), (Box<dyn Substream>, OutboundHandshakeState)>,
+    substreams: HashMap<(PeerId, Direction), (Box<dyn Substream>, HandshakeState)>,
+
+    new_ready: VecDeque<HandshakeEvent>,
 
     /// Ready substreams.
     ready: VecDeque<(PeerId, Direction, Vec<u8>)>,
@@ -139,10 +164,9 @@ impl HandshakeService {
     pub(crate) fn new(handshake: Vec<u8>) -> Self {
         Self {
             handshake,
-            pending_outbound: HashMap::new(),
-            pending_inbound: HashMap::new(),
             ready: VecDeque::new(),
             substreams: HashMap::new(),
+            new_ready: VecDeque::new(),
         }
     }
 
@@ -166,42 +190,94 @@ impl HandshakeService {
     }
 
     /// Negotiate outbound handshake.
-    pub fn negotiate_outbound(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
-        tracing::info!(target: "notification::protocol", "negotiate outbound");
+    pub fn negotiate_outbound(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "negotiate outbound");
+
         self.substreams.insert(
             (peer, Direction::Outbound),
-            (substream, OutboundHandshakeState::SendHandshake),
+            (substream, HandshakeState::SendHandshake),
         );
     }
 
     /// Negotiate outbound handshake.
-    pub fn accept_inbound(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
-        tracing::info!(target: "notification::protocol", "accept inbound");
+    pub fn accept_inbound(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "accept inbound substream");
+
         self.substreams.insert(
             (peer, Direction::InboundAccepting),
-            (substream, OutboundHandshakeState::ReadHandshake),
+            (substream, HandshakeState::ReadHandshake),
         );
     }
 
     /// Read handshake from remote peer.
     pub fn read_handshake(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "read handshake");
+
         self.substreams.insert(
             (peer, Direction::Inbound),
-            (substream, OutboundHandshakeState::ReadHandshake),
+            (substream, HandshakeState::ReadHandshake),
         );
     }
 
     /// Write handshake to remote peer.
     pub fn send_handshake(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "send handshake");
+
         self.substreams.insert(
             (peer, Direction::Inbound),
-            (substream, OutboundHandshakeState::SendHandshake),
+            (substream, HandshakeState::SendHandshake),
         );
     }
 
     /// Returns `true` if [`HandshakeService`] contains no elements.
     pub fn is_empty(&self) -> bool {
         self.substreams.is_empty()
+    }
+
+    /// Pop event from the event queue.
+    fn pop_event(&mut self) -> Option<(PeerId, HandshakeEvent)> {
+        let (peer, direction, handshake) = self.ready.pop_front()?;
+
+        match direction {
+            Direction::Outbound => {
+                let (substream, _) = self
+                    .substreams
+                    .remove(&(peer, direction))
+                    .expect("peer to exist");
+
+                return Some((
+                    peer,
+                    HandshakeEvent::OutboundNegotiated {
+                        peer,
+                        handshake,
+                        substream,
+                    },
+                ));
+            }
+            Direction::Inbound => {
+                let (substream, _) = self
+                    .substreams
+                    .remove(&(peer, direction))
+                    .expect("peer to exist");
+
+                return Some((
+                    peer,
+                    HandshakeEvent::InboundNegotiated {
+                        peer,
+                        handshake,
+                        substream,
+                    },
+                ));
+            }
+            Direction::InboundAccepting => {
+                let (substream, _) = self
+                    .substreams
+                    .remove(&(peer, direction))
+                    .expect("peer to exist");
+
+                return Some((peer, HandshakeEvent::InboundAccepted { peer, substream }));
+            }
+        }
     }
 }
 
@@ -211,44 +287,9 @@ impl Stream for HandshakeService {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inner = Pin::into_inner(self);
 
-        if let Some((peer, direction, handshake)) = inner.ready.pop_front() {
-            match direction {
-                Direction::Outbound => {
-                    let (substream, _) = inner
-                        .substreams
-                        .remove(&(peer, direction))
-                        .expect("peer to exist");
-                    return Poll::Ready(Some((
-                        peer,
-                        HandshakeEvent::OutboundNegotiated {
-                            peer,
-                            handshake,
-                            substream,
-                        },
-                    )));
-                }
-                Direction::Inbound => {
-                    let (substream, _) = inner
-                        .substreams
-                        .remove(&(peer, direction))
-                        .expect("peer to exist");
-                    return Poll::Ready(Some((
-                        peer,
-                        HandshakeEvent::InboundNegotiated {
-                            peer,
-                            handshake,
-                            substream,
-                        },
-                    )));
-                }
-                Direction::InboundAccepting => {
-                    tracing::info!(target: "notification::protocol", "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1");
-                    todo!();
-                }
-            }
+        if let Some(event) = inner.pop_event() {
+            return Poll::Ready(Some(event));
         }
-
-        tracing::info!(target: "notification::protocol", "POLLLLLL {}", inner.substreams.len());
 
         if inner.substreams.is_empty() {
             return Poll::Pending;
@@ -259,9 +300,9 @@ impl Stream for HandshakeService {
                 let pinned = Pin::new(&mut *substream);
 
                 match state {
-                    OutboundHandshakeState::SendHandshake => match pinned.poll_ready(cx) {
+                    HandshakeState::SendHandshake => match pinned.poll_ready(cx) {
                         Poll::Ready(Ok(())) => {
-                            *state = OutboundHandshakeState::SinkReady;
+                            *state = HandshakeState::SinkReady;
                             continue;
                         }
                         Poll::Ready(Err(_)) => {
@@ -272,10 +313,10 @@ impl Stream for HandshakeService {
                         }
                         Poll::Pending => continue 'outer,
                     },
-                    OutboundHandshakeState::SinkReady => {
+                    HandshakeState::SinkReady => {
                         match pinned.start_send(inner.handshake.clone().into()) {
                             Ok(()) => {
-                                *state = OutboundHandshakeState::HandshakeSent;
+                                *state = HandshakeState::HandshakeSent;
                                 continue;
                             }
                             Err(_) => {
@@ -286,10 +327,10 @@ impl Stream for HandshakeService {
                             }
                         }
                     }
-                    OutboundHandshakeState::HandshakeSent => match pinned.poll_flush(cx) {
+                    HandshakeState::HandshakeSent => match pinned.poll_flush(cx) {
                         Poll::Ready(Ok(())) => match direction {
                             Direction::Outbound => {
-                                *state = OutboundHandshakeState::ReadHandshake;
+                                *state = HandshakeState::ReadHandshake;
                                 continue;
                             }
                             Direction::Inbound => {
@@ -309,11 +350,10 @@ impl Stream for HandshakeService {
                         }
                         Poll::Pending => continue 'outer,
                     },
-                    OutboundHandshakeState::ReadHandshake => match pinned.poll_next(cx) {
+                    HandshakeState::ReadHandshake => match pinned.poll_next(cx) {
                         Poll::Ready(Some(Ok(handshake))) => match direction {
                             Direction::InboundAccepting => {
-                                // tracing::info!(target: "notification::protocol", "handshake read, send it next");
-                                *state = OutboundHandshakeState::SendHandshake;
+                                *state = HandshakeState::SendHandshake;
                                 continue;
                             }
                             _ => {
@@ -368,7 +408,6 @@ impl Stream for HandshakeService {
                     )));
                 }
                 Direction::InboundAccepting => {
-                    tracing::info!(target: "notification::protocol", "ZZZZZZZZZZZZZZZZZZZZZZZ" );
                     let (substream, _) = inner
                         .substreams
                         .remove(&(peer, direction))
