@@ -429,6 +429,11 @@ async fn reconnect_after_disconnect() {
     // close the substream
     handle2.close_substream(peer1).await;
 
+    match handle2.next_event().await.unwrap() {
+        NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer1),
+        _ => panic!("invalid event received"),
+    }
+
     match handle1.next_event().await.unwrap() {
         NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer2),
         _ => panic!("invalid event received"),
@@ -571,6 +576,11 @@ async fn set_new_handshake() {
 
     // close the substream
     handle2.close_substream(peer1).await;
+
+    match handle2.next_event().await.unwrap() {
+        NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer1),
+        _ => panic!("invalid event received"),
+    }
 
     match handle1.next_event().await.unwrap() {
         NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer2),

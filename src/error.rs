@@ -78,6 +78,8 @@ pub enum Error {
     ProtocolAlreadyExists(ProtocolName),
     #[error("Operation timed out")]
     Timeout,
+    #[error("Invalid state transition")]
+    InvalidState,
 }
 
 #[derive(Debug, thiserror::Error)]
