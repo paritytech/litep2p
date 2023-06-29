@@ -42,13 +42,13 @@ use std::collections::HashMap;
 pub mod codec;
 pub mod config;
 pub mod crypto;
+pub mod error;
 pub mod peer_id;
 pub mod protocol;
 pub mod substream;
 pub mod transport;
 pub mod types;
 
-mod error;
 mod mock;
 mod multistream_select;
 

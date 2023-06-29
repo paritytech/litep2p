@@ -21,6 +21,7 @@
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
+    error::Error,
     peer_id::PeerId,
     protocol::notification::types::{
         Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
@@ -113,7 +114,7 @@ async fn open_substreams() {
     });
 
     // open substream for `peer2` and accept it
-    handle1.open_substream(peer2).await;
+    handle1.open_substream(peer2).await.unwrap();
     assert_eq!(
         handle2.next_event().await.unwrap(),
         NotificationEvent::ValidateSubstream {
@@ -226,7 +227,7 @@ async fn reject_substream() {
     });
 
     // open substream for `peer2` and accept it
-    handle1.open_substream(peer2).await;
+    handle1.open_substream(peer2).await.unwrap();
     assert_eq!(
         handle2.next_event().await.unwrap(),
         NotificationEvent::ValidateSubstream {
@@ -300,7 +301,7 @@ async fn notification_stream_closed() {
     });
 
     // open substream for `peer2` and accept it
-    handle1.open_substream(peer2).await;
+    handle1.open_substream(peer2).await.unwrap();
     assert_eq!(
         handle2.next_event().await.unwrap(),
         NotificationEvent::ValidateSubstream {
@@ -420,7 +421,7 @@ async fn reconnect_after_disconnect() {
     });
 
     // open substream for `peer2` and accept it
-    handle1.open_substream(peer2).await;
+    handle1.open_substream(peer2).await.unwrap();
 
     // accept the inbound substreams
     assert_eq!(
@@ -479,7 +480,7 @@ async fn reconnect_after_disconnect() {
     }
 
     // open the substream
-    handle2.open_substream(peer1).await;
+    handle2.open_substream(peer1).await.unwrap();
 
     assert_eq!(
         handle1.next_event().await.unwrap(),
@@ -595,7 +596,7 @@ async fn set_new_handshake() {
     });
 
     // open substream for `peer2` and accept it
-    handle1.open_substream(peer2).await;
+    handle1.open_substream(peer2).await.unwrap();
 
     // accept the substreams
     assert_eq!(
@@ -656,7 +657,7 @@ async fn set_new_handshake() {
     // set new handshakes and open the substream
     handle1.set_handshake(vec![5, 5, 5, 5]).await;
     handle2.set_handshake(vec![6, 6, 6, 6]).await;
-    handle2.open_substream(peer1).await;
+    handle2.open_substream(peer1).await.unwrap();
 
     // accept the substreams
     assert_eq!(
@@ -756,8 +757,8 @@ async fn both_nodes_open_substreams() {
     });
 
     // both nodes open a substream at the same time
-    handle1.open_substream(peer2).await;
-    handle2.open_substream(peer1).await;
+    handle1.open_substream(peer2).await.unwrap();
+    handle2.open_substream(peer1).await.unwrap();
 
     // accept the substreams
     assert_eq!(
@@ -921,7 +922,7 @@ async fn try_to_connect_to_non_existent_peer() {
     });
 
     let peer = PeerId::random();
-    handle1.open_substream(peer).await;
+    handle1.open_substream(peer).await.unwrap();
     assert_eq!(
         handle1.next_event().await.unwrap(),
         NotificationEvent::NotificationStreamOpenFailure {
@@ -962,4 +963,106 @@ async fn try_to_disconnect_to_non_existent_peer() {
     });
 
     handle1.close_substream(PeerId::random()).await;
+}
+
+#[tokio::test]
+async fn try_to_reopen_substream() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config1)
+        .build();
+
+    let (notif_config2, mut handle2) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+    );
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_notification_protocol(notif_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected and spawn the litep2p objects in the background
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2
+        .send_validation_result(peer1, ValidationResult::Accept)
+        .await;
+
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1
+        .send_validation_result(peer2, ValidationResult::Accept)
+        .await;
+
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // open substream for `peer2` and accept it
+    match handle1.open_substream(peer2).await {
+        Err(Error::PeerAlreadyExists(peer)) => assert_eq!(peer, peer2),
+        result => panic!("invalid event received: {result:?}"),
+    }
 }

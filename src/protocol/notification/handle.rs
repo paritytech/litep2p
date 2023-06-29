@@ -161,18 +161,28 @@ impl NotificationHandle {
     }
 
     /// Open substream to peer.
-    pub async fn open_substream(&self, peer: PeerId) {
+    ///
+    /// Returns `PeerAlreadyExists(PeerId)` if there already exists a substream to the peer.
+    pub async fn open_substream(&self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
 
-        let _ = self
-            .command_tx
+        if self.peers.contains_key(&peer) {
+            return Err(Error::PeerAlreadyExists(peer));
+        }
+
+        self.command_tx
             .send(NotificationCommand::OpenSubstream { peer })
-            .await;
+            .await
+            .map_or(Ok(()), |_| Ok(()))
     }
 
     /// Close substream to peer.
     pub async fn close_substream(&self, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?peer, "close substream");
+
+        if !self.peers.contains_key(&peer) {
+            return;
+        }
 
         let _ = self
             .command_tx
