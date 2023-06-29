@@ -94,6 +94,12 @@ pub enum OutboundState {
     /// Substream is closed.
     Closed,
 
+    /// Outbound substream initiated.
+    OutboundInitiated {
+        /// Substream ID.
+        substream: SubstreamId,
+    },
+
     /// Substream is in the state of being negotiated.
     ///
     /// This process entails sending local node's handshake and reading back the remote node's
@@ -294,18 +300,41 @@ impl NotificationProtocol {
             PeerState::Validating {
                 protocol,
                 inbound,
-                outbound: _,
-            } => match inbound {
-                InboundState::SendingHandshake | InboundState::Open { .. } => {
-                    context.state = PeerState::Validating {
-                        protocol,
-                        inbound,
-                        outbound: OutboundState::Negotiating,
-                    };
-                    self.negotiation.negotiate_outbound(peer, outbound);
+                outbound: outbound_state,
+            } => {
+                //
+                match inbound {
+                    InboundState::SendingHandshake | InboundState::Open { .. } => {
+                        context.state = PeerState::Validating {
+                            protocol,
+                            inbound,
+                            outbound: OutboundState::Negotiating,
+                        };
+                        self.negotiation.negotiate_outbound(peer, outbound);
+                    }
+                    inbound_state => match outbound_state {
+                        OutboundState::OutboundInitiated { substream } => {
+                            debug_assert!(substream == substream_id);
+
+                            context.state = PeerState::Validating {
+                                protocol,
+                                inbound: inbound_state,
+                                outbound: OutboundState::Negotiating,
+                            };
+                            self.negotiation.negotiate_outbound(peer, outbound);
+                        }
+                        inner_state => {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?inbound_state,
+                                ?inner_state,
+                                "invalid state"
+                            );
+                            debug_assert!(false);
+                        }
+                    },
                 }
-                _state => debug_assert!(false),
-            },
+            }
             _state => debug_assert!(false),
         }
 
@@ -352,6 +381,15 @@ impl NotificationProtocol {
                 context.state = PeerState::Validating {
                     protocol,
                     outbound,
+                    inbound: InboundState::ReadingHandshake,
+                };
+            }
+            PeerState::OutboundInitiated { substream } => {
+                self.negotiation.read_handshake(peer, inbound);
+
+                context.state = PeerState::Validating {
+                    protocol,
+                    outbound: OutboundState::OutboundInitiated { substream },
                     inbound: InboundState::ReadingHandshake,
                 };
             }
@@ -539,39 +577,34 @@ impl NotificationProtocol {
 
                     Ok(())
                 }
-                ValidationResult::Accept => {
-                    match outbound {
-                        OutboundState::Closed => {
-                            match context.service.open_substream().await {
-                                Ok(_) => {
-                                    self.negotiation.send_handshake(peer, inbound);
-                                    // TODO: set state properly
-                                    context.state = PeerState::Validating {
-                                        protocol,
-                                        inbound: InboundState::SendingHandshake,
-                                        outbound,
-                                    };
-                                    Ok(())
-                                }
-                                Err(error) => {
-                                    let _ = inbound.close().await;
-                                    context.state = PeerState::Closed { pending_open: None };
-                                    return Err(error);
-                                }
-                            }
-                        }
-                        _ => {
+                ValidationResult::Accept => match outbound {
+                    OutboundState::Closed => match context.service.open_substream().await {
+                        Ok(substream) => {
                             self.negotiation.send_handshake(peer, inbound);
                             context.state = PeerState::Validating {
                                 protocol,
                                 inbound: InboundState::SendingHandshake,
-                                outbound,
+                                outbound: OutboundState::OutboundInitiated { substream },
                             };
-
                             Ok(())
                         }
+                        Err(error) => {
+                            let _ = inbound.close().await;
+                            context.state = PeerState::Closed { pending_open: None };
+                            return Err(error);
+                        }
+                    },
+                    _ => {
+                        self.negotiation.send_handshake(peer, inbound);
+                        context.state = PeerState::Validating {
+                            protocol,
+                            inbound: InboundState::SendingHandshake,
+                            outbound,
+                        };
+
+                        Ok(())
                     }
-                }
+                },
             },
             _state => {
                 debug_assert!(false);

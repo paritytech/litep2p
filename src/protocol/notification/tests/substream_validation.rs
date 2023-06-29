@@ -139,7 +139,7 @@ async fn substream_accepted() {
         PeerState::Validating {
             protocol: _,
             inbound: InboundState::Open { .. },
-            outbound: OutboundState::Closed,
+            outbound: OutboundState::OutboundInitiated { substream: 0 },
         } => {}
         state => panic!("invalid state for peer: {state:?}"),
     }
