@@ -21,10 +21,7 @@
 use crate::{
     peer_id::PeerId,
     protocol::{
-        notification::{
-            types::{Config, NotificationHandle},
-            NotificationProtocol,
-        },
+        notification::{handle::NotificationHandle, types::Config, NotificationProtocol},
         ConnectionEvent, ConnectionService, ProtocolEvent,
     },
     types::protocol::ProtocolName,

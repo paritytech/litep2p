@@ -27,7 +27,7 @@ use crate::{
             negotiation::HandshakeEvent,
             tests::{add_peer, make_notification_protocol},
             types::{NotificationEvent, ValidationResult},
-            InboundState, OutboundState, PeerContext, PeerState, LOG_TARGET,
+            InboundState, OutboundState, PeerContext, PeerState,
         },
         ProtocolEvent,
     },
@@ -224,7 +224,7 @@ async fn accept_fails_due_to_closed_substream() {
         .try_init();
 
     let (mut notif, mut handle, _sender) = make_notification_protocol();
-    let (peer, service, mut receiver) = add_peer();
+    let (peer, service, _receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
     let mut substream = MockSubstream::new();
     substream

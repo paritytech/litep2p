@@ -23,8 +23,9 @@ use crate::{
     peer_id::PeerId,
     protocol::{
         notification::{
+            handle::{NotificationEventHandle, NotificationSink},
             negotiation::{HandshakeEvent, HandshakeService},
-            types::{NotificationCommand, NotificationError, NotificationSink, ValidationResult},
+            types::{NotificationCommand, NotificationError, ValidationResult},
         },
         ConnectionEvent, ConnectionService, Direction,
     },
@@ -43,12 +44,12 @@ use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
 use std::collections::{hash_map::Entry, HashMap};
 
-use self::types::NotificationEventHandle;
-
+pub mod handle;
 mod negotiation;
+pub mod types;
+
 #[cfg(test)]
 mod tests;
-pub mod types;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "notification::protocol";

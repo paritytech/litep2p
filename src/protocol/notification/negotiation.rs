@@ -20,6 +20,8 @@
 
 //! Implementation of the notification handshaking.
 
+#![allow(unused)]
+
 use crate::{
     error::{Error, SubstreamError},
     peer_id::PeerId,
