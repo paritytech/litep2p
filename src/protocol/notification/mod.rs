@@ -347,19 +347,20 @@ impl NotificationProtocol {
                 outbound,
                 inbound: InboundState::Closed,
             } => {
-                self.negotiation.accept_inbound(peer, inbound);
+                self.negotiation.read_handshake(peer, inbound);
 
                 context.state = PeerState::Validating {
                     protocol,
                     outbound,
-                    inbound: InboundState::Accepting,
+                    inbound: InboundState::ReadingHandshake,
                 };
             }
             state => {
                 tracing::error!(
                     target: LOG_TARGET,
+                    ?peer,
                     ?state,
-                    "invalid state for inbound state"
+                    "invalid state for inbound substream"
                 );
                 debug_assert!(false);
             }
@@ -538,35 +539,39 @@ impl NotificationProtocol {
 
                     Ok(())
                 }
-                ValidationResult::Accept => async {
-                    self.negotiation.send_handshake(peer, inbound);
-                    context.service.open_substream().await.map_err(From::from)
+                ValidationResult::Accept => {
+                    match outbound {
+                        OutboundState::Closed => {
+                            match context.service.open_substream().await {
+                                Ok(_) => {
+                                    self.negotiation.send_handshake(peer, inbound);
+                                    // TODO: set state properly
+                                    context.state = PeerState::Validating {
+                                        protocol,
+                                        inbound: InboundState::SendingHandshake,
+                                        outbound,
+                                    };
+                                    Ok(())
+                                }
+                                Err(error) => {
+                                    let _ = inbound.close().await;
+                                    context.state = PeerState::Closed { pending_open: None };
+                                    return Err(error);
+                                }
+                            }
+                        }
+                        _ => {
+                            self.negotiation.send_handshake(peer, inbound);
+                            context.state = PeerState::Validating {
+                                protocol,
+                                inbound: InboundState::SendingHandshake,
+                                outbound,
+                            };
+
+                            Ok(())
+                        }
+                    }
                 }
-                .await
-                .map(|substream_id| {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?substream_id,
-                        "substream accepted and outbound substream opened"
-                    );
-
-                    context.state = PeerState::Validating {
-                        protocol,
-                        inbound: InboundState::SendingHandshake,
-                        outbound,
-                    };
-                })
-                .map_err(|error| {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        "failed to accept substream, now closed"
-                    );
-
-                    context.state = PeerState::Closed { pending_open: None };
-                    error
-                }),
             },
             _state => {
                 debug_assert!(false);

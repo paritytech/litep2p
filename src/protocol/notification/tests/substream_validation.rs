@@ -296,6 +296,10 @@ async fn accept_fails_due_to_closed_substream() {
 
 #[tokio::test]
 async fn accept_fails_due_to_closed_connection() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
     let (mut notif, mut handle, _sender) = make_notification_protocol();
     let (peer, service, receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
@@ -304,6 +308,10 @@ async fn accept_fails_due_to_closed_connection() {
         .expect_poll_next()
         .times(1)
         .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
+    substream
+        .expect_poll_close()
+        .times(1)
+        .return_once(|_| Poll::Ready(Ok(())));
 
     // connect peer and verify it's in closed state
     notif
@@ -354,9 +362,9 @@ async fn accept_fails_due_to_closed_connection() {
         .await
         .is_err());
 
-    match notif.peers.get(&peer).unwrap().state {
+    match &notif.peers.get(&peer).unwrap().state {
         PeerState::Closed { .. } => {}
-        _ => panic!("invalid state for peer"),
+        state => panic!("invalid state for peer: {state:?}"),
     }
 }
 

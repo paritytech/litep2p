@@ -127,6 +127,18 @@ async fn open_substreams() {
         .await;
 
     assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1
+        .send_validation_result(peer2, ValidationResult::Accept)
+        .await;
+
+    assert_eq!(
         handle2.next_event().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
@@ -302,6 +314,18 @@ async fn notification_stream_closed() {
         .await;
 
     assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1
+        .send_validation_result(peer2, ValidationResult::Accept)
+        .await;
+
+    assert_eq!(
         handle2.next_event().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
@@ -397,6 +421,8 @@ async fn reconnect_after_disconnect() {
 
     // open substream for `peer2` and accept it
     handle1.open_substream(peer2).await;
+
+    // accept the inbound substreams
     assert_eq!(
         handle2.next_event().await.unwrap(),
         NotificationEvent::ValidateSubstream {
@@ -407,6 +433,19 @@ async fn reconnect_after_disconnect() {
     );
     handle2
         .send_validation_result(peer1, ValidationResult::Accept)
+        .await;
+
+    // accept the inbound substreams
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1
+        .send_validation_result(peer2, ValidationResult::Accept)
         .await;
 
     assert_eq!(
@@ -452,6 +491,18 @@ async fn reconnect_after_disconnect() {
     );
     handle1
         .send_validation_result(peer2, ValidationResult::Accept)
+        .await;
+
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2
+        .send_validation_result(peer1, ValidationResult::Accept)
         .await;
 
     // verify that both peers get the open event
@@ -545,6 +596,8 @@ async fn set_new_handshake() {
 
     // open substream for `peer2` and accept it
     handle1.open_substream(peer2).await;
+
+    // accept the substreams
     assert_eq!(
         handle2.next_event().await.unwrap(),
         NotificationEvent::ValidateSubstream {
@@ -555,6 +608,19 @@ async fn set_new_handshake() {
     );
     handle2
         .send_validation_result(peer1, ValidationResult::Accept)
+        .await;
+
+    // accept the substreams
+    assert_eq!(
+        handle1.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1
+        .send_validation_result(peer2, ValidationResult::Accept)
         .await;
 
     assert_eq!(
@@ -592,6 +658,7 @@ async fn set_new_handshake() {
     handle2.set_handshake(vec![6, 6, 6, 6]).await;
     handle2.open_substream(peer1).await;
 
+    // accept the substreams
     assert_eq!(
         handle1.next_event().await.unwrap(),
         NotificationEvent::ValidateSubstream {
@@ -602,6 +669,19 @@ async fn set_new_handshake() {
     );
     handle1
         .send_validation_result(peer2, ValidationResult::Accept)
+        .await;
+
+    // accept the substreams
+    assert_eq!(
+        handle2.next_event().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            peer: peer1,
+            handshake: vec![5, 5, 5, 5],
+        }
+    );
+    handle2
+        .send_validation_result(peer1, ValidationResult::Accept)
         .await;
 
     // verify that both peers get the open event
