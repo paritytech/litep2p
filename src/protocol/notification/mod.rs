@@ -516,6 +516,8 @@ impl NotificationProtocol {
             }
             PeerState::Open { mut outbound } => match self.substreams.remove(&peer) {
                 Some(mut inbound) => {
+                    tracing::info!(target: LOG_TARGET, "close the substream");
+
                     self.receivers.remove(&peer);
                     let _ = outbound.close().await;
                     let _ = inbound.close().await;
@@ -755,6 +757,8 @@ impl NotificationProtocol {
                     },
                 inbound: InboundState::Open { inbound },
             } => {
+                tracing::debug!(target: LOG_TARGET, ?peer, "notification stream opened");
+
                 let (async_tx, async_rx) = channel(ASYNC_CHANNEL_SIZE);
                 let (sync_tx, sync_rx) = channel(SYNC_CHANNEL_SIZE);
                 let notif_stream =
@@ -775,7 +779,7 @@ impl NotificationProtocol {
 
     /// Start [`NotificationProtocol`] event loop.
     pub async fn run(mut self) {
-        tracing::debug!(target: LOG_TARGET, "starting request-response event loop");
+        tracing::debug!(target: LOG_TARGET, "starting notification event loop");
 
         loop {
             tokio::select! {

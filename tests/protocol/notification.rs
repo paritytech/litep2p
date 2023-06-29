@@ -156,8 +156,12 @@ async fn open_substreams() {
         }
     );
 
-    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]);
-    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]);
+    handle1
+        .send_sync_notification(peer2, vec![1, 3, 3, 7])
+        .unwrap();
+    handle2
+        .send_sync_notification(peer1, vec![1, 3, 3, 8])
+        .unwrap();
 
     assert_eq!(
         handle2.next_event().await.unwrap(),
@@ -343,8 +347,12 @@ async fn notification_stream_closed() {
         }
     );
 
-    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]);
-    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]);
+    handle1
+        .send_sync_notification(peer2, vec![1, 3, 3, 7])
+        .unwrap();
+    handle2
+        .send_sync_notification(peer1, vec![1, 3, 3, 8])
+        .unwrap();
 
     assert_eq!(
         handle2.next_event().await.unwrap(),
@@ -525,8 +533,12 @@ async fn reconnect_after_disconnect() {
     );
 
     // send notifications to verify that the connection works again
-    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]);
-    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]);
+    handle1
+        .send_sync_notification(peer2, vec![1, 3, 3, 7])
+        .unwrap();
+    handle2
+        .send_sync_notification(peer1, vec![1, 3, 3, 8])
+        .unwrap();
 
     assert_eq!(
         handle2.next_event().await.unwrap(),
@@ -803,8 +815,12 @@ async fn both_nodes_open_substreams() {
         }
     );
 
-    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]);
-    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]);
+    handle1
+        .send_sync_notification(peer2, vec![1, 3, 3, 7])
+        .unwrap();
+    handle2
+        .send_sync_notification(peer1, vec![1, 3, 3, 8])
+        .unwrap();
 
     assert_eq!(
         handle2.next_event().await.unwrap(),
@@ -852,7 +868,9 @@ async fn send_sync_notification_non_existent_peer() {
         }
     });
 
-    handle1.send_sync_notification(PeerId::random(), vec![1, 3, 3, 7]);
+    handle1
+        .send_sync_notification(PeerId::random(), vec![1, 3, 3, 7])
+        .unwrap();
 }
 
 #[tokio::test]

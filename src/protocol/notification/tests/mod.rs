@@ -31,6 +31,8 @@ use crate::{
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 #[cfg(test)]
+mod notification;
+#[cfg(test)]
 mod substream_validation;
 
 /// create new `NotificationProtocol`
