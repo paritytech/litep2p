@@ -28,6 +28,12 @@ use crate::{
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
+/// Default channel size for synchronous notifications.
+pub(super) const SYNC_CHANNEL_SIZE: usize = 16;
+
+/// Default channel size for asynchronous notifications.
+pub(super) const ASYNC_CHANNEL_SIZE: usize = 8;
+
 /// Validation result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationResult {
@@ -46,6 +52,9 @@ pub enum NotificationError {
 
     /// Connection to peer doesn't exist.
     NoConnection,
+
+    /// Synchronous notification channel is clogged.
+    ChannelClogged,
 }
 
 /// Notification events.

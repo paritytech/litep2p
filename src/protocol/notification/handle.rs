@@ -134,8 +134,15 @@ impl NotificationSink {
     }
 
     /// Send notification to peer synchronously.
-    pub(crate) fn send_sync_notification(&mut self, notification: Vec<u8>) {
-        self.sync_tx.try_send(notification).unwrap();
+    ///
+    /// If the channel is clogged, `NotificationError::Clogged` is returned.
+    pub(crate) fn send_sync_notification(
+        &mut self,
+        notification: Vec<u8>,
+    ) -> Result<(), NotificationError> {
+        self.sync_tx
+            .try_send(notification)
+            .map_err(|_| NotificationError::ChannelClogged)
     }
 
     /// Send notification to peer asynchronously.
@@ -228,11 +235,16 @@ impl NotificationHandle {
     }
 
     /// Send synchronous notification to user.
-    pub fn send_sync_notification(&mut self, peer: PeerId, notification: Vec<u8>) {
+    pub fn send_sync_notification(
+        &mut self,
+        peer: PeerId,
+        notification: Vec<u8>,
+    ) -> Result<(), NotificationError> {
         tracing::trace!(target: LOG_TARGET, ?peer, "send sync notification");
 
-        if let Some(sink) = self.peers.get_mut(&peer) {
-            sink.send_sync_notification(notification);
+        match self.peers.get_mut(&peer) {
+            Some(sink) => sink.send_sync_notification(notification),
+            None => Ok(()),
         }
     }
 

@@ -25,7 +25,10 @@ use crate::{
         notification::{
             handle::{NotificationEventHandle, NotificationSink},
             negotiation::{HandshakeEvent, HandshakeService},
-            types::{NotificationCommand, NotificationError, ValidationResult},
+            types::{
+                NotificationCommand, NotificationError, ValidationResult, ASYNC_CHANNEL_SIZE,
+                SYNC_CHANNEL_SIZE,
+            },
         },
         ConnectionEvent, ConnectionService, Direction,
     },
@@ -53,12 +56,6 @@ mod tests;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "notification::protocol";
-
-/// Default channel size for synchronous notifications.
-const SYNC_CHANNEL_SIZE: usize = 2048;
-
-/// Default channel size for asynchronous notifications.
-const ASYNC_CHANNEL_SIZE: usize = 8;
 
 /// Inbound substream state.
 #[derive(Debug)]
