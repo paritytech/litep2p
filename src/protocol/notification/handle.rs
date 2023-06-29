@@ -113,14 +113,24 @@ impl NotificationEventHandle {
 
 #[derive(Debug, Clone)]
 pub(crate) struct NotificationSink {
+    /// Peer ID.
+    peer: PeerId,
+
+    /// TX channel for sending notifications synchronously.
     sync_tx: Sender<Vec<u8>>,
+
+    /// TX channel for sending notifications asynchronously.
     async_tx: Sender<Vec<u8>>,
 }
 
 impl NotificationSink {
     /// Create new [`NotificationSink`].
-    pub(crate) fn new(sync_tx: Sender<Vec<u8>>, async_tx: Sender<Vec<u8>>) -> Self {
-        Self { async_tx, sync_tx }
+    pub(crate) fn new(peer: PeerId, sync_tx: Sender<Vec<u8>>, async_tx: Sender<Vec<u8>>) -> Self {
+        Self {
+            peer,
+            async_tx,
+            sync_tx,
+        }
     }
 
     /// Send notification to peer synchronously.
@@ -129,9 +139,16 @@ impl NotificationSink {
     }
 
     /// Send notification to peer asynchronously.
-    pub(crate) async fn send_async_notification(&mut self, notification: Vec<u8>) {
-        // TODO: fix
-        self.async_tx.try_send(notification).unwrap();
+    ///
+    /// Returns `Err(PeerDoesntExist(PeerId))` if the connection has been closed.
+    pub(crate) async fn send_async_notification(
+        &mut self,
+        notification: Vec<u8>,
+    ) -> crate::Result<()> {
+        self.async_tx
+            .send(notification)
+            .await
+            .map_err(|_| Error::PeerDoesntExist(self.peer))
     }
 }
 
@@ -220,6 +237,8 @@ impl NotificationHandle {
     }
 
     /// Send asynchronous notification to user.
+    ///
+    /// Returns `Err(PeerDoesntExist(PeerId))` if the connection has been closed.
     pub async fn send_async_notification(
         &mut self,
         peer: PeerId,
@@ -228,10 +247,7 @@ impl NotificationHandle {
         tracing::trace!(target: LOG_TARGET, ?peer, "send async notification");
 
         match self.peers.get_mut(&peer) {
-            Some(sink) => {
-                sink.send_async_notification(notification).await;
-                Ok(())
-            }
+            Some(sink) => sink.send_async_notification(notification).await,
             None => Err(Error::PeerDoesntExist(peer)),
         }
     }

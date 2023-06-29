@@ -762,7 +762,7 @@ impl NotificationProtocol {
                 let (sync_tx, sync_rx) = channel(SYNC_CHANNEL_SIZE);
                 let notif_stream =
                     select(ReceiverStream::new(async_rx), ReceiverStream::new(sync_rx));
-                let sink = NotificationSink::new(sync_tx, async_tx);
+                let sink = NotificationSink::new(peer, sync_tx, async_tx);
 
                 context.state = PeerState::Open { outbound };
 
