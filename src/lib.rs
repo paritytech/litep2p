@@ -34,10 +34,17 @@ use crate::{
     types::protocol::ProtocolName,
 };
 
-use multiaddr::Multiaddr;
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use multiaddr::{Multiaddr, Protocol};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use trust_dns_resolver::{
+    config::{ResolverConfig, ResolverOpts},
+    error::ResolveError,
+    lookup_ip::LookupIp,
+    AsyncResolver,
+};
 
-use std::collections::HashMap;
+use std::{collections::HashMap, net::IpAddr, result};
 
 pub mod codec;
 pub mod config;
@@ -53,7 +60,7 @@ mod mock;
 mod multistream_select;
 
 /// Public result type used by the crate.
-pub type Result<T> = std::result::Result<T, error::Error>;
+pub type Result<T> = result::Result<T, error::Error>;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p";
@@ -96,6 +103,10 @@ pub struct Litep2p {
 
     /// Pending connections.
     pending_connections: HashMap<usize, Multiaddr>,
+
+    /// Pending DNS resolves.
+    pending_dns_resolves:
+        FuturesUnordered<BoxFuture<'static, (Multiaddr, result::Result<LookupIp, ResolveError>)>>,
 }
 
 #[derive(Debug)]
@@ -252,6 +263,7 @@ impl Litep2p {
             local_peer_id,
             listen_addresses,
             pending_connections: HashMap::new(),
+            pending_dns_resolves: FuturesUnordered::new(),
         })
     }
 
@@ -271,10 +283,26 @@ impl Litep2p {
     /// The connection is established in the background and its result is reported through
     /// [`Litep2p::next_event()`].
     pub fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
-        let mut protocol_stack = address.protocol_stack();
+        let mut protocol_stack = address.iter();
 
-        match protocol_stack.next() {
-            Some("ip4") | Some("ip6") => {}
+        match protocol_stack
+            .next()
+            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+        {
+            Protocol::Ip4(_) | Protocol::Ip6(_) => {}
+            Protocol::Dns(addr) | Protocol::Dns4(addr) | Protocol::Dns6(addr) => {
+                let dns_address = addr.to_string();
+                let original = address.clone();
+
+                self.pending_dns_resolves.push(Box::pin(async move {
+                    match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
+                        Ok(resolver) => (original, resolver.lookup_ip(dns_address).await),
+                        Err(error) => (original, Err(error)),
+                    }
+                }));
+
+                return Ok(());
+            }
             transport => {
                 tracing::error!(
                     target: LOG_TARGET,
@@ -285,8 +313,11 @@ impl Litep2p {
             }
         }
 
-        match protocol_stack.next() {
-            Some("tcp") => {
+        match protocol_stack
+            .next()
+            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+        {
+            Protocol::Tcp(_) => {
                 let connection_id = self.tcp.open_connection(address.clone())?;
                 self.pending_connections.insert(connection_id, address);
                 Ok(())
@@ -301,6 +332,70 @@ impl Litep2p {
                 Err(Error::TransportNotSupported(address))
             }
         }
+    }
+
+    /// Handle resolved DNS address.
+    async fn on_resolved_dns_address(
+        &mut self,
+        address: Multiaddr,
+        result: result::Result<LookupIp, ResolveError>,
+    ) -> crate::Result<Multiaddr> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?address,
+            ?result,
+            "dns address resolved"
+        );
+
+        let Ok(resolved) = result else {
+            return Err(Error::DnsAddressResolutionFailed);
+        };
+
+        let mut address_iter = resolved.iter();
+        let mut protocol_stack = address.into_iter();
+        let mut new_address = Multiaddr::empty();
+
+        match protocol_stack.next().expect("entry to exist") {
+            Protocol::Dns4(_) => match address_iter.next() {
+                Some(IpAddr::V4(inner)) => {
+                    new_address.push(Protocol::Ip4(inner));
+                }
+                _ => return Err(Error::TransportNotSupported(address)),
+            },
+            Protocol::Dns6(_) => match address_iter.next() {
+                Some(IpAddr::V6(inner)) => {
+                    new_address.push(Protocol::Ip6(inner));
+                }
+                _ => return Err(Error::TransportNotSupported(address)),
+            },
+            Protocol::Dns(_) => {
+                // TODO: zzz
+                let mut ip6 = Vec::new();
+                let mut ip4 = Vec::new();
+
+                for ip in address_iter {
+                    match ip {
+                        IpAddr::V4(inner) => ip4.push(inner),
+                        IpAddr::V6(inner) => ip6.push(inner),
+                    }
+                }
+
+                if !ip6.is_empty() {
+                    new_address.push(Protocol::Ip6(ip6[0]));
+                } else if !ip4.is_empty() {
+                    new_address.push(Protocol::Ip4(ip4[0]));
+                } else {
+                    return Err(Error::TransportNotSupported(address));
+                }
+            }
+            _ => panic!("somehow got invalid dns address"),
+        };
+
+        for protocol in protocol_stack {
+            new_address.push(protocol);
+        }
+
+        Ok(new_address)
     }
 
     /// Poll next event.
@@ -319,6 +414,17 @@ impl Litep2p {
                     }
                     event => {
                         tracing::info!(target: LOG_TARGET, ?event, "unhandle event from tcp");
+                    }
+                },
+                event = self.pending_dns_resolves.select_next_some(), if !self.pending_dns_resolves.is_empty() => {
+                    match self.on_resolved_dns_address(event.0.clone(), event.1).await {
+                        Ok(address) => {
+                            tracing::debug!(target: LOG_TARGET, ?address, "connect to remote peer");
+
+                            let connection_id = self.tcp.open_connection(address.clone())?;
+                            self.pending_connections.insert(connection_id, address);
+                        }
+                        Err(error) => return Ok(Litep2pEvent::DialFailure { address: event.0, error }),
                     }
                 }
             }
@@ -340,6 +446,7 @@ mod tests {
         Litep2p, Litep2pEvent,
     };
     use futures::Stream;
+    use multiaddr::{Multiaddr, Protocol};
 
     #[tokio::test]
     async fn initialize_litep2p() {
@@ -438,6 +545,57 @@ mod tests {
         assert!(std::matches!(
             litep2p1.next_event().await,
             Ok(Litep2pEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn connect_over_dns() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let keypair1 = Keypair::generate();
+        let (ping_config1, _ping_event_stream1) = PingConfig::new(3);
+
+        let config1 = Litep2pConfigBuilder::new()
+            .with_keypair(keypair1)
+            .with_tcp(TcpTransportConfig {
+                listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            })
+            .with_ipfs_ping(ping_config1)
+            .build();
+
+        let keypair2 = Keypair::generate();
+        let (ping_config2, _ping_event_stream2) = PingConfig::new(3);
+
+        let config2 = Litep2pConfigBuilder::new()
+            .with_keypair(keypair2)
+            .with_tcp(TcpTransportConfig {
+                listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            })
+            .with_ipfs_ping(ping_config2)
+            .build();
+
+        let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+        let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+        let address = litep2p2.listen_addresses().next().unwrap().clone();
+        let tcp = address.iter().skip(1).next().unwrap();
+
+        let mut new_address = Multiaddr::empty();
+        new_address.push(Protocol::Dns("localhost".into()));
+        new_address.push(tcp);
+
+        litep2p1.connect(new_address).unwrap();
+        let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
+
+        assert!(std::matches!(
+            res1,
+            Ok(Litep2pEvent::ConnectionEstablished { .. })
+        ));
+        assert!(std::matches!(
+            res2,
+            Ok(Litep2pEvent::ConnectionEstablished { .. })
         ));
     }
 }

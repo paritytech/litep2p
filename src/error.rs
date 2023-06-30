@@ -80,6 +80,8 @@ pub enum Error {
     Timeout,
     #[error("Invalid state transition")]
     InvalidState,
+    #[error("DNS address resolution failed")]
+    DnsAddressResolutionFailed,
 }
 
 #[derive(Debug, thiserror::Error)]
