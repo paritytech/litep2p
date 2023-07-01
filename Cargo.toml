@@ -52,6 +52,7 @@ features = ["dangerous_configuration"] # Must enable this to allow for custom ve
 
 [dev-dependencies]
 [dev-dependencies]
+async-channel = "1.8.0"
 libp2p = { version = "0.51.3", features = [
     "tokio",
     "dns",
@@ -64,6 +65,7 @@ libp2p = { version = "0.51.3", features = [
     "websocket",
     "yamux"
 ]}
+sc-network = { path = "/home/altonen/work/substrate/client/network", version = "0.10.0-dev" }
 
 [profile.release]
 debug = true

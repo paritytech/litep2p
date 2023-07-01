@@ -19,10 +19,4 @@
 // DEALINGS IN THE SOFTWARE.
 
 #[cfg(test)]
-mod go_libp2p;
-#[cfg(test)]
-mod rust_identify;
-#[cfg(test)]
-mod rust_ping;
-#[cfg(test)]
-mod substrate;
+mod request_response;
