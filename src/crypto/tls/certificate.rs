@@ -451,13 +451,17 @@ mod tests {
 
     #[test]
     fn sanity_check() {
-        let keypair = identity::Keypair::generate_ed25519();
+        // let keypair = identity::Keypair::generate_ed25519();
+        let keypair = crate::crypto::ed25519::Keypair::generate();
 
         let (cert, _) = generate(&keypair).unwrap();
         let parsed_cert = parse(&cert).unwrap();
 
         assert!(parsed_cert.verify().is_ok());
-        assert_eq!(keypair.public(), parsed_cert.extension.public_key);
+        assert_eq!(
+            crate::crypto::PublicKey::Ed25519(keypair.public()),
+            parsed_cert.extension.public_key
+        );
     }
 
     macro_rules! check_cert {

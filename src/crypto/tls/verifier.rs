@@ -173,6 +173,8 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
         intermediates: &[Certificate],
         _now: std::time::SystemTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
+        tracing::error!("VERIFY CLIENT CERTIFICATE");
+
         verify_presented_certs(end_entity, intermediates)?;
 
         Ok(ClientCertVerified::assertion())
@@ -193,6 +195,8 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
         cert: &Certificate,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        tracing::error!("VERIFY TLS 1.3 SIGNATURE");
+
         verify_tls13_signature(cert, dss.scheme, message, dss.signature())
     }
 
