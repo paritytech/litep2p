@@ -37,7 +37,7 @@ async fn go_libp2p_dials() {
         .try_init();
 
     let mut file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    file_path.push("tests/conformance/go_libp2p/tcp_ping_identify/ping_test");
+    file_path.push("tests/conformance/golang/tcp_ping_identify/ping_test");
 
     let _ = std::process::Command::new(file_path)
         .spawn()
