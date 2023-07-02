@@ -226,17 +226,12 @@ impl Transport for TcpTransport {
                                 }
                             });
 
-                            self.context.tx.send(TransportEvent::ConnectionEstablished { peer, address }).await?;
+                            self.context.report_connection_established(peer, address).await;
                         }
                         Err(error) => {
                             match error.connection_id {
                                 Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                                    Some(address) => {
-                                        self.context.tx.send(TransportEvent::DialFailure {
-                                            address,
-                                            error: error.error,
-                                        }).await?;
-                                    }
+                                    Some(address) => self.context.report_dial_failure(address, error.error).await,
                                     None => tracing::debug!(
                                         target: LOG_TARGET,
                                         ?error,

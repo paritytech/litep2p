@@ -195,6 +195,30 @@ impl TransportContext {
             None => Ok(service),
         }
     }
+
+    /// Report to `Litep2p` that a peer connected.
+    pub(crate) async fn report_connection_established(&mut self, peer: PeerId, address: Multiaddr) {
+        let _ = self
+            .tx
+            .send(TransportEvent::ConnectionEstablished { peer, address })
+            .await;
+    }
+
+    /// Report to `Litep2p` that a peer disconnected.
+    pub(crate) async fn report_connection_closed(&mut self, peer: PeerId) {
+        let _ = self
+            .tx
+            .send(TransportEvent::ConnectionClosed { peer })
+            .await;
+    }
+
+    /// Report to `Litep2p` that dialing a remote peer failed.
+    pub(crate) async fn report_dial_failure(&mut self, address: Multiaddr, error: Error) {
+        let _ = self
+            .tx
+            .send(TransportEvent::DialFailure { address, error })
+            .await;
+    }
 }
 
 /// Supported protocols.

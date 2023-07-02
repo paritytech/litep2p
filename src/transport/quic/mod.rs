@@ -277,7 +277,7 @@ impl Transport for QuicTransport {
                             }
                         });
 
-                        self.context.tx.send(TransportEvent::ConnectionEstablished { peer, address }).await?;
+                        self.context.report_connection_established(peer, address).await;
                     }
                     None => {
                         // TODO: close transport
@@ -306,12 +306,10 @@ impl Transport for QuicTransport {
                             }).await?;
                         }
                         Err(error) => match self.pending_dials.remove(&connection_id) {
-                            Some(address) => {
-                                self.context.tx.send(TransportEvent::DialFailure {
-                                    address,
-                                    error: Error::TransportError(error.to_string()),
-                                }).await?;
-                            }
+                            Some(address) => self.context.report_dial_failure(
+                                address,
+                                Error::TransportError(error.to_string())
+                            ).await,
                             None => tracing::debug!(
                                 target: LOG_TARGET,
                                 ?error,
