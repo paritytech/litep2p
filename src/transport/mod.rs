@@ -18,9 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{error::Error, peer_id::PeerId, TransportContext};
+use crate::{error::Error, peer_id::PeerId, TransportContext, DEFAULT_CHANNEL_SIZE};
 
 use multiaddr::Multiaddr;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::fmt::Debug;
 
@@ -34,6 +35,19 @@ pub trait TransportError {
 
     /// Convert [`TransportError`] into `Error`
     fn into_error(self) -> Error;
+}
+
+/// Commands send by `Litep2p` to the transport.
+#[derive(Debug)]
+pub(crate) enum TransportCommand {
+    /// Dial remote peer at `address`.
+    Dial {
+        /// Address.
+        address: Multiaddr,
+
+        /// Connection ID allocated for this connection.
+        connection_id: usize,
+    },
 }
 
 /// Events emitted by the underlying transport.
@@ -62,23 +76,22 @@ pub enum TransportEvent {
 }
 
 #[async_trait::async_trait]
-pub trait Transport {
+pub(crate) trait Transport {
     type Config: Debug;
     type Error: TransportError; // TODO: is this really necessary?
 
     /// Create new [`Transport`] object.
-    async fn new(context: TransportContext, config: Self::Config) -> crate::Result<Self>
+    async fn new(
+        context: TransportContext,
+        config: Self::Config,
+        rx: Receiver<TransportCommand>,
+    ) -> crate::Result<Self>
     where
         Self: Sized;
 
     /// Get assigned listen address.
     fn listen_address(&self) -> Multiaddr;
 
-    /// Try to open a connection to remote peer.
-    ///
-    /// The result is polled using [`Transport::next_connection()`].
-    fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize>;
-
-    /// Poll next connection.
-    async fn next_event(&mut self) -> Result<TransportEvent, Self::Error>;
+    /// Start transport event loop.
+    async fn start(mut self) -> crate::Result<()>;
 }

@@ -23,7 +23,7 @@ use crate::{
     peer_id::PeerId,
     transport::{
         tcp::{config::TransportConfig, connection::TcpConnection},
-        Transport, TransportError, TransportEvent,
+        Transport, TransportCommand, TransportError, TransportEvent,
     },
     TransportContext,
 };
@@ -33,7 +33,7 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
 };
 use multiaddr::{Multiaddr, Protocol};
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::mpsc::Receiver};
 
 use std::{
     collections::HashMap,
@@ -102,6 +102,9 @@ pub struct TcpTransport {
 
     /// Pending connections.
     pending_connections: FuturesUnordered<BoxFuture<'static, Result<TcpConnection, TcpError>>>,
+
+    /// RX channel for receiving commands from `Litep2p`.
+    rx: Receiver<TransportCommand>,
 }
 
 impl TcpTransport {
@@ -174,7 +177,11 @@ impl Transport for TcpTransport {
     type Config = TransportConfig;
 
     /// Create new [`TcpTransport`].
-    async fn new(context: TransportContext, config: Self::Config) -> crate::Result<Self> {
+    async fn new(
+        context: TransportContext,
+        config: Self::Config,
+        rx: Receiver<TransportCommand>,
+    ) -> crate::Result<Self> {
         tracing::info!(
             target: LOG_TARGET,
             listen_address = ?config.listen_address,
@@ -186,6 +193,7 @@ impl Transport for TcpTransport {
         let listen_address = listener.local_addr()?;
 
         Ok(Self {
+            rx,
             context,
             listener,
             listen_address,
@@ -200,26 +208,26 @@ impl Transport for TcpTransport {
         socket_addr_to_multi_addr(self.listen_address())
     }
 
-    /// Open connection to remote peer at `address`.
-    fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize> {
-        tracing::debug!(target: LOG_TARGET, ?address, "open connection");
+    // /// Open connection to remote peer at `address`.
+    // fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize> {
+    //     tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
-        let context = self.context.clone();
-        let (socket_address, peer) = Self::get_socket_address(&address)?;
-        let connection_id = self.next_connection_id();
+    //     let context = self.context.clone();
+    //     let (socket_address, peer) = Self::get_socket_address(&address)?;
+    //     let connection_id = self.next_connection_id();
 
-        self.pending_dials.insert(connection_id, address);
-        self.pending_connections.push(Box::pin(async move {
-            TcpConnection::open_connection(context, connection_id, socket_address, peer)
-                .await
-                .map_err(|error| TcpError::new(error, Some(connection_id)))
-        }));
+    //     self.pending_dials.insert(connection_id, address);
+    //     self.pending_connections.push(Box::pin(async move {
+    //         TcpConnection::open_connection(context, connection_id, socket_address, peer)
+    //             .await
+    //             .map_err(|error| TcpError::new(error, Some(connection_id)))
+    //     }));
 
-        Ok(connection_id)
-    }
+    //     Ok(connection_id)
+    // }
 
-    /// Poll next connection from [`TcpTransport`].
-    async fn next_event(&mut self) -> Result<TransportEvent, TcpError> {
+    /// Start TCP transport event loop.
+    async fn start(mut self) -> crate::Result<()> {
         loop {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
@@ -233,7 +241,8 @@ impl Transport for TcpTransport {
                                 .map_err(|error| TcpError::new(error, Some(connection_id)))
                         }));
                     }
-                    Err(err) => return Err(TcpError::new(err.into(), None)),
+                    Err(err) => todo!(),
+                    // Err(err) => return Err(TcpError::new(err.into(), None)),
                 },
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
                     match connection {
@@ -247,16 +256,16 @@ impl Transport for TcpTransport {
                                 }
                             });
 
-                            return Ok(TransportEvent::ConnectionEstablished { peer, address })
+                            self.context.tx.send(TransportEvent::ConnectionEstablished { peer, address }).await?;
                         }
                         Err(error) => {
                             match error.connection_id {
                                 Some(connection_id) => match self.pending_dials.remove(&connection_id) {
                                     Some(address) => {
-                                        return Ok(TransportEvent::DialFailure {
+                                        self.context.tx.send(TransportEvent::DialFailure {
                                             address,
                                             error: error.error,
-                                        })
+                                        }).await?;
                                     }
                                     None => tracing::debug!(
                                         target: LOG_TARGET,
@@ -271,9 +280,95 @@ impl Transport for TcpTransport {
                         }
                     }
                 }
+                command = self.rx.recv() => match command {
+                    None => return Err(Error::EssentialTaskClosed),
+                    Some(command) => match command {
+                        TransportCommand::Dial { address, connection_id } => {
+                            tracing::debug!(target: LOG_TARGET, ?address, "open connection");
+
+                            let context = self.context.clone();
+                            let (socket_address, peer) = Self::get_socket_address(&address)?;
+                            // let connection_id = self.next_connection_id();
+
+                            self.pending_dials.insert(connection_id, address);
+                            self.pending_connections.push(Box::pin(async move {
+                                TcpConnection::open_connection(context, connection_id, socket_address, peer)
+                                    .await
+                                    .map_err(|error| TcpError::new(error, Some(connection_id)))
+                            }));
+
+                            // Ok(connection_id)
+                        }
+                    }
+                }
             }
         }
     }
+
+    // /// Poll next connection from [`TcpTransport`].
+    // async fn next_event(&mut self) -> Result<TransportEvent, TcpError> {
+    //     loop {
+    //         tokio::select! {
+    //             connection = self.listener.accept() => match connection {
+    //                 Ok((connection, address)) => {
+    //                     let context = self.context.clone();
+    //                     let connection_id = self.next_connection_id();
+
+    //                     self.pending_connections.push(Box::pin(async move {
+    //                         TcpConnection::accept_connection(context, connection, connection_id, address)
+    //                             .await
+    //                             .map_err(|error| TcpError::new(error, Some(connection_id)))
+    //                     }));
+    //                 }
+    //                 Err(err) => return Err(TcpError::new(err.into(), None)),
+    //             },
+    //             connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
+    //                 match connection {
+    //                     Ok(connection) => {
+    //                         let peer = *connection.peer();
+    //                         let address = connection.address().clone();
+
+    //                         tokio::spawn(async move {
+    //                             if let Err(error) = connection.start().await {
+    //                                 tracing::error!(target: LOG_TARGET, ?peer, ?error, "connection failure");
+    //                             }
+    //                         });
+
+    //                         return Ok(TransportEvent::ConnectionEstablished { peer, address })
+    //                     }
+    //                     Err(error) => {
+    //                         match error.connection_id {
+    //                             Some(connection_id) => match self.pending_dials.remove(&connection_id) {
+    //                                 Some(address) => {
+    //                                     return Ok(TransportEvent::DialFailure {
+    //                                         address,
+    //                                         error: error.error,
+    //                                     })
+    //                                 }
+    //                                 None => tracing::debug!(
+    //                                     target: LOG_TARGET,
+    //                                     ?error,
+    //                                     "failed to establish connection"
+    //                                 ),
+    //                             },
+    //                             None => {
+    //                                 tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //             command = self.rx.recv() => match command {
+    //                 None => return Err(Error::EssentialTaskClosed),
+    //                 Some(command) => match command {
+    //                     TransportCommand::Dial { address, connection_id } => {
+    //                         todo!();
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 #[cfg(test)]
@@ -333,7 +428,11 @@ mod tests {
 
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
+        let (mut event_tx1, mut event_rx1) = channel(64);
+        let (mut command_tx1, mut command_rx1) = channel(64);
+
         let context1 = TransportContext {
+            tx: event_tx1,
             keypair: keypair1.clone(),
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -347,13 +446,22 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let mut transport1 = TcpTransport::new(context1, transport_config1)
+        let mut transport1 = TcpTransport::new(context1, transport_config1, command_rx1)
             .await
             .unwrap();
 
+        let listen_address = Transport::listen_address(&transport1);
+        tokio::spawn(async move {
+            let _ = transport1.start().await;
+        });
+
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
+        let (mut event_tx2, mut event_rx2) = channel(64);
+        let (mut command_tx2, mut command_rx2) = channel(64);
+
         let context2 = TransportContext {
+            tx: event_tx2,
             keypair: keypair2.clone(),
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -367,24 +475,34 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let mut transport2 = TcpTransport::new(context2, transport_config2)
+        let mut transport2 = TcpTransport::new(context2, transport_config2, command_rx2)
             .await
             .unwrap();
+
+        tokio::spawn(async move {
+            let _ = transport2.start().await;
+        });
 
         let _peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let _peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
 
-        let listen_address = Transport::listen_address(&transport1);
-        let _ = transport2.open_connection(listen_address).unwrap();
-        let (res1, res2) = tokio::join!(transport1.next_event(), transport2.next_event());
+        command_tx2
+            .send(TransportCommand::Dial {
+                address: listen_address,
+                connection_id: 0usize,
+            })
+            .await
+            .unwrap();
+
+        let (res1, res2) = tokio::join!(event_rx1.recv(), event_rx2.recv());
 
         assert!(std::matches!(
             res1,
-            Ok(TransportEvent::ConnectionEstablished { .. })
+            Some(TransportEvent::ConnectionEstablished { .. })
         ));
         assert!(std::matches!(
             res2,
-            Ok(TransportEvent::ConnectionEstablished { .. })
+            Some(TransportEvent::ConnectionEstablished { .. })
         ));
     }
 
@@ -396,7 +514,11 @@ mod tests {
 
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
+        let (event_tx1, mut event_rx1) = channel(64);
+        let (command_tx1, command_rx1) = channel(64);
+
         let context1 = TransportContext {
+            tx: event_tx1,
             keypair: keypair1.clone(),
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -410,13 +532,19 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let mut transport1 = TcpTransport::new(context1, transport_config1)
+        let mut transport1 = TcpTransport::new(context1, transport_config1, command_rx1)
             .await
             .unwrap();
 
+        tokio::spawn(transport1.start());
+
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
+        let (event_tx2, mut event_rx2) = channel(64);
+        let (command_tx2, command_rx2) = channel(64);
+
         let context2 = TransportContext {
+            tx: event_tx2,
             keypair: keypair2.clone(),
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -430,29 +558,34 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let mut transport2 = TcpTransport::new(context2, transport_config2)
+        let mut transport2 = TcpTransport::new(context2, transport_config2, command_rx2)
             .await
             .unwrap();
+        tokio::spawn(transport2.start());
 
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
 
         tracing::info!(target: LOG_TARGET, "peer1 {peer1}, peer2 {peer2}");
 
-        let _ = transport2
-            .open_connection("/ip6/::1/tcp/1".parse().unwrap())
+        command_tx2
+            .send(TransportCommand::Dial {
+                address: "/ip6/::1/tcp/1".parse().unwrap(),
+                connection_id: 0usize,
+            })
+            .await
             .unwrap();
 
         // spawn the other conection in the background as it won't return anything
         tokio::spawn(async move {
             loop {
-                let _ = transport1.next_event().await;
+                let _ = event_rx1.recv().await;
             }
         });
 
         assert!(std::matches!(
-            transport2.next_event().await,
-            Ok(TransportEvent::DialFailure { .. })
+            event_rx2.recv().await,
+            Some(TransportEvent::DialFailure { .. })
         ));
     }
 

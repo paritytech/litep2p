@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(unused)]
+
 use crate::{
     codec::ProtocolCodec,
     config::Litep2pConfig,
@@ -30,14 +32,14 @@ use crate::{
         request_response::RequestResponseProtocol,
         ConnectionEvent, ProtocolEvent,
     },
-    transport::{tcp::TcpTransport, Transport, TransportEvent},
+    transport::{tcp::TcpTransport, Transport, TransportCommand, TransportEvent},
     types::protocol::ProtocolName,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use transport::quic::QuicTransport;
+// use transport::quic::QuicTransport;
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
     error::ResolveError,
@@ -97,14 +99,19 @@ pub struct Litep2p {
     /// Local peer ID.
     local_peer_id: PeerId,
 
-    /// TCP transport.
-    tcp: TcpTransport,
+    // /// TCP transport.
+    // tcp: TcpTransport,
 
-    /// QUIC transport
-    quic: QuicTransport,
-
+    // /// QUIC transport
+    // quic: QuicTransport,
     /// Listen addresses.
     listen_addresses: Vec<Multiaddr>,
+
+    /// RX channel for receiving events from transports.
+    rx: Receiver<TransportEvent>,
+
+    /// Supported transports and their command handles.
+    transports: HashMap<SupportedTransport, Sender<TransportCommand>>,
 
     /// Pending connections.
     pending_connections: HashMap<usize, Multiaddr>,
@@ -161,14 +168,18 @@ pub struct TransportContext {
 
     /// Keypair.
     pub keypair: Keypair,
+
+    /// TX channel for sending events to [`Litep2p`].
+    tx: Sender<TransportEvent>,
 }
 
 impl TransportContext {
     /// Create new [`TransportContext`].
-    pub fn new(keypair: Keypair) -> Self {
+    pub fn new(keypair: Keypair, tx: Sender<TransportEvent>) -> Self {
         Self {
-            protocols: HashMap::new(),
+            tx,
             keypair,
+            protocols: HashMap::new(),
         }
     }
 
@@ -190,13 +201,21 @@ impl TransportContext {
     }
 }
 
+/// Supported protocols.
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+enum SupportedTransport {
+    Tcp,
+}
+
 impl Litep2p {
     /// Create new [`Litep2p`].
     pub async fn new(mut config: Litep2pConfig) -> crate::Result<Litep2p> {
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
-        let mut transport_ctx = TransportContext::new(config.keypair.clone());
+        let mut transport_ctx = TransportContext::new(config.keypair.clone(), tx);
         let listen_addresses = Vec::new();
         let mut protocols = Vec::new();
+        let mut transports = HashMap::new();
 
         // start notification protocol event loops
         for (protocol, config) in config.notification_protocols.into_iter() {
@@ -259,22 +278,39 @@ impl Litep2p {
 
         // enable tcp transport if the config exists
         let tcp = match config.tcp.take() {
-            Some(config) => <TcpTransport as Transport>::new(transport_ctx.clone(), config).await?,
+            Some(config) => {
+                // TODO: what to do here?
+                // TODO: - pass rx channel to transport so it can receive commands
+                // TODO: - pass tx channel for sending commands to transport
+                let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
+                transports.insert(SupportedTransport::Tcp, command_tx);
+
+                <TcpTransport as Transport>::new(transport_ctx.clone(), config, command_rx).await?
+            }
             None => panic!("tcp not enabled"),
         };
 
-        // enable quic transport if the config exists
-        let quic = match config.quic.take() {
-            Some(config) => <QuicTransport as Transport>::new(transport_ctx, config).await?,
-            None => todo!("quic not enabled"),
-        };
+        // // enable quic transport if the config exists
+        // let quic = match config.quic.take() {
+        //     Some(config) => <QuicTransport as Transport>::new(transport_ctx, config).await?,
+        //     None => todo!("quic not enabled"),
+        // };
 
         let listen_addresses = vec![tcp.listen_address()];
+
+        tokio::spawn(async move {
+            if let Err(error) = tcp.start().await {
+                tracing::error!(target: LOG_TARGET, "tcp failed");
+            }
+        });
+
         Ok(Self {
-            tcp,
-            quic,
+            // tcp,
+            // quic,
+            rx,
             local_peer_id,
             listen_addresses,
+            transports,
             pending_connections: HashMap::new(),
             pending_dns_resolves: FuturesUnordered::new(),
         })
@@ -295,7 +331,7 @@ impl Litep2p {
     /// If the transport specified by `address` is not supported, an error is returned.
     /// The connection is established in the background and its result is reported through
     /// [`Litep2p::next_event()`].
-    pub fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
+    pub async fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
         let mut protocol_stack = address.iter();
 
         match protocol_stack
@@ -331,7 +367,19 @@ impl Litep2p {
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Tcp(_) => {
-                let connection_id = self.tcp.open_connection(address.clone())?;
+                let connection_id = match self.transports.get_mut(&SupportedTransport::Tcp) {
+                    Some(sender) => {
+                        sender
+                            .send(TransportCommand::Dial {
+                                address: address.clone(),
+                                connection_id: 0usize,
+                            })
+                            .await?;
+                        0usize
+                    }
+                    None => return Err(Error::TransportNotSupported(address)),
+                };
+
                 self.pending_connections.insert(connection_id, address);
                 Ok(())
             }
@@ -415,29 +463,15 @@ impl Litep2p {
     pub async fn next_event(&mut self) -> crate::Result<Litep2pEvent> {
         loop {
             tokio::select! {
-                event = self.tcp.next_event() => match event {
-                    Ok(TransportEvent::ConnectionEstablished { peer, address }) => {
+                event = self.rx.recv() => match event {
+                    Some(TransportEvent::ConnectionEstablished { peer, address }) => {
                         return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
                     }
-                    Ok(TransportEvent::DialFailure { error, address }) => {
+                    Some(TransportEvent::DialFailure { error, address }) => {
                         return Ok(Litep2pEvent::DialFailure { address, error })
                     }
-                    Err(error) => {
-                        panic!("tcp transport failed: {error:?}");
-                    }
-                    event => {
-                        tracing::info!(target: LOG_TARGET, ?event, "unhandle event from tcp");
-                    }
-                },
-                event = self.quic.next_event() => match event {
-                    Ok(TransportEvent::ConnectionEstablished { peer, address }) => {
-                        return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
-                    }
-                    Ok(TransportEvent::DialFailure { error, address }) => {
-                        return Ok(Litep2pEvent::DialFailure { address, error })
-                    }
-                    Err(error) => {
-                        panic!("tcp transport failed: {error:?}");
+                    None => {
+                        panic!("tcp transport failed");
                     }
                     event => {
                         tracing::info!(target: LOG_TARGET, ?event, "unhandle event from tcp");
@@ -448,7 +482,21 @@ impl Litep2p {
                         Ok(address) => {
                             tracing::debug!(target: LOG_TARGET, ?address, "connect to remote peer");
 
-                            let connection_id = self.tcp.open_connection(address.clone())?;
+                            let connection_id = match self.transports.get_mut(&SupportedTransport::Tcp) {
+                                Some(sender) => {
+                                    sender
+                                        .send(TransportCommand::Dial {
+                                            address: address.clone(),
+                                            connection_id: 0usize,
+                                        })
+                                        .await?;
+                                    tracing::info!(target: LOG_TARGET, "event sent!!!");
+                                    0usize
+                                }
+                                None => return Err(Error::TransportNotSupported(address)),
+                            };
+
+                            // let connection_id = self.tcp.open_connection(address.clone())?;
                             self.pending_connections.insert(connection_id, address);
                         }
                         Err(error) => return Ok(Litep2pEvent::DialFailure { address: event.0, error }),
@@ -536,7 +584,7 @@ mod tests {
         let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
         let address = litep2p2.listen_addresses().next().unwrap().clone();
-        litep2p1.connect(address).unwrap();
+        litep2p1.connect(address).await.unwrap();
 
         let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
 
@@ -561,7 +609,10 @@ mod tests {
         let mut litep2p1 = Litep2p::new(config1).await.unwrap();
         let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
-        litep2p1.connect("/ip6/::1/tcp/1".parse().unwrap()).unwrap();
+        litep2p1
+            .connect("/ip6/::1/tcp/1".parse().unwrap())
+            .await
+            .unwrap();
 
         tokio::spawn(async move {
             loop {
@@ -613,7 +664,7 @@ mod tests {
         new_address.push(Protocol::Dns("localhost".into()));
         new_address.push(tcp);
 
-        litep2p1.connect(new_address).unwrap();
+        litep2p1.connect(new_address).await.unwrap();
         let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
 
         assert!(std::matches!(
@@ -624,34 +675,5 @@ mod tests {
             res2,
             Ok(Litep2pEvent::ConnectionEstablished { .. })
         ));
-    }
-
-    #[tokio::test]
-    async fn testfunc1() {
-        async fn test1() -> Option<usize> {
-            futures::future::pending::<Option<usize>>().await
-        }
-
-        async fn test2() -> Option<usize> {
-            Some(1337)
-        }
-
-        async fn test3() -> Option<usize> {
-            Some(1338)
-        }
-
-        loop {
-            tokio::select! {
-                event = test1() => {
-                    println!("event 1: {event:?}");
-                }
-                event = test2() => {
-                    println!("event 2: {event:?}");
-                }
-                event = test3() => {
-                    println!("event 3: {event:?}");
-                }
-            }
-        }
     }
 }

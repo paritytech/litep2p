@@ -53,7 +53,7 @@ async fn ping_supported() {
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
     let address = litep2p2.listen_addresses().next().unwrap().clone();
 
-    litep2p1.connect(address).unwrap();
+    litep2p1.connect(address).await.unwrap();
 
     let mut litep2p1_done = false;
     let mut litep2p2_done = false;
