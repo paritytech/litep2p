@@ -25,7 +25,7 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
-    transport::tcp::{socket_addr_to_multi_addr, LOG_TARGET},
+    transport::tcp::socket_addr_to_multi_addr,
     types::{protocol::ProtocolName, SubstreamId},
     TransportContext,
 };
@@ -44,6 +44,8 @@ use tokio_util::compat::{
 use std::{fmt, io, net::SocketAddr, pin::Pin};
 
 // TODO: introduce `NegotiatingConnection` to clean up this code a bit?
+/// Logging target for the file.
+const LOG_TARGET: &str = "tcp::connection";
 
 /// TCP connection error.
 #[derive(Debug)]
