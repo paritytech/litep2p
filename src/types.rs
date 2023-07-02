@@ -25,3 +25,39 @@ pub type SubstreamId = usize;
 
 /// Request ID.
 pub type RequestId = usize;
+
+/// Connection ID.
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct ConnectionId(usize);
+
+impl ConnectionId {
+    /// Create new [`ConnectionId`].
+    pub fn new() -> Self {
+        ConnectionId(0usize)
+    }
+
+    /// Get next [`ConnectionID`].
+    pub fn next(&mut self) -> ConnectionId {
+        let connection_id = self.0;
+        self.0 += 1usize;
+
+        ConnectionId(connection_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_id_works() {
+        let mut connection_id = ConnectionId::new();
+        assert_eq!(connection_id, ConnectionId(0));
+
+        let next_connection_id = connection_id.next();
+        assert_eq!(next_connection_id, ConnectionId(0));
+
+        let next_connection_id = connection_id.next();
+        assert_eq!(next_connection_id, ConnectionId(1));
+    }
+}
