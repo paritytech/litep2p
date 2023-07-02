@@ -18,24 +18,20 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
 use crate::{
-    codec::ProtocolCodec,
     config::Litep2pConfig,
-    crypto::{ed25519::Keypair, PublicKey},
+    crypto::PublicKey,
     error::Error,
     peer_id::PeerId,
     protocol::{
         libp2p::{identify::Identify, ping::Ping},
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
-        ConnectionEvent, ProtocolEvent,
     },
     transport::{
         quic::QuicTransport, tcp::TcpTransport, Transport, TransportCommand, TransportEvent,
     },
-    types::{protocol::ProtocolName, ConnectionId},
+    types::ConnectionId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -271,7 +267,7 @@ impl Litep2p {
 
             tokio::spawn(async move {
                 if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, "tcp failed");
+                    tracing::error!(target: LOG_TARGET, ?error, "tcp failed");
                 }
             });
         }
@@ -287,7 +283,7 @@ impl Litep2p {
 
             tokio::spawn(async move {
                 if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, "quic failed");
+                    tracing::error!(target: LOG_TARGET, ?error, "quic failed");
                 }
             });
         }

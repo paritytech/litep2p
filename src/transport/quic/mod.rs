@@ -91,7 +91,7 @@ pub(crate) struct QuicTransport {
     rx: Receiver<PeerId>,
 
     /// TX channel for send the client `PeerId` to server.
-    tx: Sender<PeerId>,
+    _tx: Sender<PeerId>,
 }
 
 impl QuicTransport {
@@ -173,9 +173,9 @@ impl Transport for QuicTransport {
 
         let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
         let (certificate, key) = generate(&context.keypair)?;
-        let (tx, rx) = channel(1);
+        let (_tx, rx) = channel(1);
 
-        let provider = TlsProvider::new(key, certificate, None, Some(tx.clone()));
+        let provider = TlsProvider::new(key, certificate, None, Some(_tx.clone()));
         let server = Server::builder()
             .with_tls(provider)
             .expect("TLS provider to be enabled successfully")
@@ -185,7 +185,7 @@ impl Transport for QuicTransport {
 
         Ok(Self {
             rx,
-            tx,
+            _tx,
             server,
             context,
             command_rx,
@@ -200,42 +200,6 @@ impl Transport for QuicTransport {
     fn listen_address(&self) -> Multiaddr {
         socket_addr_to_multi_addr(&self.listen_address)
     }
-
-    // /// Try to open a connection to remote peer.
-    // ///
-    // /// The result is polled using [`Transport::next_connection()`].
-    // fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize> {
-    //     tracing::debug!(target: LOG_TARGET, ?address, "open connection");
-
-    //     let context = self.context.clone();
-    //     let (socket_address, peer) = match Self::get_socket_address(&address)? {
-    //         (address, Some(peer)) => (address, peer),
-    //         _ => {
-    //             return Err(Error::TransportError(String::from(
-    //                 "Peer ID needed to open a connectino",
-    //             )))
-    //         }
-    //     };
-
-    //     let connection_id = self.next_connection_id();
-    //     let (certificate, key) = generate(&self.context.keypair).unwrap();
-    //     let provider = TlsProvider::new(key, certificate, Some(peer), None);
-
-    //     let client = Client::builder()
-    //         .with_tls(provider)
-    //         .expect("TLS provider to be enabled successfully")
-    //         .with_io("0.0.0.0:0")? // TODO: zzz
-    //         .start()?;
-
-    //     let connect = Connect::new(socket_address).with_server_name("localhost");
-
-    //     self.pending_dials.insert(connection_id, address);
-    //     self.pending_connections.push(Box::pin(async move {
-    //         (connection_id, peer, client.connect(connect).await)
-    //     }));
-
-    //     Ok(connection_id)
-    // }
 
     /// Start [`QuicTransport`] event loop.
     async fn start(mut self) -> crate::Result<()> {
@@ -316,7 +280,7 @@ impl Transport for QuicTransport {
                     TransportCommand::Dial { address, connection_id } => {
                         tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
-                        let context = self.context.clone();
+                        let _context = self.context.clone();
                         let (socket_address, peer) = match Self::get_socket_address(&address)? {
                             (address, Some(peer)) => (address, peer),
                             _ => { // TODO: don't return an error

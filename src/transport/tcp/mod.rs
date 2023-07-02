@@ -23,7 +23,7 @@ use crate::{
     peer_id::PeerId,
     transport::{
         tcp::{config::TransportConfig, connection::TcpConnection},
-        Transport, TransportCommand, TransportContext, TransportEvent,
+        Transport, TransportCommand, TransportContext,
     },
     types::ConnectionId,
 };
@@ -206,7 +206,7 @@ impl Transport for TcpTransport {
                                 .map_err(|error| TcpError::new(error, Some(connection_id)))
                         }));
                     }
-                    Err(err) => todo!(),
+                    Err(_error) => todo!(),
                 },
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
                     match connection {

@@ -71,7 +71,7 @@ pub(crate) struct QuicConnection {
     peer: PeerId,
 
     /// Connection ID.
-    connection_id: ConnectionId,
+    _connection_id: ConnectionId,
 
     /// Transport context.
     context: ProtocolSet,
@@ -102,12 +102,12 @@ impl QuicConnection {
         peer: PeerId,
         context: TransportContext,
         connection: Connection,
-        connection_id: ConnectionId,
+        _connection_id: ConnectionId,
     ) -> crate::Result<Self> {
         Ok(Self {
             peer,
             connection,
-            connection_id,
+            _connection_id,
             next_substream_id: 0usize,
             pending_substreams: FuturesUnordered::new(),
             context: ProtocolSet::from_transport_context(peer, context).await?,

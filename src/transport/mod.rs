@@ -170,7 +170,7 @@ impl TransportContext {
     }
 
     /// Report to `Litep2p` that a peer disconnected.
-    pub(crate) async fn report_connection_closed(&mut self, peer: PeerId) {
+    pub(crate) async fn _report_connection_closed(&mut self, peer: PeerId) {
         let _ = self
             .tx
             .send(TransportEvent::ConnectionClosed { peer })
