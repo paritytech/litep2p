@@ -82,6 +82,10 @@ pub enum Error {
     InvalidState,
     #[error("DNS address resolution failed")]
     DnsAddressResolutionFailed,
+    #[error("Transport error: `{0}`")]
+    TransportError(String),
+    #[error("Failed to generate certificate")]
+    CertificateGeneration(#[from] crate::crypto::tls::certificate::GenError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -175,6 +179,12 @@ impl From<prost::DecodeError> for Error {
 impl From<DecodingError> for Error {
     fn from(error: DecodingError) -> Self {
         Error::ParseError(ParseError::DecodingError(error))
+    }
+}
+
+impl From<s2n_quic::provider::StartError> for Error {
+    fn from(error: s2n_quic::provider::StartError) -> Self {
+        Error::TransportError(error.to_string())
     }
 }
 

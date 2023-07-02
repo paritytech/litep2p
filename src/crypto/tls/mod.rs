@@ -26,9 +26,18 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![allow(unused)]
 
-use crate::{crypto::ed25519::Keypair, peer_id::PeerId};
+// TODO: remove all unneeded stuff
 
-use std::sync::Arc;
+use crate::{crypto::ed25519::Keypair, peer_id::PeerId};
+use rustls::{ClientConfig, ServerConfig};
+use s2n_quic::provider::tls::{
+    rustls::{Client as TlsClient, Server as TlsServer},
+    Provider,
+};
+use s2n_quic::{client::Connect, Client, Server};
+use tokio::sync::mpsc::{channel, Sender};
+
+use std::{error::Error, net::SocketAddr, path::Path, sync::Arc};
 
 pub mod certificate;
 mod upgrade;
@@ -36,52 +45,80 @@ mod verifier;
 
 // TODO: remove maybe
 pub use futures_rustls::TlsStream;
-pub use upgrade::Config;
 pub use upgrade::UpgradeError;
 
 const P2P_ALPN: [u8; 6] = *b"libp2p";
 
-/// Create a TLS client configuration for libp2p.
-pub fn make_client_config(
-    keypair: &Keypair,
+pub(crate) struct TlsProvider {
+    /// Private key.
+    private_key: rustls::PrivateKey,
+
+    /// Certificate.
+    certificate: rustls::Certificate,
+
+    /// Remote peer ID, provided for the TLS client.
     remote_peer_id: Option<PeerId>,
-) -> Result<rustls::ClientConfig, certificate::GenError> {
-    let (certificate, private_key) = certificate::generate(keypair)?;
 
-    let mut crypto = rustls::ClientConfig::builder()
-        .with_cipher_suites(verifier::CIPHERSUITES)
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect("Cipher suites and kx groups are configured; qed")
-        .with_custom_certificate_verifier(Arc::new(
-            verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
-        ))
-        .with_single_cert(vec![certificate], private_key)
-        .expect("Client cert key DER is valid; qed");
-    crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
-
-    Ok(crypto)
+    /// Sender for the peer ID.
+    sender: Option<Sender<PeerId>>,
 }
 
-/// Create a TLS server configuration for libp2p.
-pub fn make_server_config(
-    keypair: &Keypair,
-) -> Result<rustls::ServerConfig, certificate::GenError> {
-    let (certificate, private_key) = certificate::generate(keypair)?;
-
-    let mut crypto = rustls::ServerConfig::builder()
-        .with_cipher_suites(verifier::CIPHERSUITES)
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect("Cipher suites and kx groups are configured; qed")
-        .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
-        .with_single_cert(vec![certificate], private_key)
-        .expect("Server cert key DER is valid; qed");
-    crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
-
-    Ok(crypto)
+impl TlsProvider {
+    /// Create new [`TlsProvider`].
+    pub(crate) fn new(
+        private_key: rustls::PrivateKey,
+        certificate: rustls::Certificate,
+        remote_peer_id: Option<PeerId>,
+        sender: Option<Sender<PeerId>>,
+    ) -> Self {
+        Self {
+            sender,
+            private_key,
+            certificate,
+            remote_peer_id,
+        }
+    }
 }
 
+impl Provider for TlsProvider {
+    type Server = TlsServer;
+    type Client = TlsClient;
+    type Error = rustls::Error;
+
+    fn start_server(self) -> Result<Self::Server, Self::Error> {
+        let mut cfg = ServerConfig::builder()
+            .with_cipher_suites(verifier::CIPHERSUITES)
+            .with_safe_default_kx_groups()
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .expect("Cipher suites and kx groups are configured; qed")
+            .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::with_sender(
+                self.sender,
+            )))
+            .with_single_cert(vec![self.certificate], self.private_key)
+            .expect("Server cert key DER is valid; qed");
+
+        cfg.alpn_protocols = vec![P2P_ALPN.to_vec()];
+        Ok(cfg.into())
+    }
+
+    fn start_client(self) -> Result<Self::Client, Self::Error> {
+        let mut cfg = ClientConfig::builder()
+            .with_cipher_suites(verifier::CIPHERSUITES)
+            .with_safe_default_kx_groups()
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .expect("Cipher suites and kx groups are configured; qed")
+            .with_custom_certificate_verifier(Arc::new(
+                verifier::Libp2pCertificateVerifier::with_remote_peer_id(self.remote_peer_id),
+            ))
+            .with_single_cert(vec![self.certificate], self.private_key)
+            .expect("Client cert key DER is valid; qed");
+
+        cfg.alpn_protocols = vec![P2P_ALPN.to_vec()];
+        Ok(cfg.into())
+    }
+}
+
+// TODO: remove
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,68 +131,6 @@ mod tests {
     use s2n_quic::{client::Connect, Client, Server};
     use std::{error::Error, net::SocketAddr, path::Path};
 
-    struct TlsProvider {
-        /// Private key.
-        private_key: rustls::PrivateKey,
-
-        /// Certificate.
-        certificate: rustls::Certificate,
-
-        /// Remote peer ID, provided for the TLS client.
-        remote_peer_id: Option<PeerId>,
-    }
-
-    impl TlsProvider {
-        /// Create new [`TlsProvider`].
-        fn new(
-            private_key: rustls::PrivateKey,
-            certificate: rustls::Certificate,
-            remote_peer_id: Option<PeerId>,
-        ) -> Self {
-            Self {
-                remote_peer_id,
-                private_key,
-                certificate,
-            }
-        }
-    }
-
-    impl Provider for TlsProvider {
-        type Server = TlsServer;
-        type Client = TlsClient;
-        type Error = rustls::Error;
-
-        fn start_server(self) -> Result<Self::Server, Self::Error> {
-            let mut cfg = ServerConfig::builder()
-                .with_cipher_suites(verifier::CIPHERSUITES)
-                .with_safe_default_kx_groups()
-                .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-                .expect("Cipher suites and kx groups are configured; qed")
-                .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
-                .with_single_cert(vec![self.certificate], self.private_key)
-                .expect("Server cert key DER is valid; qed");
-
-            cfg.alpn_protocols = vec![P2P_ALPN.to_vec()];
-            Ok(cfg.into())
-        }
-
-        fn start_client(self) -> Result<Self::Client, Self::Error> {
-            let mut cfg = ClientConfig::builder()
-                .with_cipher_suites(verifier::CIPHERSUITES)
-                .with_safe_default_kx_groups()
-                .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-                .expect("Cipher suites and kx groups are configured; qed")
-                .with_custom_certificate_verifier(Arc::new(
-                    verifier::Libp2pCertificateVerifier::with_remote_peer_id(self.remote_peer_id),
-                ))
-                .with_single_cert(vec![self.certificate], self.private_key)
-                .expect("Client cert key DER is valid; qed");
-
-            cfg.alpn_protocols = vec![P2P_ALPN.to_vec()];
-            Ok(cfg.into())
-        }
-    }
-
     #[tokio::test]
     async fn test_quic_server() {
         let _ = tracing_subscriber::fmt()
@@ -165,7 +140,8 @@ mod tests {
         let keypair = Keypair::generate();
         let (certificate, key) = certificate::generate(&keypair).unwrap();
 
-        let provider = TlsProvider::new(key, certificate, None);
+        let (tx, rx) = channel(1);
+        let provider = TlsProvider::new(key, certificate, None, Some(tx));
         let mut server = Server::builder()
             .with_tls(provider)
             .unwrap()
@@ -211,7 +187,7 @@ mod tests {
             .unwrap(),
         );
 
-        let provider = TlsProvider::new(key, certificate, remote_peer_id);
+        let provider = TlsProvider::new(key, certificate, remote_peer_id, None);
         let mut client = Client::builder()
             .with_tls(provider)
             .unwrap()

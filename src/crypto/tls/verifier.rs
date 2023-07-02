@@ -35,6 +35,7 @@ use rustls::{
     Certificate, DistinguishedNames, SignatureScheme, SupportedCipherSuite,
     SupportedProtocolVersion,
 };
+use tokio::sync::mpsc::Sender;
 
 /// The protocol versions supported by this verifier.
 ///
@@ -60,6 +61,9 @@ pub static CIPHERSUITES: &[SupportedCipherSuite] = &[
 pub struct Libp2pCertificateVerifier {
     /// The peer ID we intend to connect to
     remote_peer_id: Option<PeerId>,
+
+    ///
+    sender: Option<Sender<PeerId>>,
 }
 
 /// libp2p requires the following of X.509 server certificate chains:
@@ -72,10 +76,22 @@ impl Libp2pCertificateVerifier {
     pub fn new() -> Self {
         Self {
             remote_peer_id: None,
+            sender: None,
         }
     }
+
     pub fn with_remote_peer_id(remote_peer_id: Option<PeerId>) -> Self {
-        Self { remote_peer_id }
+        Self {
+            remote_peer_id,
+            sender: None,
+        }
+    }
+
+    pub fn with_sender(sender: Option<Sender<PeerId>>) -> Self {
+        Self {
+            sender,
+            remote_peer_id: None,
+        }
     }
 
     /// Return the list of SignatureSchemes that this verifier will handle,
@@ -173,9 +189,11 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
         intermediates: &[Certificate],
         _now: std::time::SystemTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
-        tracing::error!("VERIFY CLIENT CERTIFICATE");
+        let peer_id: PeerId = verify_presented_certs(end_entity, intermediates)?;
 
-        verify_presented_certs(end_entity, intermediates)?;
+        if let Some(sender) = &self.sender {
+            sender.try_send(peer_id).unwrap(); // TODO: don't unwrap()
+        }
 
         Ok(ClientCertVerified::assertion())
     }
@@ -195,8 +213,6 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
         cert: &Certificate,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        tracing::error!("VERIFY TLS 1.3 SIGNATURE");
-
         verify_tls13_signature(cert, dss.scheme, message, dss.signature())
     }
 

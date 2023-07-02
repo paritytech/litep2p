@@ -24,7 +24,10 @@ use crate::{
         libp2p::{identify, ping},
         notification, request_response,
     },
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::{
+        quic::config::Config as QuicTransportConfig,
+        tcp::config::TransportConfig as TcpTransportConfig,
+    },
     types::protocol::ProtocolName,
 };
 
@@ -54,6 +57,9 @@ pub struct Litep2pConfigBuilder {
     // TCP transport configuration.
     tcp: Option<TcpTransportConfig>,
 
+    /// QUIC transport config.
+    quic: Option<QuicTransportConfig>,
+
     /// Keypair.
     keypair: Option<Keypair>,
 
@@ -81,6 +87,7 @@ impl Litep2pConfigBuilder {
     pub fn new() -> Self {
         Self {
             tcp: None,
+            quic: None,
             keypair: None,
             ping: None,
             identify: None,
@@ -92,6 +99,12 @@ impl Litep2pConfigBuilder {
     /// Add TCP transport configuration.
     pub fn with_tcp(mut self, config: TcpTransportConfig) -> Self {
         self.tcp = Some(config);
+        self
+    }
+
+    /// Add QUIC transport configuration.
+    pub fn with_quic(mut self, config: QuicTransportConfig) -> Self {
+        self.quic = Some(config);
         self
     }
 
@@ -142,6 +155,7 @@ impl Litep2pConfigBuilder {
         Litep2pConfig {
             keypair,
             tcp: self.tcp.take(),
+            quic: self.quic.take(),
             ping: self.ping.take(),
             identify: self.identify.take(),
             notification_protocols: self.notification_protocols,
@@ -154,6 +168,9 @@ impl Litep2pConfigBuilder {
 pub struct Litep2pConfig {
     // TCP transport configuration.
     pub(crate) tcp: Option<TcpTransportConfig>,
+
+    /// QUIC transport config.
+    pub(crate) quic: Option<QuicTransportConfig>,
 
     /// Keypair.
     pub(crate) keypair: Keypair,

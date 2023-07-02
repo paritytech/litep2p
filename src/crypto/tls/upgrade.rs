@@ -44,20 +44,20 @@ pub enum UpgradeError {
     BadCertificate(#[from] certificate::ParseError),
 }
 
-#[derive(Clone)]
-pub struct Config {
-    server: rustls::ServerConfig,
-    client: rustls::ClientConfig,
-}
+// #[derive(Clone)]
+// pub struct Config {
+//     server: rustls::ServerConfig,
+//     client: rustls::ClientConfig,
+// }
 
-impl Config {
-    pub fn new(identity: &Keypair) -> Result<Self, certificate::GenError> {
-        Ok(Self {
-            server: super::make_server_config(identity)?,
-            client: super::make_client_config(identity, None)?,
-        })
-    }
-}
+// impl Config {
+//     pub fn new(identity: &Keypair) -> Result<Self, certificate::GenError> {
+//         Ok(Self {
+//             server: super::make_server_config(identity)?,
+//             client: super::make_client_config(identity, None)?,
+//         })
+//     }
+// }
 
 // impl UpgradeInfo for Config {
 //     type Info = &'static [u8];

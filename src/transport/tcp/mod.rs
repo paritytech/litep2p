@@ -160,7 +160,7 @@ impl TcpTransport {
         &self.listen_address
     }
 
-    /// Get next substream ID.
+    /// Get next connection ID.
     fn next_connection_id(&mut self) -> usize {
         let connection = self.next_connection_id;
         self.next_connection_id += 1;

@@ -37,6 +37,7 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use transport::quic::QuicTransport;
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
     error::ResolveError,
@@ -97,6 +98,9 @@ pub struct Litep2p {
 
     /// TCP transport.
     tcp: TcpTransport,
+
+    /// QUIC transport
+    quic: QuicTransport,
 
     /// Listen addresses.
     listen_addresses: Vec<Multiaddr>,
@@ -253,13 +257,21 @@ impl Litep2p {
 
         // enable tcp transport if the config exists
         let tcp = match config.tcp.take() {
-            Some(config) => <TcpTransport as Transport>::new(transport_ctx, config).await?,
+            Some(config) => <TcpTransport as Transport>::new(transport_ctx.clone(), config).await?,
             None => panic!("tcp not enabled"),
         };
+
+        // enable quic transport if the config exists
+        let quic = match config.quic.take() {
+            Some(config) => <QuicTransport as Transport>::new(transport_ctx, config).await?,
+            None => todo!("quic not enabled"),
+        };
+
         let listen_addresses = vec![tcp.listen_address()];
 
         Ok(Self {
             tcp,
+            quic,
             local_peer_id,
             listen_addresses,
             pending_connections: HashMap::new(),
@@ -403,6 +415,20 @@ impl Litep2p {
         loop {
             tokio::select! {
                 event = self.tcp.next_event() => match event {
+                    Ok(TransportEvent::ConnectionEstablished { peer, address }) => {
+                        return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
+                    }
+                    Ok(TransportEvent::DialFailure { error, address }) => {
+                        return Ok(Litep2pEvent::DialFailure { address, error })
+                    }
+                    Err(error) => {
+                        panic!("tcp transport failed: {error:?}");
+                    }
+                    event => {
+                        tracing::info!(target: LOG_TARGET, ?event, "unhandle event from tcp");
+                    }
+                },
+                event = self.quic.next_event() => match event {
                     Ok(TransportEvent::ConnectionEstablished { peer, address }) => {
                         return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
                     }
