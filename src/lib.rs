@@ -47,6 +47,7 @@ use trust_dns_resolver::{
 
 use std::{collections::HashMap, net::IpAddr, result};
 
+// TODO: which of these need to be pub?
 pub mod codec;
 pub mod config;
 pub mod crypto;
@@ -151,6 +152,7 @@ pub struct ProtocolInfo {
     pub codec: ProtocolCodec,
 }
 
+// TODO: move to transport maybe
 /// Transport context.
 #[derive(Debug, Clone)]
 pub struct TransportContext {
@@ -268,7 +270,6 @@ impl Litep2p {
         };
 
         let listen_addresses = vec![tcp.listen_address()];
-
         Ok(Self {
             tcp,
             quic,
@@ -623,5 +624,34 @@ mod tests {
             res2,
             Ok(Litep2pEvent::ConnectionEstablished { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn testfunc1() {
+        async fn test1() -> Option<usize> {
+            futures::future::pending::<Option<usize>>().await
+        }
+
+        async fn test2() -> Option<usize> {
+            Some(1337)
+        }
+
+        async fn test3() -> Option<usize> {
+            Some(1338)
+        }
+
+        loop {
+            tokio::select! {
+                event = test1() => {
+                    println!("event 1: {event:?}");
+                }
+                event = test2() => {
+                    println!("event 2: {event:?}");
+                }
+                event = test3() => {
+                    println!("event 3: {event:?}");
+                }
+            }
+        }
     }
 }

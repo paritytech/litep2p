@@ -22,3 +22,5 @@
 mod identify;
 #[cfg(test)]
 mod ping;
+#[cfg(test)]
+mod quic_ping;

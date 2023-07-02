@@ -19,10 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{
-        ed25519::Keypair,
-        tls::{certificate::generate, TlsProvider},
-    },
+    crypto::tls::{certificate::generate, TlsProvider},
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
@@ -100,7 +97,7 @@ pub(crate) struct QuicTransport {
 
     /// Pending connections.
     pending_connections:
-        FuturesUnordered<BoxFuture<'static, (usize, Result<Connection, ConnectionError>)>>,
+        FuturesUnordered<BoxFuture<'static, (usize, PeerId, Result<Connection, ConnectionError>)>>,
 
     /// RX channel for receiving the client `PeerId`.
     rx: Receiver<PeerId>,
@@ -251,7 +248,7 @@ impl Transport for QuicTransport {
 
         self.pending_dials.insert(connection_id, address);
         self.pending_connections.push(Box::pin(async move {
-            (connection_id, client.connect(connect).await)
+            (connection_id, peer, client.connect(connect).await)
         }));
 
         Ok(connection_id)
@@ -264,11 +261,8 @@ impl Transport for QuicTransport {
                 connection = self.server.accept() => match connection {
                     Some(connection) => {
                         let connection_id = self.next_connection_id();
+                        let context = self.context.clone();
                         let address = socket_addr_to_multi_addr(&connection.remote_addr().expect("remote address to be known"));
-                        let quic_connection = QuicConnection::new(connection, connection_id);
-
-                        tracing::info!(target: LOG_TARGET, ?address, "accepted connection from remote peer");
-
                         // TODO: so ugly
                         let peer = match self.rx.try_recv() {
                             Ok(peer) => peer,
@@ -277,6 +271,15 @@ impl Transport for QuicTransport {
                                 continue
                             }
                         };
+                        // TODO: no unwraps
+                        let quic_connection = QuicConnection::new(
+                            peer,
+                            context,
+                            connection,
+                            connection_id
+                        ).await.unwrap();
+
+                        tracing::info!(target: LOG_TARGET, ?address, ?peer, "accepted connection from remote peer");
 
                         tokio::spawn(async move {
                             if let Err(error) = quic_connection.start().await {
@@ -292,12 +295,15 @@ impl Transport for QuicTransport {
                     }
                 },
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
-                    let (connection_id, result) = connection;
+                    let (connection_id, peer, result) = connection;
 
                     match result {
                         Ok(connection) => {
+                            // TODO: remove from pending diadls
+                            let context = self.context.clone();
                             tokio::spawn(async move {
-                                let quic_connection = QuicConnection::new(connection, connection_id);
+                                // TODO: no unwraps
+                                let quic_connection = QuicConnection::new(peer, context, connection, connection_id).await.unwrap();
                                 if let Err(error) = quic_connection.start().await {
                                     tracing::debug!(target: LOG_TARGET, ?error, "quic connection exited with an error");
                                 }

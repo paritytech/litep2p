@@ -64,7 +64,8 @@ libp2p = { version = "0.51.3", features = [
     "ping",
     "tcp",
     "websocket",
-    "yamux"
+    "yamux",
+    "quic",
 ]}
 sc-network = { path = "/home/altonen/work/substrate/client/network", version = "0.10.0-dev" }
 
