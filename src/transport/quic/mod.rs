@@ -263,10 +263,12 @@ impl Transport for QuicTransport {
             tokio::select! {
                 connection = self.server.accept() => match connection {
                     Some(connection) => {
-                        tracing::info!(target: LOG_TARGET, "accepted connection");
-
                         let connection_id = self.next_connection_id();
+                        let address = socket_addr_to_multi_addr(&connection.remote_addr().expect("remote address to be known"));
                         let quic_connection = QuicConnection::new(connection, connection_id);
+
+                        tracing::info!(target: LOG_TARGET, ?address, "accepted connection from remote peer");
+
                         // TODO: so ugly
                         let peer = match self.rx.try_recv() {
                             Ok(peer) => peer,
@@ -282,11 +284,7 @@ impl Transport for QuicTransport {
                             }
                         });
 
-                        // TODO: fix
-                        return Ok(TransportEvent::ConnectionEstablished {
-                            peer,
-                            address: Multiaddr::empty()
-                        });
+                        return Ok(TransportEvent::ConnectionEstablished { peer, address });
                     }
                     None => {
                         // TODO: close transport
