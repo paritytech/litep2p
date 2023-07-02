@@ -20,7 +20,7 @@
 
 use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt};
 use libp2p::{
-    identity, ping,
+    identity,
     swarm::{NetworkBehaviour as NetworkBehaviourDerive, SwarmBuilder, SwarmEvent},
     PeerId, Swarm,
 };

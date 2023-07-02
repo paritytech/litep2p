@@ -225,6 +225,7 @@ impl TransportContext {
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 enum SupportedTransport {
     Tcp,
+    Quic,
 }
 
 impl Litep2p {
@@ -316,7 +317,7 @@ impl Litep2p {
 
         if let Some(config) = config.quic.take() {
             let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-            transports.insert(SupportedTransport::Tcp, command_tx);
+            transports.insert(SupportedTransport::Quic, command_tx);
 
             let transport =
                 <QuicTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
