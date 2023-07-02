@@ -26,7 +26,7 @@ use crate::{
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
     transport::tcp::socket_addr_to_multi_addr,
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     TransportContext,
 };
 
@@ -75,7 +75,7 @@ enum ConnectionError {
 /// TCP connection.
 pub struct TcpConnection {
     /// Connection ID.
-    _connection_id: usize,
+    _connection_id: ConnectionId,
 
     /// Protocol context.
     context: ProtocolSet,
@@ -112,7 +112,7 @@ impl TcpConnection {
     /// Open connection to remote peer at `address`.
     pub async fn open_connection(
         context: TransportContext,
-        connection_id: usize,
+        connection_id: ConnectionId,
         address: SocketAddr,
         peer: Option<PeerId>,
     ) -> crate::Result<Self> {
@@ -166,7 +166,7 @@ impl TcpConnection {
     pub async fn accept_connection(
         context: TransportContext,
         stream: TcpStream,
-        connection_id: usize,
+        connection_id: ConnectionId,
         address: SocketAddr,
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
@@ -227,7 +227,7 @@ impl TcpConnection {
     /// Negotiate noise + yamux for the connection.
     async fn negotiate_connection(
         stream: TcpStream,
-        connection_id: usize,
+        connection_id: ConnectionId,
         context: TransportContext,
         noise_config: NoiseConfiguration,
         address: SocketAddr,

@@ -26,6 +26,7 @@ use crate::{
         quic::{config::Config, connection::QuicConnection},
         Transport, TransportCommand, TransportEvent,
     },
+    types::ConnectionId,
     TransportContext,
 };
 
@@ -72,16 +73,17 @@ pub(crate) struct QuicTransport {
     listen_address: SocketAddr,
 
     /// Next connection ID.
-    next_connection_id: usize,
+    connection_id: ConnectionId,
 
     // /// Keypair used for signing certificates,
     // keypair: Keypair,
     /// Pending dials.
-    pending_dials: HashMap<usize, Multiaddr>,
+    pending_dials: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending connections.
-    pending_connections:
-        FuturesUnordered<BoxFuture<'static, (usize, PeerId, Result<Connection, ConnectionError>)>>,
+    pending_connections: FuturesUnordered<
+        BoxFuture<'static, (ConnectionId, PeerId, Result<Connection, ConnectionError>)>,
+    >,
 
     /// RX channel for receiving commands from `Litep2p`.
     command_rx: Receiver<TransportCommand>,
@@ -149,14 +151,6 @@ impl QuicTransport {
 
         Ok((socket_address, maybe_peer))
     }
-
-    /// Get next connection ID.
-    // TODO: use `types::ConnectionId`
-    fn next_connection_id(&mut self) -> usize {
-        let connection = self.next_connection_id;
-        self.next_connection_id += 1;
-        connection
-    }
 }
 
 #[async_trait::async_trait]
@@ -197,7 +191,7 @@ impl Transport for QuicTransport {
             context,
             command_rx,
             listen_address,
-            next_connection_id: 0usize,
+            connection_id: ConnectionId::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
@@ -250,7 +244,8 @@ impl Transport for QuicTransport {
             tokio::select! {
                 connection = self.server.accept() => match connection {
                     Some(connection) => {
-                        let connection_id = self.next_connection_id();
+                        // TODO: verify that this can't clash with `Litep2p`'s connection id
+                        let connection_id = self.connection_id.next();
                         let context = self.context.clone();
                         let address = socket_addr_to_multi_addr(&connection.remote_addr().expect("remote address to be known"));
                         // TODO: so ugly
@@ -430,7 +425,7 @@ mod tests {
         command_tx2
             .send(TransportCommand::Dial {
                 address: listen_address,
-                connection_id: 0usize,
+                connection_id: ConnectionId::new(),
             })
             .await
             .unwrap();

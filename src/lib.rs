@@ -35,7 +35,7 @@ use crate::{
     transport::{
         quic::QuicTransport, tcp::TcpTransport, Transport, TransportCommand, TransportEvent,
     },
-    types::protocol::ProtocolName,
+    types::{protocol::ProtocolName, ConnectionId},
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -95,6 +95,67 @@ pub enum Litep2pEvent {
     },
 }
 
+struct Transports {
+    /// Supported transports and their command handles.
+    transports: HashMap<SupportedTransport, Sender<TransportCommand>>,
+
+    /// Connection ID.
+    connection_id: ConnectionId,
+}
+
+impl Transports {
+    /// Create new [`Transports`].
+    pub fn new() -> Self {
+        Self {
+            transports: HashMap::new(),
+            connection_id: ConnectionId::new(),
+        }
+    }
+
+    /// Add supported transport.
+    pub(crate) fn add_transport(
+        &mut self,
+        transport: SupportedTransport,
+        tx: Sender<TransportCommand>,
+    ) {
+        self.transports.insert(transport, tx);
+    }
+
+    /// Dial remote peer over TCP.
+    pub(crate) async fn dial_tcp(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
+        let connection_id = self.connection_id.next();
+
+        let _ = self
+            .transports
+            .get_mut(&SupportedTransport::Tcp)
+            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+            .send(TransportCommand::Dial {
+                address,
+                connection_id,
+            })
+            .await?;
+
+        Ok(connection_id)
+    }
+
+    /// Dial remote peer over QUIC.
+    pub(crate) async fn dial_quic(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
+        let connection_id = self.connection_id.next();
+
+        let _ = self
+            .transports
+            .get_mut(&SupportedTransport::Quic)
+            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+            .send(TransportCommand::Dial {
+                address,
+                connection_id,
+            })
+            .await?;
+
+        Ok(connection_id)
+    }
+}
+
 /// [`Litep2p`] object.
 pub struct Litep2p {
     /// Local peer ID.
@@ -106,11 +167,11 @@ pub struct Litep2p {
     /// RX channel for receiving events from transports.
     rx: Receiver<TransportEvent>,
 
-    /// Supported transports and their command handles.
-    transports: HashMap<SupportedTransport, Sender<TransportCommand>>,
+    /// Supported transports.
+    transports: Transports,
 
     /// Pending connections.
-    pending_connections: HashMap<usize, Multiaddr>,
+    pending_connections: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending DNS resolves.
     pending_dns_resolves:
@@ -224,7 +285,10 @@ impl TransportContext {
 /// Supported protocols.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 enum SupportedTransport {
+    /// TCP.
     Tcp,
+
+    /// QUIC.
     Quic,
 }
 
@@ -238,7 +302,7 @@ impl Litep2p {
         // TODO: zzz
         let mut listen_addresses = Vec::new();
         let mut protocols = Vec::new();
-        let mut transports = HashMap::new();
+        let mut transports = Transports::new();
 
         // start notification protocol event loops
         for (protocol, config) in config.notification_protocols.into_iter() {
@@ -302,7 +366,7 @@ impl Litep2p {
         // enable tcp transport if the config exists
         if let Some(config) = config.tcp.take() {
             let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-            transports.insert(SupportedTransport::Tcp, command_tx);
+            transports.add_transport(SupportedTransport::Tcp, command_tx);
 
             let transport =
                 <TcpTransport as Transport>::new(transport_ctx.clone(), config, command_rx).await?;
@@ -317,7 +381,7 @@ impl Litep2p {
 
         if let Some(config) = config.quic.take() {
             let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-            transports.insert(SupportedTransport::Quic, command_tx);
+            transports.add_transport(SupportedTransport::Quic, command_tx);
 
             let transport =
                 <QuicTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
@@ -397,22 +461,23 @@ impl Litep2p {
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Tcp(_) => {
-                let connection_id = match self.transports.get_mut(&SupportedTransport::Tcp) {
-                    Some(sender) => {
-                        sender
-                            .send(TransportCommand::Dial {
-                                address: address.clone(),
-                                connection_id: 0usize,
-                            })
-                            .await?;
-                        0usize
-                    }
-                    None => return Err(Error::TransportNotSupported(address)),
-                };
-
+                let connection_id = self.transports.dial_tcp(address.clone()).await?;
                 self.pending_connections.insert(connection_id, address);
+
                 Ok(())
             }
+            Protocol::Udp(_) => match protocol_stack
+                .next()
+                .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+            {
+                Protocol::QuicV1 => {
+                    let connection_id = self.transports.dial_quic(address.clone()).await?;
+                    self.pending_connections.insert(connection_id, address);
+
+                    Ok(())
+                }
+                _ => Err(Error::TransportNotSupported(address.clone())),
+            },
             protocol => {
                 tracing::error!(
                     target: LOG_TARGET,
@@ -512,21 +577,7 @@ impl Litep2p {
                         Ok(address) => {
                             tracing::debug!(target: LOG_TARGET, ?address, "connect to remote peer");
 
-                            let connection_id = match self.transports.get_mut(&SupportedTransport::Tcp) {
-                                Some(sender) => {
-                                    sender
-                                        .send(TransportCommand::Dial {
-                                            address: address.clone(),
-                                            connection_id: 0usize,
-                                        })
-                                        .await?;
-                                    tracing::info!(target: LOG_TARGET, "event sent!!!");
-                                    0usize
-                                }
-                                None => return Err(Error::TransportNotSupported(address)),
-                            };
-
-                            // let connection_id = self.tcp.open_connection(address.clone())?;
+                            let connection_id = self.transports.dial_tcp(address.clone()).await?;
                             self.pending_connections.insert(connection_id, address);
                         }
                         Err(error) => return Ok(Litep2pEvent::DialFailure { address: event.0, error }),

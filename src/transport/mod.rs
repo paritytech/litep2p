@@ -18,7 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{error::Error, peer_id::PeerId, TransportContext, DEFAULT_CHANNEL_SIZE};
+use crate::{
+    error::Error, peer_id::PeerId, types::ConnectionId, TransportContext, DEFAULT_CHANNEL_SIZE,
+};
 
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -37,7 +39,7 @@ pub(crate) enum TransportCommand {
         address: Multiaddr,
 
         /// Connection ID allocated for this connection.
-        connection_id: usize,
+        connection_id: ConnectionId,
     },
 }
 

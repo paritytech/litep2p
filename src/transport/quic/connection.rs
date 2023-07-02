@@ -24,7 +24,7 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     TransportContext,
 };
 
@@ -71,7 +71,7 @@ pub(crate) struct QuicConnection {
     peer: PeerId,
 
     /// Connection ID.
-    connection_id: usize,
+    connection_id: ConnectionId,
 
     /// Transport context.
     context: ProtocolSet,
@@ -102,7 +102,7 @@ impl QuicConnection {
         peer: PeerId,
         context: TransportContext,
         connection: Connection,
-        connection_id: usize,
+        connection_id: ConnectionId,
     ) -> crate::Result<Self> {
         Ok(Self {
             peer,

@@ -25,6 +25,7 @@ use crate::{
         tcp::{config::TransportConfig, connection::TcpConnection},
         Transport, TransportCommand, TransportEvent,
     },
+    types::ConnectionId,
     TransportContext,
 };
 
@@ -60,11 +61,11 @@ pub struct TcpError {
     error: Error,
 
     /// Connection ID.
-    connection_id: Option<usize>,
+    connection_id: Option<ConnectionId>,
 }
 
 impl TcpError {
-    pub fn new(error: Error, connection_id: Option<usize>) -> Self {
+    pub fn new(error: Error, connection_id: Option<ConnectionId>) -> Self {
         Self {
             error,
             connection_id,
@@ -85,10 +86,10 @@ pub struct TcpTransport {
     listen_address: SocketAddr,
 
     /// Next connection ID.
-    next_connection_id: usize,
+    next_connection_id: ConnectionId,
 
     /// Pending dials.
-    pending_dials: HashMap<usize, Multiaddr>,
+    pending_dials: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending connections.
     pending_connections: FuturesUnordered<BoxFuture<'static, Result<TcpConnection, TcpError>>>,
@@ -152,13 +153,6 @@ impl TcpTransport {
     fn listen_address(&self) -> &SocketAddr {
         &self.listen_address
     }
-
-    /// Get next connection ID.
-    fn next_connection_id(&mut self) -> usize {
-        let connection = self.next_connection_id;
-        self.next_connection_id += 1;
-        connection
-    }
 }
 
 #[async_trait::async_trait]
@@ -186,7 +180,7 @@ impl Transport for TcpTransport {
             context,
             listener,
             listen_address,
-            next_connection_id: 0usize,
+            next_connection_id: ConnectionId::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
@@ -204,7 +198,8 @@ impl Transport for TcpTransport {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
                         let context = self.context.clone();
-                        let connection_id = self.next_connection_id();
+                        // TODO: verify that this won't clash with connection IDs received from `Litep2p`
+                        let connection_id = self.next_connection_id.next();
 
                         self.pending_connections.push(Box::pin(async move {
                             TcpConnection::accept_connection(context, connection, connection_id, address)
@@ -253,7 +248,6 @@ impl Transport for TcpTransport {
 
                             let context = self.context.clone();
                             let (socket_address, peer) = Self::get_socket_address(&address)?;
-                            // let connection_id = self.next_connection_id();
 
                             self.pending_dials.insert(connection_id, address);
                             self.pending_connections.push(Box::pin(async move {
@@ -387,7 +381,7 @@ mod tests {
         command_tx2
             .send(TransportCommand::Dial {
                 address: listen_address,
-                connection_id: 0usize,
+                connection_id: ConnectionId::new(),
             })
             .await
             .unwrap();
@@ -469,7 +463,7 @@ mod tests {
         command_tx2
             .send(TransportCommand::Dial {
                 address: "/ip6/::1/tcp/1".parse().unwrap(),
-                connection_id: 0usize,
+                connection_id: ConnectionId::new(),
             })
             .await
             .unwrap();
