@@ -25,8 +25,9 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     substream::{RawSubstream, Substream},
+    transport::TransportContext,
     types::{protocol::ProtocolName, SubstreamId},
-    ProtocolInfo, TransportContext, DEFAULT_CHANNEL_SIZE,
+    DEFAULT_CHANNEL_SIZE,
 };
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -171,14 +172,26 @@ impl ConnectionService {
     }
 }
 
+/// Protocol information.
+#[derive(Debug, Clone)]
+pub(crate) struct ProtocolInfo {
+    /// TX channel for sending connection events to the protocol.
+    pub tx: Sender<ConnectionEvent>,
+
+    /// Codec used by the protocol.
+    pub codec: ProtocolCodec,
+}
+
 /// Supported protocol information.
 ///
 /// Each connection gets a copy of [`ProtocolSet`] which allows it to interact
 /// directly with installed protocols.
 #[derive(Debug)]
 pub struct ProtocolSet {
-    // TODO: why is this pub?
-    pub protocols: HashMap<ProtocolName, ProtocolInfo>,
+    /// Installed protocols.
+    pub(crate) protocols: HashMap<ProtocolName, ProtocolInfo>,
+
+    /// RX channel for protocol events.
     rx: Receiver<ProtocolEvent>,
 }
 

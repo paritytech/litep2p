@@ -24,8 +24,8 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
+    transport::TransportContext,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
-    TransportContext,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};

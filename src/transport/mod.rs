@@ -19,13 +19,19 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::Error, peer_id::PeerId, types::ConnectionId, TransportContext, DEFAULT_CHANNEL_SIZE,
+    codec::ProtocolCodec,
+    crypto::ed25519::Keypair,
+    error::Error,
+    peer_id::PeerId,
+    protocol::{ConnectionEvent, ProtocolEvent, ProtocolInfo},
+    types::{protocol::ProtocolName, ConnectionId},
+    DEFAULT_CHANNEL_SIZE,
 };
 
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 
 pub mod quic;
 pub mod tcp;
@@ -86,4 +92,96 @@ pub(crate) trait Transport {
 
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()>;
+}
+
+#[derive(Debug)]
+pub struct TransportService {
+    rx: Receiver<ConnectionEvent>,
+    _peers: HashMap<PeerId, Sender<ProtocolEvent>>,
+}
+
+impl TransportService {
+    /// Create new [`ConnectionService`].
+    pub fn new() -> (Self, Sender<ConnectionEvent>) {
+        // TODO: maybe specify some other channel size
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+
+        (
+            Self {
+                rx,
+                _peers: HashMap::new(),
+            },
+            tx,
+        )
+    }
+
+    /// Get next event from the transport.
+    pub async fn next_event(&mut self) -> Option<ConnectionEvent> {
+        self.rx.recv().await
+    }
+}
+
+/// Transport context.
+#[derive(Debug, Clone)]
+pub struct TransportContext {
+    /// Enabled protocols.
+    pub(crate) protocols: HashMap<ProtocolName, ProtocolInfo>,
+
+    /// Keypair.
+    pub(crate) keypair: Keypair,
+
+    /// TX channel for sending events to [`Litep2p`].
+    tx: Sender<TransportEvent>,
+}
+
+impl TransportContext {
+    /// Create new [`TransportContext`].
+    pub fn new(keypair: Keypair, tx: Sender<TransportEvent>) -> Self {
+        Self {
+            tx,
+            keypair,
+            protocols: HashMap::new(),
+        }
+    }
+
+    /// Add new protocol.
+    pub fn add_protocol(
+        &mut self,
+        protocol: ProtocolName,
+        codec: ProtocolCodec,
+    ) -> crate::Result<TransportService> {
+        let (service, tx) = TransportService::new();
+
+        match self
+            .protocols
+            .insert(protocol.clone(), ProtocolInfo { tx, codec })
+        {
+            Some(_) => Err(Error::ProtocolAlreadyExists(protocol)),
+            None => Ok(service),
+        }
+    }
+
+    /// Report to `Litep2p` that a peer connected.
+    pub(crate) async fn report_connection_established(&mut self, peer: PeerId, address: Multiaddr) {
+        let _ = self
+            .tx
+            .send(TransportEvent::ConnectionEstablished { peer, address })
+            .await;
+    }
+
+    /// Report to `Litep2p` that a peer disconnected.
+    pub(crate) async fn report_connection_closed(&mut self, peer: PeerId) {
+        let _ = self
+            .tx
+            .send(TransportEvent::ConnectionClosed { peer })
+            .await;
+    }
+
+    /// Report to `Litep2p` that dialing a remote peer failed.
+    pub(crate) async fn report_dial_failure(&mut self, address: Multiaddr, error: Error) {
+        let _ = self
+            .tx
+            .send(TransportEvent::DialFailure { address, error })
+            .await;
+    }
 }

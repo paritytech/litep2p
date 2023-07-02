@@ -29,8 +29,8 @@ use crate::{
         ConnectionEvent, ConnectionService, Direction,
     },
     substream::Substream,
+    transport::TransportService,
     types::{RequestId, SubstreamId},
-    TransportService,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};

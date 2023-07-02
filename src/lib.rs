@@ -95,7 +95,18 @@ pub enum Litep2pEvent {
     },
 }
 
-struct Transports {
+/// Supported protocols.
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub(crate) enum SupportedTransport {
+    /// TCP.
+    Tcp,
+
+    /// QUIC.
+    Quic,
+}
+
+/// [`Litep2p`] transport context.
+struct TransportContext {
     /// Supported transports and their command handles.
     transports: HashMap<SupportedTransport, Sender<TransportCommand>>,
 
@@ -103,8 +114,8 @@ struct Transports {
     connection_id: ConnectionId,
 }
 
-impl Transports {
-    /// Create new [`Transports`].
+impl TransportContext {
+    /// Create new [`TransportContext`].
     pub fn new() -> Self {
         Self {
             transports: HashMap::new(),
@@ -168,7 +179,7 @@ pub struct Litep2p {
     rx: Receiver<TransportEvent>,
 
     /// Supported transports.
-    transports: Transports,
+    transports: TransportContext,
 
     /// Pending connections.
     pending_connections: HashMap<ConnectionId, Multiaddr>,
@@ -178,131 +189,17 @@ pub struct Litep2p {
         FuturesUnordered<BoxFuture<'static, (Multiaddr, result::Result<LookupIp, ResolveError>)>>,
 }
 
-#[derive(Debug)]
-pub struct TransportService {
-    rx: Receiver<ConnectionEvent>,
-    _peers: HashMap<PeerId, Sender<ProtocolEvent>>,
-}
-
-impl TransportService {
-    /// Create new [`ConnectionService`].
-    pub fn new() -> (Self, Sender<ConnectionEvent>) {
-        // TODO: maybe specify some other channel size
-        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
-
-        (
-            Self {
-                rx,
-                _peers: HashMap::new(),
-            },
-            tx,
-        )
-    }
-
-    /// Get next event from the transport.
-    pub async fn next_event(&mut self) -> Option<ConnectionEvent> {
-        self.rx.recv().await
-    }
-}
-
-// TODO: move to protocol
-/// Protocol information.
-#[derive(Debug, Clone)]
-pub struct ProtocolInfo {
-    /// TX channel for sending connection events to the protocol.
-    pub tx: Sender<ConnectionEvent>,
-
-    /// Codec used by the protocol.
-    pub codec: ProtocolCodec,
-}
-
-// TODO: move to transport maybe
-/// Transport context.
-#[derive(Debug, Clone)]
-pub struct TransportContext {
-    /// Enabled protocols.
-    pub protocols: HashMap<ProtocolName, ProtocolInfo>,
-
-    /// Keypair.
-    pub keypair: Keypair,
-
-    /// TX channel for sending events to [`Litep2p`].
-    tx: Sender<TransportEvent>,
-}
-
-impl TransportContext {
-    /// Create new [`TransportContext`].
-    pub fn new(keypair: Keypair, tx: Sender<TransportEvent>) -> Self {
-        Self {
-            tx,
-            keypair,
-            protocols: HashMap::new(),
-        }
-    }
-
-    /// Add new protocol.
-    pub fn add_protocol(
-        &mut self,
-        protocol: ProtocolName,
-        codec: ProtocolCodec,
-    ) -> crate::Result<TransportService> {
-        let (service, tx) = TransportService::new();
-
-        match self
-            .protocols
-            .insert(protocol.clone(), ProtocolInfo { tx, codec })
-        {
-            Some(_) => Err(Error::ProtocolAlreadyExists(protocol)),
-            None => Ok(service),
-        }
-    }
-
-    /// Report to `Litep2p` that a peer connected.
-    pub(crate) async fn report_connection_established(&mut self, peer: PeerId, address: Multiaddr) {
-        let _ = self
-            .tx
-            .send(TransportEvent::ConnectionEstablished { peer, address })
-            .await;
-    }
-
-    /// Report to `Litep2p` that a peer disconnected.
-    pub(crate) async fn report_connection_closed(&mut self, peer: PeerId) {
-        let _ = self
-            .tx
-            .send(TransportEvent::ConnectionClosed { peer })
-            .await;
-    }
-
-    /// Report to `Litep2p` that dialing a remote peer failed.
-    pub(crate) async fn report_dial_failure(&mut self, address: Multiaddr, error: Error) {
-        let _ = self
-            .tx
-            .send(TransportEvent::DialFailure { address, error })
-            .await;
-    }
-}
-
-/// Supported protocols.
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-enum SupportedTransport {
-    /// TCP.
-    Tcp,
-
-    /// QUIC.
-    Quic,
-}
-
 impl Litep2p {
     /// Create new [`Litep2p`].
     pub async fn new(mut config: Litep2pConfig) -> crate::Result<Litep2p> {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
-        let mut transport_ctx = TransportContext::new(config.keypair.clone(), tx);
+        let mut transport_ctx = transport::TransportContext::new(config.keypair.clone(), tx);
 
         // TODO: zzz
         let mut listen_addresses = Vec::new();
         let mut protocols = Vec::new();
-        let mut transports = Transports::new();
+        let mut transports = TransportContext::new();
 
         // start notification protocol event loops
         for (protocol, config) in config.notification_protocols.into_iter() {

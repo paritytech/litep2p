@@ -24,8 +24,9 @@ use crate::{
     peer_id::PeerId,
     protocol::{ConnectionEvent, ConnectionService, Direction},
     substream::Substream,
+    transport::TransportService,
     types::{protocol::ProtocolName, SubstreamId},
-    TransportService, DEFAULT_CHANNEL_SIZE,
+    DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{SinkExt, Stream, StreamExt};

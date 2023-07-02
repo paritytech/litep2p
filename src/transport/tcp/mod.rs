@@ -23,10 +23,9 @@ use crate::{
     peer_id::PeerId,
     transport::{
         tcp::{config::TransportConfig, connection::TcpConnection},
-        Transport, TransportCommand, TransportEvent,
+        Transport, TransportCommand, TransportContext, TransportEvent,
     },
     types::ConnectionId,
-    TransportContext,
 };
 
 use futures::{
@@ -269,8 +268,8 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
+        protocol::ProtocolInfo,
         types::protocol::ProtocolName,
-        ProtocolInfo,
     };
     use tokio::sync::mpsc::channel;
 

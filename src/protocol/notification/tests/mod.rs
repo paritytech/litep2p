@@ -24,8 +24,8 @@ use crate::{
         notification::{handle::NotificationHandle, types::Config, NotificationProtocol},
         ConnectionEvent, ConnectionService, ProtocolEvent,
     },
+    transport::TransportService,
     types::protocol::ProtocolName,
-    TransportService,
 };
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};

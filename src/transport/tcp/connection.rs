@@ -25,9 +25,8 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
-    transport::tcp::socket_addr_to_multi_addr,
+    transport::{tcp::socket_addr_to_multi_addr, TransportContext},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
-    TransportContext,
 };
 
 use futures::{

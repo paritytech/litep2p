@@ -33,8 +33,8 @@ use crate::{
         ConnectionEvent, ConnectionService, Direction,
     },
     substream::{Substream, SubstreamSet},
+    transport::TransportService,
     types::{protocol::ProtocolName, SubstreamId},
-    TransportService,
 };
 
 use bytes::BytesMut;
