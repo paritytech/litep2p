@@ -32,14 +32,15 @@ use crate::{
         request_response::RequestResponseProtocol,
         ConnectionEvent, ProtocolEvent,
     },
-    transport::{tcp::TcpTransport, Transport, TransportCommand, TransportEvent},
+    transport::{
+        quic::QuicTransport, tcp::TcpTransport, Transport, TransportCommand, TransportEvent,
+    },
     types::protocol::ProtocolName,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-// use transport::quic::QuicTransport;
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
     error::ResolveError,
@@ -99,11 +100,6 @@ pub struct Litep2p {
     /// Local peer ID.
     local_peer_id: PeerId,
 
-    // /// TCP transport.
-    // tcp: TcpTransport,
-
-    // /// QUIC transport
-    // quic: QuicTransport,
     /// Listen addresses.
     listen_addresses: Vec<Multiaddr>,
 
@@ -279,30 +275,41 @@ impl Litep2p {
         }
 
         // enable tcp transport if the config exists
-        match config.tcp.take() {
-            Some(config) => {
-                let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-                transports.insert(SupportedTransport::Tcp, command_tx);
+        if let Some(config) = config.tcp.take() {
+            let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
+            transports.insert(SupportedTransport::Tcp, command_tx);
 
-                let transport =
-                    <TcpTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
-                        .await?;
-                listen_addresses.push(transport.listen_address());
+            let transport =
+                <TcpTransport as Transport>::new(transport_ctx.clone(), config, command_rx).await?;
+            listen_addresses.push(transport.listen_address());
 
-                tokio::spawn(async move {
-                    if let Err(error) = transport.start().await {
-                        tracing::error!(target: LOG_TARGET, "tcp failed");
-                    }
-                });
-            }
-            None => panic!("tcp not enabled"),
+            tokio::spawn(async move {
+                if let Err(error) = transport.start().await {
+                    tracing::error!(target: LOG_TARGET, "tcp failed");
+                }
+            });
         }
 
-        // // enable quic transport if the config exists
-        // let quic = match config.quic.take() {
-        //     Some(config) => <QuicTransport as Transport>::new(transport_ctx, config).await?,
-        //     None => todo!("quic not enabled"),
-        // };
+        if let Some(config) = config.quic.take() {
+            let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
+            transports.insert(SupportedTransport::Tcp, command_tx);
+
+            let transport =
+                <QuicTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
+                    .await?;
+            listen_addresses.push(transport.listen_address());
+
+            tokio::spawn(async move {
+                if let Err(error) = transport.start().await {
+                    tracing::error!(target: LOG_TARGET, "quic failed");
+                }
+            });
+        }
+
+        // verify that at least one transport is specified
+        if listen_addresses.is_empty() {
+            return Err(Error::Other(String::from("No transport specified")));
+        }
 
         Ok(Self {
             rx,
