@@ -23,7 +23,7 @@ use crate::{
     peer_id::PeerId,
     transport::{
         tcp::{config::TransportConfig, connection::TcpConnection},
-        Transport, TransportCommand, TransportError, TransportEvent,
+        Transport, TransportCommand, TransportEvent,
     },
     TransportContext,
 };
@@ -69,16 +69,6 @@ impl TcpError {
             error,
             connection_id,
         }
-    }
-}
-
-impl TransportError for TcpError {
-    fn connection_id(&self) -> Option<usize> {
-        self.connection_id
-    }
-
-    fn into_error(self) -> Error {
-        self.error
     }
 }
 
@@ -173,7 +163,6 @@ impl TcpTransport {
 
 #[async_trait::async_trait]
 impl Transport for TcpTransport {
-    type Error = TcpError;
     type Config = TransportConfig;
 
     /// Create new [`TcpTransport`].
@@ -208,24 +197,6 @@ impl Transport for TcpTransport {
         socket_addr_to_multi_addr(self.listen_address())
     }
 
-    // /// Open connection to remote peer at `address`.
-    // fn open_connection(&mut self, address: Multiaddr) -> crate::Result<usize> {
-    //     tracing::debug!(target: LOG_TARGET, ?address, "open connection");
-
-    //     let context = self.context.clone();
-    //     let (socket_address, peer) = Self::get_socket_address(&address)?;
-    //     let connection_id = self.next_connection_id();
-
-    //     self.pending_dials.insert(connection_id, address);
-    //     self.pending_connections.push(Box::pin(async move {
-    //         TcpConnection::open_connection(context, connection_id, socket_address, peer)
-    //             .await
-    //             .map_err(|error| TcpError::new(error, Some(connection_id)))
-    //     }));
-
-    //     Ok(connection_id)
-    // }
-
     /// Start TCP transport event loop.
     async fn start(mut self) -> crate::Result<()> {
         loop {
@@ -242,7 +213,6 @@ impl Transport for TcpTransport {
                         }));
                     }
                     Err(err) => todo!(),
-                    // Err(err) => return Err(TcpError::new(err.into(), None)),
                 },
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
                     match connection {
@@ -296,79 +266,12 @@ impl Transport for TcpTransport {
                                     .await
                                     .map_err(|error| TcpError::new(error, Some(connection_id)))
                             }));
-
-                            // Ok(connection_id)
                         }
                     }
                 }
             }
         }
     }
-
-    // /// Poll next connection from [`TcpTransport`].
-    // async fn next_event(&mut self) -> Result<TransportEvent, TcpError> {
-    //     loop {
-    //         tokio::select! {
-    //             connection = self.listener.accept() => match connection {
-    //                 Ok((connection, address)) => {
-    //                     let context = self.context.clone();
-    //                     let connection_id = self.next_connection_id();
-
-    //                     self.pending_connections.push(Box::pin(async move {
-    //                         TcpConnection::accept_connection(context, connection, connection_id, address)
-    //                             .await
-    //                             .map_err(|error| TcpError::new(error, Some(connection_id)))
-    //                     }));
-    //                 }
-    //                 Err(err) => return Err(TcpError::new(err.into(), None)),
-    //             },
-    //             connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
-    //                 match connection {
-    //                     Ok(connection) => {
-    //                         let peer = *connection.peer();
-    //                         let address = connection.address().clone();
-
-    //                         tokio::spawn(async move {
-    //                             if let Err(error) = connection.start().await {
-    //                                 tracing::error!(target: LOG_TARGET, ?peer, ?error, "connection failure");
-    //                             }
-    //                         });
-
-    //                         return Ok(TransportEvent::ConnectionEstablished { peer, address })
-    //                     }
-    //                     Err(error) => {
-    //                         match error.connection_id {
-    //                             Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-    //                                 Some(address) => {
-    //                                     return Ok(TransportEvent::DialFailure {
-    //                                         address,
-    //                                         error: error.error,
-    //                                     })
-    //                                 }
-    //                                 None => tracing::debug!(
-    //                                     target: LOG_TARGET,
-    //                                     ?error,
-    //                                     "failed to establish connection"
-    //                                 ),
-    //                             },
-    //                             None => {
-    //                                 tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
-    //                             }
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //             command = self.rx.recv() => match command {
-    //                 None => return Err(Error::EssentialTaskClosed),
-    //                 Some(command) => match command {
-    //                     TransportCommand::Dial { address, connection_id } => {
-    //                         todo!();
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 }
 
 #[cfg(test)]

@@ -213,7 +213,9 @@ impl Litep2p {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
         let mut transport_ctx = TransportContext::new(config.keypair.clone(), tx);
-        let listen_addresses = Vec::new();
+
+        // TODO: zzz
+        let mut listen_addresses = Vec::new();
         let mut protocols = Vec::new();
         let mut transports = HashMap::new();
 
@@ -270,25 +272,31 @@ impl Litep2p {
                 identify_config.codec.clone(),
             )?;
             identify_config.public = Some(PublicKey::Ed25519(config.keypair.public()));
-            identify_config.listen_addresses = listen_addresses;
+            identify_config.listen_addresses = Vec::new(); // TODO: zzz
             identify_config.protocols = protocols;
 
             tokio::spawn(async move { Identify::new(service, identify_config).run().await });
         }
 
         // enable tcp transport if the config exists
-        let tcp = match config.tcp.take() {
+        match config.tcp.take() {
             Some(config) => {
-                // TODO: what to do here?
-                // TODO: - pass rx channel to transport so it can receive commands
-                // TODO: - pass tx channel for sending commands to transport
                 let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
                 transports.insert(SupportedTransport::Tcp, command_tx);
 
-                <TcpTransport as Transport>::new(transport_ctx.clone(), config, command_rx).await?
+                let transport =
+                    <TcpTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
+                        .await?;
+                listen_addresses.push(transport.listen_address());
+
+                tokio::spawn(async move {
+                    if let Err(error) = transport.start().await {
+                        tracing::error!(target: LOG_TARGET, "tcp failed");
+                    }
+                });
             }
             None => panic!("tcp not enabled"),
-        };
+        }
 
         // // enable quic transport if the config exists
         // let quic = match config.quic.take() {
@@ -296,17 +304,7 @@ impl Litep2p {
         //     None => todo!("quic not enabled"),
         // };
 
-        let listen_addresses = vec![tcp.listen_address()];
-
-        tokio::spawn(async move {
-            if let Err(error) = tcp.start().await {
-                tracing::error!(target: LOG_TARGET, "tcp failed");
-            }
-        });
-
         Ok(Self {
-            // tcp,
-            // quic,
             rx,
             local_peer_id,
             listen_addresses,

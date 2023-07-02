@@ -28,15 +28,6 @@ use std::fmt::Debug;
 pub mod quic;
 pub mod tcp;
 
-/// Trait which allows `litep2p` to associate dial failures to opened connections.
-pub trait TransportError {
-    /// Get connection ID.
-    fn connection_id(&self) -> Option<usize>;
-
-    /// Convert [`TransportError`] into `Error`
-    fn into_error(self) -> Error;
-}
-
 /// Commands send by `Litep2p` to the transport.
 #[derive(Debug)]
 pub(crate) enum TransportCommand {
@@ -78,7 +69,6 @@ pub enum TransportEvent {
 #[async_trait::async_trait]
 pub(crate) trait Transport {
     type Config: Debug;
-    type Error: TransportError; // TODO: is this really necessary?
 
     /// Create new [`Transport`] object.
     async fn new(

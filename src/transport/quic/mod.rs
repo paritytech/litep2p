@@ -24,7 +24,7 @@ use crate::{
     peer_id::PeerId,
     transport::{
         quic::{config::Config, connection::QuicConnection},
-        Transport, TransportError, TransportEvent,
+        Transport, TransportEvent,
     },
     TransportContext,
 };
