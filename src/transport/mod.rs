@@ -35,6 +35,7 @@ use std::{collections::HashMap, fmt::Debug};
 
 pub mod quic;
 pub mod tcp;
+pub mod webrtc;
 
 /// Commands send by `Litep2p` to the transport.
 #[derive(Debug)]
