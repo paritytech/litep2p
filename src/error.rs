@@ -84,12 +84,14 @@ pub enum Error {
     DnsAddressResolutionFailed,
     #[error("Transport error: `{0}`")]
     TransportError(String),
-    #[error("Failed to generate certificate")]
+    #[error("Failed to generate certificate: `{0}`")]
     CertificateGeneration(#[from] crate::crypto::tls::certificate::GenError),
     #[error("Invalid data")]
     InvalidData,
     #[error("Input rejected")]
     InputRejected,
+    #[error("WebSocket error: `{0}`")]
+    WebSocket(#[from] tokio_tungstenite::tungstenite::error::Error),
 }
 
 #[derive(Debug, thiserror::Error)]

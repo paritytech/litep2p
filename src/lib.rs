@@ -29,7 +29,8 @@ use crate::{
         request_response::RequestResponseProtocol,
     },
     transport::{
-        quic::QuicTransport, tcp::TcpTransport, Transport, TransportCommand, TransportEvent,
+        quic::QuicTransport, tcp::TcpTransport, webrtc::WebRtcTransport,
+        websocket::WebSocketTransport, Transport, TransportCommand, TransportEvent,
     },
     types::ConnectionId,
 };
@@ -37,7 +38,6 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use transport::webrtc::WebRtcTransport;
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
     error::ResolveError,
@@ -103,6 +103,9 @@ pub(crate) enum SupportedTransport {
 
     /// WebRTC
     WebRtc,
+
+    /// WebSocket
+    WebSocket,
 }
 
 /// [`Litep2p`] transport context.
@@ -249,6 +252,7 @@ impl Litep2p {
             tokio::spawn(async move { Ping::new(service, ping_config).run().await });
         }
 
+        // start identify protocol event loop if enabled
         if let Some(mut identify_config) = config.identify.take() {
             tracing::debug!(
                 target: LOG_TARGET,
@@ -314,6 +318,23 @@ impl Litep2p {
             tokio::spawn(async move {
                 if let Err(error) = transport.start().await {
                     tracing::error!(target: LOG_TARGET, ?error, "webrtc failed");
+                }
+            });
+        }
+
+        // enable websocket transport if the config exists
+        if let Some(config) = config.websocket.take() {
+            let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
+            transports.add_transport(SupportedTransport::WebSocket, command_tx);
+
+            let transport =
+                <WebSocketTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
+                    .await?;
+            listen_addresses.push(transport.listen_address());
+
+            tokio::spawn(async move {
+                if let Err(error) = transport.start().await {
+                    tracing::error!(target: LOG_TARGET, ?error, "quic failed");
                 }
             });
         }
@@ -679,5 +700,45 @@ mod tests {
             res2,
             Ok(Litep2pEvent::ConnectionEstablished { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn wss_test() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let keypair1 = Keypair::generate();
+        let (ping_config1, _ping_event_stream1) = PingConfig::new(3);
+
+        let config1 = Litep2pConfigBuilder::new()
+            .with_keypair(keypair1)
+            .with_tcp(TcpTransportConfig {
+                listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            })
+            .with_ipfs_ping(ping_config1)
+            .build();
+
+        let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+        let address = "/dns/polkadot-connect-0.parity.io/tcp/443/wss/p2p/12D3KooWEPmjoRpDSUuiTjvyNDd8fejZ9eNWH5bE965nyBMDrB4o";
+
+        litep2p1
+            .connect(Multiaddr::try_from(address).unwrap())
+            .await
+            .unwrap();
+
+        loop {
+            let _ = litep2p1.next_event().await.unwrap();
+        }
+
+        // let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
+        // assert!(std::matches!(
+        //     res1,
+        //     Ok(Litep2pEvent::ConnectionEstablished { .. })
+        // ));
+        // assert!(std::matches!(
+        //     res2,
+        //     Ok(Litep2pEvent::ConnectionEstablished { .. })
+        // ));
     }
 }

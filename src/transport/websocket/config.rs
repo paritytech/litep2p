@@ -18,5 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use multiaddr::Multiaddr;
+
+/// WebSocket config.
 #[derive(Debug)]
-pub struct Config {}
+pub struct Config {
+    pub listen_address: Multiaddr,
+}

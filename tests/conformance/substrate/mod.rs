@@ -20,3 +20,5 @@
 
 #[cfg(test)]
 mod request_response;
+#[cfg(test)]
+mod websocket;
