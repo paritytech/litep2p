@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    crypto::PublicKey,
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{Transport, TransportCommand, TransportContext},
@@ -26,7 +27,7 @@ use crate::{
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered};
-use multiaddr::{Multiaddr, Protocol};
+use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
     change::{DtlsCert, Fingerprint, IceCreds, SdpAnswer, SdpOffer, SdpPendingOffer},
     Candidate, Rtc,
@@ -98,7 +99,7 @@ impl WebRtcTransport {
         let mut iter = address.iter();
         let socket_address = match iter.next() {
             Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V6(address), port),
+                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V6(address), port),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -109,7 +110,7 @@ impl WebRtcTransport {
                 }
             },
             Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V4(address), port),
+                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V4(address), port),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -180,11 +181,67 @@ impl Transport for WebRtcTransport {
 
     /// Get assigned listen address.
     fn listen_address(&self) -> Multiaddr {
-        socket_addr_to_multi_addr(&self.listen_address)
+        let fingerprint = self.dtls_cert.fingerprint().bytes;
+
+        const MULTIHASH_SHA256_CODE: u64 = 0x12;
+        let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
+            .expect("fingerprint's len to be 32 bytes");
+
+        Multiaddr::empty()
+            .with(Protocol::from(self.listen_address.ip()))
+            .with(Protocol::Udp(self.listen_address.port()))
+            .with(Protocol::WebRTC)
+            .with(Protocol::Certhash(certificate))
+            .with(Protocol::P2p(
+                PeerId::from(PublicKey::Ed25519(self.context.keypair.public())).into(),
+            ))
     }
 
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()> {
         todo!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        codec::ProtocolCodec, crypto::ed25519::Keypair, protocol::ProtocolInfo,
+        types::protocol::ProtocolName,
+    };
+    use tokio::sync::mpsc::channel;
+
+    #[tokio::test]
+    async fn create_transport() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let keypair = Keypair::generate();
+        let (tx, _rx) = channel(64);
+        let (event_tx, mut event_rx) = channel(64);
+        let (command_tx, command_rx) = channel(64);
+
+        let context = TransportContext {
+            tx: event_tx,
+            keypair: keypair.clone(),
+            protocols: HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolInfo {
+                    tx,
+                    codec: ProtocolCodec::Identity(32),
+                },
+            )]),
+        };
+        let transport_config = WebRtcConfig {
+            listen_address: "/ip4/192.168.1.173/udp/0".parse().unwrap(),
+        };
+
+        let mut transport = WebRtcTransport::new(context, transport_config, command_rx)
+            .await
+            .unwrap();
+
+        tracing::error!("listen address: {}", transport.listen_address());
     }
 }

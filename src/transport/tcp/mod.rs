@@ -269,6 +269,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
         protocol::ProtocolInfo,
+        transport::TransportEvent,
         types::protocol::ProtocolName,
     };
     use tokio::sync::mpsc::channel;
