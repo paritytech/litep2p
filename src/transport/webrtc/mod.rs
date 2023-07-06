@@ -27,13 +27,24 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered};
 use multiaddr::{Multiaddr, Protocol};
-use str0m::{Candidate, Rtc};
+use str0m::{
+    change::{DtlsCert, Fingerprint, IceCreds, SdpAnswer, SdpOffer, SdpPendingOffer},
+    Candidate, Rtc,
+};
 use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
 };
+
+mod webrtc {
+    include!(concat!(env!("OUT_DIR"), "/webrtc.rs"));
+}
+
+mod noise {
+    include!(concat!(env!("OUT_DIR"), "/noise.rs"));
+}
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc";
@@ -60,8 +71,8 @@ pub(crate) struct WebRtcTransport {
     /// UDP socket.
     socket: UdpSocket,
 
-    /// Str0m RTC service.
-    rtc: Rtc,
+    /// DTLS certificate.
+    dtls_cert: DtlsCert,
 
     /// Assigned listen addresss.
     listen_address: SocketAddr,
@@ -153,18 +164,13 @@ impl Transport for WebRtcTransport {
         let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
         let socket = UdpSocket::bind(listen_address).await?;
         let listen_address = socket.local_addr()?;
-        let rtc = {
-            let mut rtc = Rtc::builder().set_ice_lite(true).build();
-            let local_candidate = Candidate::host(listen_address).unwrap(); // TODO: no unwraps
-            rtc.add_local_candidate(local_candidate);
-            rtc
-        };
+        let dtls_cert = DtlsCert::new();
 
         Ok(Self {
             rx,
             context,
             socket,
-            rtc,
+            dtls_cert,
             listen_address,
             next_connection_id: ConnectionId::new(),
             pending_dials: HashMap::new(),
@@ -179,19 +185,6 @@ impl Transport for WebRtcTransport {
 
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, "start webrtc event loop");
-
-        let mut buf = vec![0u8; 2048];
-
-        loop {
-            tokio::select! {
-                event = self.socket.recv_from(&mut buf) => match event {
-                    Ok((len, address)) => {
-                        tracing::info!(target: LOG_TARGET, ?len, ?address, "{:?}", std::str::from_utf8(&buf));
-                    }
-                    Err(_) => return Err(Error::Other(String::from("failed to read from udp socket"))),
-                }
-            }
-        }
+        todo!();
     }
 }
