@@ -192,7 +192,11 @@ impl RequestResponseProtocol {
         substream_id: SubstreamId,
         mut substream: Box<dyn Substream>,
     ) -> crate::Result<()> {
-        let Some(RequestContext { request_id, request }) = self.pending_outbound.remove(&substream_id) else {
+        let Some(RequestContext {
+            request_id,
+            request,
+        }) = self.pending_outbound.remove(&substream_id)
+        else {
             tracing::error!(
                 target: LOG_TARGET,
                 ?peer,
@@ -201,7 +205,9 @@ impl RequestResponseProtocol {
             );
             debug_assert!(false);
 
-            return Err(Error::Other(format!("pending outbound request does not exist")));
+            return Err(Error::Other(format!(
+                "pending outbound request does not exist"
+            )));
         };
 
         tracing::trace!(
@@ -300,11 +306,14 @@ impl RequestResponseProtocol {
         );
 
         let Some(context) = self.peers.get_mut(&peer) else {
-            let _ = self.event_tx.send(RequestResponseEvent::RequestFailed {
-                peer,
-                request_id,
-                error: RequestResponseError::NotConnected
-            }).await;
+            let _ = self
+                .event_tx
+                .send(RequestResponseEvent::RequestFailed {
+                    peer,
+                    request_id,
+                    error: RequestResponseError::NotConnected,
+                })
+                .await;
 
             return Err(Error::PeerDoesntExist(peer));
         };

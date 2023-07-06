@@ -422,8 +422,10 @@ impl NotificationProtocol {
         let Some(context) = self.peers.get_mut(&peer) else {
             tracing::debug!(target: LOG_TARGET, ?peer, "no open connection to peer");
 
-            self.event_handle.report_notification_stream_open_failure(peer, NotificationError::NoConnection).await;
-            return Err(Error::PeerDoesntExist(peer))
+            self.event_handle
+                .report_notification_stream_open_failure(peer, NotificationError::NoConnection)
+                .await;
+            return Err(Error::PeerDoesntExist(peer));
         };
 
         // protocol can only request a new outbound substream to be opened if the state is `Closed`
@@ -562,7 +564,7 @@ impl NotificationProtocol {
 
         let Some(context) = self.peers.get_mut(&peer) else {
             tracing::debug!(target: LOG_TARGET, ?peer, "peer doesn't exist");
-            return  Err(Error::PeerDoesntExist(peer));
+            return Err(Error::PeerDoesntExist(peer));
         };
 
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {

@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    codec::unsigned_varint::UnsignedVarint,
     crypto::PublicKey,
     error::{AddressError, Error},
     peer_id::PeerId,
@@ -28,15 +29,26 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered};
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
+use prost::Message;
 use str0m::{
-    change::{DtlsCert, Fingerprint, IceCreds, SdpAnswer, SdpOffer, SdpPendingOffer},
-    Candidate, Rtc,
+    change::{DtlsCert, IceCreds, SdpPendingOffer},
+    channel::{ChannelConfig, ChannelData, ChannelId},
+    media::{KeyframeRequest, MediaData, MediaKind, Mid, Rid},
+    net::{self, DatagramRecv, Receive},
+    Candidate, Event, IceConnectionState, Input, Output, Rtc,
 };
 use tokio::{net::UdpSocket, sync::mpsc::Receiver};
+use tokio_util::codec::Encoder;
 
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    ops::Deref,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Weak,
+    },
+    time::{Duration, Instant},
 };
 
 mod webrtc {
@@ -49,15 +61,6 @@ mod noise {
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc";
-
-/// Convert `SocketAddr` to `Multiaddr`
-fn socket_addr_to_multi_addr(address: &SocketAddr) -> Multiaddr {
-    let mut multiaddr = Multiaddr::from(address.ip());
-    multiaddr.push(Protocol::Udp(address.port()));
-    multiaddr.push(Protocol::P2pWebRtcDirect);
-
-    multiaddr
-}
 
 #[derive(Debug)]
 pub struct WebRtcConfig {
@@ -104,7 +107,7 @@ impl WebRtcTransport {
                     tracing::error!(
                         target: LOG_TARGET,
                         ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
+                        "invalid transport protocol, expected `Upd`",
                     );
                     return Err(Error::AddressError(AddressError::InvalidProtocol));
                 }
@@ -115,7 +118,7 @@ impl WebRtcTransport {
                     tracing::error!(
                         target: LOG_TARGET,
                         ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
+                        "invalid transport protocol, expected `Udp`",
                     );
                     return Err(Error::AddressError(AddressError::InvalidProtocol));
                 }
@@ -199,7 +202,513 @@ impl Transport for WebRtcTransport {
 
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()> {
-        todo!();
+        let mut clients: Vec<Client> = vec![];
+        let mut buf = vec![0; 2000];
+
+        loop {
+            // Clean out disconnected clients
+            clients.retain(|c| c.rtc.is_alive());
+
+            // Poll all clients, and get propagated events as a result.
+            // let to_propagate: Vec<_> = clients
+            //     .iter_mut()
+            //     .map(|c| c.poll_output(&self.socket))
+            //     .collect();
+            let mut to_propagate = Vec::new();
+            for client in clients.iter_mut() {
+                let value = client.poll_output(&self.socket).await;
+                to_propagate.push(value);
+            }
+
+            let timeouts: Vec<_> = to_propagate.iter().filter_map(|p| p.as_timeout()).collect();
+
+            // We keep propagating client events until all clients respond with a timeout.
+            if to_propagate.len() > timeouts.len() {
+                propagate(&mut clients, to_propagate);
+                // Start over to propagate more client data until all are timeouts.
+                continue;
+            }
+
+            // Timeout in case we have no clients. We can't wait forever since we need to keep
+            // polling the spawn_new_clients to discover a client.
+            fn default_timeout() -> Instant {
+                Instant::now() + Duration::from_millis(100)
+            }
+
+            // All poll_output resulted in timeouts, figure out the shortest timeout.
+            let timeout = timeouts.into_iter().min().unwrap_or_else(default_timeout);
+
+            // The read timeout is not allowed to be 0. In case it is 0, we set 1 millisecond.
+            let duration = (timeout - Instant::now()).max(Duration::from_millis(1));
+
+            // self.socket
+            //     .set_read_timeout(Some(duration))
+            //     .expect("setting socket read timeout");
+
+            if let Some(input) = read_socket_input(&self.socket, &mut buf, duration).await {
+                match input {
+                    Input::Timeout(_) => {}
+                    Input::Receive(
+                        _,
+                        net::Receive {
+                            source,
+                            destination,
+                            contents: DatagramRecv::Stun(message),
+                        },
+                    ) => {
+                        if let Some((u, p)) = message.split_username() {
+                            tracing::debug!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
+
+                            let mut rtc = Rtc::builder()
+                                .set_ice_lite(true)
+                                .set_dtls_certification(self.dtls_cert.clone())
+                                .set_certificate_fingerprint_verification(false)
+                                .build();
+                            rtc.add_local_candidate(Candidate::host(destination).unwrap());
+                            rtc.add_remote_candidate(Candidate::host(source).unwrap());
+                            rtc.direct_api().set_remote_fingerprint("sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF".parse().unwrap());
+                            rtc.direct_api().set_remote_ice_credentials(IceCreds {
+                                ufrag: u.to_owned(),
+                                pass: p.to_owned(),
+                            });
+                            rtc.direct_api().set_local_ice_credentials(IceCreds {
+                                ufrag: u.to_owned(),
+                                pass: p.to_owned(),
+                            });
+                            rtc.direct_api().set_ice_controlling(false);
+                            rtc.direct_api().start_dtls(false).unwrap();
+                            rtc.direct_api().start_sctp(false);
+
+                            if rtc.accepts(&Input::Receive(
+                                Instant::now(),
+                                net::Receive {
+                                    source,
+                                    destination,
+                                    contents: DatagramRecv::Stun(message.clone()),
+                                },
+                            )) {
+                                rtc.handle_input(Input::Receive(
+                                    Instant::now(),
+                                    net::Receive {
+                                        source,
+                                        destination,
+                                        contents: DatagramRecv::Stun(message),
+                                    },
+                                ));
+                            }
+
+                            let noise_channel_id =
+                                rtc.direct_api().create_data_channel(ChannelConfig {
+                                    label: "noise".to_string(),
+                                    ordered: false,
+                                    reliability: Default::default(),
+                                    negotiated: Some(0),
+                                    protocol: "".to_string(),
+                                });
+
+                            clients.push(Client::new(rtc, noise_channel_id));
+                        }
+                    }
+                    other => {
+                        for mut c in clients.iter_mut() {
+                            if c.accepts(&other) {
+                                c.handle_input(other);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Drive time forward in all clients.
+            let now = Instant::now();
+            for client in &mut clients {
+                client.handle_input(Input::Timeout(now));
+            }
+        }
+    }
+}
+
+fn propagate(clients: &mut [Client], to_propagate: Vec<Propagated>) {
+    for p in to_propagate {
+        let Some(client_id) = p.client_id() else {
+            // If the event doesn't have a client id, it can't be propagated,
+            // (it's either a noop or a timeout).
+            continue;
+        };
+
+        for client in &mut *clients {
+            if client.id == client_id {
+                // Do not propagate to originating client.
+                continue;
+            }
+
+            match &p {
+                Propagated::Noop | Propagated::Timeout(_) => {}
+                p => panic!("Unexpected `Propagated`"),
+            }
+        }
+    }
+}
+
+async fn read_socket_input<'a>(
+    socket: &UdpSocket,
+    buf: &'a mut Vec<u8>,
+    duration: Duration,
+) -> Option<Input<'a>> {
+    buf.resize(2000, 0);
+
+    tokio::select! {
+        result = socket.recv_from(buf) => match result {
+            Ok((n, source)) => {
+                buf.truncate(n);
+
+                // Parse data to a DatagramRecv, which help preparse network data to
+                // figure out the multiplexing of all protocols on one UDP port.
+                let Ok(contents) = buf.as_slice().try_into() else {
+                    return None;
+                };
+
+                Some(Input::Receive(
+                    Instant::now(),
+                    Receive {
+                        source,
+                        destination: socket.local_addr().unwrap(),
+                        contents,
+                    },
+                ))
+            }
+            Err(error) => panic!("error: {error:?}"),
+        },
+        _ = tokio::time::sleep(duration) => {
+            None
+        }
+    }
+}
+
+struct Client {
+    id: ClientId,
+    rtc: Rtc,
+    pending: Option<SdpPendingOffer>,
+    cid: Option<ChannelId>,
+    tracks_in: Vec<Arc<TrackIn>>,
+    tracks_out: Vec<TrackOut>,
+    chosen_rid: Option<Rid>,
+    noise_channel_id: ChannelId,
+    noise: Option<snow::HandshakeState>,
+    keypair: Option<snow::Keypair>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClientId(u64);
+
+impl Deref for ClientId {
+    type Target = u64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug)]
+struct TrackIn {
+    origin: ClientId,
+    mid: Mid,
+    kind: MediaKind,
+}
+
+#[derive(Debug)]
+struct TrackOut {
+    track_in: Weak<TrackIn>,
+    state: TrackOutState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrackOutState {
+    ToOpen,
+    Negotiating(Mid),
+    Open(Mid),
+}
+
+impl TrackOut {
+    fn mid(&self) -> Option<Mid> {
+        match self.state {
+            TrackOutState::ToOpen => None,
+            TrackOutState::Negotiating(m) | TrackOutState::Open(m) => Some(m),
+        }
+    }
+}
+
+impl Client {
+    fn new(rtc: Rtc, noise_channel_id: ChannelId) -> Client {
+        static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let next_id = ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+
+        Client {
+            id: ClientId(next_id),
+            noise_channel_id,
+            rtc,
+            pending: None,
+            cid: None,
+            tracks_in: vec![],
+            tracks_out: vec![],
+            chosen_rid: None,
+            noise: None,
+            keypair: None,
+        }
+    }
+
+    fn accepts(&self, input: &Input) -> bool {
+        self.rtc.accepts(input)
+    }
+
+    fn handle_input(&mut self, input: Input) {
+        if !self.rtc.is_alive() {
+            return;
+        }
+
+        if let Err(e) = self.rtc.handle_input(input) {
+            println!("Client ({}) disconnected: {:?}", *self.id, e);
+            self.rtc.disconnect();
+        }
+    }
+
+    async fn poll_output(&mut self, socket: &UdpSocket) -> Propagated {
+        if !self.rtc.is_alive() {
+            return Propagated::Noop;
+        }
+
+        match self.rtc.poll_output() {
+            Ok(output) => self.handle_output(output, socket).await,
+            Err(e) => {
+                println!("Client ({}) poll_output failed: {:?}", *self.id, e);
+                self.rtc.disconnect();
+                Propagated::Noop
+            }
+        }
+    }
+
+    async fn handle_output(&mut self, output: Output, socket: &UdpSocket) -> Propagated {
+        match output {
+            Output::Transmit(transmit) => {
+                dbg!(&transmit);
+
+                socket
+                    .send_to(&transmit.contents, transmit.destination)
+                    .await
+                    .expect("sending UDP data");
+                Propagated::Noop
+            }
+            Output::Timeout(t) => Propagated::Timeout(t),
+            Output::Event(e) => match e {
+                Event::IceConnectionStateChange(v) => {
+                    println!("icen conneciton changed");
+                    if v == IceConnectionState::Disconnected {
+                        println!("disconnected");
+                        // Ice disconnect could result in trying to establish a new connection,
+                        // but this impl just disconnects directly.
+                        self.rtc.disconnect();
+                    }
+                    Propagated::Noop
+                }
+                Event::ChannelOpen(cid, name) => {
+                    self.on_channel_open(cid, name);
+                    Propagated::Noop
+                }
+                Event::ChannelData(data) => {
+                    println!("channel data");
+                    self.on_channel_data(data)
+                }
+                e => {
+                    println!("Unhandled event: {:?}", e);
+                    Propagated::Noop
+                }
+            },
+        }
+    }
+
+    fn on_channel_open(&mut self, id: ChannelId, name: String) {
+        let remote_fingerprint = self
+            .rtc
+            .direct_api()
+            .remote_dtls_fingerprint()
+            .clone()
+            .expect("fingerprint to exist")
+            .bytes;
+        let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint().bytes;
+
+        let Some(mut channel) = self.rtc.channel(id) else {
+            tracing::warn!("channel {id:?} {name}, does not exist");
+            return;
+        };
+
+        let noise = snow::Builder::new("Noise_XX_25519_ChaChaPoly_SHA256".parse().unwrap());
+        let keypair = noise.generate_keypair().unwrap();
+
+        const MULTIHASH_SHA256_CODE: u64 = 0x12;
+        let remote_fingerprint = Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint)
+            .expect("fingerprint's len to be 32 bytes")
+            .to_bytes();
+        let local_fingerprint = Multihash::wrap(MULTIHASH_SHA256_CODE, &local_fingerprint)
+            .expect("fingerprint's len to be 32 bytes")
+            .to_bytes();
+
+        const PREFIX: &[u8] = b"libp2p-webrtc-noise:";
+        let mut prologue =
+            Vec::with_capacity(PREFIX.len() + local_fingerprint.len() + remote_fingerprint.len());
+        prologue.extend_from_slice(PREFIX);
+        prologue.extend_from_slice(&remote_fingerprint);
+        prologue.extend_from_slice(&local_fingerprint);
+
+        tracing::error!("{remote_fingerprint:02x?}");
+
+        let mut noise = noise
+            .local_private_key(&keypair.private)
+            .prologue(&prologue)
+            .build_initiator()
+            .unwrap();
+
+        let mut buffer = vec![0u8; 1024];
+
+        let nwritten = noise.write_message(&[], &mut buffer).unwrap();
+        self.noise = Some(noise);
+        self.keypair = Some(keypair);
+        buffer.truncate(nwritten);
+
+        let size = nwritten as u16;
+        let mut size = size.to_be_bytes().to_vec();
+        size.append(&mut buffer);
+
+        let protobuf_payload = webrtc::Message {
+            message: Some(size),
+            ..Default::default()
+        };
+        let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
+        protobuf_payload
+            .encode(&mut payload)
+            .expect("Vec<u8> provides capacity as needed");
+
+        let payload: bytes::Bytes = payload.into();
+
+        let mut out_buf = bytes::BytesMut::with_capacity(1024);
+        let mut codec = UnsignedVarint::new();
+        let result = codec.encode(payload, &mut out_buf);
+        let result: Vec<u8> = out_buf.into();
+
+        tracing::error!(target: LOG_TARGET, "send noise handshake to remote peer");
+
+        channel.write(true, result.as_slice()).unwrap();
+    }
+
+    fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
+        tracing::error!("channel has data {}: {:?}", d.data.len(), d.data);
+
+        panic!("handle channel data");
+
+        // TODO: zzz
+        // let mut out_buf = bytes::BytesMut::with_capacity(1024);
+        // let mut codec = UviBytes::<bytes::Bytes>::default();
+        // let mut stuff = bytes::BytesMut::from(d.data.as_slice());
+        // let result = codec.decode(&mut stuff).unwrap().unwrap();
+
+        // // TODO: use `as_slice()`
+        // match webrtc::Message::decode(result) {
+        //     Ok(payload) => {
+        //         let size: Result<[u8; 2], _> = payload.message.clone().unwrap()[0..2].try_into();
+        //         let size = u16::from_be_bytes(size.unwrap());
+        //         tracing::warn!("noise payload size: {size}");
+
+        //         let mut inner = vec![0u8; 200];
+
+        //         match self
+        //             .noise
+        //             .as_mut()
+        //             .unwrap()
+        //             .read_message(&payload.message.unwrap()[2..], &mut inner)
+        //         {
+        //             Ok(res) => {
+        //                 inner.truncate(res);
+        //             }
+        //             Err(error) => {
+        //                 panic!("cipher error");
+        //             }
+        //         }
+
+        //         match noise::NoiseHandshakePayload::decode(inner.as_slice()) {
+        //             Ok(payload) => {
+        //                 tracing::error!("received noise payload: {payload:?}");
+
+        //                 // let noise_payload = noise::NoiseHandshakePayload {
+        //                 //     identity_key: Some(
+        //                 //         PublicKey::Ed25519(keypair.public()).to_protobuf_encoding(),
+        //                 //     ),
+        //                 //     identity_sig: Some(
+        //                 //         keypair.sign(
+        //                 //             &[STATIC_KEY_DOMAIN.as_bytes(), dh_keypair.public.as_ref()]
+        //                 //                 .concat(),
+        //                 //         ),
+        //                 //     ),
+        //                 //     ..Default::default()
+        //                 // };
+        //                 // let mut payload = Vec::with_capacity(noise_payload.encoded_len());
+        //                 // noise_payload
+        //                 //     .encode(&mut payload)
+        //                 //     .expect("Vec<u8> provides capacity as needed");
+
+        //                 // let public_key = PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
+        //                 //     error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
+        //                 // )?)?;
+        //                 // Ok(PeerId::from_public_key(&public_key))
+        //             }
+        //             Err(err) => todo!("invalid noise payload not implemented"),
+        //         }
+
+        //         todo!("rest of the parsing not implemented");
+        //     }
+        //     Err(err) => todo!("error not implemented"),
+        // }
+
+        Propagated::Noop
+    }
+}
+
+/// Events propagated between client.
+#[allow(clippy::large_enum_variant)]
+enum Propagated {
+    /// When we have nothing to propagate.
+    Noop,
+
+    /// Poll client has reached timeout.
+    Timeout(Instant),
+
+    /// A new incoming track opened.
+    TrackOpen(ClientId, Weak<TrackIn>),
+
+    /// Data to be propagated from one client to another.
+    MediaData(ClientId, MediaData),
+
+    /// A keyframe request from one client to the source.
+    KeyframeRequest(ClientId, KeyframeRequest, ClientId, Mid),
+}
+
+impl Propagated {
+    /// Get client id, if the propagated event has a client id.
+    fn client_id(&self) -> Option<ClientId> {
+        match self {
+            Propagated::TrackOpen(c, _)
+            | Propagated::MediaData(c, _)
+            | Propagated::KeyframeRequest(c, _, _, _) => Some(*c),
+            _ => None,
+        }
+    }
+
+    /// If the propagated data is a timeout, returns the instant.
+    fn as_timeout(&self) -> Option<Instant> {
+        if let Self::Timeout(v) = self {
+            Some(*v)
+        } else {
+            None
+        }
     }
 }
 
@@ -220,8 +729,8 @@ mod tests {
 
         let keypair = Keypair::generate();
         let (tx, _rx) = channel(64);
-        let (event_tx, mut event_rx) = channel(64);
-        let (command_tx, command_rx) = channel(64);
+        let (event_tx, _event_rx) = channel(64);
+        let (_command_tx, command_rx) = channel(64);
 
         let context = TransportContext {
             tx: event_tx,
@@ -235,13 +744,15 @@ mod tests {
             )]),
         };
         let transport_config = WebRtcConfig {
-            listen_address: "/ip4/192.168.1.173/udp/0".parse().unwrap(),
+            listen_address: "/ip4/192.168.1.173/udp/8888".parse().unwrap(),
         };
 
-        let mut transport = WebRtcTransport::new(context, transport_config, command_rx)
+        let transport = WebRtcTransport::new(context, transport_config, command_rx)
             .await
             .unwrap();
 
         tracing::error!("listen address: {}", transport.listen_address());
+
+        transport.start().await.unwrap();
     }
 }
