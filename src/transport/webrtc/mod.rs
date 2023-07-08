@@ -20,8 +20,8 @@
 
 use crate::{
     codec::unsigned_varint::UnsignedVarint,
-    crypto::PublicKey,
-    error::{AddressError, Error},
+    crypto::{ed25519::Keypair, noise::STATIC_KEY_DOMAIN, PublicKey},
+    error::{AddressError, Error, NegotiationError},
     peer_id::PeerId,
     transport::{Transport, TransportCommand, TransportContext},
     types::ConnectionId,
@@ -37,7 +37,7 @@ use str0m::{
     Candidate, Event, IceConnectionState, Input, Output, Rtc,
 };
 use tokio::{net::UdpSocket, sync::mpsc::Receiver};
-use tokio_util::codec::Encoder;
+use tokio_util::codec::{Decoder, Encoder};
 
 use std::{
     collections::HashMap,
@@ -400,6 +400,7 @@ struct Client {
     noise_channel_id: ChannelId,
     noise: Option<snow::HandshakeState>,
     keypair: Option<snow::Keypair>,
+    id_keypair: Keypair,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -491,6 +492,11 @@ impl Client {
                     println!("channel data");
                     self.on_channel_data(data)
                 }
+                Event::ChannelClose(_) => {
+                    tracing::warn!("channel closed");
+                    Propagated::Noop
+                    // panic!("channel closed");
+                }
                 e => {
                     println!("Unhandled event: {:?}", e);
                     Propagated::Noop
@@ -564,7 +570,7 @@ impl Client {
 
         let mut out_buf = bytes::BytesMut::with_capacity(1024);
         let mut codec = UnsignedVarint::new();
-        let result = codec.encode(payload, &mut out_buf);
+        let _result = codec.encode(payload, &mut out_buf);
         let result: Vec<u8> = out_buf.into();
 
         tracing::error!(target: LOG_TARGET, "send noise handshake to remote peer");
@@ -573,74 +579,128 @@ impl Client {
     }
 
     fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
-        tracing::error!("channel has data {}: {:?}", d.data.len(), d.data);
+        tracing::error!(
+            "channel has data {}: {:?} {:?}",
+            d.data.len(),
+            d.data,
+            std::str::from_utf8(&d.data)
+        );
 
-        panic!("handle channel data");
-
-        // TODO: zzz
-        // let mut out_buf = bytes::BytesMut::with_capacity(1024);
-        // let mut codec = UviBytes::<bytes::Bytes>::default();
-        // let mut stuff = bytes::BytesMut::from(d.data.as_slice());
-        // let result = codec.decode(&mut stuff).unwrap().unwrap();
+        let mut codec = UnsignedVarint::new();
+        let mut stuff = bytes::BytesMut::from(d.data.as_slice());
+        let result = codec.decode(&mut stuff).unwrap().unwrap();
 
         // // TODO: use `as_slice()`
-        // match webrtc::Message::decode(result) {
-        //     Ok(payload) => {
-        //         let size: Result<[u8; 2], _> = payload.message.clone().unwrap()[0..2].try_into();
-        //         let size = u16::from_be_bytes(size.unwrap());
-        //         tracing::warn!("noise payload size: {size}");
+        match webrtc::Message::decode(result) {
+            Ok(payload) => {
+                let size: Result<[u8; 2], _> = payload.message.clone().unwrap()[0..2].try_into();
+                let _size = u16::from_be_bytes(size.unwrap());
 
-        //         let mut inner = vec![0u8; 200];
+                let mut inner = vec![0u8; 1024];
 
-        //         match self
-        //             .noise
-        //             .as_mut()
-        //             .unwrap()
-        //             .read_message(&payload.message.unwrap()[2..], &mut inner)
-        //         {
-        //             Ok(res) => {
-        //                 inner.truncate(res);
-        //             }
-        //             Err(error) => {
-        //                 panic!("cipher error");
-        //             }
-        //         }
+                match self
+                    .noise
+                    .as_mut()
+                    .unwrap()
+                    .read_message(&payload.message.unwrap()[2..], &mut inner)
+                {
+                    Ok(res) => {
+                        inner.truncate(res);
+                    }
+                    Err(error) => {
+                        panic!("cipher error: {error}");
+                    }
+                }
 
-        //         match noise::NoiseHandshakePayload::decode(inner.as_slice()) {
-        //             Ok(payload) => {
-        //                 tracing::error!("received noise payload: {payload:?}");
+                match noise::NoiseHandshakePayload::decode(inner.as_slice()) {
+                    Ok(payload) => {
+                        tracing::error!("received noise payload: {payload:?}");
 
-        //                 // let noise_payload = noise::NoiseHandshakePayload {
-        //                 //     identity_key: Some(
-        //                 //         PublicKey::Ed25519(keypair.public()).to_protobuf_encoding(),
-        //                 //     ),
-        //                 //     identity_sig: Some(
-        //                 //         keypair.sign(
-        //                 //             &[STATIC_KEY_DOMAIN.as_bytes(), dh_keypair.public.as_ref()]
-        //                 //                 .concat(),
-        //                 //         ),
-        //                 //     ),
-        //                 //     ..Default::default()
-        //                 // };
-        //                 // let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-        //                 // noise_payload
-        //                 //     .encode(&mut payload)
-        //                 //     .expect("Vec<u8> provides capacity as needed");
+                        let public_key = PublicKey::from_protobuf_encoding(
+                            &payload
+                                .identity_key
+                                .ok_or(Error::NegotiationError(NegotiationError::PeerIdMissing))
+                                .unwrap(),
+                        )
+                        .unwrap();
 
-        //                 // let public_key = PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
-        //                 //     error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
-        //                 // )?)?;
-        //                 // Ok(PeerId::from_public_key(&public_key))
-        //             }
-        //             Err(err) => todo!("invalid noise payload not implemented"),
-        //         }
+                        tracing::error!("remote peer id: {}", PeerId::from_public_key(&public_key));
 
-        //         todo!("rest of the parsing not implemented");
-        //     }
-        //     Err(err) => todo!("error not implemented"),
-        // }
+                        let keypair = self.keypair.take().unwrap();
+                        let noise_payload = noise::NoiseHandshakePayload {
+                            identity_key: Some(
+                                PublicKey::Ed25519(self.id_keypair.public()).to_protobuf_encoding(),
+                            ),
+                            identity_sig: Some(self.id_keypair.sign(
+                                &[STATIC_KEY_DOMAIN.as_bytes(), keypair.public.as_ref()].concat(),
+                            )),
+                            ..Default::default()
+                        };
+                        tracing::warn!("noise payload size: {}", noise_payload.encoded_len());
 
-        Propagated::Noop
+                        let mut payload = Vec::with_capacity(noise_payload.encoded_len());
+                        noise_payload
+                            .encode(&mut payload)
+                            .expect("Vec<u8> provides capacity as needed");
+
+                        let mut buffer = vec![0u8; 2048];
+
+                        let nwritten = self
+                            .noise
+                            .as_mut()
+                            .unwrap()
+                            .write_message(&payload, &mut buffer)
+                            .unwrap();
+                        buffer.truncate(nwritten);
+
+                        tracing::error!("buffer size {}", buffer.len());
+
+                        let size = nwritten as u16;
+                        let mut size = size.to_be_bytes().to_vec();
+                        size.append(&mut buffer);
+
+                        tracing::error!("noise payload size: {}", size.len());
+
+                        let protobuf_payload = webrtc::Message {
+                            message: Some(size),
+                            ..Default::default()
+                        };
+                        let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
+                        protobuf_payload
+                            .encode(&mut payload)
+                            .expect("Vec<u8> provides capacity as needed");
+
+                        tracing::error!("protobuf message size: {}", payload.len());
+
+                        let payload: bytes::Bytes = payload.into();
+
+                        let mut out_buf = bytes::BytesMut::with_capacity(1024);
+                        let mut codec = UnsignedVarint::new();
+                        let _result = codec.encode(payload, &mut out_buf);
+                        let result: Vec<u8> = out_buf.into();
+
+                        tracing::info!("result size {:?}", result.len());
+
+                        if let Some(mut channel) = self.rtc.channel(d.id) {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                "send noise handshake to remote peer"
+                            );
+
+                            channel.write(true, result.as_slice()).unwrap();
+
+                            tracing::warn!("DATA SENT");
+
+                            Propagated::Noop
+                        } else {
+                            panic!("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz");
+                        }
+                    }
+                    Err(_err) => todo!("invalid noise payload not implemented"),
+                }
+            }
+            Err(_err) => todo!("error not implemented"),
+        }
     }
 }
 
@@ -702,7 +762,9 @@ mod tests {
             )]),
         };
         let transport_config = WebRtcConfig {
-            listen_address: "/ip4/192.168.1.173/udp/8888".parse().unwrap(),
+            // listen_address: "/ip4/172.30.0.59/udp/8888".parse().unwrap(),
+            // listen_address: "/ip4/10.117.221.190/udp/8888".parse().unwrap(),
+            listen_address: "/ip4/192.168.1.112/udp/8888".parse().unwrap(),
         };
 
         let transport = WebRtcTransport::new(context, transport_config, command_rx)

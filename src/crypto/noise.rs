@@ -48,7 +48,7 @@ mod handshake_schema {
 const NOISE_PARAMETERS: &str = "Noise_XX_25519_ChaChaPoly_SHA256";
 
 /// Prefix of static key signatures for domain separation.
-const STATIC_KEY_DOMAIN: &str = "noise-libp2p-static-key:";
+pub(crate) const STATIC_KEY_DOMAIN: &str = "noise-libp2p-static-key:";
 
 /// Noise decrypt buffer size.
 const NOISE_DECRYPT_BUFFER_SIZE: usize = 65536;
