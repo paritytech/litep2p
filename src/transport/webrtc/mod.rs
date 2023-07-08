@@ -24,10 +24,8 @@ use crate::{
     error::{AddressError, Error, NegotiationError},
     peer_id::PeerId,
     transport::{Transport, TransportCommand, TransportContext},
-    types::ConnectionId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered};
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use prost::Message;
 use str0m::{
@@ -76,15 +74,6 @@ pub(crate) struct WebRtcTransport {
 
     /// Assigned listen addresss.
     listen_address: SocketAddr,
-
-    /// Next connection ID.
-    next_connection_id: ConnectionId,
-
-    /// Pending dials.
-    pending_dials: HashMap<ConnectionId, Multiaddr>,
-
-    /// Pending connections.
-    pending_connections: FuturesUnordered<BoxFuture<'static, ()>>,
 
     /// RX channel for receiving commands from `Litep2p`.
     rx: Receiver<TransportCommand>,
@@ -172,9 +161,6 @@ impl Transport for WebRtcTransport {
             socket,
             dtls_cert,
             listen_address,
-            next_connection_id: ConnectionId::new(),
-            pending_dials: HashMap::new(),
-            pending_connections: FuturesUnordered::new(),
         })
     }
 
@@ -395,9 +381,7 @@ async fn read_socket_input<'a>(
 struct Client {
     id: ClientId,
     rtc: Rtc,
-    pending: Option<SdpPendingOffer>,
-    cid: Option<ChannelId>,
-    noise_channel_id: ChannelId,
+    _noise_channel_id: ChannelId,
     noise: Option<snow::HandshakeState>,
     keypair: Option<snow::Keypair>,
     id_keypair: Keypair,
@@ -415,16 +399,14 @@ impl Deref for ClientId {
 }
 
 impl Client {
-    fn new(rtc: Rtc, noise_channel_id: ChannelId, id_keypair: Keypair) -> Client {
+    fn new(rtc: Rtc, _noise_channel_id: ChannelId, id_keypair: Keypair) -> Client {
         static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
         let next_id = ID_COUNTER.fetch_add(1, Ordering::SeqCst);
 
         Client {
             id: ClientId(next_id),
-            noise_channel_id,
+            _noise_channel_id,
             rtc,
-            pending: None,
-            cid: None,
             noise: None,
             keypair: None,
             id_keypair,
@@ -440,8 +422,8 @@ impl Client {
             return;
         }
 
-        if let Err(e) = self.rtc.handle_input(input) {
-            println!("Client ({}) disconnected: {:?}", *self.id, e);
+        if let Err(error) = self.rtc.handle_input(input) {
+            tracing::warn!(target: LOG_TARGET, ?error, id = ?self.id, "peer disconnected");
             self.rtc.disconnect();
         }
     }
@@ -475,9 +457,8 @@ impl Client {
             Output::Timeout(t) => Propagated::Timeout(t),
             Output::Event(e) => match e {
                 Event::IceConnectionStateChange(v) => {
-                    println!("icen conneciton changed");
                     if v == IceConnectionState::Disconnected {
-                        println!("disconnected");
+                        tracing::debug!(target: LOG_TARGET, "connection closed");
                         // Ice disconnect could result in trying to establish a new connection,
                         // but this impl just disconnects directly.
                         self.rtc.disconnect();
@@ -488,17 +469,13 @@ impl Client {
                     self.on_channel_open(cid, name);
                     Propagated::Noop
                 }
-                Event::ChannelData(data) => {
-                    println!("channel data");
-                    self.on_channel_data(data)
-                }
+                Event::ChannelData(data) => self.on_channel_data(data),
                 Event::ChannelClose(_) => {
                     tracing::warn!("channel closed");
                     Propagated::Noop
-                    // panic!("channel closed");
                 }
-                e => {
-                    println!("Unhandled event: {:?}", e);
+                event => {
+                    tracing::warn!(target: LOG_TARGET, ?event, "unhandled event");
                     Propagated::Noop
                 }
             },
@@ -616,15 +593,13 @@ impl Client {
                     Ok(payload) => {
                         tracing::error!("received noise payload: {payload:?}");
 
-                        let public_key = PublicKey::from_protobuf_encoding(
+                        let _public_key = PublicKey::from_protobuf_encoding(
                             &payload
                                 .identity_key
                                 .ok_or(Error::NegotiationError(NegotiationError::PeerIdMissing))
                                 .unwrap(),
                         )
                         .unwrap();
-
-                        tracing::error!("remote peer id: {}", PeerId::from_public_key(&public_key));
 
                         let keypair = self.keypair.take().unwrap();
                         let noise_payload = noise::NoiseHandshakePayload {
@@ -653,13 +628,9 @@ impl Client {
                             .unwrap();
                         buffer.truncate(nwritten);
 
-                        tracing::error!("buffer size {}", buffer.len());
-
                         let size = nwritten as u16;
                         let mut size = size.to_be_bytes().to_vec();
                         size.append(&mut buffer);
-
-                        tracing::error!("noise payload size: {}", size.len());
 
                         let protobuf_payload = webrtc::Message {
                             message: Some(size),
@@ -670,8 +641,6 @@ impl Client {
                             .encode(&mut payload)
                             .expect("Vec<u8> provides capacity as needed");
 
-                        tracing::error!("protobuf message size: {}", payload.len());
-
                         let payload: bytes::Bytes = payload.into();
 
                         let mut out_buf = bytes::BytesMut::with_capacity(1024);
@@ -679,22 +648,12 @@ impl Client {
                         let _result = codec.encode(payload, &mut out_buf);
                         let result: Vec<u8> = out_buf.into();
 
-                        tracing::info!("result size {:?}", result.len());
+                        let mut channel = self.rtc.channel(d.id).expect("channel to exist");
+                        tracing::error!(target: LOG_TARGET, "send noise handshake to remote peer");
 
-                        if let Some(mut channel) = self.rtc.channel(d.id) {
-                            tracing::error!(
-                                target: LOG_TARGET,
-                                "send noise handshake to remote peer"
-                            );
+                        channel.write(true, result.as_slice()).unwrap();
 
-                            channel.write(true, result.as_slice()).unwrap();
-
-                            tracing::warn!("DATA SENT");
-
-                            Propagated::Noop
-                        } else {
-                            panic!("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz");
-                        }
+                        Propagated::Noop
                     }
                     Err(_err) => todo!("invalid noise payload not implemented"),
                 }
@@ -762,8 +721,6 @@ mod tests {
             )]),
         };
         let transport_config = WebRtcConfig {
-            // listen_address: "/ip4/172.30.0.59/udp/8888".parse().unwrap(),
-            // listen_address: "/ip4/10.117.221.190/udp/8888".parse().unwrap(),
             listen_address: "/ip4/192.168.1.112/udp/8888".parse().unwrap(),
         };
 
