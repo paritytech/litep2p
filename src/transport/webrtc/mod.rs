@@ -29,7 +29,7 @@ use crate::{
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use prost::Message;
 use str0m::{
-    change::{DtlsCert, IceCreds, SdpPendingOffer},
+    change::{DtlsCert, IceCreds},
     channel::{ChannelConfig, ChannelData, ChannelId},
     net::{self, DatagramRecv, Receive},
     Candidate, Event, IceConnectionState, Input, Output, Rtc,
@@ -76,7 +76,7 @@ pub(crate) struct WebRtcTransport {
     listen_address: SocketAddr,
 
     /// RX channel for receiving commands from `Litep2p`.
-    rx: Receiver<TransportCommand>,
+    _rx: Receiver<TransportCommand>,
 }
 
 impl WebRtcTransport {
@@ -139,7 +139,7 @@ impl Transport for WebRtcTransport {
     async fn new(
         context: TransportContext,
         config: Self::Config,
-        rx: Receiver<TransportCommand>,
+        _rx: Receiver<TransportCommand>,
     ) -> crate::Result<Self>
     where
         Self: Sized,
@@ -156,7 +156,7 @@ impl Transport for WebRtcTransport {
         let dtls_cert = DtlsCert::new();
 
         Ok(Self {
-            rx,
+            _rx,
             context,
             socket,
             dtls_cert,

@@ -332,7 +332,7 @@ mod tests {
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
-        let (command_tx1, command_rx1) = channel(64);
+        let (_command_tx1, command_rx1) = channel(64);
 
         let context1 = TransportContext {
             tx: event_tx1,
@@ -349,7 +349,7 @@ mod tests {
             listen_address: "/ip4/127.0.0.1/udp/8888/quic-v1".parse().unwrap(),
         };
 
-        let mut transport1 = QuicTransport::new(context1, transport_config1, command_rx1)
+        let transport1 = QuicTransport::new(context1, transport_config1, command_rx1)
             .await
             .unwrap();
 
@@ -380,7 +380,7 @@ mod tests {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         };
 
-        let mut transport2 = QuicTransport::new(context2, transport_config2, command_rx2)
+        let transport2 = QuicTransport::new(context2, transport_config2, command_rx2)
             .await
             .unwrap();
         tokio::spawn(transport2.start());

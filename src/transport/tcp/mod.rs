@@ -320,8 +320,8 @@ mod tests {
 
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
-        let (mut event_tx1, mut event_rx1) = channel(64);
-        let (mut command_tx1, mut command_rx1) = channel(64);
+        let (event_tx1, mut event_rx1) = channel(64);
+        let (_command_tx1, command_rx1) = channel(64);
 
         let context1 = TransportContext {
             tx: event_tx1,
@@ -338,7 +338,7 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let mut transport1 = TcpTransport::new(context1, transport_config1, command_rx1)
+        let transport1 = TcpTransport::new(context1, transport_config1, command_rx1)
             .await
             .unwrap();
 
@@ -349,8 +349,8 @@ mod tests {
 
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
-        let (mut event_tx2, mut event_rx2) = channel(64);
-        let (mut command_tx2, mut command_rx2) = channel(64);
+        let (event_tx2, mut event_rx2) = channel(64);
+        let (command_tx2, command_rx2) = channel(64);
 
         let context2 = TransportContext {
             tx: event_tx2,
@@ -367,7 +367,7 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let mut transport2 = TcpTransport::new(context2, transport_config2, command_rx2)
+        let transport2 = TcpTransport::new(context2, transport_config2, command_rx2)
             .await
             .unwrap();
 
@@ -407,7 +407,7 @@ mod tests {
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
-        let (command_tx1, command_rx1) = channel(64);
+        let (_command_tx1, command_rx1) = channel(64);
 
         let context1 = TransportContext {
             tx: event_tx1,
@@ -424,7 +424,7 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let mut transport1 = TcpTransport::new(context1, transport_config1, command_rx1)
+        let transport1 = TcpTransport::new(context1, transport_config1, command_rx1)
             .await
             .unwrap();
 
@@ -450,7 +450,7 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let mut transport2 = TcpTransport::new(context2, transport_config2, command_rx2)
+        let transport2 = TcpTransport::new(context2, transport_config2, command_rx2)
             .await
             .unwrap();
         tokio::spawn(transport2.start());
