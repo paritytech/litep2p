@@ -29,7 +29,7 @@ use crate::{
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use prost::Message;
 use str0m::{
-    change::{DtlsCert, IceCreds},
+    change::{DtlsCert, Fingerprint, IceCreds},
     channel::{ChannelConfig, ChannelData, ChannelId},
     net::{self, DatagramRecv, Receive},
     Candidate, Event, IceConnectionState, Input, Output, Rtc,
@@ -59,6 +59,41 @@ const LOG_TARGET: &str = "webrtc";
 #[derive(Debug)]
 pub struct WebRtcConfig {
     listen_address: Multiaddr,
+}
+
+/// Create Noise handshake state and keypair.
+fn noise_prologue(
+    local_fingerprint: Fingerprint,
+    remote_fingerprint: Fingerprint,
+) -> (snow::HandshakeState, snow::Keypair) {
+    let noise = snow::Builder::new("Noise_XX_25519_ChaChaPoly_SHA256".parse().unwrap());
+    let keypair = noise.generate_keypair().unwrap();
+
+    const MULTIHASH_SHA256_CODE: u64 = 0x12;
+    let remote_fingerprint = Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint.bytes)
+        .expect("fingerprint's len to be 32 bytes")
+        .to_bytes();
+    let local_fingerprint = Multihash::wrap(MULTIHASH_SHA256_CODE, &local_fingerprint.bytes)
+        .expect("fingerprint's len to be 32 bytes")
+        .to_bytes();
+
+    const PREFIX: &[u8] = b"libp2p-webrtc-noise:";
+    let mut prologue =
+        Vec::with_capacity(PREFIX.len() + local_fingerprint.len() + remote_fingerprint.len());
+    prologue.extend_from_slice(PREFIX);
+    prologue.extend_from_slice(&remote_fingerprint);
+    prologue.extend_from_slice(&local_fingerprint);
+
+    tracing::error!("{remote_fingerprint:02x?}");
+
+    (
+        noise
+            .local_private_key(&keypair.private)
+            .prologue(&prologue)
+            .build_initiator()
+            .unwrap(),
+        keypair,
+    )
 }
 
 /// WebRTC transport.
@@ -488,41 +523,15 @@ impl Client {
             .direct_api()
             .remote_dtls_fingerprint()
             .clone()
-            .expect("fingerprint to exist")
-            .bytes;
-        let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint().bytes;
+            .expect("fingerprint to exist");
+        let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint();
 
         let Some(mut channel) = self.rtc.channel(id) else {
             tracing::warn!("channel {id:?} {name}, does not exist");
             return;
         };
 
-        let noise = snow::Builder::new("Noise_XX_25519_ChaChaPoly_SHA256".parse().unwrap());
-        let keypair = noise.generate_keypair().unwrap();
-
-        const MULTIHASH_SHA256_CODE: u64 = 0x12;
-        let remote_fingerprint = Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint)
-            .expect("fingerprint's len to be 32 bytes")
-            .to_bytes();
-        let local_fingerprint = Multihash::wrap(MULTIHASH_SHA256_CODE, &local_fingerprint)
-            .expect("fingerprint's len to be 32 bytes")
-            .to_bytes();
-
-        const PREFIX: &[u8] = b"libp2p-webrtc-noise:";
-        let mut prologue =
-            Vec::with_capacity(PREFIX.len() + local_fingerprint.len() + remote_fingerprint.len());
-        prologue.extend_from_slice(PREFIX);
-        prologue.extend_from_slice(&remote_fingerprint);
-        prologue.extend_from_slice(&local_fingerprint);
-
-        tracing::error!("{remote_fingerprint:02x?}");
-
-        let mut noise = noise
-            .local_private_key(&keypair.private)
-            .prologue(&prologue)
-            .build_initiator()
-            .unwrap();
-
+        let (mut noise, keypair) = noise_prologue(local_fingerprint, remote_fingerprint);
         let mut buffer = vec![0u8; 1024];
 
         let nwritten = noise.write_message(&[], &mut buffer).unwrap();
