@@ -55,6 +55,26 @@ mod schema {
     }
 }
 
+enum State {
+    /// Connection state is poisoned.
+    Poisoned,
+
+    /// Connection state is closed.
+    Closed,
+
+    /// Connection state is opened.
+    Opened {
+        /// Noise handshake state.
+        noise: snow::HandshakeState,
+
+        /// Noise keypair.
+        keypair: snow::Keypair,
+    },
+
+    /// Handshake has been sent
+    HandshakeSent,
+}
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc";
 
@@ -420,6 +440,7 @@ struct Client {
     noise: Option<snow::HandshakeState>,
     keypair: Option<snow::Keypair>,
     id_keypair: Keypair,
+    state: State,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -445,6 +466,7 @@ impl Client {
             noise: None,
             keypair: None,
             id_keypair,
+            state: State::Closed,
         }
     }
 
@@ -501,12 +523,60 @@ impl Client {
                     Propagated::Noop
                 }
                 Event::ChannelOpen(cid, name) => {
+                    tracing::error!("CHANNEL OPEN!!!!!!!!!!!!!!");
                     self.on_channel_open(cid, name);
                     Propagated::Noop
                 }
                 Event::ChannelData(data) => self.on_channel_data(data),
                 Event::ChannelClose(_) => {
                     tracing::warn!("channel closed");
+                    Propagated::Noop
+                }
+                Event::Connected => {
+                    match std::mem::replace(&mut self.state, State::Poisoned) {
+                        State::Closed => {
+                            let remote_fingerprint = self
+                                .rtc
+                                .direct_api()
+                                .remote_dtls_fingerprint()
+                                .clone()
+                                .expect("fingerprint to exist");
+                            let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint();
+
+                            let noise = snow::Builder::new(
+                                "Noise_XX_25519_ChaChaPoly_SHA256".parse().unwrap(),
+                            );
+                            let keypair = noise.generate_keypair().unwrap();
+
+                            const MULTIHASH_SHA256_CODE: u64 = 0x12;
+                            let remote_fingerprint =
+                                Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint.bytes)
+                                    .expect("fingerprint's len to be 32 bytes")
+                                    .to_bytes();
+                            let local_fingerprint =
+                                Multihash::wrap(MULTIHASH_SHA256_CODE, &local_fingerprint.bytes)
+                                    .expect("fingerprint's len to be 32 bytes")
+                                    .to_bytes();
+
+                            const PREFIX: &[u8] = b"libp2p-webrtc-noise:";
+                            let mut prologue = Vec::with_capacity(
+                                PREFIX.len() + local_fingerprint.len() + remote_fingerprint.len(),
+                            );
+                            prologue.extend_from_slice(PREFIX);
+                            prologue.extend_from_slice(&remote_fingerprint);
+                            prologue.extend_from_slice(&local_fingerprint);
+
+                            self.state = State::Opened {
+                                noise: noise
+                                    .local_private_key(&keypair.private)
+                                    .prologue(&prologue)
+                                    .build_initiator()
+                                    .unwrap(),
+                                keypair,
+                            };
+                        }
+                        _ => panic!("invalid state for connection"),
+                    }
                     Propagated::Noop
                 }
                 event => {
@@ -517,7 +587,11 @@ impl Client {
         }
     }
 
-    fn on_channel_open(&mut self, id: ChannelId, name: String) {
+    fn on_connection_handshake(&mut self) {
+        let State::Opened { .. } = std::mem::replace(&mut self.state, State::Poisoned) else {
+            panic!("invalid state for connection, expected `Opened`");
+        };
+
         let remote_fingerprint = self
             .rtc
             .direct_api()
@@ -525,11 +599,6 @@ impl Client {
             .clone()
             .expect("fingerprint to exist");
         let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint();
-
-        let Some(mut channel) = self.rtc.channel(id) else {
-            tracing::warn!("channel {id:?} {name}, does not exist");
-            return;
-        };
 
         let (mut noise, keypair) = noise_prologue(local_fingerprint, remote_fingerprint);
         let mut buffer = vec![0u8; 1024];
@@ -561,7 +630,23 @@ impl Client {
 
         tracing::error!(target: LOG_TARGET, "send noise handshake to remote peer");
 
-        channel.write(true, result.as_slice()).unwrap();
+        self.rtc
+            .channel(self._noise_channel_id)
+            .expect("channel for noise to exist")
+            .write(true, result.as_slice())
+            .unwrap();
+
+        self.state = State::HandshakeSent;
+    }
+
+    fn on_channel_open(&mut self, id: ChannelId, name: String) {
+        tracing::debug!(target: LOG_TARGET, channel_id = ?id, channel_name = ?name, "channel opened");
+
+        if id == self._noise_channel_id {
+            return self.on_connection_handshake();
+        }
+
+        panic!("support for other channels not supported");
     }
 
     fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
