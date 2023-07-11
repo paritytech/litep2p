@@ -288,7 +288,7 @@ impl Transport for WebRtcTransport {
                         },
                     ) => {
                         if let Some((u, p)) = message.split_username() {
-                            tracing::debug!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
+                            tracing::error!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
 
                             if !clients.contains_key(&source) {
                                 let mut rtc = Rtc::builder()
@@ -587,7 +587,7 @@ impl Client {
         }
     }
 
-    fn on_connection_handshake(&mut self) {
+    fn on_noise_channel_open(&mut self) {
         let State::Opened { .. } = std::mem::replace(&mut self.state, State::Poisoned) else {
             panic!("invalid state for connection, expected `Opened`");
         };
@@ -643,25 +643,17 @@ impl Client {
         tracing::debug!(target: LOG_TARGET, channel_id = ?id, channel_name = ?name, "channel opened");
 
         if id == self._noise_channel_id {
-            return self.on_connection_handshake();
+            return self.on_noise_channel_open();
         }
 
         panic!("support for other channels not supported");
     }
 
-    fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
-        tracing::error!(
-            "channel has data {}: {:?} {:?}",
-            d.data.len(),
-            d.data,
-            std::str::from_utf8(&d.data)
-        );
-
+    fn on_noise_channel_data(&mut self, data: Vec<u8>) -> Propagated {
         let mut codec = UnsignedVarint::new();
-        let mut stuff = bytes::BytesMut::from(d.data.as_slice());
+        let mut stuff = bytes::BytesMut::from(data.as_slice());
         let result = codec.decode(&mut stuff).unwrap().unwrap();
 
-        // // TODO: use `as_slice()`
         match schema::webrtc::Message::decode(result) {
             Ok(payload) => {
                 let size: Result<[u8; 2], _> = payload.message.clone().unwrap()[0..2].try_into();
@@ -742,7 +734,10 @@ impl Client {
                         let _result = codec.encode(payload, &mut out_buf);
                         let result: Vec<u8> = out_buf.into();
 
-                        let mut channel = self.rtc.channel(d.id).expect("channel to exist");
+                        let mut channel = self
+                            .rtc
+                            .channel(self._noise_channel_id)
+                            .expect("channel to exist");
                         tracing::error!(target: LOG_TARGET, "send noise handshake to remote peer");
 
                         channel.write(true, result.as_slice()).unwrap();
@@ -754,6 +749,14 @@ impl Client {
             }
             Err(_err) => todo!("error not implemented"),
         }
+    }
+
+    fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
+        if d.id == self._noise_channel_id {
+            return self.on_noise_channel_data(d.data);
+        }
+
+        panic!("support for other channels not supported");
     }
 }
 
