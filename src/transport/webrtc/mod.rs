@@ -45,12 +45,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-mod webrtc {
-    include!(concat!(env!("OUT_DIR"), "/webrtc.rs"));
-}
+mod schema {
+    pub(super) mod webrtc {
+        include!(concat!(env!("OUT_DIR"), "/webrtc.rs"));
+    }
 
-mod noise {
-    include!(concat!(env!("OUT_DIR"), "/noise.rs"));
+    pub(super) mod noise {
+        include!(concat!(env!("OUT_DIR"), "/noise.rs"));
+    }
 }
 
 /// Logging target for the file.
@@ -330,8 +332,6 @@ impl Transport for WebRtcTransport {
                                             ))
                                             .unwrap();
                                     }
-
-                                    tracing::error!("CLIENTS LEN: {}", clients.len());
                                 }
                                 None => panic!("client does not exist"),
                             }
@@ -543,7 +543,7 @@ impl Client {
         let mut size = size.to_be_bytes().to_vec();
         size.append(&mut buffer);
 
-        let protobuf_payload = webrtc::Message {
+        let protobuf_payload = schema::webrtc::Message {
             message: Some(size),
             ..Default::default()
         };
@@ -577,7 +577,7 @@ impl Client {
         let result = codec.decode(&mut stuff).unwrap().unwrap();
 
         // // TODO: use `as_slice()`
-        match webrtc::Message::decode(result) {
+        match schema::webrtc::Message::decode(result) {
             Ok(payload) => {
                 let size: Result<[u8; 2], _> = payload.message.clone().unwrap()[0..2].try_into();
                 let _size = u16::from_be_bytes(size.unwrap());
@@ -598,7 +598,7 @@ impl Client {
                     }
                 }
 
-                match noise::NoiseHandshakePayload::decode(inner.as_slice()) {
+                match schema::noise::NoiseHandshakePayload::decode(inner.as_slice()) {
                     Ok(payload) => {
                         tracing::error!("received noise payload: {payload:?}");
 
@@ -611,7 +611,7 @@ impl Client {
                         .unwrap();
 
                         let keypair = self.keypair.take().unwrap();
-                        let noise_payload = noise::NoiseHandshakePayload {
+                        let noise_payload = schema::noise::NoiseHandshakePayload {
                             identity_key: Some(
                                 PublicKey::Ed25519(self.id_keypair.public()).to_protobuf_encoding(),
                             ),
@@ -641,7 +641,7 @@ impl Client {
                         let mut size = size.to_be_bytes().to_vec();
                         size.append(&mut buffer);
 
-                        let protobuf_payload = webrtc::Message {
+                        let protobuf_payload = schema::webrtc::Message {
                             message: Some(size),
                             ..Default::default()
                         };
