@@ -72,7 +72,22 @@ enum State {
     },
 
     /// Handshake has been sent
-    HandshakeSent,
+    HandshakeSent {
+        /// Noise handshake state.
+        noise: snow::HandshakeState,
+
+        /// Noise keypair.
+        keypair: snow::Keypair,
+    },
+
+    /// Connection is open.
+    Open {
+        /// Noise handshake state.
+        noise: snow::HandshakeState,
+
+        /// Noise keypair.
+        keypair: snow::Keypair,
+    },
 }
 
 /// Logging target for the file.
@@ -543,37 +558,10 @@ impl Client {
                                 .expect("fingerprint to exist");
                             let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint();
 
-                            let noise = snow::Builder::new(
-                                "Noise_XX_25519_ChaChaPoly_SHA256".parse().unwrap(),
-                            );
-                            let keypair = noise.generate_keypair().unwrap();
+                            let (noise, keypair) =
+                                noise_prologue(local_fingerprint, remote_fingerprint);
 
-                            const MULTIHASH_SHA256_CODE: u64 = 0x12;
-                            let remote_fingerprint =
-                                Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint.bytes)
-                                    .expect("fingerprint's len to be 32 bytes")
-                                    .to_bytes();
-                            let local_fingerprint =
-                                Multihash::wrap(MULTIHASH_SHA256_CODE, &local_fingerprint.bytes)
-                                    .expect("fingerprint's len to be 32 bytes")
-                                    .to_bytes();
-
-                            const PREFIX: &[u8] = b"libp2p-webrtc-noise:";
-                            let mut prologue = Vec::with_capacity(
-                                PREFIX.len() + local_fingerprint.len() + remote_fingerprint.len(),
-                            );
-                            prologue.extend_from_slice(PREFIX);
-                            prologue.extend_from_slice(&remote_fingerprint);
-                            prologue.extend_from_slice(&local_fingerprint);
-
-                            self.state = State::Opened {
-                                noise: noise
-                                    .local_private_key(&keypair.private)
-                                    .prologue(&prologue)
-                                    .build_initiator()
-                                    .unwrap(),
-                                keypair,
-                            };
+                            self.state = State::Opened { noise, keypair };
                         }
                         _ => panic!("invalid state for connection"),
                     }
@@ -588,9 +576,11 @@ impl Client {
     }
 
     fn on_noise_channel_open(&mut self) {
-        let State::Opened { .. } = std::mem::replace(&mut self.state, State::Poisoned) else {
+        let State::Opened { mut noise, keypair } = std::mem::replace(&mut self.state, State::Poisoned) else {
             panic!("invalid state for connection, expected `Opened`");
         };
+
+        tracing::warn!(target: LOG_TARGET, "noise channel opened");
 
         let remote_fingerprint = self
             .rtc
