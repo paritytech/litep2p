@@ -61,15 +61,10 @@ pub trait SubstreamSetKey: Hash + Unpin + Debug + PartialEq + Eq + Copy {}
 
 impl<K: Hash + Unpin + Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
 
-#[derive(Debug)]
+/// Substream set.
+#[derive(Debug, Default)]
 pub struct SubstreamSet<K: SubstreamSetKey> {
     substreams: HashMap<K, Box<dyn Substream>>,
-}
-
-impl<K: SubstreamSetKey> Default for SubstreamSet<K> {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<K: SubstreamSetKey> SubstreamSet<K> {
