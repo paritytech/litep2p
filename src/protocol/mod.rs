@@ -39,6 +39,7 @@ pub mod libp2p;
 pub mod notification;
 pub mod request_response;
 
+/// Logging target for the file.
 const LOG_TARGET: &str = "protocol";
 
 /// Substream direction.
@@ -76,8 +77,8 @@ pub enum ConnectionEvent {
         /// Protocol name.
         ///
         /// One protocol handler may handle multiple sub-protocols (such as `/ipfs/identify/1.0.0`
-        /// and `/ipfs/identify/push/1.0.0`) or the it may have aliases which should be handled by
-        /// the same protocol handler. When the substream is sent from transpor to the protocol
+        /// and `/ipfs/identify/push/1.0.0`) or it may have aliases which should be handled by
+        /// the same protocol handler. When the substream is sent from transport to the protocol
         /// handler, the protocol name that was used to negotiate the substream is also sent so
         /// the protocol can handle the substream appropriately.
         protocol: ProtocolName,
@@ -98,12 +99,12 @@ pub enum ConnectionEvent {
 
     /// Failed to open substream.
     ///
-    /// Substream failure are only reported for outbound substreams.
+    /// Substream open failures are reported only for outbound substreams.
     SubstreamOpenFailure {
         /// Substream ID.
         substream: SubstreamId,
 
-        /// Error.
+        /// Error that occurred when the substream was being opened.
         error: Error,
     },
 }
@@ -120,7 +121,7 @@ pub enum ProtocolEvent {
         ///
         /// Protocol allocates an ephemeral ID for outbound substreams which allows it to track
         /// the state of its pending substream. The ID is given back to protocol in
-        ///  [`TransportEvent::SubstreamOpened`]/[`TransportEvent::SubstreamOpenFailure`].
+        /// [`TransportEvent::SubstreamOpened`]/[`TransportEvent::SubstreamOpenFailure`].
         ///
         /// This allows the protocol to distinguish inbound substreams from outbound substreams
         /// and associate incoming substreams with whatever logic it has.
@@ -161,6 +162,9 @@ impl ConnectionService {
     /// Open substream to remote peer over `protocol`.
     pub async fn open_substream(&mut self) -> crate::Result<SubstreamId> {
         let substream_id = self.next_substream_id();
+
+        tracing::trace!(target: LOG_TARGET, ?substream_id, "open substream");
+
         self.tx
             .send(ProtocolEvent::OpenSubstream {
                 protocol: self.protocol.clone(),
@@ -201,6 +205,12 @@ impl ProtocolSet {
         peer: PeerId,
         context: TransportContext,
     ) -> crate::Result<Self> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            "connection established to remote peer"
+        );
+
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
         // TODO: this is kind of ugly
@@ -263,6 +273,14 @@ impl ProtocolSet {
         substream: SubstreamId,
         error: Error,
     ) -> crate::Result<()> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?protocol,
+            ?substream,
+            ?error,
+            "failed to open substream"
+        );
+
         match self.protocols.get_mut(&protocol) {
             Some(info) => info
                 .tx
