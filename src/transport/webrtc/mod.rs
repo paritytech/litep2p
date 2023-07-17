@@ -121,8 +121,6 @@ fn noise_prologue(
     prologue.extend_from_slice(&remote_fingerprint);
     prologue.extend_from_slice(&local_fingerprint);
 
-    tracing::error!("{remote_fingerprint:02x?}");
-
     (
         noise
             .local_private_key(&keypair.private)
@@ -590,12 +588,9 @@ impl Client {
             .expect("fingerprint to exist");
         let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint();
 
-        let (mut noise, keypair) = noise_prologue(local_fingerprint, remote_fingerprint);
         let mut buffer = vec![0u8; 1024];
 
         let nwritten = noise.write_message(&[], &mut buffer).unwrap();
-        self.noise = Some(noise);
-        self.keypair = Some(keypair);
         buffer.truncate(nwritten);
 
         let size = nwritten as u16;
@@ -626,7 +621,7 @@ impl Client {
             .write(true, result.as_slice())
             .unwrap();
 
-        self.state = State::HandshakeSent;
+        self.state = State::HandshakeSent { noise, keypair };
     }
 
     fn on_channel_open(&mut self, id: ChannelId, name: String) {
@@ -640,6 +635,10 @@ impl Client {
     }
 
     fn on_noise_channel_data(&mut self, data: Vec<u8>) -> Propagated {
+        let State::HandshakeSent { mut noise, keypair } = std::mem::replace(&mut self.state, State::Poisoned) else {
+            panic!("invalid state for connection, expected `HandshakeSent`");
+        };
+
         let mut codec = UnsignedVarint::new();
         let mut stuff = bytes::BytesMut::from(data.as_slice());
         let result = codec.decode(&mut stuff).unwrap().unwrap();
@@ -651,12 +650,7 @@ impl Client {
 
                 let mut inner = vec![0u8; 1024];
 
-                match self
-                    .noise
-                    .as_mut()
-                    .unwrap()
-                    .read_message(&payload.message.unwrap()[2..], &mut inner)
-                {
+                match noise.read_message(&payload.message.unwrap()[2..], &mut inner) {
                     Ok(res) => {
                         inner.truncate(res);
                     }
@@ -677,7 +671,6 @@ impl Client {
                         )
                         .unwrap();
 
-                        let keypair = self.keypair.take().unwrap();
                         let noise_payload = schema::noise::NoiseHandshakePayload {
                             identity_key: Some(
                                 PublicKey::Ed25519(self.id_keypair.public()).to_protobuf_encoding(),
@@ -696,12 +689,7 @@ impl Client {
 
                         let mut buffer = vec![0u8; 2048];
 
-                        let nwritten = self
-                            .noise
-                            .as_mut()
-                            .unwrap()
-                            .write_message(&payload, &mut buffer)
-                            .unwrap();
+                        let nwritten = noise.write_message(&payload, &mut buffer).unwrap();
                         buffer.truncate(nwritten);
 
                         let size = nwritten as u16;
@@ -731,6 +719,8 @@ impl Client {
                         tracing::error!(target: LOG_TARGET, "send noise handshake to remote peer");
 
                         channel.write(true, result.as_slice()).unwrap();
+
+                        self.state = State::Open { noise, keypair };
 
                         Propagated::Noop
                     }
