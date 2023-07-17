@@ -536,7 +536,7 @@ impl Client {
                     Propagated::Noop
                 }
                 Event::ChannelOpen(cid, name) => {
-                    tracing::error!("CHANNEL OPEN!!!!!!!!!!!!!!");
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     self.on_channel_open(cid, name);
                     Propagated::Noop
                 }
@@ -798,7 +798,7 @@ mod tests {
             )]),
         };
         let transport_config = WebRtcConfig {
-            listen_address: "/ip4/192.168.1.112/udp/8888".parse().unwrap(),
+            listen_address: "/ip4/192.168.1.173/udp/8888".parse().unwrap(),
         };
 
         let transport = WebRtcTransport::new(context, transport_config, command_rx)
