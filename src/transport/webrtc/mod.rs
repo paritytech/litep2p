@@ -580,14 +580,6 @@ impl Client {
 
         tracing::warn!(target: LOG_TARGET, "noise channel opened");
 
-        let remote_fingerprint = self
-            .rtc
-            .direct_api()
-            .remote_dtls_fingerprint()
-            .clone()
-            .expect("fingerprint to exist");
-        let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint();
-
         let mut buffer = vec![0u8; 1024];
 
         let nwritten = noise.write_message(&[], &mut buffer).unwrap();
@@ -650,6 +642,7 @@ impl Client {
 
                 let mut inner = vec![0u8; 1024];
 
+                // TODO: don't panic
                 match noise.read_message(&payload.message.unwrap()[2..], &mut inner) {
                     Ok(res) => {
                         inner.truncate(res);
@@ -659,10 +652,12 @@ impl Client {
                     }
                 }
 
+                // TODO: refactor this code
                 match schema::noise::NoiseHandshakePayload::decode(inner.as_slice()) {
                     Ok(payload) => {
                         tracing::error!("received noise payload: {payload:?}");
 
+                        // TODO: no unwraps
                         let _public_key = PublicKey::from_protobuf_encoding(
                             &payload
                                 .identity_key
@@ -724,9 +719,11 @@ impl Client {
 
                         Propagated::Noop
                     }
+                    // TODO: don't panic
                     Err(_err) => todo!("invalid noise payload not implemented"),
                 }
             }
+            // TODO: don't panic
             Err(_err) => todo!("error not implemented"),
         }
     }
