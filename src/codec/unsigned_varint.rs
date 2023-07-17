@@ -44,6 +44,19 @@ impl UnsignedVarint {
             codec: UviBytes::<Bytes>::default(),
         }
     }
+
+    /// Encode `payload` using `unsigned-varint`.
+    pub fn encode<T: Into<Bytes>>(payload: T) -> crate::Result<Vec<u8>> {
+        let payload: Bytes = payload.into();
+
+        assert!(payload.len() <= u32::MAX as usize);
+
+        let mut bytes = BytesMut::with_capacity(payload.len() + 4);
+        let mut codec = Self::new();
+        codec.encode(payload.into(), &mut bytes)?;
+
+        Ok(bytes.into())
+    }
 }
 
 impl Decoder for UnsignedVarint {
