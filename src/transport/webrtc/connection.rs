@@ -24,6 +24,7 @@ use crate::{
     error::{Error, NegotiationError},
     peer_id::PeerId,
     transport::webrtc::Propagated,
+    types::ConnectionId,
 };
 
 use multiaddr::multihash::Multihash;
@@ -35,11 +36,6 @@ use str0m::{
 };
 use tokio::net::UdpSocket;
 use tokio_util::codec::{Decoder, Encoder};
-
-use std::{
-    ops::Deref,
-    sync::atomic::{AtomicU64, Ordering},
-};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::connection";
@@ -227,37 +223,33 @@ enum State {
     },
 }
 
+/// WebRTC connection.
 pub(super) struct WebRtcConnection {
-    pub(super) id: WebRtcConnectionId,
+    /// Connection ID.
+    pub(super) connection_id: ConnectionId,
+
+    /// `str0m` WebRTC object.
     pub(super) rtc: Rtc,
+
+    /// Noise channel ID.
     _noise_channel_id: ChannelId,
+
+    /// Identity keypair.
     id_keypair: Keypair,
+
+    /// Connection state.
     state: State,
-}
-
-// TODO: replace with `ConnectionId`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct WebRtcConnectionId(u64);
-
-impl Deref for WebRtcConnectionId {
-    type Target = u64;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
 }
 
 impl WebRtcConnection {
     pub(super) fn new(
         rtc: Rtc,
+        connection_id: ConnectionId,
         _noise_channel_id: ChannelId,
         id_keypair: Keypair,
     ) -> WebRtcConnection {
-        static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
-        let next_id = ID_COUNTER.fetch_add(1, Ordering::SeqCst);
-
         WebRtcConnection {
-            id: WebRtcConnectionId(next_id),
+            connection_id,
             _noise_channel_id,
             rtc,
             id_keypair,
@@ -275,7 +267,12 @@ impl WebRtcConnection {
         }
 
         if let Err(error) = self.rtc.handle_input(input) {
-            tracing::warn!(target: LOG_TARGET, ?error, id = ?self.id, "peer disconnected");
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?error,
+                connection_id = ?self.connection_id,
+                "peer disconnected"
+            );
             self.rtc.disconnect();
         }
     }
@@ -289,8 +286,8 @@ impl WebRtcConnection {
             Ok(output) => self.handle_output(output, socket).await,
             Err(e) => {
                 println!(
-                    "WebRtcConnection ({}) poll_output failed: {:?}",
-                    *self.id, e
+                    "WebRtcConnection ({:?}) poll_output failed: {:?}",
+                    self.connection_id, e
                 );
                 self.rtc.disconnect();
                 Propagated::Noop

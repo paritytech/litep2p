@@ -23,9 +23,9 @@ use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
-        webrtc::connection::{WebRtcConnection, WebRtcConnectionId},
-        Transport, TransportCommand, TransportContext,
+        webrtc::connection::WebRtcConnection, Transport, TransportCommand, TransportContext,
     },
+    types::ConnectionId,
 };
 
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
@@ -66,6 +66,9 @@ pub(crate) struct WebRtcTransport {
 
     /// Assigned listen addresss.
     listen_address: SocketAddr,
+
+    /// Next connection id.
+    next_connection_id: ConnectionId,
 
     /// RX channel for receiving commands from `Litep2p`.
     _rx: Receiver<TransportCommand>,
@@ -153,6 +156,7 @@ impl Transport for WebRtcTransport {
             socket,
             dtls_cert,
             listen_address,
+            next_connection_id: ConnectionId::new(),
         })
     }
 
@@ -258,6 +262,7 @@ impl Transport for WebRtcTransport {
                                     source,
                                     WebRtcConnection::new(
                                         rtc,
+                                        self.next_connection_id.next(),
                                         noise_channel_id,
                                         self.context.keypair.clone(),
                                     ),
@@ -320,7 +325,7 @@ fn propagate(clients: &mut HashMap<SocketAddr, WebRtcConnection>, to_propagate: 
         };
 
         for (_, client) in &mut *clients {
-            if client.id == client_id {
+            if client.connection_id == client_id {
                 // Do not propagate to originating client.
                 continue;
             }
@@ -379,7 +384,7 @@ enum Propagated {
 
 impl Propagated {
     /// Get client id, if the propagated event has a client id.
-    fn client_id(&self) -> Option<WebRtcConnectionId> {
+    fn client_id(&self) -> Option<ConnectionId> {
         None
     }
 
