@@ -18,15 +18,19 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::collections::HashMap;
+
 use crate::{
     codec::unsigned_varint::UnsignedVarint,
     crypto::{ed25519::Keypair, noise::STATIC_KEY_DOMAIN, PublicKey},
     error::{Error, NegotiationError},
+    multistream_select::Message as MultiStreamMessage,
     peer_id::PeerId,
-    transport::webrtc::Propagated,
-    types::ConnectionId,
+    transport::{webrtc::Propagated, TransportContext},
+    types::{protocol::ProtocolName, ConnectionId},
 };
 
+use bytes::BytesMut;
 use multiaddr::multihash::Multihash;
 use prost::Message;
 use str0m::{
@@ -112,11 +116,20 @@ fn noise_first_message(noise: &mut snow::HandshakeState) -> Vec<u8> {
     out_buf.into()
 }
 
+// TODO: no unwraps
+fn new_read_remote_reply(data: &[u8]) -> crate::Result<schema::webrtc::Message> {
+    let mut codec = UnsignedVarint::new();
+    let mut data = bytes::BytesMut::from(data);
+    let result = codec.decode(&mut data)?.ok_or(Error::Unknown)?; // TODO: bad error
+
+    schema::webrtc::Message::decode(result).map_err(From::from)
+}
+
 /// Read remote reply and extract remote's `PeerId` from it.
 fn read_remote_reply(data: &[u8], noise: &mut snow::HandshakeState) -> crate::Result<PeerId> {
     let mut codec = UnsignedVarint::new();
-    let mut stuff = bytes::BytesMut::from(data);
-    let result = codec.decode(&mut stuff)?.ok_or(Error::Unknown)?; // TODO: bad error
+    let mut data = bytes::BytesMut::from(data);
+    let result = codec.decode(&mut data)?.ok_or(Error::Unknown)?; // TODO: bad error
 
     let payload = schema::webrtc::Message::decode(result)?;
     let size: Result<[u8; 2], _> = payload.message.clone().unwrap()[0..2].try_into();
@@ -187,6 +200,25 @@ fn noise_second_message(
     Ok(out_buf.into())
 }
 
+fn create_webrtc_message(payload: Vec<u8>) -> Vec<u8> {
+    let protobuf_payload = schema::webrtc::Message {
+        message: Some(payload),
+        ..Default::default()
+    };
+    let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
+    protobuf_payload
+        .encode(&mut payload)
+        .expect("Vec<u8> to provide needed capacity");
+
+    let payload: bytes::Bytes = payload.into();
+
+    let mut out_buf = bytes::BytesMut::with_capacity(1024);
+    let mut codec = UnsignedVarint::new();
+    let _result = codec.encode(payload, &mut out_buf);
+
+    out_buf.into()
+}
+
 /// WebRTC connection state.
 enum State {
     /// Connection state is poisoned.
@@ -223,6 +255,15 @@ enum State {
     },
 }
 
+/// WebRTC channel state.
+enum ChannelState {
+    /// Confirmation sent for a proposed protocol.
+    ConfirmationSent {
+        /// Confirmed protocol.
+        protocol: ProtocolName,
+    },
+}
+
 /// WebRTC connection.
 pub(super) struct WebRtcConnection {
     /// Connection ID.
@@ -239,6 +280,12 @@ pub(super) struct WebRtcConnection {
 
     /// Connection state.
     state: State,
+
+    /// Transport context.
+    context: TransportContext,
+
+    /// WebRTC data channels.
+    channels: HashMap<ChannelId, ChannelState>,
 }
 
 impl WebRtcConnection {
@@ -247,6 +294,7 @@ impl WebRtcConnection {
         connection_id: ConnectionId,
         _noise_channel_id: ChannelId,
         id_keypair: Keypair,
+        context: TransportContext,
     ) -> WebRtcConnection {
         WebRtcConnection {
             connection_id,
@@ -254,6 +302,8 @@ impl WebRtcConnection {
             rtc,
             id_keypair,
             state: State::Closed,
+            context,
+            channels: HashMap::new(),
         }
     }
 
@@ -423,13 +473,94 @@ impl WebRtcConnection {
         Propagated::Noop
     }
 
-    fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
-        if d.id == self._noise_channel_id {
-            return self.on_noise_channel_data(d.data);
+    /// Negotiate protocol for the channel
+    fn negotiate_protocol(&mut self, d: ChannelData) -> Propagated {
+        tracing::error!(target: LOG_TARGET, "negotiate protocol for the channel");
+
+        // TODO: no unwraps
+        let message = new_read_remote_reply(&d.data).unwrap();
+        let payload = message.message.unwrap();
+
+        match MultiStreamMessage::decode(payload.into()) {
+            Ok(MultiStreamMessage::Protocols(protocols)) => {
+                tracing::debug!(target: LOG_TARGET, ?protocols, "negotiate protocol");
+
+                for protocol in protocols {
+                    for supported in self.context.protocols.keys() {
+                        // TODO: this is so ugly
+                        let proto = protocol.clone();
+                        let proto1: &[u8] = protocol.as_ref();
+                        let proto2: &[u8] = supported.as_bytes();
+
+                        // TODO: no unwraps
+                        if proto1 == proto2 {
+                            let mut bytes = BytesMut::with_capacity(128);
+                            let message = MultiStreamMessage::Header(
+                                crate::multistream_select::HeaderLine::V1,
+                            );
+                            let _ = message.encode(&mut bytes).unwrap();
+
+                            // TODO: no unwraps
+                            let mut header = UnsignedVarint::encode(bytes).unwrap();
+
+                            let mut proto_bytes = BytesMut::with_capacity(128);
+                            let message = MultiStreamMessage::Protocol(proto);
+                            let _ = message.encode(&mut proto_bytes).unwrap();
+                            let proto_bytes = UnsignedVarint::encode(proto_bytes).unwrap();
+
+                            header.append(&mut proto_bytes.into());
+
+                            let message = create_webrtc_message(header.into());
+
+                            self.rtc
+                                .channel(d.id)
+                                .expect("channel to exist")
+                                .write(true, message.as_ref())
+                                .unwrap();
+
+                            self.channels.insert(
+                                d.id,
+                                ChannelState::ConfirmationSent {
+                                    protocol: supported.clone(),
+                                },
+                            );
+                            return Propagated::Noop;
+                        }
+                    }
+                }
+
+                // return Propagated::Noop;
+                todo!("no supported protocol found");
+            }
+            result => todo!("unexpected result: {result:?}"),
         }
+    }
 
-        tracing::error!(target: LOG_TARGET, "{:?}", std::str::from_utf8(&d.data));
+    fn process_multistream_select_confirmation(&mut self, d: ChannelData) -> Propagated {
+        tracing::debug!(
+            target: LOG_TARGET,
+            channel_id = ?d.id,
+            "process protocol event",
+        );
 
-        todo!();
+        // TODO: no unwraps
+        let message = new_read_remote_reply(&d.data).unwrap();
+
+        if let Some(_message) = message.message {}
+
+        Propagated::Noop
+    }
+
+    fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
+        match &self.state {
+            State::HandshakeSent { .. } => return self.on_noise_channel_data(d.data),
+            State::Open { .. } => match self.channels.get_mut(&d.id) {
+                Some(ChannelState::ConfirmationSent { .. }) => {
+                    return self.process_multistream_select_confirmation(d)
+                }
+                None => return self.negotiate_protocol(d),
+            },
+            _ => panic!("invalid state for connection"),
+        }
     }
 }

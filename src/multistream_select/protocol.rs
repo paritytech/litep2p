@@ -195,7 +195,8 @@ impl Message {
         let mut remaining: &[u8] = &msg;
         loop {
             // A well-formed message must be terminated with a newline.
-            if remaining == [b'\n'] {
+            // TODO: don't do this
+            if remaining == [b'\n'] || remaining.is_empty() {
                 break;
             } else if protocols.len() == MAX_PROTOCOLS {
                 return Err(ProtocolError::TooManyProtocols);

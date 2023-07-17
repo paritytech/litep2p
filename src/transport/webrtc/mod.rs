@@ -226,7 +226,7 @@ impl Transport for WebRtcTransport {
                         },
                     ) => {
                         if let Some((u, p)) = message.split_username() {
-                            tracing::error!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
+                            tracing::debug!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
 
                             if !clients.contains_key(&source) {
                                 let mut rtc = Rtc::builder()
@@ -265,6 +265,7 @@ impl Transport for WebRtcTransport {
                                         self.next_connection_id.next(),
                                         noise_channel_id,
                                         self.context.keypair.clone(),
+                                        self.context.clone(),
                                     ),
                                 );
                             }
@@ -421,13 +422,22 @@ mod tests {
         let context = TransportContext {
             tx: event_tx,
             keypair: keypair.clone(),
-            protocols: HashMap::from_iter([(
-                ProtocolName::from("/notif/1"),
-                ProtocolInfo {
-                    tx,
-                    codec: ProtocolCodec::Identity(32),
-                },
-            )]),
+            protocols: HashMap::from_iter([
+                (
+                    ProtocolName::from("/ipfs/ping/1.0.0"),
+                    ProtocolInfo {
+                        tx: tx.clone(),
+                        codec: ProtocolCodec::Identity(32),
+                    },
+                ),
+                (
+                    ProtocolName::from("/980e7cbafbcd37f8cb17be82bf8d53fa81c9a588e8a67384376e862da54285dc/block-announces/1"),
+                    ProtocolInfo {
+                        tx,
+                        codec: ProtocolCodec::Identity(32),
+                    },
+                ),
+            ]),
         };
         let transport_config = WebRtcConfig {
             listen_address: "/ip4/192.168.1.173/udp/8888".parse().unwrap(),
@@ -437,7 +447,7 @@ mod tests {
             .await
             .unwrap();
 
-        tracing::error!("listen address: {}", transport.listen_address());
+        tracing::error!(target: "webrtc", "listen address: {}", transport.listen_address());
 
         transport.start().await.unwrap();
     }
