@@ -131,7 +131,7 @@ fn noise_prologue(
     )
 }
 
-/// Create first Noise handshake.
+/// Create first Noise handshake message.
 fn noise_first_message(noise: &mut snow::HandshakeState) -> Vec<u8> {
     let mut buffer = vec![0u8; 256];
 
@@ -158,6 +158,81 @@ fn noise_first_message(noise: &mut snow::HandshakeState) -> Vec<u8> {
     let _ = codec.encode(payload, &mut out_buf);
 
     out_buf.into()
+}
+
+/// Read remote reply and extract remote's `PeerId` from it.
+fn read_remote_reply(data: &[u8], noise: &mut snow::HandshakeState) -> crate::Result<PeerId> {
+    let mut codec = UnsignedVarint::new();
+    let mut stuff = bytes::BytesMut::from(data);
+    let result = codec.decode(&mut stuff)?.ok_or(Error::Unknown)?; // TODO: bad error
+
+    let payload = schema::webrtc::Message::decode(result)?;
+    let size: Result<[u8; 2], _> = payload.message.clone().unwrap()[0..2].try_into();
+    let _size = u16::from_be_bytes(size.unwrap());
+
+    let mut inner = vec![0u8; 1024];
+
+    // TODO: don't panic
+    let res = noise.read_message(&payload.message.unwrap()[2..], &mut inner)?;
+    inner.truncate(res);
+
+    // TODO: refactor this code
+    let payload = schema::noise::NoiseHandshakePayload::decode(inner.as_slice())?;
+
+    let public_key = PublicKey::from_protobuf_encoding(
+        &payload
+            .identity_key
+            .ok_or(Error::NegotiationError(NegotiationError::PeerIdMissing))?,
+    )?;
+
+    Ok(PeerId::from_public_key(&public_key))
+}
+
+/// Create second Noise handshake message.
+fn noise_second_message(
+    noise: &mut snow::HandshakeState,
+    id_keypair: &Keypair,
+    keypair: &snow::Keypair,
+) -> crate::Result<Vec<u8>> {
+    // TODO: no unwraps
+    let noise_payload = schema::noise::NoiseHandshakePayload {
+        identity_key: Some(PublicKey::Ed25519(id_keypair.public()).to_protobuf_encoding()),
+        identity_sig: Some(
+            id_keypair.sign(&[STATIC_KEY_DOMAIN.as_bytes(), keypair.public.as_ref()].concat()),
+        ),
+        ..Default::default()
+    };
+
+    let mut payload = Vec::with_capacity(noise_payload.encoded_len());
+    noise_payload
+        .encode(&mut payload)
+        .expect("Vec<u8> to provide needed capacity");
+
+    let mut buffer = vec![0u8; 2048];
+
+    let nwritten = noise.write_message(&payload, &mut buffer).unwrap();
+    buffer.truncate(nwritten);
+
+    let size = nwritten as u16;
+    let mut size = size.to_be_bytes().to_vec();
+    size.append(&mut buffer);
+
+    let protobuf_payload = schema::webrtc::Message {
+        message: Some(size),
+        ..Default::default()
+    };
+    let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
+    protobuf_payload
+        .encode(&mut payload)
+        .expect("Vec<u8> to provide needed capacity");
+
+    let payload: bytes::Bytes = payload.into();
+
+    let mut out_buf = bytes::BytesMut::with_capacity(1024);
+    let mut codec = UnsignedVarint::new();
+    let _result = codec.encode(payload, &mut out_buf);
+
+    Ok(out_buf.into())
 }
 
 /// WebRTC transport.
@@ -479,8 +554,6 @@ struct Client {
     id: ClientId,
     rtc: Rtc,
     _noise_channel_id: ChannelId,
-    noise: Option<snow::HandshakeState>,
-    keypair: Option<snow::Keypair>,
     id_keypair: Keypair,
     state: State,
 }
@@ -505,8 +578,6 @@ impl Client {
             id: ClientId(next_id),
             _noise_channel_id,
             rtc,
-            noise: None,
-            keypair: None,
             id_keypair,
             state: State::Closed,
         }
@@ -603,11 +674,11 @@ impl Client {
     }
 
     fn on_noise_channel_open(&mut self) {
+        tracing::trace!(target: LOG_TARGET, "send initial noise handshake");
+
         let State::Opened { mut noise, keypair } = std::mem::replace(&mut self.state, State::Poisoned) else {
             panic!("invalid state for connection, expected `Opened`");
         };
-
-        tracing::trace!(target: LOG_TARGET, "send initial noise handshake");
 
         // create first noise handshake and send it to remote peer
         let payload = noise_first_message(&mut noise);
@@ -633,105 +704,35 @@ impl Client {
     }
 
     fn on_noise_channel_data(&mut self, data: Vec<u8>) -> Propagated {
+        tracing::trace!(target: LOG_TARGET, "handle noise handshake reply");
+
         let State::HandshakeSent { mut noise, keypair } = std::mem::replace(&mut self.state, State::Poisoned) else {
             panic!("invalid state for connection, expected `HandshakeSent`");
         };
 
-        let mut codec = UnsignedVarint::new();
-        let mut stuff = bytes::BytesMut::from(data.as_slice());
-        let result = codec.decode(&mut stuff).unwrap().unwrap();
+        // TODO: no unwraps
+        let remote_peer_id = read_remote_reply(data.as_slice(), &mut noise).unwrap();
 
-        match schema::webrtc::Message::decode(result) {
-            Ok(payload) => {
-                let size: Result<[u8; 2], _> = payload.message.clone().unwrap()[0..2].try_into();
-                let _size = u16::from_be_bytes(size.unwrap());
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?remote_peer_id,
+            "remote reply parsed successfully"
+        );
 
-                let mut inner = vec![0u8; 1024];
+        // create second noise handshake message and send it to remote
+        let payload = noise_second_message(&mut noise, &self.id_keypair, &keypair).unwrap();
 
-                // TODO: don't panic
-                match noise.read_message(&payload.message.unwrap()[2..], &mut inner) {
-                    Ok(res) => {
-                        inner.truncate(res);
-                    }
-                    Err(error) => {
-                        panic!("cipher error: {error}");
-                    }
-                }
+        let mut channel = self
+            .rtc
+            .channel(self._noise_channel_id)
+            .expect("channel to exist");
 
-                // TODO: refactor this code
-                match schema::noise::NoiseHandshakePayload::decode(inner.as_slice()) {
-                    Ok(payload) => {
-                        tracing::error!("received noise payload: {payload:?}");
+        // TODO: no unwraps
+        channel.write(true, payload.as_slice()).unwrap();
 
-                        // TODO: no unwraps
-                        let _public_key = PublicKey::from_protobuf_encoding(
-                            &payload
-                                .identity_key
-                                .ok_or(Error::NegotiationError(NegotiationError::PeerIdMissing))
-                                .unwrap(),
-                        )
-                        .unwrap();
+        self.state = State::Open { noise, keypair };
 
-                        let noise_payload = schema::noise::NoiseHandshakePayload {
-                            identity_key: Some(
-                                PublicKey::Ed25519(self.id_keypair.public()).to_protobuf_encoding(),
-                            ),
-                            identity_sig: Some(self.id_keypair.sign(
-                                &[STATIC_KEY_DOMAIN.as_bytes(), keypair.public.as_ref()].concat(),
-                            )),
-                            ..Default::default()
-                        };
-                        tracing::warn!("noise payload size: {}", noise_payload.encoded_len());
-
-                        let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-                        noise_payload
-                            .encode(&mut payload)
-                            .expect("Vec<u8> provides capacity as needed");
-
-                        let mut buffer = vec![0u8; 2048];
-
-                        let nwritten = noise.write_message(&payload, &mut buffer).unwrap();
-                        buffer.truncate(nwritten);
-
-                        let size = nwritten as u16;
-                        let mut size = size.to_be_bytes().to_vec();
-                        size.append(&mut buffer);
-
-                        let protobuf_payload = schema::webrtc::Message {
-                            message: Some(size),
-                            ..Default::default()
-                        };
-                        let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
-                        protobuf_payload
-                            .encode(&mut payload)
-                            .expect("Vec<u8> provides capacity as needed");
-
-                        let payload: bytes::Bytes = payload.into();
-
-                        let mut out_buf = bytes::BytesMut::with_capacity(1024);
-                        let mut codec = UnsignedVarint::new();
-                        let _result = codec.encode(payload, &mut out_buf);
-                        let result: Vec<u8> = out_buf.into();
-
-                        let mut channel = self
-                            .rtc
-                            .channel(self._noise_channel_id)
-                            .expect("channel to exist");
-                        tracing::error!(target: LOG_TARGET, "send noise handshake to remote peer");
-
-                        channel.write(true, result.as_slice()).unwrap();
-
-                        self.state = State::Open { noise, keypair };
-
-                        Propagated::Noop
-                    }
-                    // TODO: don't panic
-                    Err(_err) => todo!("invalid noise payload not implemented"),
-                }
-            }
-            // TODO: don't panic
-            Err(_err) => todo!("error not implemented"),
-        }
+        Propagated::Noop
     }
 
     fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
