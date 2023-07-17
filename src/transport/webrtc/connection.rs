@@ -18,8 +18,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::collections::HashMap;
-
 use crate::{
     codec::unsigned_varint::UnsignedVarint,
     crypto::{ed25519::Keypair, noise::STATIC_KEY_DOMAIN, PublicKey},
@@ -27,7 +25,7 @@ use crate::{
     multistream_select::Message as MultiStreamMessage,
     peer_id::PeerId,
     transport::{webrtc::Propagated, TransportContext},
-    types::{protocol::ProtocolName, ConnectionId},
+    types::ConnectionId,
 };
 
 use bytes::BytesMut;
@@ -40,6 +38,8 @@ use str0m::{
 };
 use tokio::net::UdpSocket;
 use tokio_util::codec::{Decoder, Encoder};
+
+use std::collections::HashMap;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::connection";
@@ -255,14 +255,9 @@ enum State {
     },
 }
 
-/// WebRTC channel state.
-enum ChannelState {
-    /// Confirmation sent for a proposed protocol.
-    ConfirmationSent {
-        /// Confirmed protocol.
-        protocol: ProtocolName,
-    },
-}
+struct Substream {}
+
+impl Substream {}
 
 /// WebRTC connection.
 pub(super) struct WebRtcConnection {
@@ -285,7 +280,7 @@ pub(super) struct WebRtcConnection {
     context: TransportContext,
 
     /// WebRTC data channels.
-    channels: HashMap<ChannelId, ChannelState>,
+    channels: HashMap<ChannelId, Substream>,
 }
 
 impl WebRtcConnection {
@@ -518,12 +513,7 @@ impl WebRtcConnection {
                                 .write(true, message.as_ref())
                                 .unwrap();
 
-                            self.channels.insert(
-                                d.id,
-                                ChannelState::ConfirmationSent {
-                                    protocol: supported.clone(),
-                                },
-                            );
+                            self.channels.insert(d.id, Substream {});
                             return Propagated::Noop;
                         }
                     }
@@ -555,9 +545,7 @@ impl WebRtcConnection {
         match &self.state {
             State::HandshakeSent { .. } => return self.on_noise_channel_data(d.data),
             State::Open { .. } => match self.channels.get_mut(&d.id) {
-                Some(ChannelState::ConfirmationSent { .. }) => {
-                    return self.process_multistream_select_confirmation(d)
-                }
+                Some(_) => return self.process_multistream_select_confirmation(d),
                 None => return self.negotiate_protocol(d),
             },
             _ => panic!("invalid state for connection"),
