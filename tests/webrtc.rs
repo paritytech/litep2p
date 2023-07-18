@@ -22,17 +22,12 @@ use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    error::Error,
-    peer_id::PeerId,
     protocol::{
-        libp2p::ping::Config as PingConfig,
-        notification::types::{
-            Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
-        },
+        libp2p::ping::Config as PingConfig, notification::types::Config as NotificationConfig,
     },
     transport::webrtc::WebRtcTransportConfig,
     types::protocol::ProtocolName,
-    Litep2p, Litep2pEvent,
+    Litep2p,
 };
 
 #[tokio::test]

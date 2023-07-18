@@ -24,6 +24,7 @@ use crate::{
     error::{Error, NegotiationError},
     multistream_select::Message as MultiStreamMessage,
     peer_id::PeerId,
+    protocol::ProtocolSet,
     transport::{webrtc::Propagated, TransportContext},
     types::ConnectionId,
 };
@@ -253,6 +254,9 @@ enum State {
 
         /// Noise keypair.
         keypair: snow::Keypair,
+
+        /// Protocol context.
+        context: ProtocolSet,
     },
 }
 
@@ -490,11 +494,18 @@ impl WebRtcConnection {
         // .with(Protocol::P2p(
         //     PeerId::from(PublicKey::Ed25519(self.context.keypair.public())).into(),
         // ))
+        let context = ProtocolSet::from_transport_context(remote_peer_id, self.context.clone())
+            .await
+            .unwrap();
         self.context
             .report_connection_established(remote_peer_id, address)
             .await;
 
-        self.state = State::Open { noise, keypair };
+        self.state = State::Open {
+            noise,
+            keypair,
+            context,
+        };
 
         Propagated::Noop
     }
