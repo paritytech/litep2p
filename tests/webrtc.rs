@@ -67,7 +67,9 @@ async fn webrtc_test() {
 
     loop {
         tokio::select! {
-            _event = litep2p.next_event() => {}
+            event = litep2p.next_event() => {
+                tracing::error!("litep2p event received: {event:?}");
+            }
             event = ping_event_stream.next() => {
                 tracing::error!("ping event received: {event:?}");
             }

@@ -29,7 +29,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use multiaddr::multihash::Multihash;
+use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use prost::Message;
 use str0m::{
     change::Fingerprint,
@@ -39,7 +39,7 @@ use str0m::{
 use tokio::net::UdpSocket;
 use tokio_util::codec::{Decoder, Encoder};
 
-use std::collections::HashMap;
+use std::{collections::HashMap, net::SocketAddr};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::connection";
@@ -55,6 +55,7 @@ mod schema {
 }
 
 /// Create Noise handshake state and keypair.
+// TODO: move this code to `crypto::noise`
 fn noise_prologue(
     local_fingerprint: Fingerprint,
     remote_fingerprint: Fingerprint,
@@ -281,6 +282,9 @@ pub(super) struct WebRtcConnection {
 
     /// WebRTC data channels.
     channels: HashMap<ChannelId, Substream>,
+
+    /// Address
+    address: SocketAddr,
 }
 
 impl WebRtcConnection {
@@ -290,14 +294,16 @@ impl WebRtcConnection {
         _noise_channel_id: ChannelId,
         id_keypair: Keypair,
         context: TransportContext,
+        address: SocketAddr,
     ) -> WebRtcConnection {
         WebRtcConnection {
+            rtc,
+            address,
+            context,
+            id_keypair,
             connection_id,
             _noise_channel_id,
-            rtc,
-            id_keypair,
             state: State::Closed,
-            context,
             channels: HashMap::new(),
         }
     }
@@ -367,7 +373,7 @@ impl WebRtcConnection {
                     self.on_channel_open(cid, name);
                     Propagated::Noop
                 }
-                Event::ChannelData(data) => self.on_channel_data(data),
+                Event::ChannelData(data) => self.on_channel_data(data).await,
                 Event::ChannelClose(_) => {
                     tracing::warn!("channel closed");
                     Propagated::Noop
@@ -432,7 +438,7 @@ impl WebRtcConnection {
         // TODO: check if we can accept a channel?
     }
 
-    fn on_noise_channel_data(&mut self, data: Vec<u8>) -> Propagated {
+    async fn on_noise_channel_data(&mut self, data: Vec<u8>) -> Propagated {
         tracing::trace!(target: LOG_TARGET, "handle noise handshake reply");
 
         let State::HandshakeSent { mut noise, keypair } =
@@ -462,6 +468,31 @@ impl WebRtcConnection {
         channel.write(true, payload.as_slice()).unwrap();
 
         // TODO: emit information to all protocols
+        // TODO: inform protocols about the connection.
+        let remote_fingerprint = self
+            .rtc
+            .direct_api()
+            .remote_dtls_fingerprint()
+            .clone()
+            .expect("fingerprint to exist")
+            .bytes;
+
+        const MULTIHASH_SHA256_CODE: u64 = 0x12;
+        let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint)
+            .expect("fingerprint's len to be 32 bytes");
+
+        let address = Multiaddr::empty()
+            .with(Protocol::from(self.address.ip()))
+            .with(Protocol::Udp(self.address.port()))
+            .with(Protocol::WebRTC)
+            .with(Protocol::Certhash(certificate));
+        // TODO: add peerid
+        // .with(Protocol::P2p(
+        //     PeerId::from(PublicKey::Ed25519(self.context.keypair.public())).into(),
+        // ))
+        self.context
+            .report_connection_established(remote_peer_id, address)
+            .await;
 
         self.state = State::Open { noise, keypair };
 
@@ -514,6 +545,7 @@ impl WebRtcConnection {
                                 .unwrap();
 
                             self.channels.insert(d.id, Substream {});
+
                             return Propagated::Noop;
                         }
                     }
@@ -541,9 +573,9 @@ impl WebRtcConnection {
         Propagated::Noop
     }
 
-    fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
+    async fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
         match &self.state {
-            State::HandshakeSent { .. } => return self.on_noise_channel_data(d.data),
+            State::HandshakeSent { .. } => return self.on_noise_channel_data(d.data).await,
             State::Open { .. } => match self.channels.get_mut(&d.id) {
                 Some(_) => return self.process_multistream_select_confirmation(d),
                 None => return self.negotiate_protocol(d),
