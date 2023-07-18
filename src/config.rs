@@ -26,7 +26,7 @@ use crate::{
     },
     transport::{
         quic::config::Config as QuicTransportConfig,
-        tcp::config::TransportConfig as TcpTransportConfig,
+        tcp::config::TransportConfig as TcpTransportConfig, webrtc::WebRtcTransportConfig,
     },
     types::protocol::ProtocolName,
 };
@@ -60,6 +60,9 @@ pub struct Litep2pConfigBuilder {
     /// QUIC transport config.
     quic: Option<QuicTransportConfig>,
 
+    /// WebRTC transport config.
+    webrtc: Option<WebRtcTransportConfig>,
+
     /// Keypair.
     keypair: Option<Keypair>,
 
@@ -88,6 +91,7 @@ impl Litep2pConfigBuilder {
         Self {
             tcp: None,
             quic: None,
+            webrtc: None,
             keypair: None,
             ping: None,
             identify: None,
@@ -105,6 +109,12 @@ impl Litep2pConfigBuilder {
     /// Add QUIC transport configuration.
     pub fn with_quic(mut self, config: QuicTransportConfig) -> Self {
         self.quic = Some(config);
+        self
+    }
+
+    /// Add WebRTC transport configuration.
+    pub fn with_webrtc(mut self, config: WebRtcTransportConfig) -> Self {
+        self.webrtc = Some(config);
         self
     }
 
@@ -156,6 +166,7 @@ impl Litep2pConfigBuilder {
             keypair,
             tcp: self.tcp.take(),
             quic: self.quic.take(),
+            webrtc: self.webrtc.take(),
             ping: self.ping.take(),
             identify: self.identify.take(),
             notification_protocols: self.notification_protocols,
@@ -171,6 +182,9 @@ pub struct Litep2pConfig {
 
     /// QUIC transport config.
     pub(crate) quic: Option<QuicTransportConfig>,
+
+    /// WebRTC transport config.
+    pub(crate) webrtc: Option<WebRtcTransportConfig>,
 
     /// Keypair.
     pub(crate) keypair: Keypair,

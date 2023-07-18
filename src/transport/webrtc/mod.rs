@@ -49,8 +49,8 @@ mod connection;
 const LOG_TARGET: &str = "webrtc";
 
 #[derive(Debug)]
-pub struct WebRtcConfig {
-    listen_address: Multiaddr,
+pub struct WebRtcTransportConfig {
+    pub listen_address: Multiaddr,
 }
 
 /// WebRTC transport.
@@ -128,7 +128,7 @@ impl WebRtcTransport {
 
 #[async_trait::async_trait]
 impl Transport for WebRtcTransport {
-    type Config = WebRtcConfig;
+    type Config = WebRtcTransportConfig;
 
     /// Create new [`Transport`] object.
     async fn new(
@@ -439,7 +439,7 @@ mod tests {
                 ),
             ]),
         };
-        let transport_config = WebRtcConfig {
+        let transport_config = WebRtcTransportConfig {
             listen_address: "/ip4/192.168.1.173/udp/8888".parse().unwrap(),
         };
 

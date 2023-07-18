@@ -37,6 +37,7 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use transport::webrtc::WebRtcTransport;
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
     error::ResolveError,
@@ -99,6 +100,9 @@ pub(crate) enum SupportedTransport {
 
     /// QUIC.
     Quic,
+
+    /// WebRTC
+    WebRtc,
 }
 
 /// [`Litep2p`] transport context.
@@ -272,6 +276,7 @@ impl Litep2p {
             });
         }
 
+        // enable quic transport if the config exists
         if let Some(config) = config.quic.take() {
             let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
             transports.add_transport(SupportedTransport::Quic, command_tx);
@@ -284,6 +289,23 @@ impl Litep2p {
             tokio::spawn(async move {
                 if let Err(error) = transport.start().await {
                     tracing::error!(target: LOG_TARGET, ?error, "quic failed");
+                }
+            });
+        }
+
+        // enable webrtc transport if the config exists
+        if let Some(config) = config.webrtc.take() {
+            let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
+            transports.add_transport(SupportedTransport::WebRtc, command_tx);
+
+            let transport =
+                <WebRtcTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
+                    .await?;
+            listen_addresses.push(transport.listen_address());
+
+            tokio::spawn(async move {
+                if let Err(error) = transport.start().await {
+                    tracing::error!(target: LOG_TARGET, ?error, "webrtc failed");
                 }
             });
         }
