@@ -31,7 +31,7 @@ use crate::{
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
     change::{DtlsCert, IceCreds},
-    channel::ChannelConfig,
+    channel::{ChannelConfig, ChannelId},
     net::{self, DatagramRecv, Receive},
     Candidate, Input, Rtc,
 };
@@ -47,6 +47,10 @@ mod connection;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc";
+
+/// Hardcoded remote fingerprint.
+const REMOTE_FINGERPRINT: &str =
+    "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
 
 #[derive(Debug)]
 pub struct WebRtcTransportConfig {
@@ -124,6 +128,46 @@ impl WebRtcTransport {
         };
 
         Ok((socket_address, maybe_peer))
+    }
+
+    /// Create RTC client and open channel for Noise handshake.
+    fn make_rtc_client(
+        &self,
+        ufrag: &str,
+        pass: &str,
+        source: SocketAddr,
+        destination: SocketAddr,
+    ) -> (Rtc, ChannelId) {
+        let mut rtc = Rtc::builder()
+            .set_ice_lite(true)
+            .set_dtls_certification(self.dtls_cert.clone())
+            .set_certificate_fingerprint_verification(false)
+            .build();
+        rtc.add_local_candidate(Candidate::host(destination).unwrap());
+        rtc.add_remote_candidate(Candidate::host(source).unwrap());
+        rtc.direct_api()
+            .set_remote_fingerprint(REMOTE_FINGERPRINT.parse().expect("parse() to succeed"));
+        rtc.direct_api().set_remote_ice_credentials(IceCreds {
+            ufrag: ufrag.to_owned(),
+            pass: pass.to_owned(),
+        });
+        rtc.direct_api().set_local_ice_credentials(IceCreds {
+            ufrag: ufrag.to_owned(),
+            pass: pass.to_owned(),
+        });
+        rtc.direct_api().set_ice_controlling(false);
+        rtc.direct_api().start_dtls(false).unwrap();
+        rtc.direct_api().start_sctp(false);
+
+        let noise_channel_id = rtc.direct_api().create_data_channel(ChannelConfig {
+            label: "noise".to_string(),
+            ordered: false,
+            reliability: Default::default(),
+            negotiated: Some(0),
+            protocol: "".to_string(),
+        });
+
+        (rtc, noise_channel_id)
     }
 }
 
@@ -229,34 +273,8 @@ impl Transport for WebRtcTransport {
                             tracing::debug!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
 
                             if !clients.contains_key(&source) {
-                                let mut rtc = Rtc::builder()
-                                    .set_ice_lite(true)
-                                    .set_dtls_certification(self.dtls_cert.clone())
-                                    .set_certificate_fingerprint_verification(false)
-                                    .build();
-                                rtc.add_local_candidate(Candidate::host(destination).unwrap());
-                                rtc.add_remote_candidate(Candidate::host(source).unwrap());
-                                rtc.direct_api().set_remote_fingerprint("sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF".parse().unwrap());
-                                rtc.direct_api().set_remote_ice_credentials(IceCreds {
-                                    ufrag: u.to_owned(),
-                                    pass: p.to_owned(),
-                                });
-                                rtc.direct_api().set_local_ice_credentials(IceCreds {
-                                    ufrag: u.to_owned(),
-                                    pass: p.to_owned(),
-                                });
-                                rtc.direct_api().set_ice_controlling(false);
-                                rtc.direct_api().start_dtls(false).unwrap();
-                                rtc.direct_api().start_sctp(false);
-
-                                let noise_channel_id =
-                                    rtc.direct_api().create_data_channel(ChannelConfig {
-                                        label: "noise".to_string(),
-                                        ordered: false,
-                                        reliability: Default::default(),
-                                        negotiated: Some(0),
-                                        protocol: "".to_string(),
-                                    });
+                                let (rtc, noise_channel_id) =
+                                    self.make_rtc_client(u, p, source, destination);
 
                                 clients.insert(
                                     source,
