@@ -227,6 +227,14 @@ impl Litep2p {
             tokio::spawn(async move { RequestResponseProtocol::new(service, config).run().await });
         }
 
+        for (protocol_name, protocol) in config.user_protocols.into_iter() {
+            tracing::debug!(target: LOG_TARGET, protocol = ?protocol_name, "enable user protocol");
+            protocols.push(protocol_name.clone());
+
+            let service = transport_ctx.add_protocol(protocol_name, protocol.codec())?;
+            tokio::spawn(async move { protocol.run(service).await });
+        }
+
         // start ping protocol event loop if enabled
         if let Some(ping_config) = config.ping.take() {
             tracing::debug!(

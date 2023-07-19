@@ -22,7 +22,7 @@ use crate::{
     crypto::ed25519::Keypair,
     protocol::{
         libp2p::{identify, ping},
-        notification, request_response,
+        notification, request_response, UserProtocol,
     },
     transport::{
         quic::config::Config as QuicTransportConfig,
@@ -77,6 +77,9 @@ pub struct Litep2pConfigBuilder {
 
     /// Request-response protocols.
     request_response_protocols: HashMap<ProtocolName, request_response::types::Config>,
+
+    /// User protocols.
+    user_protocols: HashMap<ProtocolName, Box<dyn UserProtocol>>,
 }
 
 impl Default for Litep2pConfigBuilder {
@@ -95,6 +98,7 @@ impl Litep2pConfigBuilder {
             keypair: None,
             ping: None,
             identify: None,
+            user_protocols: HashMap::new(),
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
         }
@@ -153,6 +157,12 @@ impl Litep2pConfigBuilder {
         self
     }
 
+    /// Install user protocol.
+    pub fn with_user_protocol(mut self, protocol: Box<dyn UserProtocol>) -> Self {
+        self.user_protocols.insert(protocol.protocol(), protocol);
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     ///
     /// Generates a default keypair if user didn't provide one.
@@ -169,6 +179,7 @@ impl Litep2pConfigBuilder {
             webrtc: self.webrtc.take(),
             ping: self.ping.take(),
             identify: self.identify.take(),
+            user_protocols: self.user_protocols,
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
         }
@@ -200,4 +211,7 @@ pub struct Litep2pConfig {
 
     /// Request-response protocols.
     pub(crate) request_response_protocols: HashMap<ProtocolName, request_response::types::Config>,
+
+    /// User protocols.
+    pub(crate) user_protocols: HashMap<ProtocolName, Box<dyn UserProtocol>>,
 }

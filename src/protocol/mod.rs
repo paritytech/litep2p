@@ -25,7 +25,7 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     substream::{RawSubstream, Substream},
-    transport::TransportContext,
+    transport::{TransportContext, TransportService},
     types::{protocol::ProtocolName, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
@@ -129,6 +129,19 @@ pub enum ProtocolEvent {
     },
 }
 
+#[async_trait::async_trait]
+pub trait UserProtocol: Send + Debug {
+    /// Get user protocol name.
+    fn protocol(&self) -> ProtocolName;
+
+    /// Get user protocol codec.
+    fn codec(&self) -> ProtocolCodec;
+
+    /// Start the the user protocol event loop.
+    async fn run(self: Box<Self>, service: TransportService) -> crate::Result<()>;
+}
+
+// TODO: move this somewhere else
 /// Service provided to protocols by the transport protocol.
 #[derive(Debug, Clone)]
 pub struct ConnectionService {
@@ -142,6 +155,7 @@ pub struct ConnectionService {
     next_substream_id: SubstreamId,
 }
 
+// TODO: move this somewhere else
 impl ConnectionService {
     /// Create new [`ConnectionService`].
     pub fn new(protocol: ProtocolName, tx: Sender<ProtocolEvent>) -> Self {
@@ -176,6 +190,7 @@ impl ConnectionService {
     }
 }
 
+// TODO: move this somewhere else
 /// Protocol information.
 #[derive(Debug, Clone)]
 pub(crate) struct ProtocolInfo {
@@ -186,6 +201,7 @@ pub(crate) struct ProtocolInfo {
     pub codec: ProtocolCodec,
 }
 
+// TODO: move this somewhere else
 /// Supported protocol information.
 ///
 /// Each connection gets a copy of [`ProtocolSet`] which allows it to interact
@@ -199,6 +215,7 @@ pub struct ProtocolSet {
     rx: Receiver<ProtocolEvent>,
 }
 
+// TODO: move this somewhere else
 impl ProtocolSet {
     /// Create new [`ProtocolSet`] and transfer `ConnectionEstablished` to all installed protocols.
     pub async fn from_transport_context(
