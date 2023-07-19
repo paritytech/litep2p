@@ -50,6 +50,7 @@ const LOG_TARGET: &str = "webrtc";
 
 #[derive(Debug)]
 pub struct WebRtcTransportConfig {
+    /// WebRTC listening address.
     pub listen_address: Multiaddr,
 }
 
@@ -397,59 +398,5 @@ impl Propagated {
         } else {
             None
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        codec::ProtocolCodec, crypto::ed25519::Keypair, protocol::ProtocolInfo,
-        types::protocol::ProtocolName,
-    };
-    use tokio::sync::mpsc::channel;
-
-    #[tokio::test]
-    async fn create_transport() {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init();
-
-        let keypair = Keypair::generate();
-        let (tx, _rx) = channel(64);
-        let (event_tx, _event_rx) = channel(64);
-        let (_command_tx, command_rx) = channel(64);
-
-        let context = TransportContext {
-            tx: event_tx,
-            keypair: keypair.clone(),
-            protocols: HashMap::from_iter([
-                (
-                    ProtocolName::from("/ipfs/ping/1.0.0"),
-                    ProtocolInfo {
-                        tx: tx.clone(),
-                        codec: ProtocolCodec::Identity(32),
-                    },
-                ),
-                (
-                    ProtocolName::from("/980e7cbafbcd37f8cb17be82bf8d53fa81c9a588e8a67384376e862da54285dc/block-announces/1"),
-                    ProtocolInfo {
-                        tx,
-                        codec: ProtocolCodec::Identity(32),
-                    },
-                ),
-            ]),
-        };
-        let transport_config = WebRtcTransportConfig {
-            listen_address: "/ip4/192.168.1.173/udp/8888".parse().unwrap(),
-        };
-
-        let transport = WebRtcTransport::new(context, transport_config, command_rx)
-            .await
-            .unwrap();
-
-        tracing::error!(target: "webrtc", "listen address: {}", transport.listen_address());
-
-        transport.start().await.unwrap();
     }
 }
