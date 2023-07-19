@@ -198,7 +198,6 @@ impl Transport for WebRtcTransport {
 
             // We keep propagating client events until all clients respond with a timeout.
             if to_propagate.len() > timeouts.len() {
-                propagate(&mut clients, to_propagate);
                 // Start over to propagate more client data until all are timeouts.
                 continue;
             }
@@ -319,27 +318,6 @@ impl Transport for WebRtcTransport {
     }
 }
 
-fn propagate(clients: &mut HashMap<SocketAddr, WebRtcConnection>, to_propagate: Vec<Event>) {
-    for p in to_propagate {
-        let Some(client_id) = p.client_id() else {
-            // If the event doesn't have a client id, it can't be propagated,
-            // (it's either a noop or a timeout).
-            continue;
-        };
-
-        for (_, client) in &mut *clients {
-            if client.connection_id == client_id {
-                // Do not propagate to originating client.
-                continue;
-            }
-
-            match &p {
-                Event::Noop | Event::Timeout(_) => {}
-            }
-        }
-    }
-}
-
 async fn read_socket_input<'a>(
     socket: &UdpSocket,
     buf: &'a mut Vec<u8>,
@@ -386,11 +364,6 @@ enum WebRtcEvent {
 }
 
 impl WebRtcEvent {
-    /// Get client id, if the propagated event has a client id.
-    fn client_id(&self) -> Option<ConnectionId> {
-        None
-    }
-
     /// If the propagated data is a timeout, returns the instant.
     fn as_timeout(&self) -> Option<Instant> {
         if let Self::Timeout(v) = self {
