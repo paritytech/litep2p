@@ -25,7 +25,7 @@ use crate::{
     multistream_select::Message as MultiStreamMessage,
     peer_id::PeerId,
     protocol::ProtocolSet,
-    transport::{webrtc::Propagated, TransportContext},
+    transport::{webrtc::WebRtcEvent, TransportContext},
     types::ConnectionId,
 };
 
@@ -332,9 +332,9 @@ impl WebRtcConnection {
         }
     }
 
-    pub(super) async fn poll_output(&mut self, socket: &UdpSocket) -> Propagated {
+    pub(super) async fn poll_output(&mut self, socket: &UdpSocket) -> WebRtcEvent {
         if !self.rtc.is_alive() {
-            return Propagated::Noop;
+            return WebRtcEvent::Noop;
         }
 
         match self.rtc.poll_output() {
@@ -345,12 +345,12 @@ impl WebRtcConnection {
                     self.connection_id, e
                 );
                 self.rtc.disconnect();
-                Propagated::Noop
+                WebRtcEvent::Noop
             }
         }
     }
 
-    async fn handle_output(&mut self, output: Output, socket: &UdpSocket) -> Propagated {
+    async fn handle_output(&mut self, output: Output, socket: &UdpSocket) -> WebRtcEvent {
         match output {
             Output::Transmit(transmit) => {
                 dbg!(&transmit);
@@ -359,9 +359,9 @@ impl WebRtcConnection {
                     .send_to(&transmit.contents, transmit.destination)
                     .await
                     .expect("sending UDP data");
-                Propagated::Noop
+                WebRtcEvent::Noop
             }
-            Output::Timeout(t) => Propagated::Timeout(t),
+            Output::Timeout(t) => WebRtcEvent::Timeout(t),
             Output::Event(e) => match e {
                 Event::IceConnectionStateChange(v) => {
                     if v == IceConnectionState::Disconnected {
@@ -370,17 +370,17 @@ impl WebRtcConnection {
                         // but this impl just disconnects directly.
                         self.rtc.disconnect();
                     }
-                    Propagated::Noop
+                    WebRtcEvent::Noop
                 }
                 Event::ChannelOpen(cid, name) => {
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     self.on_channel_open(cid, name);
-                    Propagated::Noop
+                    WebRtcEvent::Noop
                 }
                 Event::ChannelData(data) => self.on_channel_data(data).await,
                 Event::ChannelClose(_) => {
                     tracing::warn!("channel closed");
-                    Propagated::Noop
+                    WebRtcEvent::Noop
                 }
                 Event::Connected => {
                     match std::mem::replace(&mut self.state, State::Poisoned) {
@@ -400,11 +400,11 @@ impl WebRtcConnection {
                         }
                         _ => panic!("invalid state for connection"),
                     }
-                    Propagated::Noop
+                    WebRtcEvent::Noop
                 }
                 event => {
                     tracing::warn!(target: LOG_TARGET, ?event, "unhandled event");
-                    Propagated::Noop
+                    WebRtcEvent::Noop
                 }
             },
         }
@@ -442,7 +442,7 @@ impl WebRtcConnection {
         // TODO: check if we can accept a channel?
     }
 
-    async fn on_noise_channel_data(&mut self, data: Vec<u8>) -> Propagated {
+    async fn on_noise_channel_data(&mut self, data: Vec<u8>) -> WebRtcEvent {
         tracing::trace!(target: LOG_TARGET, "handle noise handshake reply");
 
         let State::HandshakeSent { mut noise, keypair } =
@@ -507,11 +507,11 @@ impl WebRtcConnection {
             context,
         };
 
-        Propagated::Noop
+        WebRtcEvent::Noop
     }
 
     /// Negotiate protocol for the channel
-    fn negotiate_protocol(&mut self, d: ChannelData) -> Propagated {
+    fn negotiate_protocol(&mut self, d: ChannelData) -> WebRtcEvent {
         tracing::error!(target: LOG_TARGET, "negotiate protocol for the channel");
 
         // TODO: no unwraps
@@ -557,19 +557,23 @@ impl WebRtcConnection {
 
                             self.channels.insert(d.id, Substream {});
 
-                            return Propagated::Noop;
+                            // TODO: inform protocol that a substream has been opened
+                            // TODO: introduce some channel-based substream type
+                            // TOOD
+
+                            return WebRtcEvent::Noop;
                         }
                     }
                 }
 
-                // return Propagated::Noop;
+                // return WebRtcEvent::Noop;
                 todo!("no supported protocol found");
             }
             result => todo!("unexpected result: {result:?}"),
         }
     }
 
-    fn process_multistream_select_confirmation(&mut self, d: ChannelData) -> Propagated {
+    fn process_multistream_select_confirmation(&mut self, d: ChannelData) -> WebRtcEvent {
         tracing::debug!(
             target: LOG_TARGET,
             channel_id = ?d.id,
@@ -581,10 +585,10 @@ impl WebRtcConnection {
 
         if let Some(_message) = message.message {}
 
-        Propagated::Noop
+        WebRtcEvent::Noop
     }
 
-    async fn on_channel_data(&mut self, d: ChannelData) -> Propagated {
+    async fn on_channel_data(&mut self, d: ChannelData) -> WebRtcEvent {
         match &self.state {
             State::HandshakeSent { .. } => return self.on_noise_channel_data(d.data).await,
             State::Open { .. } => match self.channels.get_mut(&d.id) {

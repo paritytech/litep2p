@@ -319,7 +319,7 @@ impl Transport for WebRtcTransport {
     }
 }
 
-fn propagate(clients: &mut HashMap<SocketAddr, WebRtcConnection>, to_propagate: Vec<Propagated>) {
+fn propagate(clients: &mut HashMap<SocketAddr, WebRtcConnection>, to_propagate: Vec<Event>) {
     for p in to_propagate {
         let Some(client_id) = p.client_id() else {
             // If the event doesn't have a client id, it can't be propagated,
@@ -334,7 +334,7 @@ fn propagate(clients: &mut HashMap<SocketAddr, WebRtcConnection>, to_propagate: 
             }
 
             match &p {
-                Propagated::Noop | Propagated::Timeout(_) => {}
+                Event::Noop | Event::Timeout(_) => {}
             }
         }
     }
@@ -377,7 +377,7 @@ async fn read_socket_input<'a>(
 
 /// Events propagated between client.
 #[allow(clippy::large_enum_variant)]
-enum Propagated {
+enum WebRtcEvent {
     /// When we have nothing to propagate.
     Noop,
 
@@ -385,7 +385,7 @@ enum Propagated {
     Timeout(Instant),
 }
 
-impl Propagated {
+impl WebRtcEvent {
     /// Get client id, if the propagated event has a client id.
     fn client_id(&self) -> Option<ConnectionId> {
         None
