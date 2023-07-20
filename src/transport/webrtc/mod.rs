@@ -40,6 +40,7 @@ use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -64,7 +65,7 @@ pub(crate) struct WebRtcTransport {
     context: TransportContext,
 
     /// UDP socket.
-    socket: UdpSocket,
+    socket: Arc<UdpSocket>,
 
     /// DTLS certificate.
     dtls_cert: DtlsCert,
@@ -169,6 +170,41 @@ impl WebRtcTransport {
 
         (rtc, noise_channel_id)
     }
+
+    async fn read_socket_input<'a>(
+        &mut self,
+        buf: &'a mut Vec<u8>,
+        duration: Duration,
+    ) -> Option<Input<'a>> {
+        buf.resize(2000, 0);
+
+        tokio::select! {
+            result = self.socket.recv_from(buf) => match result {
+                Ok((n, source)) => {
+                    buf.truncate(n);
+
+                    // Parse data to a DatagramRecv, which help preparse network data to
+                    // figure out the multiplexing of all protocols on one UDP port.
+                    let Ok(contents) = buf.as_slice().try_into() else {
+                        return None;
+                    };
+
+                    Some(Input::Receive(
+                        Instant::now(),
+                        Receive {
+                            source,
+                            destination: self.socket.local_addr().unwrap(),
+                            contents,
+                        },
+                    ))
+                }
+                Err(error) => panic!("error: {error:?}"),
+            },
+            _ = tokio::time::sleep(duration) => {
+                None
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -198,9 +234,9 @@ impl Transport for WebRtcTransport {
         Ok(Self {
             _rx,
             context,
-            socket,
             dtls_cert,
             listen_address,
+            socket: Arc::new(socket),
             next_connection_id: ConnectionId::new(),
         })
     }
@@ -234,6 +270,7 @@ impl Transport for WebRtcTransport {
 
             let mut to_propagate = Vec::new();
             for (_, client) in clients.iter_mut() {
+                // TODO: poll output polls the rtc client but also the substreams and context
                 let value = client.poll_output(&self.socket).await;
                 to_propagate.push(value);
             }
@@ -258,7 +295,7 @@ impl Transport for WebRtcTransport {
             // The read timeout is not allowed to be 0. In case it is 0, we set 1 millisecond.
             let duration = (timeout - Instant::now()).max(Duration::from_millis(1));
 
-            if let Some(input) = read_socket_input(&self.socket, &mut buf, duration).await {
+            if let Some(input) = self.read_socket_input(&mut buf, duration).await {
                 match input {
                     Input::Timeout(_) => {}
                     Input::Receive(
@@ -332,41 +369,6 @@ impl Transport for WebRtcTransport {
             for (_, client) in &mut clients {
                 client.handle_input(Input::Timeout(now));
             }
-        }
-    }
-}
-
-async fn read_socket_input<'a>(
-    socket: &UdpSocket,
-    buf: &'a mut Vec<u8>,
-    duration: Duration,
-) -> Option<Input<'a>> {
-    buf.resize(2000, 0);
-
-    tokio::select! {
-        result = socket.recv_from(buf) => match result {
-            Ok((n, source)) => {
-                buf.truncate(n);
-
-                // Parse data to a DatagramRecv, which help preparse network data to
-                // figure out the multiplexing of all protocols on one UDP port.
-                let Ok(contents) = buf.as_slice().try_into() else {
-                    return None;
-                };
-
-                Some(Input::Receive(
-                    Instant::now(),
-                    Receive {
-                        source,
-                        destination: socket.local_addr().unwrap(),
-                        contents,
-                    },
-                ))
-            }
-            Err(error) => panic!("error: {error:?}"),
-        },
-        _ = tokio::time::sleep(duration) => {
-            None
         }
     }
 }
