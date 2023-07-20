@@ -271,7 +271,7 @@ impl Transport for WebRtcTransport {
             let mut to_propagate = Vec::new();
             for (_, client) in clients.iter_mut() {
                 // TODO: poll output polls the rtc client but also the substreams and context
-                let value = client.poll_output(&self.socket).await;
+                let value = client.poll_output().await;
                 to_propagate.push(value);
             }
 
@@ -322,6 +322,7 @@ impl Transport for WebRtcTransport {
                                         self.context.keypair.clone(),
                                         self.context.clone(),
                                         source,
+                                        Arc::clone(&self.socket),
                                     ),
                                 );
                             }

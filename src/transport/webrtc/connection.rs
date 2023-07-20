@@ -40,7 +40,7 @@ use str0m::{
 use tokio::net::UdpSocket;
 use tokio_util::codec::{Decoder, Encoder};
 
-use std::{collections::HashMap, net::SocketAddr};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::connection";
@@ -289,6 +289,9 @@ pub(super) struct WebRtcConnection {
 
     /// Address
     address: SocketAddr,
+
+    /// Transport socket.
+    socket: Arc<UdpSocket>,
 }
 
 impl WebRtcConnection {
@@ -299,9 +302,11 @@ impl WebRtcConnection {
         id_keypair: Keypair,
         context: TransportContext,
         address: SocketAddr,
+        socket: Arc<UdpSocket>,
     ) -> WebRtcConnection {
         WebRtcConnection {
             rtc,
+            socket,
             address,
             context,
             id_keypair,
@@ -332,13 +337,13 @@ impl WebRtcConnection {
         }
     }
 
-    pub(super) async fn poll_output(&mut self, socket: &UdpSocket) -> WebRtcEvent {
+    pub(super) async fn poll_output(&mut self) -> WebRtcEvent {
         if !self.rtc.is_alive() {
             return WebRtcEvent::Noop;
         }
 
         match self.rtc.poll_output() {
-            Ok(output) => self.handle_output(output, socket).await,
+            Ok(output) => self.handle_output(output).await,
             Err(e) => {
                 println!(
                     "WebRtcConnection ({:?}) poll_output failed: {:?}",
@@ -350,12 +355,12 @@ impl WebRtcConnection {
         }
     }
 
-    async fn handle_output(&mut self, output: Output, socket: &UdpSocket) -> WebRtcEvent {
+    async fn handle_output(&mut self, output: Output) -> WebRtcEvent {
         match output {
             Output::Transmit(transmit) => {
                 dbg!(&transmit);
 
-                socket
+                self.socket
                     .send_to(&transmit.contents, transmit.destination)
                     .await
                     .expect("sending UDP data");
