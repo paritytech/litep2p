@@ -76,6 +76,9 @@ pub(crate) struct WebRtcTransport {
     /// Next connection id.
     next_connection_id: ConnectionId,
 
+    /// Connected peers.
+    peers: HashMap<SocketAddr, WebRtcConnection>,
+
     /// RX channel for receiving commands from `Litep2p`.
     _rx: Receiver<TransportCommand>,
 }
@@ -236,6 +239,7 @@ impl Transport for WebRtcTransport {
             context,
             dtls_cert,
             listen_address,
+            peers: HashMap::new(),
             socket: Arc::new(socket),
             next_connection_id: ConnectionId::new(),
         })
@@ -261,15 +265,14 @@ impl Transport for WebRtcTransport {
 
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()> {
-        let mut clients: HashMap<SocketAddr, WebRtcConnection> = HashMap::new();
         let mut buf = vec![0; 2000];
 
         loop {
             // Clean out disconnected clients
-            clients.retain(|_, c| c.rtc.is_alive());
+            self.peers.retain(|_, c| c.rtc.is_alive());
 
             let mut to_propagate = Vec::new();
-            for (_, client) in clients.iter_mut() {
+            for (_, client) in self.peers.iter_mut() {
                 // TODO: poll output polls the rtc client but also the substreams and context
                 let value = client.poll_output().await;
                 to_propagate.push(value);
@@ -296,6 +299,9 @@ impl Transport for WebRtcTransport {
             let duration = (timeout - Instant::now()).max(Duration::from_millis(1));
 
             if let Some(input) = self.read_socket_input(&mut buf, duration).await {
+                // TODO: if `source` does not exist in `clients`, parse the message right away
+                // TODO: otherwise pass it to the installed client directly
+
                 match input {
                     Input::Timeout(_) => {}
                     Input::Receive(
@@ -309,11 +315,11 @@ impl Transport for WebRtcTransport {
                         if let Some((u, p)) = message.split_username() {
                             tracing::debug!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
 
-                            if !clients.contains_key(&source) {
+                            if !self.peers.contains_key(&source) {
                                 let (rtc, noise_channel_id) =
                                     self.make_rtc_client(u, p, source, destination);
 
-                                clients.insert(
+                                self.peers.insert(
                                     source,
                                     WebRtcConnection::new(
                                         rtc,
@@ -327,7 +333,7 @@ impl Transport for WebRtcTransport {
                                 );
                             }
 
-                            match clients.get_mut(&source) {
+                            match self.peers.get_mut(&source) {
                                 Some(client) => {
                                     if client.rtc.accepts(&Input::Receive(
                                         Instant::now(),
@@ -355,7 +361,7 @@ impl Transport for WebRtcTransport {
                         }
                     }
                     other => {
-                        for (_, c) in clients.iter_mut() {
+                        for (_, c) in self.peers.iter_mut() {
                             if c.accepts(&other) {
                                 c.handle_input(other);
                                 break;
@@ -367,7 +373,7 @@ impl Transport for WebRtcTransport {
 
             // Drive time forward in all clients.
             let now = Instant::now();
-            for (_, client) in &mut clients {
+            for (_, client) in self.peers.iter_mut() {
                 client.handle_input(Input::Timeout(now));
             }
         }
