@@ -35,12 +35,13 @@ use prost::Message;
 use str0m::{
     change::Fingerprint,
     channel::{ChannelData, ChannelId},
+    net::{DatagramRecv, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
 use tokio::net::UdpSocket;
 use tokio_util::codec::{Decoder, Encoder};
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Instant};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::connection";
@@ -317,10 +318,6 @@ impl WebRtcConnection {
         }
     }
 
-    pub(super) fn accepts(&self, input: &Input) -> bool {
-        self.rtc.accepts(input)
-    }
-
     pub(super) fn handle_input(&mut self, input: Input) {
         if !self.rtc.is_alive() {
             return;
@@ -352,6 +349,34 @@ impl WebRtcConnection {
                 self.rtc.disconnect();
                 WebRtcEvent::Noop
             }
+        }
+    }
+
+    /// Handle data received from peer.
+    pub(super) async fn on_input(
+        &mut self,
+        source: SocketAddr,
+        destination: SocketAddr,
+        buffer: Vec<u8>,
+    ) -> crate::Result<()> {
+        let message = Input::Receive(
+            Instant::now(),
+            Receive {
+                source,
+                destination,
+                contents: buffer
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::InvalidData)?,
+            },
+        );
+
+        match self.rtc.accepts(&message) {
+            true => self.rtc.handle_input(message).map_err(|error| {
+                tracing::debug!(target: LOG_TARGET, ?source, ?error, "failed to handle data");
+                Error::InputRejected
+            }),
+            false => return Err(Error::InputRejected),
         }
     }
 

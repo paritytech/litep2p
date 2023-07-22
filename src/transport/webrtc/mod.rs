@@ -175,11 +175,16 @@ impl WebRtcTransport {
     }
 
     /// Handle socket input.
-    async fn on_socket_input<'a>(
-        &mut self,
-        source: SocketAddr,
-        buffer: &'a Vec<u8>,
-    ) -> crate::Result<()> {
+    async fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<()> {
+        // if the `Rtc` object already exists for `souce`, pass the message directly to that connection.
+        if let Some(peer) = self.peers.get_mut(&source) {
+            return peer
+                .on_input(source, self.socket.local_addr().unwrap(), buffer)
+                .await;
+        }
+
+        // if the peer doesn't exist, decode the message and expect to receive `Stun`
+        // so that a new connection can be initialized
         let contents: DatagramRecv = buffer
             .as_slice()
             .try_into()
@@ -236,20 +241,12 @@ impl WebRtcTransport {
                 }
             }
             message => {
-                let message = Input::Receive(
-                    Instant::now(),
-                    Receive {
-                        source,
-                        destination: self.socket.local_addr().unwrap(),
-                        contents: message,
-                    },
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?source,
+                    ?message,
+                    "received unexpected message for a connection that doesn't eixst"
                 );
-                for (_, c) in self.peers.iter_mut() {
-                    if c.accepts(&message) {
-                        c.handle_input(message);
-                        break;
-                    }
-                }
             }
         }
 
@@ -312,8 +309,6 @@ impl Transport for WebRtcTransport {
 
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()> {
-        let mut buf = vec![0; 2000];
-
         loop {
             // Clean out disconnected clients
             self.peers.retain(|_, c| c.rtc.is_alive());
@@ -345,14 +340,16 @@ impl Transport for WebRtcTransport {
             // The read timeout is not allowed to be 0. In case it is 0, we set 1 millisecond.
             let duration = (timeout - Instant::now()).max(Duration::from_millis(1));
 
-            buf.resize(2000, 0);
+            let mut buf = vec![0; 2000];
 
             tokio::select! {
                 result = self.socket.recv_from(&mut buf) => match result {
                     Ok((n, source)) => {
                         buf.truncate(n);
 
-                        let _ = self.on_socket_input(source, &buf).await;
+                        if let Err(error) = self.on_socket_input(source, buf).await {
+                            tracing::error!(target: LOG_TARGET, ?error, "failed to handle input");
+                        }
 
                     }
                     Err(error) => panic!("error: {error:?}"), // TODO: don't panic

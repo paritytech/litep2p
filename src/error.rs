@@ -88,6 +88,8 @@ pub enum Error {
     CertificateGeneration(#[from] crate::crypto::tls::certificate::GenError),
     #[error("Invalid data")]
     InvalidData,
+    #[error("Input rejected")]
+    InputRejected,
 }
 
 #[derive(Debug, thiserror::Error)]
