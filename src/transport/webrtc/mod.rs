@@ -192,52 +192,50 @@ impl WebRtcTransport {
 
         match contents {
             DatagramRecv::Stun(message) => {
-                if let Some((u, p)) = message.split_username() {
-                    tracing::debug!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
+                if let Some((ufrag, pass)) = message.split_username() {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?source,
+                        ?ufrag,
+                        ?pass,
+                        "received stun message"
+                    );
 
-                    if !self.peers.contains_key(&source) {
-                        let (rtc, noise_channel_id) =
-                            self.make_rtc_client(u, p, source, self.socket.local_addr().unwrap());
+                    let (mut rtc, noise_channel_id) = self.make_rtc_client(
+                        ufrag,
+                        pass,
+                        source,
+                        self.socket.local_addr().unwrap(),
+                    );
 
-                        self.peers.insert(
+                    let input = Input::Receive(
+                        Instant::now(),
+                        Receive {
                             source,
-                            WebRtcConnection::new(
-                                rtc,
-                                self.next_connection_id.next(),
-                                noise_channel_id,
-                                self.context.keypair.clone(),
-                                self.context.clone(),
-                                source,
-                                Arc::clone(&self.socket),
-                            ),
-                        );
+                            destination: self.socket.local_addr().unwrap(),
+                            contents: DatagramRecv::Stun(message.clone()),
+                        },
+                    );
+
+                    match rtc.accepts(&input) {
+                        true => rtc
+                            .handle_input(input)
+                            .expect("client to handle input successfully"),
+                        false => panic!("client to accept input"),
                     }
 
-                    match self.peers.get_mut(&source) {
-                        Some(client) => {
-                            if client.rtc.accepts(&Input::Receive(
-                                Instant::now(),
-                                Receive {
-                                    source,
-                                    destination: self.socket.local_addr().unwrap(),
-                                    contents: DatagramRecv::Stun(message.clone()),
-                                },
-                            )) {
-                                client
-                                    .rtc
-                                    .handle_input(Input::Receive(
-                                        Instant::now(),
-                                        Receive {
-                                            source,
-                                            destination: self.socket.local_addr().unwrap(),
-                                            contents: DatagramRecv::Stun(message),
-                                        },
-                                    ))
-                                    .unwrap();
-                            }
-                        }
-                        None => panic!("client does not exist"),
-                    }
+                    self.peers.insert(
+                        source,
+                        WebRtcConnection::new(
+                            rtc,
+                            self.next_connection_id.next(),
+                            noise_channel_id,
+                            self.context.keypair.clone(),
+                            self.context.clone(),
+                            source,
+                            Arc::clone(&self.socket),
+                        ),
+                    );
                 }
             }
             message => {
