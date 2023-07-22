@@ -32,7 +32,7 @@ use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
     change::{DtlsCert, IceCreds},
     channel::{ChannelConfig, ChannelId},
-    net::{self, DatagramRecv, Receive},
+    net::{DatagramRecv, Receive},
     Candidate, Input, Rtc,
 };
 use tokio::{net::UdpSocket, sync::mpsc::Receiver};
@@ -80,7 +80,7 @@ pub(crate) struct WebRtcTransport {
     peers: HashMap<SocketAddr, WebRtcConnection>,
 
     /// RX channel for receiving commands from `Litep2p`.
-    _rx: Receiver<TransportCommand>,
+    rx: Receiver<TransportCommand>,
 }
 
 impl WebRtcTransport {
@@ -174,39 +174,86 @@ impl WebRtcTransport {
         (rtc, noise_channel_id)
     }
 
-    async fn read_socket_input<'a>(
+    /// Handle socket input.
+    async fn on_socket_input<'a>(
         &mut self,
-        buf: &'a mut Vec<u8>,
-        duration: Duration,
-    ) -> Option<Input<'a>> {
-        buf.resize(2000, 0);
+        source: SocketAddr,
+        buffer: &'a Vec<u8>,
+    ) -> crate::Result<()> {
+        let contents: DatagramRecv = buffer
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::InvalidData)?;
 
-        tokio::select! {
-            result = self.socket.recv_from(buf) => match result {
-                Ok((n, source)) => {
-                    buf.truncate(n);
+        match contents {
+            DatagramRecv::Stun(message) => {
+                if let Some((u, p)) = message.split_username() {
+                    tracing::debug!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
 
-                    // Parse data to a DatagramRecv, which help preparse network data to
-                    // figure out the multiplexing of all protocols on one UDP port.
-                    let Ok(contents) = buf.as_slice().try_into() else {
-                        return None;
-                    };
+                    if !self.peers.contains_key(&source) {
+                        let (rtc, noise_channel_id) =
+                            self.make_rtc_client(u, p, source, self.socket.local_addr().unwrap());
 
-                    Some(Input::Receive(
-                        Instant::now(),
-                        Receive {
+                        self.peers.insert(
                             source,
-                            destination: self.socket.local_addr().unwrap(),
-                            contents,
-                        },
-                    ))
+                            WebRtcConnection::new(
+                                rtc,
+                                self.next_connection_id.next(),
+                                noise_channel_id,
+                                self.context.keypair.clone(),
+                                self.context.clone(),
+                                source,
+                                Arc::clone(&self.socket),
+                            ),
+                        );
+                    }
+
+                    match self.peers.get_mut(&source) {
+                        Some(client) => {
+                            if client.rtc.accepts(&Input::Receive(
+                                Instant::now(),
+                                Receive {
+                                    source,
+                                    destination: self.socket.local_addr().unwrap(),
+                                    contents: DatagramRecv::Stun(message.clone()),
+                                },
+                            )) {
+                                client
+                                    .rtc
+                                    .handle_input(Input::Receive(
+                                        Instant::now(),
+                                        Receive {
+                                            source,
+                                            destination: self.socket.local_addr().unwrap(),
+                                            contents: DatagramRecv::Stun(message),
+                                        },
+                                    ))
+                                    .unwrap();
+                            }
+                        }
+                        None => panic!("client does not exist"),
+                    }
                 }
-                Err(error) => panic!("error: {error:?}"),
-            },
-            _ = tokio::time::sleep(duration) => {
-                None
+            }
+            message => {
+                let message = Input::Receive(
+                    Instant::now(),
+                    Receive {
+                        source,
+                        destination: self.socket.local_addr().unwrap(),
+                        contents: message,
+                    },
+                );
+                for (_, c) in self.peers.iter_mut() {
+                    if c.accepts(&message) {
+                        c.handle_input(message);
+                        break;
+                    }
+                }
             }
         }
+
+        Ok(())
     }
 }
 
@@ -218,7 +265,7 @@ impl Transport for WebRtcTransport {
     async fn new(
         context: TransportContext,
         config: Self::Config,
-        _rx: Receiver<TransportCommand>,
+        rx: Receiver<TransportCommand>,
     ) -> crate::Result<Self>
     where
         Self: Sized,
@@ -235,7 +282,7 @@ impl Transport for WebRtcTransport {
         let dtls_cert = DtlsCert::new();
 
         Ok(Self {
-            _rx,
+            rx,
             context,
             dtls_cert,
             listen_address,
@@ -298,80 +345,28 @@ impl Transport for WebRtcTransport {
             // The read timeout is not allowed to be 0. In case it is 0, we set 1 millisecond.
             let duration = (timeout - Instant::now()).max(Duration::from_millis(1));
 
-            if let Some(input) = self.read_socket_input(&mut buf, duration).await {
-                // TODO: if `source` does not exist in `clients`, parse the message right away
-                // TODO: otherwise pass it to the installed client directly
+            buf.resize(2000, 0);
 
-                match input {
-                    Input::Timeout(_) => {}
-                    Input::Receive(
-                        _,
-                        net::Receive {
-                            source,
-                            destination,
-                            contents: DatagramRecv::Stun(message),
-                        },
-                    ) => {
-                        if let Some((u, p)) = message.split_username() {
-                            tracing::debug!(target: LOG_TARGET, "Received STUN from {}:{}", u, p);
+            tokio::select! {
+                result = self.socket.recv_from(&mut buf) => match result {
+                    Ok((n, source)) => {
+                        buf.truncate(n);
 
-                            if !self.peers.contains_key(&source) {
-                                let (rtc, noise_channel_id) =
-                                    self.make_rtc_client(u, p, source, destination);
+                        let _ = self.on_socket_input(source, &buf).await;
 
-                                self.peers.insert(
-                                    source,
-                                    WebRtcConnection::new(
-                                        rtc,
-                                        self.next_connection_id.next(),
-                                        noise_channel_id,
-                                        self.context.keypair.clone(),
-                                        self.context.clone(),
-                                        source,
-                                        Arc::clone(&self.socket),
-                                    ),
-                                );
-                            }
-
-                            match self.peers.get_mut(&source) {
-                                Some(client) => {
-                                    if client.rtc.accepts(&Input::Receive(
-                                        Instant::now(),
-                                        net::Receive {
-                                            source,
-                                            destination,
-                                            contents: DatagramRecv::Stun(message.clone()),
-                                        },
-                                    )) {
-                                        client
-                                            .rtc
-                                            .handle_input(Input::Receive(
-                                                Instant::now(),
-                                                net::Receive {
-                                                    source,
-                                                    destination,
-                                                    contents: DatagramRecv::Stun(message),
-                                                },
-                                            ))
-                                            .unwrap();
-                                    }
-                                }
-                                None => panic!("client does not exist"),
-                            }
-                        }
                     }
-                    other => {
-                        for (_, c) in self.peers.iter_mut() {
-                            if c.accepts(&other) {
-                                c.handle_input(other);
-                                break;
-                            }
-                        }
-                    }
+                    Err(error) => panic!("error: {error:?}"), // TODO: don't panic
+                },
+                event = self.rx.recv() => match event {
+                    Some(_event) => {}
+                    None => return Err(Error::EssentialTaskClosed),
+                },
+                _ = tokio::time::sleep(duration) => {
+                    // None
                 }
             }
 
-            // Drive time forward in all clients.
+            // drive time forward in all clients.
             let now = Instant::now();
             for (_, client) in self.peers.iter_mut() {
                 client.handle_input(Input::Timeout(now));

@@ -86,6 +86,8 @@ pub enum Error {
     TransportError(String),
     #[error("Failed to generate certificate")]
     CertificateGeneration(#[from] crate::crypto::tls::certificate::GenError),
+    #[error("Invalid data")]
+    InvalidData,
 }
 
 #[derive(Debug, thiserror::Error)]
