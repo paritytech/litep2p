@@ -35,10 +35,10 @@ use prost::Message;
 use str0m::{
     change::Fingerprint,
     channel::{ChannelData, ChannelId},
-    net::{DatagramRecv, Receive},
+    net::Receive,
     Event, IceConnectionState, Input, Output, Rtc,
 };
-use tokio::net::UdpSocket;
+use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 use tokio_util::codec::{Decoder, Encoder};
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Instant};
@@ -288,11 +288,17 @@ pub(super) struct WebRtcConnection {
     /// WebRTC data channels.
     channels: HashMap<ChannelId, Substream>,
 
-    /// Address
-    address: SocketAddr,
+    /// Peer address
+    peer_address: SocketAddr,
+
+    /// Local address.
+    local_address: SocketAddr,
 
     /// Transport socket.
     socket: Arc<UdpSocket>,
+
+    /// RX channel for receiving datagrams from the transport.
+    dgram_rx: Receiver<Vec<u8>>,
 }
 
 impl WebRtcConnection {
@@ -302,15 +308,19 @@ impl WebRtcConnection {
         _noise_channel_id: ChannelId,
         id_keypair: Keypair,
         context: TransportContext,
-        address: SocketAddr,
+        peer_address: SocketAddr,
+        local_address: SocketAddr,
         socket: Arc<UdpSocket>,
+        dgram_rx: Receiver<Vec<u8>>,
     ) -> WebRtcConnection {
         WebRtcConnection {
             rtc,
             socket,
-            address,
+            dgram_rx,
             context,
             id_keypair,
+            peer_address,
+            local_address,
             connection_id,
             _noise_channel_id,
             state: State::Closed,
@@ -516,8 +526,8 @@ impl WebRtcConnection {
             .expect("fingerprint's len to be 32 bytes");
 
         let address = Multiaddr::empty()
-            .with(Protocol::from(self.address.ip()))
-            .with(Protocol::Udp(self.address.port()))
+            .with(Protocol::from(self.peer_address.ip()))
+            .with(Protocol::Udp(self.peer_address.port()))
             .with(Protocol::WebRTC)
             .with(Protocol::Certhash(certificate));
         // TODO: add peerid

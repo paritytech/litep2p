@@ -35,7 +35,10 @@ use str0m::{
     net::{DatagramRecv, Receive},
     Candidate, Input, Rtc,
 };
-use tokio::{net::UdpSocket, sync::mpsc::Receiver};
+use tokio::{
+    net::UdpSocket,
+    sync::mpsc::{channel, Receiver, Sender},
+};
 
 use std::{
     collections::HashMap,
@@ -77,7 +80,7 @@ pub(crate) struct WebRtcTransport {
     next_connection_id: ConnectionId,
 
     /// Connected peers.
-    peers: HashMap<SocketAddr, WebRtcConnection>,
+    peers: HashMap<SocketAddr, (Sender<Vec<u8>>, WebRtcConnection)>,
 
     /// RX channel for receiving commands from `Litep2p`.
     rx: Receiver<TransportCommand>,
@@ -177,7 +180,7 @@ impl WebRtcTransport {
     /// Handle socket input.
     async fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<()> {
         // if the `Rtc` object already exists for `souce`, pass the message directly to that connection.
-        if let Some(peer) = self.peers.get_mut(&source) {
+        if let Some((_, peer)) = self.peers.get_mut(&source) {
             return peer
                 .on_input(source, self.socket.local_addr().unwrap(), buffer)
                 .await;
@@ -224,16 +227,23 @@ impl WebRtcTransport {
                         false => panic!("client to accept input"),
                     }
 
+                    let (tx, rx) = channel(64);
+
                     self.peers.insert(
                         source,
-                        WebRtcConnection::new(
-                            rtc,
-                            self.next_connection_id.next(),
-                            noise_channel_id,
-                            self.context.keypair.clone(),
-                            self.context.clone(),
-                            source,
-                            Arc::clone(&self.socket),
+                        (
+                            tx,
+                            WebRtcConnection::new(
+                                rtc,
+                                self.next_connection_id.next(),
+                                noise_channel_id,
+                                self.context.keypair.clone(),
+                                self.context.clone(),
+                                source,
+                                self.listen_address,
+                                Arc::clone(&self.socket),
+                                rx,
+                            ),
                         ),
                     );
                 }
@@ -309,10 +319,10 @@ impl Transport for WebRtcTransport {
     async fn start(mut self) -> crate::Result<()> {
         loop {
             // Clean out disconnected clients
-            self.peers.retain(|_, c| c.rtc.is_alive());
+            self.peers.retain(|_, (_, c)| c.rtc.is_alive());
 
             let mut to_propagate = Vec::new();
-            for (_, client) in self.peers.iter_mut() {
+            for (_, (_, client)) in self.peers.iter_mut() {
                 // TODO: poll output polls the rtc client but also the substreams and context
                 let value = client.poll_output().await;
                 to_propagate.push(value);
@@ -363,7 +373,7 @@ impl Transport for WebRtcTransport {
 
             // drive time forward in all clients.
             let now = Instant::now();
-            for (_, client) in self.peers.iter_mut() {
+            for (_, (_, client)) in self.peers.iter_mut() {
                 client.handle_input(Input::Timeout(now));
             }
         }
