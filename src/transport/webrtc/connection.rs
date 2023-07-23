@@ -41,7 +41,12 @@ use str0m::{
 use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 use tokio_util::codec::{Decoder, Encoder};
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::connection";
@@ -351,10 +356,12 @@ impl WebRtcConnection {
 
         match self.rtc.poll_output() {
             Ok(output) => self.handle_output(output).await,
-            Err(e) => {
-                println!(
-                    "WebRtcConnection ({:?}) poll_output failed: {:?}",
-                    self.connection_id, e
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    connection_id = ?self.connection_id,
+                    ?error,
+                    "WebRtcConnection poll_output failed",
                 );
                 self.rtc.disconnect();
                 WebRtcEvent::Noop
@@ -363,17 +370,12 @@ impl WebRtcConnection {
     }
 
     /// Handle data received from peer.
-    pub(super) async fn on_input(
-        &mut self,
-        source: SocketAddr,
-        destination: SocketAddr,
-        buffer: Vec<u8>,
-    ) -> crate::Result<()> {
+    pub(super) async fn on_input(&mut self, buffer: Vec<u8>) -> crate::Result<()> {
         let message = Input::Receive(
             Instant::now(),
             Receive {
-                source,
-                destination,
+                source: self.peer_address,
+                destination: self.local_address,
                 contents: buffer
                     .as_slice()
                     .try_into()
@@ -383,7 +385,7 @@ impl WebRtcConnection {
 
         match self.rtc.accepts(&message) {
             true => self.rtc.handle_input(message).map_err(|error| {
-                tracing::debug!(target: LOG_TARGET, ?source, ?error, "failed to handle data");
+                tracing::debug!(target: LOG_TARGET, source = ?self.peer_address, ?error, "failed to handle data");
                 Error::InputRejected
             }),
             false => return Err(Error::InputRejected),
@@ -636,6 +638,53 @@ impl WebRtcConnection {
                 None => return self.negotiate_protocol(d),
             },
             _ => panic!("invalid state for connection"),
+        }
+    }
+
+    /// Run the event loop of a negotiated WebRTC connection.
+    pub(super) async fn run(mut self) -> crate::Result<()> {
+        // TODO:
+
+        loop {
+            let duration = match self.poll_output().await {
+                WebRtcEvent::Timeout(timeout) => {
+                    tracing::info!(target: LOG_TARGET, "TIMEOUT");
+                    let timeout =
+                        std::cmp::min(timeout, Instant::now() + Duration::from_millis(100));
+                    (timeout - Instant::now()).max(Duration::from_millis(1))
+                }
+                WebRtcEvent::Noop => continue,
+            };
+
+            tokio::select! {
+                message = self.dgram_rx.recv() => match message {
+                    Some(message) => {
+                        if let Err(error) = self.on_input(message).await {
+                            tracing::debug!(target: LOG_TARGET, ?error, "failed to handle input");
+                            todo!();
+                        }
+                    }
+                    None => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            source = ?self.peer_address,
+                            "transport shut down, shutting down connection",
+                        );
+                        return Ok(());
+                    }
+                },
+                _ = tokio::time::sleep(duration) => {}
+            }
+
+            // drive time forward in the client
+            if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to handle timeout for `Rtc`"
+                );
+                todo!();
+            }
         }
     }
 }
