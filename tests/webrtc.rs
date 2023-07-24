@@ -66,11 +66,15 @@ async fn webrtc_test() {
                 tracing::error!("litep2p event received: {event:?}");
             }
             event = ping_event_stream.next() => {
+                if std::matches!(event, None) {
+                    tracing::error!("ping event stream termintated");
+                    break
+                }
                 tracing::error!("ping event received: {event:?}");
             }
-            event = notif_event_stream.next_event() => {
-                tracing::error!("notification event received: {event:?}");
-            }
+            // event = notif_event_stream.next_event() => {
+            //     tracing::error!("notification event received: {event:?}");
+            // }
         }
     }
 }

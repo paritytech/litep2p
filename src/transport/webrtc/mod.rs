@@ -181,7 +181,6 @@ impl WebRtcTransport {
     async fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<()> {
         // if the `Rtc` object already exists for `souce`, pass the message directly to that connection.
         if let Some(tx) = self.peers.get_mut(&source) {
-            tracing::debug!(target: LOG_TARGET, ?source, "send input to peer");
             return tx.send(buffer).await.map_err(From::from);
         }
 

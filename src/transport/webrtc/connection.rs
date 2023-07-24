@@ -24,9 +24,10 @@ use crate::{
     error::{Error, NegotiationError},
     multistream_select::Message as MultiStreamMessage,
     peer_id::PeerId,
-    protocol::ProtocolSet,
+    protocol::{Direction, ProtocolSet},
+    substream::{channel::SubstreamBackend, SubstreamType},
     transport::{webrtc::WebRtcEvent, TransportContext},
-    types::ConnectionId,
+    types::{ConnectionId, SubstreamId},
 };
 
 use bytes::BytesMut;
@@ -38,7 +39,10 @@ use str0m::{
     net::Receive,
     Event, IceConnectionState, Input, Output, Rtc,
 };
-use tokio::{net::UdpSocket, sync::mpsc::Receiver};
+use tokio::{
+    net::UdpSocket,
+    sync::mpsc::{Receiver, Sender},
+};
 use tokio_util::codec::{Decoder, Encoder};
 
 use std::{
@@ -256,19 +260,31 @@ enum State {
     /// Connection is open.
     Open {
         /// Noise handshake state.
-        noise: snow::HandshakeState,
+        _noise: snow::HandshakeState,
 
         /// Noise keypair.
-        keypair: snow::Keypair,
+        _keypair: snow::Keypair,
 
         /// Protocol context.
         context: ProtocolSet,
     },
 }
 
-struct Substream {}
+/// Substream context.
+struct SubstreamContext {
+    /// `str0m` channel id.
+    channel_id: ChannelId,
 
-impl Substream {}
+    /// TX channel for sending messages to the protocol.
+    tx: Sender<Vec<u8>>,
+}
+
+impl SubstreamContext {
+    /// Create new [`SubstreamContext`].
+    pub fn new(channel_id: ChannelId, tx: Sender<Vec<u8>>) -> Self {
+        Self { channel_id, tx }
+    }
+}
 
 /// WebRTC connection.
 pub(super) struct WebRtcConnection {
@@ -291,7 +307,7 @@ pub(super) struct WebRtcConnection {
     context: TransportContext,
 
     /// WebRTC data channels.
-    channels: HashMap<ChannelId, Substream>,
+    channels: HashMap<SubstreamId, SubstreamContext>,
 
     /// Peer address
     peer_address: SocketAddr,
@@ -304,6 +320,15 @@ pub(super) struct WebRtcConnection {
 
     /// RX channel for receiving datagrams from the transport.
     dgram_rx: Receiver<Vec<u8>>,
+
+    /// Substream backend.
+    backend: SubstreamBackend,
+
+    /// Next substream ID.
+    substream_id: SubstreamId,
+
+    /// ID mappings.
+    id_mapping: HashMap<ChannelId, SubstreamId>,
 }
 
 impl WebRtcConnection {
@@ -330,22 +355,9 @@ impl WebRtcConnection {
             _noise_channel_id,
             state: State::Closed,
             channels: HashMap::new(),
-        }
-    }
-
-    pub(super) fn handle_input(&mut self, input: Input) {
-        if !self.rtc.is_alive() {
-            return;
-        }
-
-        if let Err(error) = self.rtc.handle_input(input) {
-            tracing::warn!(
-                target: LOG_TARGET,
-                ?error,
-                connection_id = ?self.connection_id,
-                "peer disconnected"
-            );
-            self.rtc.disconnect();
+            id_mapping: HashMap::new(),
+            backend: SubstreamBackend::new(),
+            substream_id: SubstreamId::new(),
         }
     }
 
@@ -420,8 +432,8 @@ impl WebRtcConnection {
                     WebRtcEvent::Noop
                 }
                 Event::ChannelData(data) => self.on_channel_data(data).await,
-                Event::ChannelClose(_) => {
-                    tracing::warn!("channel closed");
+                Event::ChannelClose(channel_id) => {
+                    tracing::warn!("channel closed: {channel_id:?}");
                     WebRtcEvent::Noop
                 }
                 Event::Connected => {
@@ -544,8 +556,8 @@ impl WebRtcConnection {
             .await;
 
         self.state = State::Open {
-            noise,
-            keypair,
+            _noise: noise,
+            _keypair: keypair,
             context,
         };
 
@@ -553,7 +565,7 @@ impl WebRtcConnection {
     }
 
     /// Negotiate protocol for the channel
-    fn negotiate_protocol(&mut self, d: ChannelData) -> WebRtcEvent {
+    async fn negotiate_protocol(&mut self, d: ChannelData) -> WebRtcEvent {
         tracing::error!(target: LOG_TARGET, "negotiate protocol for the channel");
 
         // TODO: no unwraps
@@ -597,7 +609,25 @@ impl WebRtcConnection {
                                 .write(true, message.as_ref())
                                 .unwrap();
 
-                            self.channels.insert(d.id, Substream {});
+                            let substream_id = self.substream_id.next();
+                            let (substream, tx) = self.backend.substream(substream_id);
+                            self.id_mapping.insert(d.id, substream_id);
+                            self.channels
+                                .insert(substream_id, SubstreamContext::new(d.id, tx));
+
+                            if let State::Open { context, .. } = &mut self.state {
+                                context
+                                    .report_substream_open(
+                                        PeerId::random(),
+                                        supported.clone(),
+                                        Direction::Inbound,
+                                        SubstreamType::<tokio::net::TcpStream>::ChannelBackend(
+                                            substream,
+                                        ),
+                                    )
+                                    .await
+                                    .unwrap();
+                            }
 
                             // TODO: inform protocol that a substream has been opened
                             // TODO: introduce some channel-based substream type
@@ -615,7 +645,7 @@ impl WebRtcConnection {
         }
     }
 
-    fn process_multistream_select_confirmation(&mut self, d: ChannelData) -> WebRtcEvent {
+    async fn process_multistream_select_confirmation(&mut self, d: ChannelData) -> WebRtcEvent {
         tracing::debug!(
             target: LOG_TARGET,
             channel_id = ?d.id,
@@ -625,7 +655,22 @@ impl WebRtcConnection {
         // TODO: no unwraps
         let message = new_read_remote_reply(&d.data).unwrap();
 
-        if let Some(_message) = message.message {}
+        tracing::warn!(target: LOG_TARGET, "MESSAGE: {message:?}");
+
+        if let Some(message) = message.message {
+            match self.id_mapping.get(&d.id) {
+                Some(id) => match self.channels.get_mut(&id) {
+                    Some(context) => {
+                        tracing::error!(target: LOG_TARGET, "try send data to protocol");
+                        if let Err(error) = context.tx.send(message).await {
+                            tracing::error!(target: LOG_TARGET, ?error, "failed to send");
+                        }
+                    }
+                    None => panic!("channel does not exist"),
+                },
+                None => tracing::debug!(target: LOG_TARGET, "zzz"),
+            }
+        }
 
         WebRtcEvent::Noop
     }
@@ -633,9 +678,9 @@ impl WebRtcConnection {
     async fn on_channel_data(&mut self, d: ChannelData) -> WebRtcEvent {
         match &self.state {
             State::HandshakeSent { .. } => return self.on_noise_channel_data(d.data).await,
-            State::Open { .. } => match self.channels.get_mut(&d.id) {
-                Some(_) => return self.process_multistream_select_confirmation(d),
-                None => return self.negotiate_protocol(d),
+            State::Open { .. } => match self.id_mapping.get(&d.id) {
+                Some(_) => return self.process_multistream_select_confirmation(d).await,
+                None => return self.negotiate_protocol(d).await,
             },
             _ => panic!("invalid state for connection"),
         }
@@ -653,6 +698,8 @@ impl WebRtcConnection {
                 WebRtcEvent::Noop => continue,
             };
 
+            // TODO: check if peer is still alive
+
             tokio::select! {
                 message = self.dgram_rx.recv() => match message {
                     Some(message) => {
@@ -669,6 +716,17 @@ impl WebRtcConnection {
                         return Ok(());
                     }
                 },
+                event = self.backend.next_event() => {
+                    tracing::info!(target: LOG_TARGET, "READ EVENT FROM PROTOCOL");
+                    let (id, message) = event.expect("channel to stay open");
+                    let channel_id = self.channels.get_mut(&id).expect("channel to exist").channel_id;
+
+                    self.rtc
+                        .channel(channel_id)
+                        .expect("channel to exist")
+                        .write(true, message.as_ref())
+                        .unwrap();
+                }
                 _ = tokio::time::sleep(duration) => {}
             }
 
