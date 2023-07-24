@@ -262,7 +262,10 @@ impl ProtocolSet {
                             Box::new(Framed::new(substream, UnsignedVarint::new()))
                         }
                     },
-                    SubstreamType::ChannelBackend(substream) => Box::new(substream),
+                    SubstreamType::ChannelBackend(mut substream) => {
+                        substream.apply_codec(info.codec.clone());
+                        Box::new(substream)
+                    }
                 };
 
                 info.tx
