@@ -25,6 +25,7 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
+    substream::SubstreamType,
     transport::{tcp::socket_addr_to_multi_addr, TransportContext},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
@@ -372,7 +373,7 @@ impl TcpConnection {
                             let substream = FuturesAsyncReadCompatExt::compat(substream);
 
                             if let Err(error) = self.context
-                                .report_substream_open(self.peer, protocol, direction, substream)
+                                .report_substream_open(self.peer, protocol, direction, SubstreamType::Raw(substream))
                                 .await
                             {
                                 tracing::error!(

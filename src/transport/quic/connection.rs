@@ -24,6 +24,7 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
+    substream::SubstreamType,
     transport::TransportContext,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
@@ -281,7 +282,7 @@ impl QuicConnection {
                             let substream = substream.io;
 
                             if let Err(error) = self.context
-                                .report_substream_open(self.peer, protocol, direction, substream)
+                                .report_substream_open(self.peer, protocol, direction, SubstreamType::Raw(substream))
                                 .await
                             {
                                 tracing::error!(

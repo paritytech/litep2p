@@ -39,7 +39,8 @@ use std::{
 // TODO: use substream id
 
 /// Channel-backed substream.
-pub(crate) struct Substream {
+#[derive(Debug)]
+pub struct Substream {
     /// Protocol ID.
     id: usize,
 
@@ -124,7 +125,7 @@ impl Stream for Substream {
 }
 
 // TODO: rename?
-pub(crate) struct SubstreamBackend {
+pub struct SubstreamBackend {
     /// TX channel for creating new [`Substream`] objects.
     tx: Sender<(usize, Vec<u8>)>,
 
@@ -141,12 +142,12 @@ impl SubstreamBackend {
     }
 
     /// Create new substream.
-    pub(crate) fn substream(&mut self, id: usize) -> (Substream, Sender<Vec<u8>>) {
+    pub fn substream(&mut self, id: usize) -> (Substream, Sender<Vec<u8>>) {
         Substream::new(id, self.tx.clone())
     }
 
     /// Poll next event.
-    pub(crate) async fn next_event(&mut self) -> Option<(usize, Vec<u8>)> {
+    pub async fn next_event(&mut self) -> Option<(usize, Vec<u8>)> {
         self.rx.recv().await
     }
 }

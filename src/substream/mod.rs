@@ -63,6 +63,18 @@ pub trait SubstreamSetKey: Hash + Unpin + Debug + PartialEq + Eq + Copy {}
 
 impl<K: Hash + Unpin + Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
 
+/// Substream types.
+pub enum SubstreamType<R: RawSubstream> {
+    /// Raw substream received from the transport.
+    Raw(R),
+
+    /// Channel-backend substreams.
+    ///
+    /// Transports that don't expose a substream that can be transferred to protocols
+    /// directly can use the channel-backen substream to communicate with installed protocols.
+    ChannelBackend(channel::Substream),
+}
+
 /// Substream set.
 #[derive(Debug, Default)]
 pub struct SubstreamSet<K: SubstreamSetKey> {

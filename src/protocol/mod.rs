@@ -24,7 +24,7 @@ use crate::{
     codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     error::Error,
     peer_id::PeerId,
-    substream::{RawSubstream, Substream},
+    substream::{RawSubstream, Substream, SubstreamType},
     transport::{TransportContext, TransportService},
     types::{protocol::ProtocolName, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
@@ -254,19 +254,22 @@ impl ProtocolSet {
         peer: PeerId,
         protocol: ProtocolName,
         direction: Direction,
-        substream: R,
+        substream: SubstreamType<R>,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
 
         match self.protocols.get_mut(&protocol) {
             Some(info) => {
-                let substream: Box<dyn Substream> = match info.codec {
-                    ProtocolCodec::Identity(payload_size) => {
-                        Box::new(Framed::new(substream, Identity::new(payload_size)))
-                    }
-                    ProtocolCodec::UnsignedVarint => {
-                        Box::new(Framed::new(substream, UnsignedVarint::new()))
-                    }
+                let substream: Box<dyn Substream> = match substream {
+                    SubstreamType::Raw(substream) => match info.codec {
+                        ProtocolCodec::Identity(payload_size) => {
+                            Box::new(Framed::new(substream, Identity::new(payload_size)))
+                        }
+                        ProtocolCodec::UnsignedVarint => {
+                            Box::new(Framed::new(substream, UnsignedVarint::new()))
+                        }
+                    },
+                    SubstreamType::ChannelBackend(substream) => Box::new(substream),
                 };
 
                 info.tx
