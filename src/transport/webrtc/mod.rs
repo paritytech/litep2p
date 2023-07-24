@@ -202,6 +202,7 @@ impl WebRtcTransport {
                         "received stun message"
                     );
 
+                    // create new `Rtc` object for the peer and give it the received STUN message
                     let (mut rtc, noise_channel_id) = self.make_rtc_client(
                         ufrag,
                         pass,
@@ -209,21 +210,15 @@ impl WebRtcTransport {
                         self.socket.local_addr().unwrap(),
                     );
 
-                    let input = Input::Receive(
+                    rtc.handle_input(Input::Receive(
                         Instant::now(),
                         Receive {
                             source,
                             destination: self.socket.local_addr().unwrap(),
                             contents: DatagramRecv::Stun(message.clone()),
                         },
-                    );
-
-                    match rtc.accepts(&input) {
-                        true => rtc
-                            .handle_input(input)
-                            .expect("client to handle input successfully"),
-                        false => panic!("client to accept input"),
-                    }
+                    ))
+                    .expect("client to handle input successfully");
 
                     let (tx, rx) = channel(64);
                     let connection = WebRtcConnection::new(
@@ -238,12 +233,7 @@ impl WebRtcTransport {
                         rx,
                     );
 
-                    tokio::spawn(async move {
-                        if let Err(error) = connection.run().await {
-                            tracing::error!(target: LOG_TARGET, ?error, "connection failed");
-                        }
-                    });
-
+                    tokio::spawn(connection.run());
                     self.peers.insert(source, tx);
                 }
             }
