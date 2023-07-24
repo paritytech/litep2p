@@ -162,20 +162,13 @@ impl ConnectionService {
         Self {
             tx,
             protocol,
-            next_substream_id: 0usize,
+            next_substream_id: SubstreamId::new(),
         }
-    }
-
-    /// Get next ephemeral substream ID.
-    fn next_substream_id(&mut self) -> SubstreamId {
-        let substream_id = self.next_substream_id;
-        self.next_substream_id += 1;
-        substream_id
     }
 
     /// Open substream to remote peer over `protocol`.
     pub async fn open_substream(&mut self) -> crate::Result<SubstreamId> {
-        let substream_id = self.next_substream_id();
+        let substream_id = self.next_substream_id.next();
 
         tracing::trace!(target: LOG_TARGET, ?substream_id, "open substream");
 

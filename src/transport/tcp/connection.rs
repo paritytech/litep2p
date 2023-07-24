@@ -271,17 +271,10 @@ impl TcpConnection {
             control,
             connection,
             _connection_id: connection_id,
-            next_substream_id: 0usize,
+            next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
             address: socket_addr_to_multi_addr(&address),
         })
-    }
-
-    /// Get next substream ID.
-    fn next_substream_id(&mut self) -> usize {
-        let substream = self.next_substream_id;
-        self.next_substream_id += 1;
-        substream
     }
 
     /// Get remote peer ID.
@@ -300,7 +293,7 @@ impl TcpConnection {
             tokio::select! {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
-                        let substream = self.next_substream_id();
+                        let substream = self.next_substream_id.next();
                         let protocols = self.context.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {

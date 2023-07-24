@@ -109,7 +109,7 @@ impl QuicConnection {
             peer,
             connection,
             _connection_id,
-            next_substream_id: 0usize,
+            next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
             context: ProtocolSet::from_transport_context(peer, context).await?,
         })
@@ -131,13 +131,6 @@ impl QuicConnection {
         tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
 
         Ok((socket, ProtocolName::from(protocol.to_string())))
-    }
-
-    /// Get next substream ID.
-    fn next_substream_id(&mut self) -> usize {
-        let substream = self.next_substream_id;
-        self.next_substream_id += 1;
-        substream
     }
 
     /// Open substream for `protocol`.
@@ -214,7 +207,7 @@ impl QuicConnection {
             tokio::select! {
                 substream = self.connection.accept_bidirectional_stream() => match substream {
                     Ok(Some(stream)) => {
-                        let substream = self.next_substream_id();
+                        let substream = self.next_substream_id.next();
                         let protocols = self.context.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {

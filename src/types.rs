@@ -21,7 +21,28 @@
 pub mod protocol;
 
 /// Substream ID.
-pub type SubstreamId = usize;
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct SubstreamId(usize);
+
+impl SubstreamId {
+    /// Create new [`SubstreamId`].
+    pub fn new() -> Self {
+        SubstreamId(0usize)
+    }
+
+    /// Get next [`SubstreamID`].
+    pub fn next(&mut self) -> SubstreamId {
+        let substream_id = self.0;
+        self.0 += 1usize;
+
+        SubstreamId(substream_id)
+    }
+
+    /// Get [`SubstreamId`] from a number that can be converted into a `usize`.
+    pub fn from<T: Into<usize>>(value: T) -> Self {
+        SubstreamId(value.into())
+    }
+}
 
 /// Request ID.
 pub type RequestId = usize;
