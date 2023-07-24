@@ -44,12 +44,10 @@ use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 mod connection;
-mod handshake;
-mod util;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc";
@@ -320,36 +318,6 @@ impl Transport for WebRtcTransport {
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()> {
         loop {
-            // // Clean out disconnected clients
-            // self.peers.retain(|_, (_, c)| c.rtc.is_alive());
-
-            // let mut to_propagate = Vec::new();
-            // for (_, (_, client)) in self.peers.iter_mut() {
-            //     // TODO: poll output polls the rtc client but also the substreams and context
-            //     let value = client.poll_output().await;
-            //     to_propagate.push(value);
-            // }
-
-            // let timeouts: Vec<_> = Vec::new();
-
-            // // We keep propagating client events until all clients respond with a timeout.
-            // if to_propagate.len() > timeouts.len() {
-            //     // Start over to propagate more client data until all are timeouts.
-            //     continue;
-            // }
-
-            // // Timeout in case we have no clients. We can't wait forever since we need to keep
-            // // polling the spawn_new_clients to discover a client.
-            // fn default_timeout() -> Instant {
-            //     Instant::now() + Duration::from_millis(100)
-            // }
-
-            // // // All poll_output resulted in timeouts, figure out the shortest timeout.
-            // let timeout = timeouts.into_iter().min().unwrap_or_else(default_timeout);
-
-            // // The read timeout is not allowed to be 0. In case it is 0, we set 1 millisecond.
-            // let duration = (timeout - Instant::now()).max(Duration::from_millis(1));
-
             let mut buf = vec![0; 2000];
 
             tokio::select! {
@@ -368,16 +336,7 @@ impl Transport for WebRtcTransport {
                     Some(_event) => {}
                     None => return Err(Error::EssentialTaskClosed),
                 },
-                // _ = tokio::time::sleep(duration) => {
-                //     // None
-                // }
             }
-
-            // // drive time forward in all clients.
-            // let now = Instant::now();
-            // for (_, (_, client)) in self.peers.iter_mut() {
-            //     client.handle_input(Input::Timeout(now));
-            // }
         }
     }
 }
@@ -391,15 +350,4 @@ enum WebRtcEvent {
 
     /// Poll client has reached timeout.
     Timeout(Instant),
-}
-
-impl WebRtcEvent {
-    /// If the propagated data is a timeout, returns the instant.
-    fn as_timeout(&self) -> Option<Instant> {
-        if let Self::Timeout(v) = self {
-            Some(*v)
-        } else {
-            None
-        }
-    }
 }

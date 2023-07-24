@@ -643,12 +643,9 @@ impl WebRtcConnection {
 
     /// Run the event loop of a negotiated WebRTC connection.
     pub(super) async fn run(mut self) -> crate::Result<()> {
-        // TODO:
-
         loop {
             let duration = match self.poll_output().await {
                 WebRtcEvent::Timeout(timeout) => {
-                    tracing::info!(target: LOG_TARGET, "TIMEOUT");
                     let timeout =
                         std::cmp::min(timeout, Instant::now() + Duration::from_millis(100));
                     (timeout - Instant::now()).max(Duration::from_millis(1))
@@ -661,7 +658,6 @@ impl WebRtcConnection {
                     Some(message) => {
                         if let Err(error) = self.on_input(message).await {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to handle input");
-                            todo!();
                         }
                     }
                     None => {
