@@ -35,6 +35,12 @@ impl Identity {
     pub fn new(payload_len: usize) -> Self {
         Self { payload_len }
     }
+
+    /// Encode `payload` using identity codec.
+    pub fn encode<T: Into<Bytes>>(payload: T) -> crate::Result<Vec<u8>> {
+        let payload: Bytes = payload.into();
+        Ok(payload.into())
+    }
 }
 
 impl Decoder for Identity {
