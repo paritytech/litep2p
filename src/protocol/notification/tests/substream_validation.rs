@@ -31,7 +31,7 @@ use crate::{
         },
         ProtocolEvent,
     },
-    types::protocol::ProtocolName,
+    types::{protocol::ProtocolName, SubstreamId},
 };
 
 use bytes::BytesMut;
@@ -131,15 +131,17 @@ async fn substream_accepted() {
         receiver.recv().await.unwrap(),
         ProtocolEvent::OpenSubstream {
             protocol: ProtocolName::from("/notif/1"),
-            substream_id: 0usize
+            substream_id: SubstreamId::from(0usize)
         },
     );
+
+    let substream = SubstreamId::from(0usize);
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
             protocol: _,
             inbound: InboundState::Open { .. },
-            outbound: OutboundState::OutboundInitiated { substream: 0 },
+            outbound: OutboundState::OutboundInitiated { substream },
         } => {}
         state => panic!("invalid state for peer: {state:?}"),
     }
