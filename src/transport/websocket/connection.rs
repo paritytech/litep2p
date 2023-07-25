@@ -249,19 +249,82 @@ impl WebSocketConnection {
         }
 
         tracing::info!(target: LOG_TARGET, "NOISE FINISHED");
+        let mut noise = noise.into_transport_mode().unwrap();
 
-        loop {
-            match stream.next().await {
-                Some(Ok(Message::Binary(message))) => {
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        "handle binary message, len {}",
-                        message.len()
-                    );
-                }
-                event => todo!("unhandled event 4 {event:?}"),
+        let mut buffer = vec![0u8; 1024];
+
+        // loop {
+        match stream.next().await {
+            Some(Ok(Message::Binary(message))) => {
+                tracing::info!(target: LOG_TARGET, "read message len {}", message.len());
             }
+            event => todo!("unhandled event 4 {event:?}"),
         }
+
+        match stream.next().await {
+            Some(Ok(Message::Binary(message))) => {
+                match noise.read_message(&message, &mut buffer) {
+                    Ok(len) => buffer.truncate(len),
+                    Err(error) => {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?error,
+                            "failed to read noise message: {} {:?}",
+                            message.len(),
+                            std::str::from_utf8(&message),
+                        );
+                        // todo!();
+                        // continue;
+                    }
+                }
+
+                tracing::info!(
+                    target: LOG_TARGET,
+                    "message: {:?}",
+                    std::str::from_utf8(&buffer),
+                );
+
+                let multistream = ProtocolName::from("/multistream/1.0.0");
+                let noise = ProtocolName::from("/noise");
+
+                match MultiStreamMessage::decode(message.into()) {
+                    Ok(MultiStreamMessage::Protocols(protocols)) => {
+                        let multistream = ProtocolName::from("/multistream/1.0.0");
+                        let noise = ProtocolName::from("/yamux/1.0.0");
+
+                        if protocols[0].as_ref() == multistream.as_bytes() {
+                            if protocols[1].as_ref() == noise.as_bytes() {
+                                tracing::error!(target: LOG_TARGET, "VALID PROTOCOL");
+
+                                let mut bytes = BytesMut::with_capacity(128);
+                                let message = MultiStreamMessage::Header(
+                                    crate::multistream_select::HeaderLine::V1,
+                                );
+                                let _ = message.encode(&mut bytes).unwrap();
+
+                                // TODO: no unwraps
+                                let mut header = UnsignedVarint::encode(bytes).unwrap();
+
+                                let mut proto_bytes = BytesMut::with_capacity(128);
+                                let message = MultiStreamMessage::Protocol(protocols[1].clone());
+                                let _ = message.encode(&mut proto_bytes).unwrap();
+                                let proto_bytes = UnsignedVarint::encode(proto_bytes).unwrap();
+
+                                header.append(&mut proto_bytes.into());
+
+                                stream.send(Message::Binary(header)).await.unwrap();
+                                // break;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            event => todo!("unhandled event 4 {event:?}"),
+        }
+
+        tracing::info!(target: LOG_TARGET, "YAMUX NEGOTIATED");
+        // }
         todo!();
     }
 }
