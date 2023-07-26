@@ -37,7 +37,7 @@ async fn webrtc_test() {
         .try_init();
 
     let (ping_config, mut ping_event_stream) = PingConfig::new(3);
-    let (notif_config, mut notif_event_stream) = NotificationConfig::new(
+    let (notif_config, mut _notif_event_stream) = NotificationConfig::new(
         ProtocolName::from(
             "/980e7cbafbcd37f8cb17be82bf8d53fa81c9a588e8a67384376e862da54285dc/block-announces/1",
         ),

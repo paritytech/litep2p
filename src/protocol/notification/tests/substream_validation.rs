@@ -135,14 +135,16 @@ async fn substream_accepted() {
         },
     );
 
-    let substream = SubstreamId::from(0usize);
+    let expected = SubstreamId::from(0usize);
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
             protocol: _,
             inbound: InboundState::Open { .. },
             outbound: OutboundState::OutboundInitiated { substream },
-        } => {}
+        } => {
+            assert_eq!(substream, &expected);
+        }
         state => panic!("invalid state for peer: {state:?}"),
     }
 }

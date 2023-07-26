@@ -18,14 +18,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt};
 use litep2p::{
     config::Litep2pConfigBuilder,
-    protocol::request_response::types::{
-        Config as RequestResponseConfig, RequestResponseEvent, RequestResponseHandle,
-    },
+    protocol::request_response::types::{Config as RequestResponseConfig, RequestResponseHandle},
     transport::websocket::config::Config as WebSocketConfig,
-    Litep2p, Litep2pEvent,
+    Litep2p,
 };
 
 async fn initialize_litep2p() -> (Litep2p, RequestResponseHandle) {
