@@ -18,51 +18,24 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
 use crate::{
-    codec::unsigned_varint::UnsignedVarint,
     config::Role,
-    crypto::{
-        noise::{self, Encrypted, NoiseConfiguration, STATIC_KEY_DOMAIN},
-        PublicKey,
-    },
-    error::{Error, NegotiationError, SubstreamError},
-    multistream_select::{
-        dialer_select_proto, listener_select_proto, Message as MultiStreamMessage, Negotiated,
-        Protocol, Version,
-    },
+    crypto::noise::{self, Encrypted, NoiseConfiguration},
+    error::{Error, SubstreamError},
+    multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
     substream::SubstreamType,
     transport::{websocket::stream::BufferedStream, TransportContext},
-    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    types::{protocol::ProtocolName, SubstreamId},
 };
 
-use bytes::BytesMut;
-use futures::{
-    future::BoxFuture,
-    stream::{FuturesUnordered, TryStreamExt},
-    AsyncRead, AsyncWrite, SinkExt, Stream, StreamExt,
-};
+use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
 use multiaddr::Multiaddr;
-use prost::Message as _;
-use tokio::{io::AsyncReadExt, net::TcpStream};
-use tokio_tungstenite::{accept_async, tungstenite::protocol::Message, WebSocketStream};
-use tokio_util::{compat::FuturesAsyncWriteCompatExt, io::StreamReader};
-use tokio_util::{
-    compat::{
-        Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt,
-    },
-    io::SinkWriter,
-};
+use tokio::net::TcpStream;
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 
-use std::{
-    io,
-    net::SocketAddr,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::{io, net::SocketAddr, pin::Pin};
 
 mod schema {
     pub(super) mod noise {
@@ -149,7 +122,7 @@ impl WebSocketConnection {
         context: TransportContext,
     ) -> crate::Result<Self> {
         let stream = tokio_tungstenite::accept_async(stream).await?;
-        let mut stream = BufferedStream::new(stream);
+        let stream = BufferedStream::new(stream);
 
         tracing::error!(
             target: LOG_TARGET,

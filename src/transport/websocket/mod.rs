@@ -18,8 +18,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
 use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
@@ -30,13 +28,13 @@ use crate::{
     types::ConnectionId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::{net::TcpListener, sync::mpsc::Receiver};
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
 };
 
 mod connection;
