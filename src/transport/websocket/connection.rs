@@ -324,7 +324,40 @@ impl WebSocketConnection {
         }
 
         tracing::info!(target: LOG_TARGET, "YAMUX NEGOTIATED");
-        // }
-        todo!();
+        loop {
+            match stream.next().await {
+                Some(Ok(Message::Binary(message))) => {
+                    tracing::info!(target: LOG_TARGET, "read message len {}", message.len());
+                }
+                event => todo!("unhandled event 4 {event:?}"),
+            }
+
+            match stream.next().await {
+                Some(Ok(Message::Binary(message))) => {
+                    let mut buffer = vec![0u8; 1024];
+                    match noise.read_message(&message, &mut buffer) {
+                        Ok(len) => buffer.truncate(len),
+                        Err(error) => {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to read noise message: {} {:?}",
+                                message.len(),
+                                std::str::from_utf8(&message),
+                            );
+                            // todo!();
+                            // continue;
+                        }
+                    }
+
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        "message: {:?}",
+                        std::str::from_utf8(&buffer),
+                    );
+                }
+                event => todo!("unhandled event 5 {event:?}"),
+            }
+        }
     }
 }
