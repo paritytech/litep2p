@@ -40,6 +40,7 @@ use std::{
 };
 
 mod connection;
+mod stream;
 
 pub mod config;
 
