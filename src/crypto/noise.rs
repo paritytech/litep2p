@@ -675,13 +675,16 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     let peer = match role {
         Role::Dialer => {
             let _ = socket.write(&[]).await?;
+            let _ = socket.flush().await?;
             let read = socket.read(&mut buf).await?;
             let _ = socket.write(&config.payload).await?;
+            let _ = socket.flush().await?;
             parse_peer_id(&buf[..read])?
         }
         Role::Listener => {
             let _ = socket.read(&mut buf).await?;
             let _ = socket.write(&config.payload).await?;
+            let _ = socket.flush().await?;
             let read = socket.read(&mut buf).await?;
             parse_peer_id(&buf[..read])?
         }
