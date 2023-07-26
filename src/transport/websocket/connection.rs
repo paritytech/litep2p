@@ -27,16 +27,25 @@ use crate::{
         noise::{self, Encrypted, NoiseConfiguration, STATIC_KEY_DOMAIN},
         PublicKey,
     },
-    error::{Error, NegotiationError},
-    multistream_select::{Message as MultiStreamMessage, Protocol},
+    error::{Error, NegotiationError, SubstreamError},
+    multistream_select::{
+        dialer_select_proto, listener_select_proto, Message as MultiStreamMessage, Negotiated,
+        Protocol, Version,
+    },
     peer_id::PeerId,
-    protocol::ProtocolSet,
-    transport::TransportContext,
-    types::{protocol::ProtocolName, ConnectionId},
+    protocol::{Direction, ProtocolEvent, ProtocolSet},
+    substream::SubstreamType,
+    transport::{websocket::stream::BufferedStream, TransportContext},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
 use bytes::BytesMut;
-use futures::{stream::TryStreamExt, AsyncRead, AsyncWrite, SinkExt, Stream, StreamExt};
+use futures::{
+    future::BoxFuture,
+    stream::{FuturesUnordered, TryStreamExt},
+    AsyncRead, AsyncWrite, SinkExt, Stream, StreamExt,
+};
+use multiaddr::Multiaddr;
 use prost::Message as _;
 use tokio::{io::AsyncReadExt, net::TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::protocol::Message, WebSocketStream};
@@ -49,6 +58,7 @@ use tokio_util::{
 };
 
 use std::{
+    io,
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
@@ -63,18 +73,83 @@ mod schema {
 /// Logging target for the file.
 const LOG_TARGET: &str = "websocket::connection";
 
+/// WebSocket connection error.
+#[derive(Debug)]
+enum ConnectionError {
+    /// Timeout
+    Timeout {
+        /// Protocol.
+        protocol: Option<ProtocolName>,
+
+        /// Substream ID.
+        substream_id: Option<SubstreamId>,
+    },
+
+    /// Failed to negotiate connection/substream.
+    FailedToNegotiate {
+        /// Protocol.
+        protocol: Option<ProtocolName>,
+
+        /// Substream ID.
+        substream_id: Option<SubstreamId>,
+
+        /// Error.
+        error: Error,
+    },
+}
+
 /// WebSocket connection.
-pub(crate) struct WebSocketConnection {}
+pub(crate) struct WebSocketConnection {
+    /// Protocol context.
+    context: ProtocolSet,
+
+    /// Yamux connection.
+    connection: yamux::ControlledConnection<Encrypted<BufferedStream<TcpStream>>>,
+
+    /// Yamux control.
+    control: yamux::Control,
+
+    /// Remote peer ID.
+    peer: PeerId,
+
+    /// Next substream ID.
+    next_substream_id: SubstreamId,
+
+    /// Remote address.
+    address: Multiaddr,
+
+    /// Pending substreams.
+    pending_substreams: FuturesUnordered<BoxFuture<'static, Result<Substream, ConnectionError>>>,
+}
 
 impl WebSocketConnection {
+    /// Negotiate protocol.
+    async fn negotiate_protocol<S: AsyncRead + AsyncWrite + Unpin>(
+        stream: S,
+        role: &Role,
+        protocols: Vec<&str>,
+    ) -> crate::Result<(Negotiated<S>, ProtocolName)> {
+        tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
+
+        let (protocol, socket) = match role {
+            Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await?,
+            Role::Listener => listener_select_proto(stream, protocols).await?,
+        };
+
+        tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
+
+        Ok((socket, ProtocolName::from(protocol.to_string())))
+    }
+
     /// Negotiate protocol.
     /// Accept WebSocket connection.
     pub(crate) async fn accept_connection(
         stream: TcpStream,
         address: SocketAddr,
         context: TransportContext,
-    ) -> crate::Result<()> {
-        let mut stream = tokio_tungstenite::accept_async(stream).await?;
+    ) -> crate::Result<Self> {
+        let stream = tokio_tungstenite::accept_async(stream).await?;
+        let mut stream = BufferedStream::new(stream);
 
         tracing::error!(
             target: LOG_TARGET,
@@ -82,282 +157,289 @@ impl WebSocketConnection {
             "connection received, negotiate protocols"
         );
 
-        // negotiate noise
-        loop {
-            match stream.next().await {
-                Some(Ok(Message::Binary(value))) => {
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        "decoded: {:?}",
-                        std::str::from_utf8(&value)
-                    );
-                    match MultiStreamMessage::decode(value.into()) {
-                        Ok(MultiStreamMessage::Protocols(protocols)) => {
-                            if protocols.len() != 2 {
-                                todo!();
-                            }
+        // negotiate `noise`
+        let noise_config = NoiseConfiguration::new(&context.keypair, Role::Listener);
+        let (stream, _) =
+            Self::negotiate_protocol(stream, &noise_config.role, vec!["/noise"]).await?;
 
-                            let multistream = ProtocolName::from("/multistream/1.0.0");
-                            let noise = ProtocolName::from("/noise");
+        tracing::trace!(
+            target: LOG_TARGET,
+            "`multistream-select` and `noise` negotiated"
+        );
 
-                            if protocols[0].as_ref() == multistream.as_bytes() {
-                                if protocols[1].as_ref() == noise.as_bytes() {
-                                    tracing::error!(target: LOG_TARGET, "VALID PROTOCOL");
+        // perform noise handshake
+        let (stream, peer) = noise::handshake(stream.inner(), noise_config).await?;
+        tracing::trace!(target: LOG_TARGET, "noise handshake done");
+        let stream: Encrypted<BufferedStream<TcpStream>> = stream;
 
-                                    let mut bytes = BytesMut::with_capacity(128);
-                                    let message = MultiStreamMessage::Header(
-                                        crate::multistream_select::HeaderLine::V1,
-                                    );
-                                    let _ = message.encode(&mut bytes).unwrap();
+        // negotiate `yamux`
+        let (stream, _) =
+            Self::negotiate_protocol(stream, &Role::Listener, vec!["/yamux/1.0.0"]).await?;
+        tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-                                    // TODO: no unwraps
-                                    let mut header = UnsignedVarint::encode(bytes).unwrap();
+        let connection = yamux::Connection::new(
+            stream.inner(),
+            yamux::Config::default(),
+            Role::Listener.into(),
+        );
+        let (control, connection) = yamux::Control::new(connection);
+        let context = ProtocolSet::from_transport_context(peer, context).await?;
 
-                                    let mut proto_bytes = BytesMut::with_capacity(128);
-                                    let message =
-                                        MultiStreamMessage::Protocol(protocols[1].clone());
-                                    let _ = message.encode(&mut proto_bytes).unwrap();
-                                    let proto_bytes = UnsignedVarint::encode(proto_bytes).unwrap();
+        Ok(Self {
+            peer,
+            control,
+            connection,
+            context,
+            next_substream_id: SubstreamId::new(),
+            pending_substreams: FuturesUnordered::new(),
+            address: Multiaddr::empty(), // TODO: fix
+        })
+    }
 
-                                    header.append(&mut proto_bytes.into());
+    /// Accept substream.
+    pub async fn accept_substream(
+        stream: yamux::Stream,
+        substream_id: SubstreamId,
+        protocols: Vec<ProtocolName>,
+    ) -> crate::Result<Substream> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?substream_id,
+            "accept inbound substream"
+        );
 
-                                    stream.send(Message::Binary(header)).await.unwrap();
-                                    break;
-                                }
-                            }
+        let protocols = protocols
+            .iter()
+            .map(|protocol| &**protocol)
+            .collect::<Vec<&str>>();
+        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Listener, protocols).await?;
 
-                            tracing::info!(
-                                target: LOG_TARGET,
-                                ?protocols,
-                                "respond to multistream-select"
-                            );
-                        }
-                        event => tracing::warn!(target: LOG_TARGET, "unhandled event {event:?}"),
-                    }
-                }
-                event => todo!("unhandled event 2 {event:?}"),
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?substream_id,
+            "substream accepted and negotiated"
+        );
+
+        Ok(Substream {
+            io: io.inner(),
+            direction: Direction::Inbound,
+            protocol,
+        })
+    }
+
+    /// Open substream for `protocol`.
+    pub async fn open_substream(
+        mut control: yamux::Control,
+        direction: Direction,
+        protocol: ProtocolName,
+    ) -> crate::Result<Substream> {
+        tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
+
+        let stream = match control.open_stream().await {
+            Ok(stream) => {
+                tracing::trace!(target: LOG_TARGET, ?direction, "substream opened");
+                stream
             }
-        }
-
-        tracing::info!(target: LOG_TARGET, "noise negotiated");
-
-        let noise = snow::Builder::new("Noise_XX_25519_ChaChaPoly_SHA256".parse().unwrap());
-        let keypair = noise.generate_keypair().unwrap();
-        let mut noise = noise
-            .local_private_key(&keypair.private)
-            .build_responder()
-            .unwrap();
-
-        let noise_payload = schema::noise::NoiseHandshakePayload {
-            identity_key: Some(PublicKey::Ed25519(context.keypair.public()).to_protobuf_encoding()),
-            identity_sig: Some(
-                context
-                    .keypair
-                    .sign(&[STATIC_KEY_DOMAIN.as_bytes(), keypair.public.as_ref()].concat()),
-            ),
-            ..Default::default()
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?direction,
+                    ?error,
+                    "failed to open substream"
+                );
+                return Err(Error::YamuxError(direction, error));
+            }
         };
-        let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-        noise_payload
-            .encode(&mut payload)
-            .expect("Vec<u8> provides capacity as needed");
 
-        // TODO: ignore random message
-        let _ = stream.next().await;
+        let (io, protocol) =
+            Self::negotiate_protocol(stream, &Role::Dialer, vec![&protocol]).await?;
 
+        Ok(Substream {
+            io: io.inner(),
+            direction,
+            protocol,
+        })
+    }
+
+    /// Start connection event loop.
+    pub(crate) async fn start(mut self) -> crate::Result<()> {
         loop {
-            match stream.next().await {
-                Some(Ok(Message::Binary(message))) => {
-                    tracing::info!(target: LOG_TARGET, "message len {}", message.len());
-                    let mut buffer = vec![0u8; 1024];
+            tokio::select! {
+                substream = self.connection.next() => match substream {
+                    Some(Ok(stream)) => {
+                        let substream = self.next_substream_id.next();
+                        let protocols = self.context.protocols.keys().cloned().collect();
 
-                    match noise.read_message(&message, &mut buffer) {
-                        Ok(len) => buffer.truncate(len),
-                        Err(error) => tracing::error!(
-                            target: LOG_TARGET,
-                            "failed to decode initial handshake"
-                        ),
+                        self.pending_substreams.push(Box::pin(async move {
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                Self::accept_substream(stream, substream, protocols),
+                            )
+                            .await
+                            {
+                                Ok(Ok(substream)) => Ok(substream),
+                                Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
+                                    protocol: None,
+                                    substream_id: None,
+                                    error,
+                                }),
+                                Err(_) => Err(ConnectionError::Timeout {
+                                    protocol: None,
+                                    substream_id: None
+                                }),
+                            }
+                        }));
+                    },
+                    Some(Err(error)) => {
+                        tracing::error!(target: LOG_TARGET, ?error, "failed to poll inbound substream");
+                        // TODO: this is probably not correct
+                        return Err(Error::SubstreamError(SubstreamError::YamuxError(error)));
                     }
-
-                    let mut buffer = vec![0u8; 1024];
-                    let payload = match noise.write_message(&payload, &mut buffer) {
-                        Ok(len) => {
-                            buffer.truncate(len);
-                            let size = len as u16;
-                            let mut size = size.to_be_bytes().to_vec();
-                            size.append(&mut buffer);
-
-                            size
-                        }
+                    // TODO: this is probably not correct
+                    None => return Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
+                },
+                // TODO: move this to a function
+                substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
+                    match substream {
+                        // TODO: return error to protocol
                         Err(error) => {
-                            tracing::error!(
+                            tracing::debug!(
                                 target: LOG_TARGET,
                                 ?error,
-                                "failed to write noise message"
+                                "failed to accept/open substream",
                             );
-                            todo!();
-                        }
-                    };
 
-                    stream.send(Message::Binary(payload)).await.unwrap();
-
-                    let _ = stream.next().await.unwrap();
-                    let message = stream.next().await.unwrap();
-
-                    match message {
-                        Ok(Message::Binary(message)) => {
-                            let mut buffer = vec![0u8; 1024];
-                            match noise.read_message(&message, &mut buffer) {
-                                Ok(len) => buffer.truncate(len),
-                                Err(error) => tracing::error!(
-                                    target: LOG_TARGET,
-                                    ?error,
-                                    "failed to read second noise message"
-                                ),
-                            }
-                            let bytes: bytes::Bytes = buffer.into();
-
-                            let peer_id = match schema::noise::NoiseHandshakePayload::decode(bytes)
-                            {
-                                Ok(payload) => {
-                                    tracing::info!(target: LOG_TARGET, "got peer public key");
-                                    let public_key = PublicKey::from_protobuf_encoding(
-                                        &payload.identity_key.ok_or(Error::NegotiationError(
-                                            NegotiationError::PeerIdMissing,
-                                        ))?,
-                                    )?;
-                                    Ok(PeerId::from_public_key(&public_key))
+                            let (protocol, substream_id, error) = match error {
+                                ConnectionError::Timeout { protocol, substream_id } => {
+                                    (protocol, substream_id, Error::Timeout)
                                 }
-                                Err(err) => {
-                                    tracing::error!(
-                                        target: LOG_TARGET,
-                                        "failed to read public key"
-                                    );
-                                    Err(Error::Unknown)
+                                ConnectionError::FailedToNegotiate { protocol, substream_id, error } => {
+                                    (protocol, substream_id, error)
                                 }
                             };
 
-                            tracing::info!(target: LOG_TARGET, "peer id, maybe: {peer_id:?}");
+                            match (protocol, substream_id) {
+                                (Some(protocol), Some(substream_id)) => {
+                                    if let Err(error) = self.context
+                                        .report_substream_open_failure(protocol, substream_id, error)
+                                        .await
+                                    {
+                                        tracing::error!(
+                                            target: LOG_TARGET,
+                                            ?error,
+                                            "failed to register opened substream to protocol"
+                                        );
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
-                        event => tracing::error!(target: LOG_TARGET, "unhandled event {event:?}"),
-                    }
+                        Ok(substream) => {
+                            let protocol = substream.protocol.clone();
+                            let direction = substream.direction;
+                            let substream = FuturesAsyncReadCompatExt::compat(substream);
 
-                    break;
-                }
-                event => todo!("unhandled event 3 {event:?}"),
-            }
-        }
-
-        tracing::info!(target: LOG_TARGET, "NOISE FINISHED");
-        let mut noise = noise.into_transport_mode().unwrap();
-
-        let mut buffer = vec![0u8; 1024];
-
-        // loop {
-        match stream.next().await {
-            Some(Ok(Message::Binary(message))) => {
-                tracing::info!(target: LOG_TARGET, "read message len {}", message.len());
-            }
-            event => todo!("unhandled event 4 {event:?}"),
-        }
-
-        match stream.next().await {
-            Some(Ok(Message::Binary(message))) => {
-                match noise.read_message(&message, &mut buffer) {
-                    Ok(len) => buffer.truncate(len),
-                    Err(error) => {
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            ?error,
-                            "failed to read noise message: {} {:?}",
-                            message.len(),
-                            std::str::from_utf8(&message),
-                        );
-                        // todo!();
-                        // continue;
-                    }
-                }
-
-                tracing::info!(
-                    target: LOG_TARGET,
-                    "message: {:?}",
-                    std::str::from_utf8(&buffer),
-                );
-
-                let multistream = ProtocolName::from("/multistream/1.0.0");
-                let noise = ProtocolName::from("/noise");
-
-                match MultiStreamMessage::decode(message.into()) {
-                    Ok(MultiStreamMessage::Protocols(protocols)) => {
-                        let multistream = ProtocolName::from("/multistream/1.0.0");
-                        let noise = ProtocolName::from("/yamux/1.0.0");
-
-                        if protocols[0].as_ref() == multistream.as_bytes() {
-                            if protocols[1].as_ref() == noise.as_bytes() {
-                                tracing::error!(target: LOG_TARGET, "VALID PROTOCOL");
-
-                                let mut bytes = BytesMut::with_capacity(128);
-                                let message = MultiStreamMessage::Header(
-                                    crate::multistream_select::HeaderLine::V1,
+                            if let Err(error) = self.context
+                                .report_substream_open(self.peer, protocol, direction, SubstreamType::Raw(substream))
+                                .await
+                            {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    ?error,
+                                    "failed to register opened substream to protocol"
                                 );
-                                let _ = message.encode(&mut bytes).unwrap();
-
-                                // TODO: no unwraps
-                                let mut header = UnsignedVarint::encode(bytes).unwrap();
-
-                                let mut proto_bytes = BytesMut::with_capacity(128);
-                                let message = MultiStreamMessage::Protocol(protocols[1].clone());
-                                let _ = message.encode(&mut proto_bytes).unwrap();
-                                let proto_bytes = UnsignedVarint::encode(proto_bytes).unwrap();
-
-                                header.append(&mut proto_bytes.into());
-
-                                stream.send(Message::Binary(header)).await.unwrap();
-                                // break;
                             }
                         }
                     }
-                    _ => {}
                 }
-            }
-            event => todo!("unhandled event 4 {event:?}"),
-        }
+                protocol = self.context.next_event() => match protocol {
+                    Some(ProtocolEvent::OpenSubstream { protocol, substream_id }) => {
+                        let control = self.control.clone();
 
-        tracing::info!(target: LOG_TARGET, "YAMUX NEGOTIATED");
-        loop {
-            match stream.next().await {
-                Some(Ok(Message::Binary(message))) => {
-                    tracing::info!(target: LOG_TARGET, "read message len {}", message.len());
-                }
-                event => todo!("unhandled event 4 {event:?}"),
-            }
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?protocol,
+                            ?substream_id,
+                            "open substream"
+                        );
 
-            match stream.next().await {
-                Some(Ok(Message::Binary(message))) => {
-                    let mut buffer = vec![0u8; 1024];
-                    match noise.read_message(&message, &mut buffer) {
-                        Ok(len) => buffer.truncate(len),
-                        Err(error) => {
-                            tracing::error!(
-                                target: LOG_TARGET,
-                                ?error,
-                                "failed to read noise message: {} {:?}",
-                                message.len(),
-                                std::str::from_utf8(&message),
-                            );
-                            // todo!();
-                            // continue;
-                        }
+                        self.pending_substreams.push(Box::pin(async move {
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                Self::open_substream(control, Direction::Outbound(substream_id), protocol.clone()),
+                            )
+                            .await
+                            {
+                                Ok(Ok(substream)) => Ok(substream),
+                                Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
+                                    protocol: Some(protocol),
+                                    substream_id: Some(substream_id),
+                                    error,
+                                }),
+                                Err(_) => Err(ConnectionError::Timeout {
+                                    protocol: Some(protocol),
+                                    substream_id: Some(substream_id)
+                                }),
+                            }
+                        }));
                     }
-
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        "message: {:?}",
-                        std::str::from_utf8(&buffer),
-                    );
+                    None => {
+                        tracing::error!(target: LOG_TARGET, "protocols have exited, shutting down connection");
+                        return Ok(())
+                    }
                 }
-                event => todo!("unhandled event 5 {event:?}"),
             }
         }
+    }
+}
+
+// TODO: this is not needed anymore
+#[derive(Debug)]
+pub struct Substream {
+    /// Substream direction.
+    direction: Direction,
+
+    /// Protocol name.
+    protocol: ProtocolName,
+
+    /// Yamux substream.
+    io: yamux::Stream,
+}
+
+impl AsyncRead for Substream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let inner = Pin::into_inner(self);
+        Pin::new(&mut inner.io).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Substream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let inner = Pin::into_inner(self);
+        Pin::new(&mut inner.io).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let inner = Pin::into_inner(self);
+        Pin::new(&mut inner.io).poll_flush(cx)
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let inner = Pin::into_inner(self);
+        Pin::new(&mut inner.io).poll_close(cx)
     }
 }

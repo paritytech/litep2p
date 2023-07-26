@@ -65,7 +65,7 @@ pub(crate) struct WebSocketTransport {
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending connections.
-    pending_connections: FuturesUnordered<BoxFuture<'static, Result<(), ()>>>,
+    pending_connections: FuturesUnordered<BoxFuture<'static, Result<WebSocketConnection, Error>>>,
 
     /// RX channel for receiving commands from `Litep2p`.
     rx: Receiver<TransportCommand>,
@@ -185,10 +185,9 @@ impl Transport for WebSocketTransport {
                     Ok((stream, address)) => {
                         let context = self.context.clone();
 
-                        // self.pendig_connections.push(Box::pin(async move {
-                        let connection = WebSocketConnection::accept_connection(stream, address, context).await;
-                        // }));
-
+                        self.pending_connections.push(Box::pin(async move {
+                            WebSocketConnection::accept_connection(stream, address, context).await
+                        }));
                     }
                     Err(error) => {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to accept connection");
@@ -197,6 +196,20 @@ impl Transport for WebSocketTransport {
                 command = self.rx.recv() => match command.ok_or(Error::EssentialTaskClosed)? {
                     TransportCommand::Dial { address, connection_id } => {
                         todo!();
+                    }
+                },
+                event = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
+                    match event {
+                        Ok(connection) => {
+                            tokio::spawn(async move {
+                                if let Err(error) = connection.start().await {
+                                    tracing::debug!(target: LOG_TARGET, ?error, "connection failed");
+                                }
+                            });
+                        }
+                        Err(error) => {
+                            todo!();
+                        }
                     }
                 }
             }
