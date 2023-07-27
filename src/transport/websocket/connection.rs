@@ -31,7 +31,7 @@ use crate::{
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
-use multiaddr::Multiaddr;
+use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use tokio::net::TcpStream;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 
@@ -165,7 +165,11 @@ impl WebSocketConnection {
             context,
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
-            address: Multiaddr::empty(), // TODO: fix
+            address: Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port()))
+                .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())))
+                .with(Protocol::P2p(Multihash::from(peer))),
         })
     }
 
