@@ -96,6 +96,16 @@ pub(crate) struct WebSocketConnection {
 }
 
 impl WebSocketConnection {
+    /// Get remote peer ID.
+    pub(crate) fn peer(&self) -> &PeerId {
+        &self.peer
+    }
+
+    /// Get remote address.
+    pub(crate) fn address(&self) -> &Multiaddr {
+        &self.address
+    }
+
     /// Negotiate protocol.
     async fn negotiate_protocol<S: AsyncRead + AsyncWrite + Unpin>(
         stream: S,

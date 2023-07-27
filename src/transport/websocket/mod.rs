@@ -199,11 +199,16 @@ impl Transport for WebSocketTransport {
                 event = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
                     match event {
                         Ok(connection) => {
+                            let peer = *connection.peer();
+                            let address = connection.address().clone();
+
                             tokio::spawn(async move {
                                 if let Err(error) = connection.start().await {
                                     tracing::debug!(target: LOG_TARGET, ?error, "connection failed");
                                 }
                             });
+
+                            self.context.report_connection_established(peer, address).await;
                         }
                         Err(error) => {
                             todo!();
