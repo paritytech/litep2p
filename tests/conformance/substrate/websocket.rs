@@ -55,14 +55,19 @@ async fn websocket_works() {
 
     tracing::info!("local peer id {}", litep2p.local_peer_id());
 
+    litep2p
+        .connect("/ip4/127.0.0.1/tcp/30333/ws".parse().unwrap())
+        .await
+        .unwrap();
+
     loop {
         tokio::select! {
             event = litep2p.next_event() => {
                 tracing::info!("litep2p event: {event:?}");
             }
-            event = handle.next_event() => {
-                tracing::info!("request-response event: {event:?}");
-            }
+            // event = handle.next_event() => {
+            //     tracing::info!("request-response event: {event:?}");
+            // }
         }
     }
 }

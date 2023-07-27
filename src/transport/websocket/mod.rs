@@ -42,6 +42,24 @@ mod stream;
 
 pub mod config;
 
+#[derive(Debug)]
+pub struct WebSocketError {
+    /// Error.
+    error: Error,
+
+    /// Connection ID.
+    connection_id: Option<ConnectionId>,
+}
+
+impl WebSocketError {
+    pub fn new(error: Error, connection_id: Option<ConnectionId>) -> Self {
+        Self {
+            error,
+            connection_id,
+        }
+    }
+}
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "websocket";
 
@@ -63,7 +81,8 @@ pub(crate) struct WebSocketTransport {
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending connections.
-    pending_connections: FuturesUnordered<BoxFuture<'static, Result<WebSocketConnection, Error>>>,
+    pending_connections:
+        FuturesUnordered<BoxFuture<'static, Result<WebSocketConnection, WebSocketError>>>,
 
     /// RX channel for receiving commands from `Litep2p`.
     rx: Receiver<TransportCommand>,
@@ -184,7 +203,9 @@ impl Transport for WebSocketTransport {
                         let context = self.context.clone();
 
                         self.pending_connections.push(Box::pin(async move {
-                            WebSocketConnection::accept_connection(stream, address, context).await
+                            WebSocketConnection::accept_connection(stream, address, context)
+                                .await
+                                .map_err(|error| WebSocketError::new(error, None))
                         }));
                     }
                     Err(error) => {
@@ -193,7 +214,16 @@ impl Transport for WebSocketTransport {
                 },
                 command = self.rx.recv() => match command.ok_or(Error::EssentialTaskClosed)? {
                     TransportCommand::Dial { address, connection_id } => {
-                        todo!();
+                        let context = self.context.clone();
+
+                        tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, "open connection");
+
+                        self.pending_dials.insert(connection_id, address.clone());
+                        self.pending_connections.push(Box::pin(async move {
+                            WebSocketConnection::open_connection(address, context)
+                                .await
+                                .map_err(|error| WebSocketError::new(error, Some(connection_id)))
+                        }));
                     }
                 },
                 event = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
@@ -210,8 +240,12 @@ impl Transport for WebSocketTransport {
 
                             self.context.report_connection_established(peer, address).await;
                         }
-                        Err(error) => {
-                            todo!();
+                        Err(error) => match error.connection_id {
+                            Some(connection_id) => match self.pending_dials.remove(&connection_id) {
+                                Some(address) => self.context.report_dial_failure(address, error.error).await,
+                                None => tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),
+                            }
+                            None => tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),
                         }
                     }
                 }

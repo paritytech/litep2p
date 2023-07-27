@@ -152,6 +152,23 @@ impl TransportContext {
         Ok(connection_id)
     }
 
+    /// Dial remote peer over WebSocket.
+    pub(crate) async fn dial_ws(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
+        let connection_id = self.connection_id.next();
+
+        let _ = self
+            .transports
+            .get_mut(&SupportedTransport::WebSocket)
+            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+            .send(TransportCommand::Dial {
+                address,
+                connection_id,
+            })
+            .await?;
+
+        Ok(connection_id)
+    }
+
     /// Dial remote peer over QUIC.
     pub(crate) async fn dial_quic(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
         let connection_id = self.connection_id.next();
@@ -404,12 +421,18 @@ impl Litep2p {
             .next()
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
-            Protocol::Tcp(_) => {
-                let connection_id = self.transports.dial_tcp(address.clone()).await?;
-                self.pending_connections.insert(connection_id, address);
-
-                Ok(())
-            }
+            Protocol::Tcp(_) => match protocol_stack.next() {
+                Some(Protocol::Ws(_)) => {
+                    let connection_id = self.transports.dial_ws(address.clone()).await?;
+                    self.pending_connections.insert(connection_id, address);
+                    Ok(())
+                }
+                _ => {
+                    let connection_id = self.transports.dial_tcp(address.clone()).await?;
+                    self.pending_connections.insert(connection_id, address);
+                    Ok(())
+                }
+            },
             Protocol::Udp(_) => match protocol_stack
                 .next()
                 .ok_or_else(|| Error::TransportNotSupported(address.clone()))?

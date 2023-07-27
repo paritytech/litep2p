@@ -246,6 +246,7 @@ impl Transport for TcpTransport {
                             tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
                             let context = self.context.clone();
+                            // TODO: this can't be right
                             let (socket_address, peer) = Self::get_socket_address(&address)?;
 
                             self.pending_dials.insert(connection_id, address);

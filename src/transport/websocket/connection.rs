@@ -33,7 +33,9 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use tokio::net::TcpStream;
+use tokio_tungstenite::MaybeTlsStream;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
+use url::Url;
 
 use std::{io, net::SocketAddr, pin::Pin};
 
@@ -45,6 +47,32 @@ mod schema {
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "websocket::connection";
+
+/// Convert `Multiaddr` into `url::Url`
+fn multiaddr_into_url(address: Multiaddr) -> crate::Result<Url> {
+    let mut protocol_stack = address.iter();
+
+    let ip4 = match protocol_stack
+        .next()
+        .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+    {
+        Protocol::Ip4(address) => address.to_string(),
+        _ => return Err(Error::TransportNotSupported(address)),
+    };
+
+    match protocol_stack
+        .next()
+        .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+    {
+        Protocol::Tcp(port) => match protocol_stack.next() {
+            Some(Protocol::Ws(_)) => {
+                url::Url::parse(&format!("ws://{ip4}:{port}/")).map_err(|_| Error::InvalidData)
+            }
+            _ => return Err(Error::TransportNotSupported(address.clone())),
+        },
+        _ => Err(Error::TransportNotSupported(address)),
+    }
+}
 
 /// WebSocket connection error.
 #[derive(Debug)]
@@ -77,7 +105,7 @@ pub(crate) struct WebSocketConnection {
     context: ProtocolSet,
 
     /// Yamux connection.
-    connection: yamux::ControlledConnection<Encrypted<BufferedStream<TcpStream>>>,
+    connection: yamux::ControlledConnection<Encrypted<BufferedStream<MaybeTlsStream<TcpStream>>>>,
 
     /// Yamux control.
     control: yamux::Control,
@@ -124,13 +152,67 @@ impl WebSocketConnection {
         Ok((socket, ProtocolName::from(protocol.to_string())))
     }
 
-    /// Negotiate protocol.
+    /// Open WebSocket connection.
+    pub(crate) async fn open_connection(
+        address: Multiaddr,
+        context: TransportContext,
+    ) -> crate::Result<Self> {
+        let (stream, _) =
+            tokio_tungstenite::connect_async(multiaddr_into_url(address.clone())?).await?;
+        let stream = BufferedStream::new(stream);
+
+        tracing::error!(
+            target: LOG_TARGET,
+            ?address,
+            "connection established, negotiate protocols"
+        );
+
+        // negotiate `noise`
+        let noise_config = NoiseConfiguration::new(&context.keypair, Role::Dialer);
+        let (stream, _) =
+            Self::negotiate_protocol(stream, &noise_config.role, vec!["/noise"]).await?;
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            "`multistream-select` and `noise` negotiated"
+        );
+
+        // perform noise handshake
+        let (stream, peer) = noise::handshake(stream.inner(), noise_config).await?;
+        tracing::trace!(target: LOG_TARGET, "noise handshake done");
+        let stream: Encrypted<BufferedStream<_>> = stream;
+
+        // negotiate `yamux`
+        let (stream, _) =
+            Self::negotiate_protocol(stream, &Role::Dialer, vec!["/yamux/1.0.0"]).await?;
+        tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
+
+        let connection = yamux::Connection::new(
+            stream.inner(),
+            yamux::Config::default(),
+            Role::Dialer.into(),
+        );
+        let (control, connection) = yamux::Control::new(connection);
+        let context = ProtocolSet::from_transport_context(peer, context).await?;
+
+        Ok(Self {
+            peer,
+            control,
+            connection,
+            context,
+            next_substream_id: SubstreamId::new(),
+            pending_substreams: FuturesUnordered::new(),
+            address,
+        })
+    }
+
     /// Accept WebSocket connection.
     pub(crate) async fn accept_connection(
         stream: TcpStream,
         address: SocketAddr,
         context: TransportContext,
     ) -> crate::Result<Self> {
+        let stream = MaybeTlsStream::Plain(stream);
         let stream = tokio_tungstenite::accept_async(stream).await?;
         let stream = BufferedStream::new(stream);
 
@@ -153,7 +235,7 @@ impl WebSocketConnection {
         // perform noise handshake
         let (stream, peer) = noise::handshake(stream.inner(), noise_config).await?;
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
-        let stream: Encrypted<BufferedStream<TcpStream>> = stream;
+        let stream: Encrypted<BufferedStream<_>> = stream;
 
         // negotiate `yamux`
         let (stream, _) =
