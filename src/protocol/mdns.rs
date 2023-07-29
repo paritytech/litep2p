@@ -141,10 +141,65 @@ impl Mdns {
         Some(packet.build_bytes_vec().expect("valid packet"))
     }
 
-    fn on_inbound_response(&self, packet: Packet) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?packet, "handle inbound response");
+    /// Handle inbound response.
+    fn on_inbound_response(&self, packet: Packet) -> Vec<Multiaddr> {
+        tracing::debug!(target: LOG_TARGET, "handle inbound response");
 
-        Ok(())
+        let names = packet
+            .answers
+            .iter()
+            .filter_map(|answer| {
+                if answer.name != Name::new_unchecked(SERVICE_NAME) {
+                    return None;
+                }
+
+                match answer.rdata {
+                    RData::PTR(PTR(ref name))
+                        if name
+                            != &Name::new_unchecked(
+                                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                            ) =>
+                    {
+                        Some(name)
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<&Name>>();
+
+        let name = match names.len() {
+            0 => return Vec::new(),
+            1 => names[0],
+            _ => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?names,
+                    "response contains multiple different names"
+                );
+                return Vec::new();
+            }
+        };
+
+        packet
+            .additional_records
+            .iter()
+            .flat_map(|record| {
+                if &record.name != name {
+                    return vec![];
+                }
+
+                match &record.rdata {
+                    RData::TXT(text) => text
+                        .attributes()
+                        .iter()
+                        .filter_map(|(_, address)| {
+                            address.as_ref().map_or(None, |inner| inner.parse().ok())
+                        })
+                        .collect(),
+                    _ => vec![],
+                }
+            })
+            .collect()
     }
 
     /// Event loop for [`Mdns`].
@@ -157,9 +212,11 @@ impl Mdns {
                     Ok((nread, address)) => match Packet::parse(&self.receive_buffer[..nread]) {
                         Ok(packet) => match packet.has_flags(PacketFlag::RESPONSE) {
                             true => {
-                                tracing::error!(target: LOG_TARGET, ?address, "mdns response received");
+                                let addresses = self.on_inbound_response(packet);
 
-                                let _ = self.on_inbound_response(packet);
+                                if !addresses.is_empty() {
+                                    tracing::info!(target: LOG_TARGET, ?addresses, "discovered one or more addresses");
+                                }
                             }
                             false => if let Some(response) = self.on_inbound_request(packet) {
                                 self.socket
