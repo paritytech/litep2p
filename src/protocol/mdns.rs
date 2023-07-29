@@ -334,6 +334,8 @@ impl Mdns {
 mod tests {
     use super::*;
     use crate::crypto::ed25519::Keypair;
+    use futures::StreamExt;
+    use multiaddr::Protocol;
     use tokio::sync::mpsc::channel;
 
     #[tokio::test]
@@ -342,26 +344,93 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (tx, _rx) = channel(64);
-        let (tx2, _rx2) = channel(64);
+        let (tx1, _rx1) = channel(64);
+        let (config1, mut stream1) = Config::new(Duration::from_secs(5));
 
-        let mdns = Mdns::new(
-            Config {
-                query_interval: Duration::from_secs(10),
-                tx: tx2,
-            },
-            TransportContext::new(Keypair::generate(), tx),
+        let mdns1 = Mdns::new(
+            config1,
+            TransportContext::new(Keypair::generate(), tx1),
             vec![
-                "/ip6/::1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTgzew"
+                "/ip6/::1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTaaaa"
                     .parse()
                     .unwrap(),
-                "/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTgzew"
+                "/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTaaaa"
                     .parse()
                     .unwrap(),
             ],
         )
         .unwrap();
 
-        mdns.start().await.unwrap();
+        let (tx2, _rx2) = channel(64);
+        let (config2, mut stream2) = Config::new(Duration::from_secs(5));
+
+        let mdns2 = Mdns::new(
+            config2,
+            TransportContext::new(Keypair::generate(), tx2),
+            vec![
+                "/ip6/::1/tcp/9999/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTbbbb"
+                    .parse()
+                    .unwrap(),
+                "/ip4/127.0.0.1/tcp/9999/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTbbbb"
+                    .parse()
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+
+        tokio::spawn(mdns1.start());
+        tokio::spawn(mdns2.start());
+
+        let mut peer1_discovered = false;
+        let mut peer2_discovered = false;
+
+        while !peer1_discovered && !peer2_discovered {
+            tokio::select! {
+                event = stream1.next() => match event.unwrap() {
+                    MdnsEvent::Discovered(addrs) => {
+                        if addrs.len() == 2 {
+                            let mut iter = addrs[0].iter();
+
+                            if !std::matches!(iter.next(), Some(Protocol::Ip4(_) | Protocol::Ip6(_))) {
+                                continue
+                            }
+
+                            match iter.next() {
+                                Some(Protocol::Tcp(port)) => {
+                                    if port != 9999 {
+                                        continue
+                                    }
+                                }
+                                _ => continue,
+                            }
+
+                            peer2_discovered = true;
+                        }
+                    }
+                },
+                event = stream2.next() => match event.unwrap() {
+                    MdnsEvent::Discovered(addrs) => {
+                        if addrs.len() == 2 {
+                            let mut iter = addrs[0].iter();
+
+                            if !std::matches!(iter.next(), Some(Protocol::Ip4(_) | Protocol::Ip6(_))) {
+                                continue
+                            }
+
+                            match iter.next() {
+                                Some(Protocol::Tcp(port)) => {
+                                    if port != 8888 {
+                                        continue
+                                    }
+                                }
+                                _ => continue,
+                            }
+
+                            peer2_discovered = true;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
