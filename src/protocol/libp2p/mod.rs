@@ -19,4 +19,5 @@
 // DEALINGS IN THE SOFTWARE.
 
 pub mod identify;
+pub mod kademlia;
 pub mod ping;

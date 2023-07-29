@@ -24,7 +24,7 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     protocol::{
-        libp2p::{identify::Identify, ping::Ping},
+        libp2p::{identify::Identify, kademlia::Kademlia, ping::Ping},
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
     },
@@ -268,6 +268,23 @@ impl Litep2p {
             let service = transport_ctx
                 .add_protocol(ping_config.protocol.clone(), ping_config.codec.clone())?;
             tokio::spawn(async move { Ping::new(service, ping_config).run().await });
+        }
+
+        // start kademlia protocol event loop if enabled
+        if let Some(kademlia_config) = config.kademlia.take() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?kademlia_config.protocol,
+                "enable ipfs kademlia protocol",
+            );
+            protocols.push(kademlia_config.protocol.clone());
+
+            let service = transport_ctx.add_protocol(
+                kademlia_config.protocol.clone(),
+                kademlia_config.codec.clone(),
+            )?;
+
+            tokio::spawn(async move { Kademlia::new(service, kademlia_config).run().await });
         }
 
         // start identify protocol event loop if enabled

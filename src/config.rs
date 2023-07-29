@@ -21,7 +21,7 @@
 use crate::{
     crypto::ed25519::Keypair,
     protocol::{
-        libp2p::{identify, ping},
+        libp2p::{identify, kademlia, ping},
         mdns::Config as MdnsConfig,
         notification, request_response, UserProtocol,
     },
@@ -77,6 +77,9 @@ pub struct Litep2pConfigBuilder {
     /// Identify protocol config.
     identify: Option<identify::Config>,
 
+    /// Kademlia protocol config.
+    kademlia: Option<kademlia::Config>,
+
     /// Notification protocols.
     notification_protocols: HashMap<ProtocolName, notification::types::Config>,
 
@@ -107,6 +110,7 @@ impl Litep2pConfigBuilder {
             keypair: None,
             ping: None,
             identify: None,
+            kademlia: None,
             mdns: None,
             user_protocols: HashMap::new(),
             notification_protocols: HashMap::new(),
@@ -163,6 +167,12 @@ impl Litep2pConfigBuilder {
         self
     }
 
+    /// Enable IPFS Kademlia protocol.
+    pub fn with_ipfs_kademlia(mut self, config: kademlia::Config) -> Self {
+        self.kademlia = Some(config);
+        self
+    }
+
     /// Install request-response protocol.
     pub fn with_request_response_protocol(
         mut self,
@@ -203,6 +213,7 @@ impl Litep2pConfigBuilder {
             websocket: self.websocket.take(),
             ping: self.ping.take(),
             identify: self.identify.take(),
+            kademlia: self.kademlia.take(),
             user_protocols: self.user_protocols,
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
@@ -232,6 +243,9 @@ pub struct Litep2pConfig {
 
     /// Identify protocol configuration, if enabled.
     pub(crate) identify: Option<identify::Config>,
+
+    /// Kdaemlia protocol configuration, if enabled.
+    pub(crate) kademlia: Option<kademlia::Config>,
 
     /// Notification protocols.
     pub(crate) notification_protocols: HashMap<ProtocolName, notification::types::Config>,
