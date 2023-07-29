@@ -22,6 +22,7 @@ use crate::{
     crypto::ed25519::Keypair,
     protocol::{
         libp2p::{identify, ping},
+        mdns::Config as MdnsConfig,
         notification, request_response, UserProtocol,
     },
     transport::{
@@ -84,6 +85,9 @@ pub struct Litep2pConfigBuilder {
 
     /// User protocols.
     user_protocols: HashMap<ProtocolName, Box<dyn UserProtocol>>,
+
+    /// mDNS configuration.
+    mdns: Option<MdnsConfig>,
 }
 
 impl Default for Litep2pConfigBuilder {
@@ -103,6 +107,7 @@ impl Litep2pConfigBuilder {
             keypair: None,
             ping: None,
             identify: None,
+            mdns: None,
             user_protocols: HashMap::new(),
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
@@ -174,6 +179,12 @@ impl Litep2pConfigBuilder {
         self
     }
 
+    /// Enable mDNS for peer discoveries in the local network.
+    pub fn with_mdns(mut self, config: MdnsConfig) -> Self {
+        self.mdns = Some(config);
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     ///
     /// Generates a default keypair if user didn't provide one.
@@ -186,6 +197,7 @@ impl Litep2pConfigBuilder {
         Litep2pConfig {
             keypair,
             tcp: self.tcp.take(),
+            mdns: self.mdns.take(),
             quic: self.quic.take(),
             webrtc: self.webrtc.take(),
             websocket: self.websocket.take(),
@@ -229,4 +241,7 @@ pub struct Litep2pConfig {
 
     /// User protocols.
     pub(crate) user_protocols: HashMap<ProtocolName, Box<dyn UserProtocol>>,
+
+    /// mDNS configuration.
+    pub(crate) mdns: Option<MdnsConfig>,
 }

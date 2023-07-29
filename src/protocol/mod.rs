@@ -36,6 +36,7 @@ use tokio_util::codec::Framed;
 use std::{collections::HashMap, fmt::Debug};
 
 pub mod libp2p;
+pub mod mdns;
 pub mod notification;
 pub mod request_response;
 

@@ -37,6 +37,7 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
+use protocol::mdns::Mdns;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
@@ -352,6 +353,17 @@ impl Litep2p {
             tokio::spawn(async move {
                 if let Err(error) = transport.start().await {
                     tracing::error!(target: LOG_TARGET, ?error, "quic failed");
+                }
+            });
+        }
+
+        // enable mdns if the config exists
+        if let Some(config) = config.mdns.take() {
+            let mdns = Mdns::new(config, transport_ctx.clone(), listen_addresses.clone())?;
+
+            tokio::spawn(async move {
+                if let Err(error) = mdns.start().await {
+                    tracing::error!(target: LOG_TARGET, ?error, "mdns failed");
                 }
             });
         }
