@@ -33,6 +33,7 @@ use std::{
     collections::HashSet,
     net,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
     time::Duration,
 };
 
@@ -73,7 +74,7 @@ pub struct Mdns {
     receive_buffer: Vec<u8>,
 
     /// Listen addresses.
-    listen_addresses: HashSet<Multiaddr>,
+    listen_addresses: Vec<Arc<str>>,
 }
 
 impl Mdns {
@@ -98,10 +99,13 @@ impl Mdns {
         Ok(Self {
             config,
             context,
-            next_query_id: 1337u16, // TODO: zzz
+            next_query_id: 1337u16,
             receive_buffer: vec![0u8; 4096],
             socket: UdpSocket::from_std(net::UdpSocket::from(socket))?,
-            listen_addresses: HashSet::from_iter(listen_addresses.into_iter()),
+            listen_addresses: listen_addresses
+                .into_iter()
+                .map(|address| format!("dnsaddr={address}").into())
+                .collect(),
         })
     }
 
@@ -152,21 +156,18 @@ impl Mdns {
             ))),
         ));
 
-        // TODO: use correct addresses
-        let mut record = TXT::new();
-        record
-            .add_string(
-                "dnsaddr=/ip6/::1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTgzew",
-            )
-            .expect("valid string");
+        for address in &self.listen_addresses {
+            let mut record = TXT::new();
+            record.add_string(address).expect("valid string");
 
-        packet.additional_records.push(ResourceRecord {
-            name: Name::new_unchecked("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-            class: CLASS::IN,
-            ttl: 360,
-            rdata: RData::TXT(record),
-            cache_flush: false,
-        });
+            packet.additional_records.push(ResourceRecord {
+                name: Name::new_unchecked("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                class: CLASS::IN,
+                ttl: 360,
+                rdata: RData::TXT(record),
+                cache_flush: false,
+            });
+        }
 
         Some(packet.build_bytes_vec().expect("valid packet"))
     }
@@ -305,7 +306,14 @@ mod tests {
                 query_interval: Duration::from_secs(10),
             },
             TransportContext::new(Keypair::generate(), tx),
-            Vec::new(),
+            vec![
+                "/ip6/::1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTgzew"
+                    .parse()
+                    .unwrap(),
+                "/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTgzew"
+                    .parse()
+                    .unwrap(),
+            ],
         )
         .unwrap();
 
