@@ -24,13 +24,14 @@ use crate::{error::Error, transport::TransportContext};
 use multiaddr::Multiaddr;
 use simple_dns::{
     rdata::{RData, PTR, TXT},
-    Name, Packet, PacketFlag, ResourceRecord, CLASS,
+    Name, Packet, PacketFlag, Question, ResourceRecord, CLASS, QCLASS, QTYPE, TYPE,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
 
 use std::{
     collections::HashSet,
+    net,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::Duration,
 };
@@ -65,6 +66,9 @@ pub struct Mdns {
     /// Transport context.
     context: TransportContext,
 
+    /// Next query ID.
+    next_query_id: u16,
+
     /// Buffer for incoming messages.
     receive_buffer: Vec<u8>,
 
@@ -93,17 +97,42 @@ impl Mdns {
         Ok(Self {
             config,
             context,
+            next_query_id: 1337u16, // TODO: zzz
             receive_buffer: vec![0u8; 4096],
-            socket: UdpSocket::from_std(std::net::UdpSocket::from(socket))?,
+            socket: UdpSocket::from_std(net::UdpSocket::from(socket))?,
             listen_addresses: HashSet::from_iter(listen_addresses.into_iter()),
         })
     }
 
+    /// Get next query ID.
+    fn next_query_id(&mut self) -> u16 {
+        let query_id = self.next_query_id;
+        self.next_query_id += 1;
+
+        query_id
+    }
+
     /// Send mDNS query on the network.
     async fn on_outbound_request(&mut self) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, "send mdns query");
+        tracing::debug!(target: LOG_TARGET, "send outbound query");
 
-        Ok(())
+        let mut packet = Packet::new_query(self.next_query_id());
+
+        packet.questions.push(Question {
+            qname: Name::new_unchecked(SERVICE_NAME),
+            qtype: QTYPE::TYPE(TYPE::PTR),
+            qclass: QCLASS::CLASS(CLASS::IN),
+            unicast_response: false,
+        });
+
+        self.socket
+            .send_to(
+                &packet.build_bytes_vec().expect("valid packet"),
+                (IPV4_MULTICAST_ADDRESS, IPV4_MULTICAST_PORT),
+            )
+            .await
+            .map(|_| ())
+            .map_err(From::from)
     }
 
     /// Handle inbound query.
@@ -188,6 +217,7 @@ impl Mdns {
                     return vec![];
                 }
 
+                // TODO: `filter_map` is not necessary as there's at most one entry
                 match &record.rdata {
                     RData::TXT(text) => text
                         .attributes()
@@ -206,8 +236,21 @@ impl Mdns {
     pub(crate) async fn start(mut self) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, "starting mdns event loop");
 
+        // before starting the loop, make an initial query to the network
+        //
+        // bail early if the socket is not working
+        self.on_outbound_request().await?;
+
         loop {
             tokio::select! {
+                _ = tokio::time::sleep(self.config.query_interval) => {
+                    tracing::info!(target: LOG_TARGET, "timeout expired");
+
+                    if let Err(error) = self.on_outbound_request().await {
+                        tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
+                        return Err(error);
+                    }
+                }
                 result = self.socket.recv_from(&mut self.receive_buffer) => match result {
                     Ok((nread, address)) => match Packet::parse(&self.receive_buffer[..nread]) {
                         Ok(packet) => match packet.has_flags(PacketFlag::RESPONSE) {
@@ -237,12 +280,6 @@ impl Mdns {
                         return Err(Error::from(error));
                     }
                 },
-                _ = tokio::time::sleep(self.config.query_interval) => {
-                    if let Err(error) = self.on_outbound_request().await {
-                        tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
-                        return Err(error);
-                    }
-                }
             }
         }
     }
@@ -264,7 +301,7 @@ mod tests {
 
         let mdns = Mdns::new(
             Config {
-                query_interval: Duration::from_secs(60),
+                query_interval: Duration::from_secs(1),
             },
             TransportContext::new(Keypair::generate(), tx),
             Vec::new(),
