@@ -19,18 +19,22 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{error::Error, transport::TransportContext};
+use crate::{error::Error, transport::TransportContext, DEFAULT_CHANNEL_SIZE};
 
+use futures::Stream;
 use multiaddr::Multiaddr;
 use simple_dns::{
     rdata::{RData, PTR, TXT},
     Name, Packet, PacketFlag, Question, ResourceRecord, CLASS, QCLASS, QTYPE, TYPE,
 };
 use socket2::{Domain, Protocol, Socket, Type};
-use tokio::net::UdpSocket;
+use tokio::{
+    net::UdpSocket,
+    sync::mpsc::{channel, Sender},
+};
+use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
-    collections::HashSet,
     net,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -49,11 +53,33 @@ const IPV4_MULTICAST_PORT: u16 = 5353;
 /// Service name.
 const SERVICE_NAME: &str = "_p2p._udp.local";
 
+/// Events emitted by mDNS.
+#[derive(Debug, Clone)]
+pub enum MdnsEvent {}
+
 /// mDNS configuration.
 #[derive(Debug)]
 pub struct Config {
     /// How often the network should be queried for new peers.
     query_interval: Duration,
+
+    /// TX channel for sending mDNS events to user.
+    tx: Sender<MdnsEvent>,
+}
+
+impl Config {
+    /// Create new [`MdnsConfig`]
+    ///
+    /// Return the configuration and an event stream for receiving mDNS events.
+    pub fn new(
+        query_interval: Duration,
+    ) -> (Self, Box<dyn Stream<Item = MdnsEvent> + Send + Unpin>) {
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+        (
+            Self { query_interval, tx },
+            Box::new(ReceiverStream::new(rx)),
+        )
+    }
 }
 
 /// Main mDNS object.
@@ -300,10 +326,12 @@ mod tests {
             .try_init();
 
         let (tx, _rx) = channel(64);
+        let (tx2, _rx2) = channel(64);
 
         let mdns = Mdns::new(
             Config {
                 query_interval: Duration::from_secs(10),
+                tx: tx2,
             },
             TransportContext::new(Keypair::generate(), tx),
             vec![
