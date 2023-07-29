@@ -93,6 +93,7 @@ impl Mdns {
         socket.set_multicast_loop_v4(true)?;
         socket.set_multicast_ttl_v4(255)?;
         socket.join_multicast_v4(&IPV4_MULTICAST_ADDRESS, &Ipv4Addr::UNSPECIFIED)?;
+        socket.set_nonblocking(true)?;
 
         Ok(Self {
             config,
@@ -301,7 +302,7 @@ mod tests {
 
         let mdns = Mdns::new(
             Config {
-                query_interval: Duration::from_secs(1),
+                query_interval: Duration::from_secs(10),
             },
             TransportContext::new(Keypair::generate(), tx),
             Vec::new(),
