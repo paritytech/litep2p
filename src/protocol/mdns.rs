@@ -36,6 +36,7 @@ use tokio::{
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
+    collections::HashSet,
     net,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -56,7 +57,10 @@ const SERVICE_NAME: &str = "_p2p._udp.local";
 
 /// Events emitted by mDNS.
 #[derive(Debug, Clone)]
-pub enum MdnsEvent {}
+pub enum MdnsEvent {
+    /// One or more addresses discovered.
+    Discovered(Vec<Multiaddr>),
+}
 
 /// mDNS configuration.
 #[derive(Debug)]
@@ -88,8 +92,11 @@ pub struct Mdns {
     /// UDP socket for multicast requests/responses.
     socket: UdpSocket,
 
-    /// mDNS configuration.
-    config: Config,
+    /// Query interval.
+    query_interval: Duration,
+
+    /// TX channel for sending events to user.
+    event_tx: Sender<MdnsEvent>,
 
     /// Transport context.
     _context: TransportContext,
@@ -105,6 +112,9 @@ pub struct Mdns {
 
     /// Listen addresses.
     listen_addresses: Vec<Arc<str>>,
+
+    /// Discovered addresses.
+    discovered: HashSet<Multiaddr>,
 }
 
 impl Mdns {
@@ -127,9 +137,11 @@ impl Mdns {
         socket.set_nonblocking(true)?;
 
         Ok(Self {
-            config,
             _context,
+            event_tx: config.tx,
             next_query_id: 1337u16,
+            discovered: HashSet::new(),
+            query_interval: config.query_interval,
             receive_buffer: vec![0u8; 4096],
             username: rand::thread_rng()
                 .sample_iter(&Alphanumeric)
@@ -273,7 +285,7 @@ impl Mdns {
 
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(self.config.query_interval) => {
+                _ = tokio::time::sleep(self.query_interval) => {
                     tracing::info!(target: LOG_TARGET, "timeout expired");
 
                     if let Err(error) = self.on_outbound_request().await {
@@ -285,10 +297,13 @@ impl Mdns {
                     Ok((nread, address)) => match Packet::parse(&self.receive_buffer[..nread]) {
                         Ok(packet) => match packet.has_flags(PacketFlag::RESPONSE) {
                             true => {
-                                let addresses = self.on_inbound_response(packet);
+                                let to_forward = self.on_inbound_response(packet).into_iter().filter_map(|address| {
+                                    self.discovered.insert(address.clone()).then_some(address)
+                                })
+                                .collect::<Vec<_>>();
 
-                                if !addresses.is_empty() {
-                                    tracing::info!(target: LOG_TARGET, ?addresses, "discovered one or more addresses");
+                                if !to_forward.is_empty() {
+                                    let _ = self.event_tx.send(MdnsEvent::Discovered(to_forward)).await;
                                 }
                             }
                             false => if let Some(response) = self.on_inbound_request(packet) {
