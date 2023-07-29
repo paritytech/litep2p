@@ -48,6 +48,7 @@ hex-literal = "0.4.1"
 tokio-tungstenite = "0.19.0"
 url = "2.4.0"
 socket2 = "0.5.3"
+simple-dns = "0.5.3"
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]
