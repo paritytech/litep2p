@@ -23,6 +23,7 @@ use crate::{error::Error, transport::TransportContext, DEFAULT_CHANNEL_SIZE};
 
 use futures::Stream;
 use multiaddr::Multiaddr;
+use rand::{distributions::Alphanumeric, Rng};
 use simple_dns::{
     rdata::{RData, PTR, TXT},
     Name, Packet, PacketFlag, Question, ResourceRecord, CLASS, QCLASS, QTYPE, TYPE,
@@ -91,7 +92,10 @@ pub struct Mdns {
     config: Config,
 
     /// Transport context.
-    context: TransportContext,
+    _context: TransportContext,
+
+    // Username.
+    username: String,
 
     /// Next query ID.
     next_query_id: u16,
@@ -107,7 +111,7 @@ impl Mdns {
     /// Create new [`Mdns`].
     pub fn new(
         config: Config,
-        context: TransportContext,
+        _context: TransportContext,
         listen_addresses: Vec<Multiaddr>,
     ) -> crate::Result<Self> {
         let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -124,9 +128,14 @@ impl Mdns {
 
         Ok(Self {
             config,
-            context,
+            _context,
             next_query_id: 1337u16,
             receive_buffer: vec![0u8; 4096],
+            username: rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(32)
+                .map(char::from)
+                .collect(),
             socket: UdpSocket::from_std(net::UdpSocket::from(socket))?,
             listen_addresses: listen_addresses
                 .into_iter()
@@ -177,9 +186,7 @@ impl Mdns {
             srv_name.clone(),
             CLASS::IN,
             360,
-            RData::PTR(PTR(Name::new_unchecked(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            ))),
+            RData::PTR(PTR(Name::new_unchecked(&self.username))),
         ));
 
         for address in &self.listen_addresses {
@@ -187,7 +194,7 @@ impl Mdns {
             record.add_string(address).expect("valid string");
 
             packet.additional_records.push(ResourceRecord {
-                name: Name::new_unchecked("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                name: Name::new_unchecked(&self.username),
                 class: CLASS::IN,
                 ttl: 360,
                 rdata: RData::TXT(record),
@@ -211,12 +218,7 @@ impl Mdns {
                 }
 
                 match answer.rdata {
-                    RData::PTR(PTR(ref name))
-                        if name
-                            != &Name::new_unchecked(
-                                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                            ) =>
-                    {
+                    RData::PTR(PTR(ref name)) if name != &Name::new_unchecked(&self.username) => {
                         Some(name)
                     }
                     _ => None,
