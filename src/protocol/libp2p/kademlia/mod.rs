@@ -36,6 +36,12 @@ const LOG_TARGET: &str = "ipfs::kademlia";
 /// Protocol name.
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
 
+mod schema {
+    pub(super) mod kademlia {
+        include!(concat!(env!("OUT_DIR"), "/kademlia.rs"));
+    }
+}
+
 /// Kademlia configuration.
 #[derive(Debug)]
 pub struct Config {
