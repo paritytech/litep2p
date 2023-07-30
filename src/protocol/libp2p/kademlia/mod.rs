@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::collections::{hash_map::Entry, HashMap};
+
 use crate::{
     codec::ProtocolCodec,
     error::Error,
@@ -74,24 +76,52 @@ impl KademliaHandle {
     }
 }
 
+/// Peer context.
+struct PeerContext {
+    /// Connection service for the peer.
+    service: ConnectionService,
+}
+
+impl PeerContext {
+    /// Create new [`PeerContext`].
+    fn new(service: ConnectionService) -> Self {
+        Self { service }
+    }
+}
+
+/// Main Kademlia object.
 pub struct Kademlia {
     /// Transport service.
     service: TransportService,
+
+    /// Connected peers,
+    peers: HashMap<PeerId, PeerContext>,
 }
 
 impl Kademlia {
     /// Create new [`Kademlia`].
     pub fn new(service: TransportService, config: Config) -> Self {
-        Self { service }
+        Self {
+            service,
+            peers: HashMap::new(),
+        }
     }
 
     /// Connection established to remote peer.
     async fn on_connection_established(
         &mut self,
         peer: PeerId,
-        _service: ConnectionService,
+        service: ConnectionService,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
+
+        let Entry::Vacant(entry) = self.peers.entry(peer) else {
+            return Err(Error::PeerAlreadyExists(peer));
+        };
+
+        entry.insert(PeerContext::new(service));
+
+        // TODO: open substream to peer
 
         Ok(())
     }
@@ -99,6 +129,10 @@ impl Kademlia {
     /// Connection closed to remote peer.
     fn on_connection_closed(&mut self, peer: PeerId) {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection closed");
+
+        if let None = self.peers.remove(&peer) {
+            tracing::debug!(target: LOG_TARGET, ?peer, "peer doesn't exist");
+        }
     }
 
     /// Local node opened a substream to remote node.
