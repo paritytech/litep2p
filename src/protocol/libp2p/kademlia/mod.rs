@@ -18,10 +18,18 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{codec::ProtocolCodec, transport::TransportService, types::protocol::ProtocolName};
+use crate::{
+    codec::ProtocolCodec,
+    error::Error,
+    peer_id::PeerId,
+    protocol::{ConnectionEvent, ConnectionService, Direction},
+    substream::Substream,
+    transport::TransportService,
+    types::{protocol::ProtocolName, SubstreamId},
+};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "kademlia";
+const LOG_TARGET: &str = "ipfs::kademlia";
 
 /// Protocol name.
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
@@ -37,35 +45,140 @@ pub struct Config {
 }
 
 impl Config {
+    /// Create new [`Config`].
     pub fn new() -> (Self, KademliaHandle) {
-        (Self {
-            protocol: ProtocolName::from(PROTOCOL_NAME),
-            codec: ProtocolCodec::UnsignedVarint,
-        }, KademliaHandle {})
+        (
+            Self {
+                protocol: ProtocolName::from(PROTOCOL_NAME),
+                codec: ProtocolCodec::UnsignedVarint,
+            },
+            KademliaHandle {},
+        )
     }
 }
 
-pub struct KademliaHandle {
-}
+#[derive(Debug, Clone)]
+pub enum KademliaEvent {}
+
+pub struct KademliaHandle {}
 
 impl KademliaHandle {
+    /// Create new [`KademliaHandle`].
     pub fn new() -> Self {
         Self {}
     }
+
+    /// Poll next event from [`Kademlia`].
+    pub async fn next_event(&mut self) -> Option<KademliaEvent> {
+        None
+    }
 }
 
-pub struct Kademlia {}
+pub struct Kademlia {
+    /// Transport service.
+    service: TransportService,
+}
 
 impl Kademlia {
-    pub fn new(context: TransportService, config: Config) -> Self {
-        Self {}
+    /// Create new [`Kademlia`].
+    pub fn new(service: TransportService, config: Config) -> Self {
+        Self { service }
     }
 
-    pub async fn run(self) -> crate::Result<()> {
+    /// Connection established to remote peer.
+    async fn on_connection_established(
+        &mut self,
+        peer: PeerId,
+        _service: ConnectionService,
+    ) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
+
+        Ok(())
+    }
+
+    /// Connection closed to remote peer.
+    fn on_connection_closed(&mut self, peer: PeerId) {
+        tracing::debug!(target: LOG_TARGET, ?peer, "connection closed");
+    }
+
+    /// Local node opened a substream to remote node.
+    async fn on_outbound_substream(
+        &mut self,
+        peer: PeerId,
+        _substream_id: SubstreamId,
+        _substream: Box<dyn Substream>,
+    ) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?peer, "outbound substream opened");
+
+        Ok(())
+    }
+
+    /// Remote opened a substream to local node.
+    async fn on_inbound_substream(
+        &mut self,
+        peer: PeerId,
+        _substream: Box<dyn Substream>,
+    ) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?peer, "inbound substream opened");
+
+        Ok(())
+    }
+
+    /// Failed to open substream to remote peer.
+    fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?substream,
+            ?error,
+            "failed to open substream"
+        );
+    }
+
+    pub async fn run(mut self) -> crate::Result<()> {
         tracing::error!(target: LOG_TARGET, "starting kademlia event loop");
 
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await
+            tokio::select! {
+                event = self.service.next_event() => match event {
+                    Some(ConnectionEvent::ConnectionEstablished { peer, service }) => {
+                        if let Err(error) = self.on_connection_established(peer, service).await {
+                            tracing::debug!(target: LOG_TARGET, ?error, "failed to handle established connection");
+                        }
+                    }
+                    Some(ConnectionEvent::ConnectionClosed { peer }) => {
+                        self.on_connection_closed(peer);
+                    }
+                    Some(ConnectionEvent::SubstreamOpened { peer, direction, substream, .. }) => {
+                        match direction {
+                            Direction::Inbound => {
+                                if let Err(error) = self.on_inbound_substream(peer, substream).await {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        ?peer,
+                                        ?error,
+                                        "failed to handle inbound substream",
+                                    );
+                                }
+                            }
+                            Direction::Outbound(substream_id) => {
+                                if let Err(error) = self.on_outbound_substream(peer, substream_id, substream).await {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        ?peer,
+                                        ?substream_id,
+                                        ?error,
+                                        "failed to handle outbound substream",
+                                    );
+                                }
+                            }
+                        }
+                    },
+                    Some(ConnectionEvent::SubstreamOpenFailure { substream, error }) => {
+                        self.on_substream_open_failure(substream, error);
+                    }
+                    None => return Ok(()),
+                }
+            }
         }
     }
 }
