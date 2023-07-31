@@ -18,17 +18,16 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::collections::{hash_map::Entry, HashMap};
-
 use crate::{
-    codec::ProtocolCodec,
     error::Error,
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ConnectionService, Direction},
+    protocol::{libp2p::kademlia::key::Key, ConnectionEvent, ConnectionService, Direction},
     substream::Substream,
     transport::TransportService,
-    types::{protocol::ProtocolName, SubstreamId},
+    types::SubstreamId,
 };
+
+use std::collections::{hash_map::Entry, HashMap};
 
 pub use crate::protocol::libp2p::kademlia::config::Config;
 
@@ -40,8 +39,9 @@ mod schema {
         include!(concat!(env!("OUT_DIR"), "/kademlia.rs"));
     }
 }
-mod handle;
 mod config;
+mod handle;
+mod key;
 
 /// Peer context.
 struct PeerContext {
@@ -61,15 +61,21 @@ pub struct Kademlia {
     /// Transport service.
     service: TransportService,
 
+    /// Local Kademlia key.
+    local_key: Key<PeerId>,
+
     /// Connected peers,
     peers: HashMap<PeerId, PeerContext>,
 }
 
 impl Kademlia {
     /// Create new [`Kademlia`].
-    pub fn new(service: TransportService, config: Config) -> Self {
+    pub fn new(service: TransportService, _config: Config) -> Self {
+        let local_key = Key::from(service.local_peer_id());
+
         Self {
             service,
+            local_key,
             peers: HashMap::new(),
         }
     }

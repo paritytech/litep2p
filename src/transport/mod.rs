@@ -20,7 +20,7 @@
 
 use crate::{
     codec::ProtocolCodec,
-    crypto::ed25519::Keypair,
+    crypto::{ed25519::Keypair, PublicKey},
     error::Error,
     peer_id::PeerId,
     protocol::{ConnectionEvent, ProtocolEvent, ProtocolInfo},
@@ -99,22 +99,30 @@ pub(crate) trait Transport {
 #[derive(Debug)]
 pub struct TransportService {
     rx: Receiver<ConnectionEvent>,
+    local_peer_id: PeerId,
+    // TODO: what is this used for?
     _peers: HashMap<PeerId, Sender<ProtocolEvent>>,
 }
 
 impl TransportService {
     /// Create new [`ConnectionService`].
-    pub fn new() -> (Self, Sender<ConnectionEvent>) {
+    pub fn new(local_peer_id: PeerId) -> (Self, Sender<ConnectionEvent>) {
         // TODO: maybe specify some other channel size
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
         (
             Self {
                 rx,
+                local_peer_id,
                 _peers: HashMap::new(),
             },
             tx,
         )
+    }
+
+    /// Get local peer ID.
+    pub fn local_peer_id(&self) -> PeerId {
+        self.local_peer_id
     }
 
     /// Get next event from the transport.
@@ -132,6 +140,9 @@ pub struct TransportContext {
     /// Keypair.
     pub(crate) keypair: Keypair,
 
+    /// Local peer ID.
+    pub(crate) local_peer_id: PeerId,
+
     /// TX channel for sending events to [`Litep2p`].
     tx: Sender<TransportEvent>,
 }
@@ -143,6 +154,7 @@ impl TransportContext {
             tx,
             keypair,
             protocols: HashMap::new(),
+            local_peer_id: PeerId::from_public_key(&PublicKey::Ed25519(keypair.public())),
         }
     }
 
@@ -152,7 +164,7 @@ impl TransportContext {
         protocol: ProtocolName,
         codec: ProtocolCodec,
     ) -> crate::Result<TransportService> {
-        let (service, tx) = TransportService::new();
+        let (service, tx) = TransportService::new(self.local_peer_id);
 
         match self
             .protocols

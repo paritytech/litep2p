@@ -49,6 +49,8 @@ tokio-tungstenite = "0.19.0"
 url = "2.4.0"
 socket2 = "0.5.3"
 simple-dns = "0.5.3"
+uint = "0.9.5"
+sha2 = "0.10.7"
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]
