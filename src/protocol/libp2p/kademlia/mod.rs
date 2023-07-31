@@ -30,57 +30,18 @@ use crate::{
     types::{protocol::ProtocolName, SubstreamId},
 };
 
+pub use crate::protocol::libp2p::kademlia::config::Config;
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "ipfs::kademlia";
-
-/// Protocol name.
-const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
 
 mod schema {
     pub(super) mod kademlia {
         include!(concat!(env!("OUT_DIR"), "/kademlia.rs"));
     }
 }
-
-/// Kademlia configuration.
-#[derive(Debug)]
-pub struct Config {
-    /// Protocol name.
-    pub(crate) protocol: ProtocolName,
-
-    /// Protocol codec.
-    pub(crate) codec: ProtocolCodec,
-}
-
-impl Config {
-    /// Create new [`Config`].
-    pub fn new() -> (Self, KademliaHandle) {
-        (
-            Self {
-                protocol: ProtocolName::from(PROTOCOL_NAME),
-                codec: ProtocolCodec::UnsignedVarint,
-            },
-            KademliaHandle {},
-        )
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum KademliaEvent {}
-
-pub struct KademliaHandle {}
-
-impl KademliaHandle {
-    /// Create new [`KademliaHandle`].
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    /// Poll next event from [`Kademlia`].
-    pub async fn next_event(&mut self) -> Option<KademliaEvent> {
-        None
-    }
-}
+mod handle;
+mod config;
 
 /// Peer context.
 struct PeerContext {
