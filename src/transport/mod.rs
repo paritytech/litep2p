@@ -152,7 +152,7 @@ impl TransportContext {
     pub fn new(keypair: Keypair, tx: Sender<TransportEvent>) -> Self {
         Self {
             tx,
-            keypair,
+            keypair: keypair.clone(),
             protocols: HashMap::new(),
             local_peer_id: PeerId::from_public_key(&PublicKey::Ed25519(keypair.public())),
         }
