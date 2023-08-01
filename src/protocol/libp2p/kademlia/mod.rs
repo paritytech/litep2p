@@ -34,14 +34,16 @@ pub use crate::protocol::libp2p::kademlia::config::Config;
 /// Logging target for the file.
 const LOG_TARGET: &str = "ipfs::kademlia";
 
+mod config;
+mod handle;
+mod key;
+mod store;
+
 mod schema {
     pub(super) mod kademlia {
         include!(concat!(env!("OUT_DIR"), "/kademlia.rs"));
     }
 }
-mod config;
-mod handle;
-mod key;
 
 /// Peer context.
 struct PeerContext {
