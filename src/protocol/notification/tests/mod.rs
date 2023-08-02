@@ -41,7 +41,8 @@ fn make_notification_protocol() -> (
     NotificationHandle,
     Sender<ConnectionEvent>,
 ) {
-    let (service, sender) = TransportService::new();
+    // TODO: fix
+    let (service, sender) = TransportService::new(PeerId::random());
     let (config, handle) = Config::new(
         ProtocolName::from("/notif/1"),
         1024usize,

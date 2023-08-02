@@ -21,7 +21,7 @@
 use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder, crypto::ed25519::Keypair,
-    protocol::libp2p::kademlia::Config as KademliaConfig,
+    protocol::libp2p::kademlia::ConfigBuilder as KademliaConfigBuilder,
     transport::tcp::config::TransportConfig as TcpTransportConfig, Litep2p,
 };
 
@@ -31,7 +31,7 @@ async fn kademlia_supported() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (kad_config1, mut kad_handle1) = KademliaConfig::new();
+    let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {

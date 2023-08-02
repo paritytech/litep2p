@@ -29,7 +29,7 @@ use crate::{
 
 use std::collections::{hash_map::Entry, HashMap};
 
-pub use crate::protocol::libp2p::kademlia::config::Config;
+pub use crate::protocol::libp2p::kademlia::config::{Config, ConfigBuilder};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "ipfs::kademlia";
@@ -86,7 +86,7 @@ impl Kademlia {
     async fn on_connection_established(
         &mut self,
         peer: PeerId,
-        service: ConnectionService,
+        mut service: ConnectionService,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
 
@@ -94,11 +94,21 @@ impl Kademlia {
             return Err(Error::PeerAlreadyExists(peer));
         };
 
-        entry.insert(PeerContext::new(service));
-
-        // TODO: open substream to peer
-
-        Ok(())
+        match service.open_substream().await {
+            Ok(substream_id) => {
+                entry.insert(PeerContext::new(service));
+                Ok(())
+            }
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?error,
+                    "failed to open substream to remote peer"
+                );
+                return Err(error);
+            }
+        }
     }
 
     /// Connection closed to remote peer.
@@ -144,7 +154,7 @@ impl Kademlia {
     }
 
     pub async fn run(mut self) -> crate::Result<()> {
-        tracing::error!(target: LOG_TARGET, "starting kademlia event loop");
+        tracing::debug!(target: LOG_TARGET, "starting kademlia event loop");
 
         loop {
             tokio::select! {

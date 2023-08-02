@@ -325,6 +325,7 @@ mod tests {
         let (_command_tx1, command_rx1) = channel(64);
 
         let context1 = TransportContext {
+            local_peer_id: PeerId::random(),
             tx: event_tx1,
             keypair: keypair1.clone(),
             protocols: HashMap::from_iter([(
@@ -354,6 +355,7 @@ mod tests {
         let (command_tx2, command_rx2) = channel(64);
 
         let context2 = TransportContext {
+            local_peer_id: PeerId::random(),
             tx: event_tx2,
             keypair: keypair2.clone(),
             protocols: HashMap::from_iter([(
@@ -411,6 +413,7 @@ mod tests {
         let (_command_tx1, command_rx1) = channel(64);
 
         let context1 = TransportContext {
+            local_peer_id: PeerId::random(),
             tx: event_tx1,
             keypair: keypair1.clone(),
             protocols: HashMap::from_iter([(
@@ -437,6 +440,7 @@ mod tests {
         let (command_tx2, command_rx2) = channel(64);
 
         let context2 = TransportContext {
+            local_peer_id: PeerId::random(),
             tx: event_tx2,
             keypair: keypair2.clone(),
             protocols: HashMap::from_iter([(
