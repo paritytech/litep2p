@@ -18,12 +18,28 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder, crypto::ed25519::Keypair,
     protocol::libp2p::kademlia::ConfigBuilder as KademliaConfigBuilder,
     transport::tcp::config::TransportConfig as TcpTransportConfig, Litep2p,
 };
+
+async fn spawn_litep2p(port: u16) {
+    let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: format!("/ip6/::1/tcp/{port}").parse().unwrap(),
+        })
+        .with_ipfs_kademlia(kad_config1)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    loop {
+        let _ = litep2p1.next_event().await;
+    }
+}
 
 #[tokio::test]
 async fn kademlia_supported() {
@@ -31,7 +47,7 @@ async fn kademlia_supported() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
+    let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -41,6 +57,10 @@ async fn kademlia_supported() {
         .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    for port in 9000..9003 {
+        tokio::spawn(spawn_litep2p(port));
+    }
 
     loop {
         tokio::select! {

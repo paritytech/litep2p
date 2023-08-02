@@ -61,13 +61,13 @@ impl TryFrom<i32> for ConnectionType {
 #[derive(Debug)]
 pub struct KademliaPeer {
     /// Peer ID.
-    peer: PeerId,
+    pub(super) peer: PeerId,
 
     /// Known addresses of peer.
-    addresses: Vec<Multiaddr>,
+    pub(super) addresses: Vec<Multiaddr>,
 
     /// Connection type.
-    connection: ConnectionType,
+    pub(super) connection: ConnectionType,
 }
 
 impl TryFrom<&schema::kademlia::Peer> for KademliaPeer {
@@ -135,8 +135,6 @@ impl KademliaMessage {
         match schema::kademlia::Message::decode(bytes) {
             Ok(message) => match message.r#type {
                 4 => {
-                    tracing::info!(target: LOG_TARGET, "message: {message:?}");
-
                     let peers = message
                         .closer_peers
                         .iter()

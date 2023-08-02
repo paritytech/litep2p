@@ -21,11 +21,17 @@
 use crate::{
     error::Error,
     peer_id::PeerId,
-    protocol::{libp2p::kademlia::key::Key, ConnectionEvent, ConnectionService, Direction},
-    substream::Substream,
+    protocol::{
+        libp2p::kademlia::{key::Key, message::KademliaMessage},
+        ConnectionEvent, ConnectionService, Direction,
+    },
+    substream::{Substream, SubstreamSet},
     transport::TransportService,
     types::SubstreamId,
 };
+
+use bytes::BytesMut;
+use futures::{SinkExt, StreamExt};
 
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -69,6 +75,9 @@ pub struct Kademlia {
 
     /// Connected peers,
     peers: HashMap<PeerId, PeerContext>,
+
+    /// Substream set.
+    substreams: SubstreamSet<PeerId>,
 }
 
 impl Kademlia {
@@ -80,6 +89,7 @@ impl Kademlia {
             service,
             local_key,
             peers: HashMap::new(),
+            substreams: SubstreamSet::new(),
         }
     }
 
@@ -126,9 +136,31 @@ impl Kademlia {
         &mut self,
         peer: PeerId,
         _substream_id: SubstreamId,
-        _substream: Box<dyn Substream>,
+        mut substream: Box<dyn Substream>,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "outbound substream opened");
+
+        let message = KademliaMessage::find_node(PeerId::random());
+
+        match substream.send(message.into()).await {
+            Ok(res) => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?res,
+                    "`FIND_NODE` message sent to peer"
+                );
+                self.substreams.insert(peer, substream);
+            }
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?error,
+                    "failed to send `FIND_NODE` message to peer"
+                );
+            }
+        }
 
         Ok(())
     }
@@ -142,6 +174,22 @@ impl Kademlia {
         tracing::debug!(target: LOG_TARGET, ?peer, "inbound substream opened");
 
         Ok(())
+    }
+
+    fn on_inbound_message(&mut self, peer: PeerId, message: BytesMut) {
+        match KademliaMessage::from_bytes(message) {
+            Some(KademliaMessage::FindNode { peers }) => {
+                for peer in peers {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        peer_id = ?peer.peer,
+                        addresses = ?peer.addresses,
+                        connection = ?peer.connection
+                    );
+                }
+            }
+            _ => tracing::debug!(target: LOG_TARGET, "ignoring unsupported message type"),
+        }
     }
 
     /// Failed to open substream to remote peer.
@@ -197,6 +245,13 @@ impl Kademlia {
                         self.on_substream_open_failure(substream, error);
                     }
                     None => return Ok(()),
+                },
+                event = self.substreams.next() => match event {
+                    Some((peer, message)) => match message {
+                        Ok(message) => self.on_inbound_message(peer, message),
+                        Err(error) => tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to read message"),
+                    },
+                    None => todo!(),
                 }
             }
         }
