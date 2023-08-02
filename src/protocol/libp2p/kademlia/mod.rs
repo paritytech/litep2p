@@ -37,6 +37,7 @@ const LOG_TARGET: &str = "ipfs::kademlia";
 mod config;
 mod handle;
 mod key;
+mod message;
 mod store;
 
 mod schema {
