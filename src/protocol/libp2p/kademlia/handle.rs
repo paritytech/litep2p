@@ -18,19 +18,44 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use crate::peer_id::PeerId;
+
+use tokio::sync::mpsc::{Receiver, Sender};
+
+/// Logging target for the file.
+const LOG_TARGET: &str = "ifsp::kademlia::handle";
+
+/// Kademlia commands.
+#[derive(Debug)]
+pub(crate) enum KademliaCommand {
+    /// Send `FIND_NODE` message.
+    FindNode {
+        /// Peer ID.
+        peer: PeerId,
+    },
+}
+
+/// Kademlia events.
 #[derive(Debug, Clone)]
 pub enum KademliaEvent {}
 
-pub struct KademliaHandle {}
+/// Handle for communicating with `Kademlia`.
+pub struct KademliaHandle {
+    /// TX channel for sending commands to `Kademlia`.
+    cmd_tx: Sender<KademliaCommand>,
+
+    /// RX channel for receiving events from `Kademlia`.
+    event_rx: Receiver<KademliaEvent>,
+}
 
 impl KademliaHandle {
     /// Create new [`KademliaHandle`].
-    pub fn new() -> Self {
-        Self {}
+    pub(super) fn new(cmd_tx: Sender<KademliaCommand>, event_rx: Receiver<KademliaEvent>) -> Self {
+        Self { cmd_tx, event_rx }
     }
 
     /// Poll next event from [`Kademlia`].
     pub async fn next_event(&mut self) -> Option<KademliaEvent> {
-        None
+        self.event_rx.recv().await
     }
 }

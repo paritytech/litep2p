@@ -19,9 +19,13 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::ProtocolCodec, protocol::libp2p::kademlia::handle::KademliaHandle,
+    codec::ProtocolCodec,
+    protocol::libp2p::kademlia::handle::{KademliaCommand, KademliaEvent, KademliaHandle},
     types::protocol::ProtocolName,
+    DEFAULT_CHANNEL_SIZE,
 };
+
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 /// Protocol name.
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
@@ -39,6 +43,12 @@ pub struct Config {
 
     /// Replication factor.
     pub(super) replication_factor: usize,
+
+    /// TX channel for sending events to `KademliaHandle`.
+    pub(super) event_tx: Sender<KademliaEvent>,
+
+    /// RX channel for receiving commands from `KademliaHandle`.
+    pub(super) cmd_rx: Receiver<KademliaCommand>,
 }
 
 /// Kademlia configuration builder.
@@ -72,13 +82,18 @@ impl ConfigBuilder {
 
     /// Build Kademlia configuration.
     pub fn build(self) -> (Config, KademliaHandle) {
+        let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+
         (
             Config {
                 protocol: self.protocol,
                 codec: self.codec,
                 replication_factor: self.replication_factor,
+                cmd_rx,
+                event_tx,
             },
-            KademliaHandle::new(),
+            KademliaHandle::new(cmd_tx, event_rx),
         )
     }
 }
