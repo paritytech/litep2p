@@ -79,10 +79,7 @@ impl TryFrom<&schema::kademlia::Peer> for KademliaPeer {
             addresses: record
                 .addrs
                 .iter()
-                .filter_map(|address| {
-                    std::str::from_utf8(address)
-                        .map_or(None, |address| Multiaddr::try_from(address).ok())
-                })
+                .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
                 .collect(),
             connection: ConnectionType::try_from(record.connection)?,
         })
