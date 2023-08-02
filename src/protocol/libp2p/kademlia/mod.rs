@@ -22,7 +22,11 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     protocol::{
-        libp2p::kademlia::{key::Key, message::KademliaMessage},
+        libp2p::kademlia::{
+            handle::{KademliaCommand, KademliaEvent},
+            key::Key,
+            message::KademliaMessage,
+        },
         ConnectionEvent, ConnectionService, Direction,
     },
     substream::{Substream, SubstreamSet},
@@ -32,6 +36,7 @@ use crate::{
 
 use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -78,11 +83,17 @@ pub struct Kademlia {
 
     /// Substream set.
     substreams: SubstreamSet<PeerId>,
+
+    /// TX channel for sending events to `KademliaHandle`.
+    event_tx: Sender<KademliaEvent>,
+
+    /// RX channel for receiving commands from `KademliaHandle`.
+    cmd_rx: Receiver<KademliaCommand>,
 }
 
 impl Kademlia {
     /// Create new [`Kademlia`].
-    pub fn new(service: TransportService, _config: Config) -> Self {
+    pub fn new(service: TransportService, config: Config) -> Self {
         let local_key = Key::from(service.local_peer_id());
 
         Self {
@@ -90,6 +101,8 @@ impl Kademlia {
             local_key,
             peers: HashMap::new(),
             substreams: SubstreamSet::new(),
+            event_tx: config.event_tx,
+            cmd_rx: config.cmd_rx,
         }
     }
 
@@ -245,6 +258,10 @@ impl Kademlia {
                         self.on_substream_open_failure(substream, error);
                     }
                     None => return Ok(()),
+                },
+                command = self.cmd_rx.recv() => match command {
+                    Some(_) => {}
+                    None => {}
                 },
                 event = self.substreams.next() => match event {
                     Some((peer, message)) => match message {
