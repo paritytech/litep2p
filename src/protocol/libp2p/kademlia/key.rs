@@ -19,10 +19,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-// use crate::record_priv;
-// use libp2p_core::multihash::Multihash;
-// use libp2p_identity::PeerId;
-
 use crate::peer_id::PeerId;
 
 use multiaddr::multihash::Multihash;

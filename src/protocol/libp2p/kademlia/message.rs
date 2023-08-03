@@ -18,7 +18,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{codec::unsigned_varint::UnsignedVarint, peer_id::PeerId};
+use crate::{
+    codec::unsigned_varint::UnsignedVarint,
+    peer_id::PeerId,
+    protocol::libp2p::kademlia::{schema, types::KademliaPeer},
+};
 
 use bytes::BytesMut;
 use multiaddr::Multiaddr;
@@ -26,65 +30,6 @@ use prost::Message;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "ifps::kademlia::message";
-
-/// Connection type to peer.
-#[derive(Debug)]
-pub enum ConnectionType {
-    /// Sender does not have a connection to peer.
-    NotConnected,
-
-    /// Sender is connected to the peer.
-    Connected,
-
-    /// Sender has recently been connected to the peer.
-    CanConnect,
-
-    /// Sender is unable to connect to the peer.
-    CannotConnect,
-}
-
-impl TryFrom<i32> for ConnectionType {
-    type Error = ();
-
-    fn try_from(value: i32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(ConnectionType::NotConnected),
-            1 => Ok(ConnectionType::Connected),
-            2 => Ok(ConnectionType::CanConnect),
-            3 => Ok(ConnectionType::CannotConnect),
-            _ => Err(()),
-        }
-    }
-}
-
-/// Kademlia peer.
-#[derive(Debug)]
-pub struct KademliaPeer {
-    /// Peer ID.
-    pub(super) peer: PeerId,
-
-    /// Known addresses of peer.
-    pub(super) addresses: Vec<Multiaddr>,
-
-    /// Connection type.
-    pub(super) connection: ConnectionType,
-}
-
-impl TryFrom<&schema::kademlia::Peer> for KademliaPeer {
-    type Error = ();
-
-    fn try_from(record: &schema::kademlia::Peer) -> Result<Self, Self::Error> {
-        Ok(KademliaPeer {
-            peer: PeerId::from_bytes(&record.id).map_err(|_| ())?,
-            addresses: record
-                .addrs
-                .iter()
-                .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
-                .collect(),
-            connection: ConnectionType::try_from(record.connection)?,
-        })
-    }
-}
 
 /// Kademlia message.
 #[derive(Debug)]
@@ -94,12 +39,6 @@ pub(super) enum KademliaMessage {
         /// Found peers.
         peers: Vec<KademliaPeer>,
     },
-}
-
-mod schema {
-    pub(super) mod kademlia {
-        include!(concat!(env!("OUT_DIR"), "/kademlia.rs"));
-    }
 }
 
 impl KademliaMessage {

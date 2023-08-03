@@ -50,6 +50,7 @@ mod handle;
 mod key;
 mod message;
 mod store;
+mod types;
 
 mod schema {
     pub(super) mod kademlia {
