@@ -26,6 +26,8 @@ use crate::{
             handle::{KademliaCommand, KademliaEvent},
             key::Key,
             message::KademliaMessage,
+            routing_table::RoutingTable,
+            types::KademliaPeer,
         },
         ConnectionEvent, ConnectionService, Direction,
     },
@@ -45,10 +47,12 @@ pub use crate::protocol::libp2p::kademlia::config::{Config, ConfigBuilder};
 /// Logging target for the file.
 const LOG_TARGET: &str = "ipfs::kademlia";
 
+mod bucket;
 mod config;
 mod handle;
 mod key;
 mod message;
+mod routing_table;
 mod store;
 mod types;
 
@@ -90,6 +94,9 @@ pub struct Kademlia {
 
     /// RX channel for receiving commands from `KademliaHandle`.
     cmd_rx: Receiver<KademliaCommand>,
+
+    /// Routing table.
+    routing_table: RoutingTable<KademliaPeer>,
 }
 
 impl Kademlia {
@@ -99,11 +106,12 @@ impl Kademlia {
 
         Self {
             service,
-            local_key,
             peers: HashMap::new(),
-            substreams: SubstreamSet::new(),
-            event_tx: config.event_tx,
             cmd_rx: config.cmd_rx,
+            event_tx: config.event_tx,
+            substreams: SubstreamSet::new(),
+            local_key: local_key.clone(),
+            routing_table: RoutingTable::new(local_key),
         }
     }
 

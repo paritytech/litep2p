@@ -25,7 +25,7 @@ use crate::{peer_id::PeerId, protocol::libp2p::kademlia::schema};
 use multiaddr::Multiaddr;
 
 /// Connection type to peer.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ConnectionType {
     /// Sender does not have a connection to peer.
     NotConnected,
@@ -55,7 +55,7 @@ impl TryFrom<i32> for ConnectionType {
 }
 
 /// Kademlia peer.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KademliaPeer {
     /// Peer ID.
     pub(super) peer: PeerId,
