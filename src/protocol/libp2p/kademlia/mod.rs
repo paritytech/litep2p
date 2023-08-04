@@ -24,10 +24,9 @@ use crate::{
     protocol::{
         libp2p::kademlia::{
             handle::{KademliaCommand, KademliaEvent},
-            key::Key,
             message::KademliaMessage,
             routing_table::RoutingTable,
-            types::KademliaPeer,
+            types::{KademliaPeer, Key},
         },
         ConnectionEvent, ConnectionService, Direction,
     },
@@ -50,7 +49,6 @@ const LOG_TARGET: &str = "ipfs::kademlia";
 mod bucket;
 mod config;
 mod handle;
-mod key;
 mod message;
 mod routing_table;
 mod store;
@@ -210,7 +208,7 @@ impl Kademlia {
         match KademliaMessage::from_bytes(message) {
             Some(KademliaMessage::FindNode { peers }) => {
                 for peer in peers {
-                    let key = key::Key::from(peer.peer);
+                    let key = Key::from(peer.peer);
                     let distance = self.local_key.distance(&key);
 
                     tracing::info!(

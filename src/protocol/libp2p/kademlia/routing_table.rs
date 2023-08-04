@@ -35,8 +35,7 @@ use crate::{
     peer_id::PeerId,
     protocol::libp2p::kademlia::{
         bucket::{KBucket, KBucketEntry},
-        key::{Distance, Key, U256},
-        types::KademliaPeer,
+        types::{Distance, KademliaPeer, Key, U256},
     },
 };
 

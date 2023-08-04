@@ -28,10 +28,7 @@
 
 use crate::{
     peer_id::PeerId,
-    protocol::libp2p::kademlia::{
-        key::Key,
-        types::{ConnectionType, KademliaPeer},
-    },
+    protocol::libp2p::kademlia::types::{ConnectionType, KademliaPeer, Key},
 };
 
 use std::time::Duration;
