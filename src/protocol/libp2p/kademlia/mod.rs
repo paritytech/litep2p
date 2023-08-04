@@ -56,6 +56,14 @@ mod routing_table;
 mod store;
 mod types;
 
+// TODO: implement at least some rudimentary version of routing table
+// TODO: verify the routing table works by writing lots of tests
+// TODO: figure out how to implement peer eviction from k-buckets
+// TODO: when connection is established, add the peer to routing table
+// TODO: when `FIND_NODE` is received from user, find closest peers and send message
+// TODO: when `GET_VALUE` is received from user, find closest peers and send message
+// TODO: when `GET_VALUE` is received from user, find closest peers and send message
+
 mod schema {
     pub(super) mod kademlia {
         include!(concat!(env!("OUT_DIR"), "/kademlia.rs"));
@@ -96,7 +104,7 @@ pub struct Kademlia {
     cmd_rx: Receiver<KademliaCommand>,
 
     /// Routing table.
-    routing_table: RoutingTable<KademliaPeer>,
+    routing_table: RoutingTable,
 }
 
 impl Kademlia {
@@ -202,16 +210,24 @@ impl Kademlia {
         match KademliaMessage::from_bytes(message) {
             Some(KademliaMessage::FindNode { peers }) => {
                 for peer in peers {
+                    let key = key::Key::from(peer.peer);
+                    let distance = self.local_key.distance(&key);
+
                     tracing::info!(
                         target: LOG_TARGET,
-                        peer_id = ?peer.peer,
-                        addresses = ?peer.addresses,
-                        connection = ?peer.connection
+                        "peer {}, index {:?}",
+                        peer.peer,
+                        distance.ilog2(),
                     );
                 }
             }
             _ => tracing::debug!(target: LOG_TARGET, "ignoring unsupported message type"),
         }
+    }
+
+    /// Send `FIND_NODE` to nearest peers.
+    async fn on_find_node(&mut self, peer: PeerId) -> crate::Result<()> {
+        Ok(())
     }
 
     /// Failed to open substream to remote peer.
@@ -268,9 +284,15 @@ impl Kademlia {
                     }
                     None => return Ok(()),
                 },
-                command = self.cmd_rx.recv() => match command {
-                    Some(_) => {}
-                    None => {}
+                command = self.cmd_rx.recv() => {
+                    let result = match command {
+                        Some(KademliaCommand::FindNode { peer }) => self.on_find_node(peer).await,
+                        None => Err(Error::EssentialTaskClosed),
+                    };
+
+                    if let Err(error) = result {
+                        tracing::debug!(target: LOG_TARGET, ?command, ?error, "failed to handle command");
+                    }
                 },
                 event = self.substreams.next() => match event {
                     Some((peer, message)) => match message {

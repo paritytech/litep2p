@@ -20,12 +20,23 @@
 // DEALINGS IN THE SOFTWARE.
 
 //! Kademlia routing table implementation.
+//!
+//! The routing table has a simple design:
+//!  - calculate k-bucket for the peer from its peer ID
+//!  - if the the k-bucket has space, insert peer into the k-bucket
+//!  - if the the k-bucket is full, check if there are any disconnected peers
+//!     - if
+//!
+//!
+//!
+//!
 
 use crate::{
     peer_id::PeerId,
     protocol::libp2p::kademlia::{
-        bucket::KBucket,
+        bucket::{KBucket, KBucketEntry},
         key::{Distance, Key, U256},
+        types::KademliaPeer,
     },
 };
 
@@ -36,12 +47,12 @@ use std::{collections::VecDeque, time::Duration};
 /// Number of k-buckets.
 const NUM_BUCKETS: usize = 256;
 
-pub struct RoutingTable<T> {
+pub struct RoutingTable {
     /// Local key.
     local_key: Key<PeerId>,
 
     /// K-buckets.
-    buckets: Vec<KBucket<Vec<T>>>,
+    buckets: Vec<KBucket>,
 }
 
 /// A (type-safe) index into a `KBucketsTable`, i.e. a non-negative integer in the
@@ -93,7 +104,7 @@ impl BucketIndex {
     }
 }
 
-impl<T: Clone> RoutingTable<T> {
+impl RoutingTable {
     /// Create new [`RoutingTable`].
     pub fn new(local_key: Key<PeerId>) -> Self {
         RoutingTable {
@@ -107,20 +118,66 @@ impl<T: Clone> RoutingTable<T> {
         &self.local_key
     }
 
-    /// Insert value into k-bucket.
-    // TODO: what should this function return if a node is replaced?
-    pub fn entry(&mut self, peer: PeerId, addresses: Vec<Multiaddr>) -> BucketEntry {
+    /// Get an entry for `peer` into a k-bucket.
+    pub fn entry<'a>(&'a mut self, peer: PeerId) -> KBucketEntry<'a> {
         let key = Key::from(peer);
 
         let Some(index) = BucketIndex::new(&self.local_key.distance(&key)) else {
-            return BucketEntry::LocalNode;
+            return KBucketEntry::LocalNode
         };
 
-        todo!();
+        self.buckets[index.get()].entry(key)
     }
 }
 
-pub enum BucketEntry {
-    /// Entry points to local node.
-    LocalNode,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::libp2p::kademlia::types::ConnectionType;
+
+    #[test]
+    fn add_peer_to_empty_table() {
+        let own_peer_id = PeerId::random();
+        let own_key = Key::from(own_peer_id);
+        let mut table = RoutingTable::new(own_key.clone());
+
+        // verify that local peer id resolves to special entry
+        assert_eq!(table.entry(own_peer_id), KBucketEntry::LocalNode);
+
+        let peer = PeerId::random();
+        let mut test = table.entry(peer);
+        let addresses = vec![];
+
+        assert!(std::matches!(test, KBucketEntry::Vacant(_)));
+        test.insert(KademliaPeer {
+            peer,
+            addresses: addresses.clone(),
+            connection: ConnectionType::Connected,
+        });
+
+        assert!(std::matches!(
+            table.entry(peer),
+            KBucketEntry::Occupied(KademliaPeer {
+                peer,
+                addresses,
+                connection: ConnectionType::Connected,
+            })
+        ));
+
+        match table.entry(peer) {
+            KBucketEntry::Occupied(entry) => {
+                entry.connection = ConnectionType::NotConnected;
+            }
+            state => panic!("invalid state for `KBucketEntry`"),
+        }
+
+        assert!(std::matches!(
+            table.entry(peer),
+            KBucketEntry::Occupied(KademliaPeer {
+                peer,
+                addresses,
+                connection: ConnectionType::NotConnected,
+            })
+        ));
+    }
 }

@@ -26,18 +26,80 @@
 // TODO: if the bucket contains a disconnected node, drop that node and insert the new node
 // TODO: how to select index for the node?
 
+use crate::{
+    peer_id::PeerId,
+    protocol::libp2p::kademlia::{
+        key::Key,
+        types::{ConnectionType, KademliaPeer},
+    },
+};
+
 use std::time::Duration;
 
-/// Kademlia k-bucket.
-pub struct KBucket<T> {
-    nodes: Vec<T>,
+/// K-bucket entry.
+#[derive(Debug, PartialEq, Eq)]
+pub enum KBucketEntry<'a> {
+    /// Entry points to local node.
+    LocalNode,
+    /// Occupied entry to a connected node.
+    Occupied(&'a mut KademliaPeer),
+    /// Vacant entry.
+    Vacant(&'a mut KademliaPeer),
+    /// Entry not found and any present entry cannot be replaced.
+    NoSlot,
 }
 
-impl<T> KBucket<T> {
+impl<'a> KBucketEntry<'a> {
+    /// Insert new entry into the entry if possible.
+    pub fn insert(&'a mut self, new: KademliaPeer) {
+        if let KBucketEntry::Vacant(old) = self {
+            old.peer = new.peer;
+            old.connection = new.connection;
+        }
+    }
+}
+
+/// Kademlia k-bucket.
+pub struct KBucket {
+    nodes: Vec<KademliaPeer>,
+}
+
+impl KBucket {
     /// Create new [`KBucket`].
     pub fn new() -> Self {
         Self {
             nodes: Vec::with_capacity(20),
         }
+    }
+
+    /// Get entry into the bucket.
+    // TODO: this is horrible code
+    pub fn entry<'a>(&'a mut self, key: Key<PeerId>) -> KBucketEntry<'a> {
+        for i in 0..self.nodes.len() {
+            if &self.nodes[i].peer == key.preimage() {
+                return KBucketEntry::Occupied(&mut self.nodes[i]);
+            }
+        }
+
+        if self.nodes.len() < 20 {
+            self.nodes.push(KademliaPeer {
+                peer: PeerId::random(),
+                addresses: vec![],
+                connection: ConnectionType::NotConnected,
+            });
+            let len = self.nodes.len() - 1;
+            return KBucketEntry::Vacant(&mut self.nodes[len]);
+        }
+
+        for i in 0..self.nodes.len() {
+            match self.nodes[i].connection {
+                ConnectionType::NotConnected | ConnectionType::CannotConnect => {
+                    return KBucketEntry::Vacant(&mut self.nodes[i]);
+                }
+                _ => continue,
+            }
+        }
+
+        KBucketEntry::NoSlot
     }
 }
