@@ -228,6 +228,9 @@ impl TryFrom<i32> for ConnectionType {
 /// Kademlia peer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KademliaPeer {
+    /// Peer key.
+    pub(super) key: Key<PeerId>,
+
     /// Peer ID.
     pub(super) peer: PeerId,
 
@@ -238,12 +241,27 @@ pub struct KademliaPeer {
     pub(super) connection: ConnectionType,
 }
 
+impl KademliaPeer {
+    /// Create new [`KademliaPeer`].
+    pub fn new(peer: PeerId, addresses: Vec<Multiaddr>, connection: ConnectionType) -> Self {
+        Self {
+            peer,
+            addresses,
+            connection,
+            key: Key::from(peer),
+        }
+    }
+}
+
 impl TryFrom<&schema::kademlia::Peer> for KademliaPeer {
     type Error = ();
 
     fn try_from(record: &schema::kademlia::Peer) -> Result<Self, Self::Error> {
+        let peer = PeerId::from_bytes(&record.id).map_err(|_| ())?;
+
         Ok(KademliaPeer {
-            peer: PeerId::from_bytes(&record.id).map_err(|_| ())?,
+            key: Key::from(peer),
+            peer,
             addresses: record
                 .addrs
                 .iter()

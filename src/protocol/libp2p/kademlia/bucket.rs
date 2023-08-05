@@ -21,14 +21,9 @@
 
 //! Kademlia k-bucket implementation.
 
-// TODO: use lru cache
-// TODO: if the bucket is full of connected nodes, drop the new node
-// TODO: if the bucket contains a disconnected node, drop that node and insert the new node
-// TODO: how to select index for the node?
-
 use crate::{
     peer_id::PeerId,
-    protocol::libp2p::kademlia::types::{ConnectionType, KademliaPeer, Key},
+    protocol::libp2p::kademlia::types::{ConnectionType, Distance, KademliaPeer, Key},
 };
 
 use std::time::Duration;
@@ -38,10 +33,13 @@ use std::time::Duration;
 pub enum KBucketEntry<'a> {
     /// Entry points to local node.
     LocalNode,
+
     /// Occupied entry to a connected node.
     Occupied(&'a mut KademliaPeer),
+
     /// Vacant entry.
     Vacant(&'a mut KademliaPeer),
+
     /// Entry not found and any present entry cannot be replaced.
     NoSlot,
 }
@@ -51,6 +49,7 @@ impl<'a> KBucketEntry<'a> {
     pub fn insert(&'a mut self, new: KademliaPeer) {
         if let KBucketEntry::Vacant(old) = self {
             old.peer = new.peer;
+            old.key = Key::from(new.peer);
             old.addresses = new.addresses;
             old.connection = new.connection;
         }
@@ -79,12 +78,13 @@ impl KBucket {
             }
         }
 
+        // TODO: return index to the vector maybe?
         if self.nodes.len() < 20 {
-            self.nodes.push(KademliaPeer {
-                peer: PeerId::random(),
-                addresses: vec![],
-                connection: ConnectionType::NotConnected,
-            });
+            self.nodes.push(KademliaPeer::new(
+                PeerId::random(),
+                vec![],
+                ConnectionType::NotConnected,
+            ));
             let len = self.nodes.len() - 1;
             return KBucketEntry::Vacant(&mut self.nodes[len]);
         }

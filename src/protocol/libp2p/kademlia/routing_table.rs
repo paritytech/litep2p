@@ -164,20 +164,20 @@ mod tests {
         let addresses = vec![];
 
         assert!(std::matches!(test, KBucketEntry::Vacant(_)));
-        test.insert(KademliaPeer {
+        test.insert(KademliaPeer::new(
             peer,
-            addresses: addresses.clone(),
-            connection: ConnectionType::Connected,
-        });
-
-        assert!(std::matches!(
-            table.entry(key.clone()),
-            KBucketEntry::Occupied(KademliaPeer {
-                peer,
-                addresses,
-                connection: ConnectionType::Connected,
-            })
+            addresses.clone(),
+            ConnectionType::Connected,
         ));
+
+        assert_eq!(
+            table.entry(key.clone()),
+            KBucketEntry::Occupied(&mut KademliaPeer::new(
+                peer,
+                addresses.clone(),
+                ConnectionType::Connected,
+            ))
+        );
 
         match table.entry(key.clone()) {
             KBucketEntry::Occupied(entry) => {
@@ -186,14 +186,14 @@ mod tests {
             state => panic!("invalid state for `KBucketEntry`"),
         }
 
-        assert!(std::matches!(
+        assert_eq!(
             table.entry(key.clone()),
-            KBucketEntry::Occupied(KademliaPeer {
+            KBucketEntry::Occupied(&mut KademliaPeer::new(
                 peer,
                 addresses,
-                connection: ConnectionType::NotConnected,
-            })
-        ));
+                ConnectionType::NotConnected,
+            ))
+        );
     }
 
     #[test]
@@ -209,11 +209,7 @@ mod tests {
             let mut entry = table.entry(key.clone());
 
             assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
-            entry.insert(KademliaPeer {
-                peer,
-                addresses: vec![],
-                connection: ConnectionType::Connected,
-            });
+            entry.insert(KademliaPeer::new(peer, vec![], ConnectionType::Connected));
         }
 
         // try to add another peer and verify the peer is rejected
@@ -241,11 +237,7 @@ mod tests {
                 let mut entry = table.entry(key.clone());
 
                 assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
-                entry.insert(KademliaPeer {
-                    peer,
-                    addresses: vec![],
-                    connection: ConnectionType::Connected,
-                });
+                entry.insert(KademliaPeer::new(peer, vec![], ConnectionType::Connected));
 
                 (peer, key)
             })
@@ -272,22 +264,22 @@ mod tests {
         // try to add the previously rejected peer again and verify it's added
         let mut entry = table.entry(key.clone());
         assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
-        entry.insert(KademliaPeer {
+        entry.insert(KademliaPeer::new(
             peer,
-            addresses: vec!["/ip6/::1/tcp/8888".parse().unwrap()],
-            connection: ConnectionType::CanConnect,
-        });
+            vec!["/ip6/::1/tcp/8888".parse().unwrap()],
+            ConnectionType::CanConnect,
+        ));
 
         // verify the node is still there
         let mut entry = table.entry(key.clone());
         let addresses = vec!["/ip6/::1/tcp/8888".parse().unwrap()];
         assert_eq!(
             entry,
-            KBucketEntry::Occupied(&mut KademliaPeer {
+            KBucketEntry::Occupied(&mut KademliaPeer::new(
                 peer,
                 addresses,
-                connection: ConnectionType::CanConnect,
-            })
+                ConnectionType::CanConnect,
+            ))
         );
     }
 
@@ -305,11 +297,11 @@ mod tests {
                 let mut entry = table.entry(key.clone());
 
                 assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
-                entry.insert(KademliaPeer {
+                entry.insert(KademliaPeer::new(
                     peer,
-                    addresses: vec![],
-                    connection: ConnectionType::NotConnected,
-                });
+                    vec![],
+                    ConnectionType::NotConnected,
+                ));
 
                 (peer, key)
             })
@@ -324,10 +316,10 @@ mod tests {
 
         let mut entry = table.entry(key.clone());
         assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
-        entry.insert(KademliaPeer {
+        entry.insert(KademliaPeer::new(
             peer,
-            addresses: vec!["/ip6/::1/tcp/8888".parse().unwrap()],
-            connection: ConnectionType::CanConnect,
-        });
+            vec!["/ip6/::1/tcp/8888".parse().unwrap()],
+            ConnectionType::CanConnect,
+        ));
     }
 }
