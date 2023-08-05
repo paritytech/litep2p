@@ -56,8 +56,24 @@ impl<'a> KBucketEntry<'a> {
     }
 }
 
+/// K-bucket iterator.
+// TODO: this may not be needed
+pub struct KBucketIterator<'a, I: Iterator<Item = &'a KademliaPeer>> {
+    iter: I,
+}
+
+// TODO: this may not be needed
+impl<'a, I: Iterator<Item = &'a KademliaPeer>> Iterator for KBucketIterator<'a, I> {
+    type Item = &'a KademliaPeer;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
 /// Kademlia k-bucket.
 pub struct KBucket {
+    // TODO: store peers in a btreemap with increasing distance from local key?
     nodes: Vec<KademliaPeer>,
 }
 
@@ -99,5 +115,53 @@ impl KBucket {
         }
 
         KBucketEntry::NoSlot
+    }
+
+    /// Get iterator over the k-bucket, sorting the k-bucket entries in increasing order
+    /// by distance.
+    pub fn closest_iter<'a>(
+        &'a mut self,
+        target: Key<PeerId>,
+    ) -> KBucketIterator<'a, impl Iterator<Item = &'a KademliaPeer>> {
+        self.nodes
+            .sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
+
+        KBucketIterator {
+            iter: self.nodes.iter(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closest_iter() {
+        let mut bucket = KBucket::new();
+
+        // add some random nodes to the bucket
+        let peers = (0..10)
+            .map(|_| {
+                let peer = PeerId::random();
+                bucket
+                    .nodes
+                    .push(KademliaPeer::new(peer, vec![], ConnectionType::Connected));
+
+                peer
+            })
+            .collect::<Vec<_>>();
+
+        let mut target = Key::from(PeerId::random());
+        let mut iter = bucket.closest_iter(target.clone());
+        let mut prev = None;
+
+        while let Some(node) = iter.next() {
+            if let Some(distance) = prev {
+                assert!(distance < target.distance(&node.key));
+            }
+
+            prev = Some(target.distance(&node.key));
+        }
     }
 }
