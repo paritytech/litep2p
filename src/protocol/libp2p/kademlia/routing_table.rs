@@ -20,16 +20,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 //! Kademlia routing table implementation.
-//!
-//! The routing table has a simple design:
-//!  - calculate k-bucket for the peer from its peer ID
-//!  - if the the k-bucket has space, insert peer into the k-bucket
-//!  - if the the k-bucket is full, check if there are any disconnected peers
-//!     - if
-//!
-//!
-//!
-//!
 
 use crate::{
     peer_id::PeerId,
