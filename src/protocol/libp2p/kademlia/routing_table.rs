@@ -118,9 +118,7 @@ impl RoutingTable {
     }
 
     /// Get an entry for `peer` into a k-bucket.
-    pub fn entry<'a>(&'a mut self, peer: PeerId) -> KBucketEntry<'a> {
-        let key = Key::from(peer);
-
+    pub fn entry<'a>(&'a mut self, key: Key<PeerId>) -> KBucketEntry<'a> {
         let Some(index) = BucketIndex::new(&self.local_key.distance(&key)) else {
             return KBucketEntry::LocalNode
         };
@@ -133,6 +131,23 @@ impl RoutingTable {
 mod tests {
     use super::*;
     use crate::protocol::libp2p::kademlia::types::ConnectionType;
+    use rand::Rng;
+    use sha2::digest::generic_array::{typenum::U32, GenericArray};
+
+    // generate random peer that falls in to specified k-bucket.
+    //
+    // NOTE: the preimage of the generated `Key` doesn't match the `Key` itself
+    fn random_peer(
+        rng: &mut impl rand::Rng,
+        own_key: Key<PeerId>,
+        bucket_index: usize,
+    ) -> (Key<PeerId>, PeerId) {
+        let peer = PeerId::random();
+        let distance = BucketIndex(bucket_index).rand_distance(rng);
+        let key_bytes = own_key.for_distance(distance);
+
+        (Key::from_bytes(key_bytes, peer), peer)
+    }
 
     #[test]
     fn add_peer_to_empty_table() {
@@ -141,10 +156,11 @@ mod tests {
         let mut table = RoutingTable::new(own_key.clone());
 
         // verify that local peer id resolves to special entry
-        assert_eq!(table.entry(own_peer_id), KBucketEntry::LocalNode);
+        assert_eq!(table.entry(own_key), KBucketEntry::LocalNode);
 
         let peer = PeerId::random();
-        let mut test = table.entry(peer);
+        let key = Key::from(peer);
+        let mut test = table.entry(key.clone());
         let addresses = vec![];
 
         assert!(std::matches!(test, KBucketEntry::Vacant(_)));
@@ -155,7 +171,7 @@ mod tests {
         });
 
         assert!(std::matches!(
-            table.entry(peer),
+            table.entry(key.clone()),
             KBucketEntry::Occupied(KademliaPeer {
                 peer,
                 addresses,
@@ -163,7 +179,7 @@ mod tests {
             })
         ));
 
-        match table.entry(peer) {
+        match table.entry(key.clone()) {
             KBucketEntry::Occupied(entry) => {
                 entry.connection = ConnectionType::NotConnected;
             }
@@ -171,12 +187,147 @@ mod tests {
         }
 
         assert!(std::matches!(
-            table.entry(peer),
+            table.entry(key.clone()),
             KBucketEntry::Occupied(KademliaPeer {
                 peer,
                 addresses,
                 connection: ConnectionType::NotConnected,
             })
         ));
+    }
+
+    #[test]
+    fn full_k_bucket() {
+        let mut rng = rand::thread_rng();
+        let own_peer_id = PeerId::random();
+        let own_key = Key::from(own_peer_id);
+        let mut table = RoutingTable::new(own_key.clone());
+
+        // add 20 nodes to the same k-bucket
+        for i in 0..20 {
+            let (key, peer) = random_peer(&mut rng, own_key.clone(), 254);
+            let mut entry = table.entry(key.clone());
+
+            assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
+            entry.insert(KademliaPeer {
+                peer,
+                addresses: vec![],
+                connection: ConnectionType::Connected,
+            });
+        }
+
+        // try to add another peer and verify the peer is rejected
+        // because the k-bucket is full of connected nodes
+        let peer = PeerId::random();
+        let distance = BucketIndex(254).rand_distance(&mut rng);
+        let key_bytes = own_key.for_distance(distance);
+        let key = Key::from_bytes(key_bytes, peer);
+
+        let mut entry = table.entry(key.clone());
+        assert!(std::matches!(entry, KBucketEntry::NoSlot));
+    }
+
+    #[test]
+    fn peer_disconnects_and_is_evicted() {
+        let mut rng = rand::thread_rng();
+        let own_peer_id = PeerId::random();
+        let own_key = Key::from(own_peer_id);
+        let mut table = RoutingTable::new(own_key.clone());
+
+        // add 20 nodes to the same k-bucket
+        let peers = (0..20)
+            .map(|_| {
+                let (key, peer) = random_peer(&mut rng, own_key.clone(), 253);
+                let mut entry = table.entry(key.clone());
+
+                assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
+                entry.insert(KademliaPeer {
+                    peer,
+                    addresses: vec![],
+                    connection: ConnectionType::Connected,
+                });
+
+                (peer, key)
+            })
+            .collect::<Vec<_>>();
+
+        // try to add another peer and verify the peer is rejected
+        // because the k-bucket is full of connected nodes
+        let peer = PeerId::random();
+        let distance = BucketIndex(253).rand_distance(&mut rng);
+        let key_bytes = own_key.for_distance(distance);
+        let key = Key::from_bytes(key_bytes, peer);
+
+        let mut entry = table.entry(key.clone());
+        assert!(std::matches!(entry, KBucketEntry::NoSlot));
+
+        // disconnect random peer
+        match table.entry(peers[3].1.clone()) {
+            KBucketEntry::Occupied(entry) => {
+                entry.connection = ConnectionType::NotConnected;
+            }
+            _ => panic!("invalid state for node"),
+        }
+
+        // try to add the previously rejected peer again and verify it's added
+        let mut entry = table.entry(key.clone());
+        assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
+        entry.insert(KademliaPeer {
+            peer,
+            addresses: vec!["/ip6/::1/tcp/8888".parse().unwrap()],
+            connection: ConnectionType::CanConnect,
+        });
+
+        // verify the node is still there
+        let mut entry = table.entry(key.clone());
+        let addresses = vec!["/ip6/::1/tcp/8888".parse().unwrap()];
+        assert_eq!(
+            entry,
+            KBucketEntry::Occupied(&mut KademliaPeer {
+                peer,
+                addresses,
+                connection: ConnectionType::CanConnect,
+            })
+        );
+    }
+
+    #[test]
+    fn disconnected_peers_are_not_evicted_if_there_is_capacity() {
+        let mut rng = rand::thread_rng();
+        let own_peer_id = PeerId::random();
+        let own_key = Key::from(own_peer_id);
+        let mut table = RoutingTable::new(own_key.clone());
+
+        // add 19 disconnected nodes to the same k-bucket
+        let peers = (0..19)
+            .map(|_| {
+                let (key, peer) = random_peer(&mut rng, own_key.clone(), 252);
+                let mut entry = table.entry(key.clone());
+
+                assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
+                entry.insert(KademliaPeer {
+                    peer,
+                    addresses: vec![],
+                    connection: ConnectionType::NotConnected,
+                });
+
+                (peer, key)
+            })
+            .collect::<Vec<_>>();
+
+        // try to add another peer and verify it's accepted as there is
+        // still room the k-bucket for the node
+        let peer = PeerId::random();
+        let distance = BucketIndex(252).rand_distance(&mut rng);
+        let key_bytes = own_key.for_distance(distance);
+        let key = Key::from_bytes(key_bytes, peer);
+
+        let mut entry = table.entry(key.clone());
+        assert!(std::matches!(entry, KBucketEntry::Vacant(_)));
+        entry.insert(KademliaPeer {
+            peer,
+            addresses: vec!["/ip6/::1/tcp/8888".parse().unwrap()],
+            connection: ConnectionType::CanConnect,
+        });
     }
 }

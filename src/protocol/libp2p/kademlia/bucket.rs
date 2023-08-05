@@ -51,6 +51,7 @@ impl<'a> KBucketEntry<'a> {
     pub fn insert(&'a mut self, new: KademliaPeer) {
         if let KBucketEntry::Vacant(old) = self {
             old.peer = new.peer;
+            old.addresses = new.addresses;
             old.connection = new.connection;
         }
     }

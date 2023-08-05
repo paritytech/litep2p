@@ -92,6 +92,14 @@ impl<T> Key<T> {
     pub fn for_distance(&self, d: Distance) -> KeyBytes {
         self.bytes.for_distance(d)
     }
+
+    /// Generate key from `KeyBytes` with a random preimage.
+    ///
+    /// Only used for testing
+    #[cfg(test)]
+    pub fn from_bytes(bytes: KeyBytes, preimage: T) -> Key<T> {
+        Self { bytes, preimage }
+    }
 }
 
 impl<T> From<Key<T>> for KeyBytes {
