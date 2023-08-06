@@ -20,6 +20,7 @@
 
 use crate::peer_id::PeerId;
 
+use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 /// Logging target for the file.
@@ -32,6 +33,15 @@ pub(crate) enum KademliaCommand {
     FindNode {
         /// Peer ID.
         peer: PeerId,
+    },
+
+    /// Add known peer.
+    AddKnownPeer {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Addresses of peer.
+        addresses: Vec<Multiaddr>,
     },
 }
 
@@ -52,6 +62,14 @@ impl KademliaHandle {
     /// Create new [`KademliaHandle`].
     pub(super) fn new(cmd_tx: Sender<KademliaCommand>, event_rx: Receiver<KademliaEvent>) -> Self {
         Self { cmd_tx, event_rx }
+    }
+
+    /// Add known peer.
+    pub async fn add_known_peer(&self, peer: PeerId, addresses: Vec<Multiaddr>) {
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::AddKnownPeer { peer, addresses })
+            .await;
     }
 
     /// Poll next event from [`Kademlia`].

@@ -23,10 +23,12 @@ use crate::{
     peer_id::PeerId,
     protocol::{
         libp2p::kademlia::{
+            bucket::KBucketEntry,
             handle::{KademliaCommand, KademliaEvent},
             message::KademliaMessage,
+            query::QueryEngine,
             routing_table::RoutingTable,
-            types::{KademliaPeer, Key},
+            types::{ConnectionType, KademliaPeer, Key},
         },
         ConnectionEvent, ConnectionService, Direction,
     },
@@ -37,6 +39,7 @@ use crate::{
 
 use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
+use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap};
@@ -187,8 +190,39 @@ impl Kademlia {
         }
     }
 
-    /// Send `FIND_NODE` to nearest peers.
-    async fn on_find_node(&mut self, peer: PeerId) -> crate::Result<()> {
+    /// Add known peer to local routing table.
+    fn on_add_known_peer(&mut self, peer: PeerId, addresses: Vec<Multiaddr>) -> crate::Result<()> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?addresses,
+            "add known peer to routing table",
+        );
+
+        match self.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                entry.addresses = addresses;
+            }
+            KBucketEntry::Vacant(mut entry) => {
+                entry.peer = peer;
+                entry.addresses = addresses;
+                entry.connection = match self.peers.get(&peer) {
+                    Some(_) => ConnectionType::Connected,
+                    None => ConnectionType::NotConnected,
+                };
+            }
+            KBucketEntry::LocalNode => tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "tried to add local node to routing table"
+            ),
+            KBucketEntry::NoSlot => tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "routing table full, cannot add new entry"
+            ),
+        }
+
         Ok(())
     }
 
@@ -249,11 +283,12 @@ impl Kademlia {
                 command = self.cmd_rx.recv() => {
                     let result = match command {
                         Some(KademliaCommand::FindNode { peer }) => self.on_find_node(peer).await,
+                        Some(KademliaCommand::AddKnownPeer { peer, addresses }) => self.on_add_known_peer(peer, addresses),
                         None => Err(Error::EssentialTaskClosed),
                     };
 
                     if let Err(error) = result {
-                        tracing::debug!(target: LOG_TARGET, ?command, ?error, "failed to handle command");
+                        tracing::debug!(target: LOG_TARGET, ?error, "failed to handle command");
                     }
                 },
                 event = self.substreams.next() => match event {
