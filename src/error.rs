@@ -94,6 +94,8 @@ pub enum Error {
     WebSocket(#[from] tokio_tungstenite::tungstenite::error::Error),
     #[error("Insufficient peers")]
     InsufficientPeers,
+    #[error("Substream doens't exist")]
+    SubstreamDoesntExist,
 }
 
 #[derive(Debug, thiserror::Error)]

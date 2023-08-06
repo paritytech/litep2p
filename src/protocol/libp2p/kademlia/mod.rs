@@ -193,26 +193,21 @@ impl Kademlia {
                         let message = KademliaMessage::find_node(peer.peer);
 
                         match substream.send(message.into()).await {
-                            Ok(_) => match self.peers.get_mut(&peer.peer) {
-                                Some(context) => context.add_pending_query(query_id),
-                                None => {
-                                    tracing::warn!(
-                                        target: LOG_TARGET,
-                                        peer = ?peer.peer,
-                                        "state mismatch: peer doesn't exist"
-                                    );
-                                    debug_assert!(false);
-                                }
-                            },
                             Err(error) => {
                                 self.engine.register_response_failure(query_id, peer.peer)
                             }
+                            Ok(_) => self
+                                .peers
+                                .get_mut(&peer.peer)
+                                .ok_or(Error::PeerDoesntExist(peer.peer))?
+                                .add_pending_query(query_id),
                         }
                     }
                     None => match self.peers.get_mut(&peer.peer) {
                         Some(context) => match context.service.open_substream().await {
                             Ok(substream_id) => context.add_pending_query(query_id),
                             Err(error) => {
+                                // TODO: disconenct peer?
                                 self.engine.register_response_failure(query_id, peer.peer)
                             }
                         },
@@ -245,17 +240,20 @@ impl Kademlia {
             "outbound substream opened"
         );
 
-        let Some(context) = self.peers.get_mut(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "state mismatch: outbound substream opened for non-existent peer");
-            debug_assert!(false);
-            return Err(Error::PeerDoesntExist(peer));
-        };
-
         // if the substream was opened but there is no query pending for the peer,
-        /// just stored the opened substream in the `SubstreamSet` and return early
-        let Some(query) = context.query.take() else {
-            self.substreams.insert(peer, substream);
-            return Ok(());
+        // just store the opened substream in the `SubstreamSet` and return early
+        let query = match self
+            .peers
+            .get_mut(&peer)
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .query
+            .take()
+        {
+            Some(query) => query,
+            None => {
+                self.substreams.insert(peer, substream);
+                return Ok(());
+            }
         };
 
         // attempt to send the pending query to peer and remove the peer if the send fails
@@ -291,56 +289,44 @@ impl Kademlia {
     }
 
     /// Handle received message.
-    async fn on_message_received(&mut self, peer: PeerId, message: BytesMut) {
+    async fn on_message_received(&mut self, peer: PeerId, message: BytesMut) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "handle message from peer");
 
-        let Some(context) = self.peers.get_mut(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "state mismatch: received message from a non-existent peer");
-            debug_assert!(false);
-            return;
-        };
+        match KademliaMessage::from_bytes(message).ok_or(Error::InvalidData)? {
+            KademliaMessage::FindNodeRequest { target } => {
+                let mut substream = self
+                    .substreams
+                    .get_mut(&peer)
+                    .ok_or(Error::SubstreamDoesntExist)?;
 
-        let Some(message) = KademliaMessage::from_bytes(message) else {
-            tracing::debug!(target: LOG_TARGET, ?peer, "failed to decode message");
-            return;
-        };
+                let message = KademliaMessage::find_node_response(
+                    self.routing_table.closest(Key::from(target), 20),
+                );
 
-        match message {
-            KademliaMessage::FindNodeRequest { target } => match self.substreams.get_mut(&peer) {
-                None => {
-                    tracing::warn!(target: LOG_TARGET, ?peer, "substream doesn't exist");
-                    debug_assert!(false);
+                if let Err(error) = substream.send(message.into()).await {
+                    // TODO: check if peer has an active query in progress
+                    self.disconnect_peer(peer).await;
                 }
-                Some(mut substream) => {
-                    let message = KademliaMessage::find_node_response(
-                        self.routing_table.closest(Key::from(target), 20),
-                    );
-
-                    if let Err(error) = substream.send(message.into()).await {
-                        // TODO: check if peer has an active query in progress
-                        self.disconnect_peer(peer).await;
-                    }
-                }
-            },
+            }
             KademliaMessage::FindNodeResponse { peers } => {
-                if let Some(query) = context.query.take() {
+                if let Some(query) = self
+                    .peers
+                    .get_mut(&peer)
+                    .ok_or(Error::PeerDoesntExist(peer))?
+                    .query
+                    .take()
+                {
                     self.engine.register_find_node_response(query, peer, peers)
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Execute `FIND_NODE`.
     async fn on_find_node(&mut self, peer: PeerId) -> crate::Result<()> {
         let candidates: VecDeque<_> = self.routing_table.closest(Key::from(peer), 20).into();
-
-        if candidates.is_empty() {
-            tracing::warn!(
-                target: LOG_TARGET,
-                "cannot perform `FIND_NODE`, no known peers"
-            );
-            return Err(Error::InsufficientPeers);
-        }
 
         // start new `FIND_NODE` query
         let query_id = self.engine.start_find_node(Key::from(peer), candidates);
@@ -427,7 +413,11 @@ impl Kademlia {
                 },
                 event = self.substreams.next() => match event {
                     Some((peer, message)) => match message {
-                        Ok(message) => self.on_message_received(peer, message).await,
+                        Ok(message) => {
+                            if let Err(error) = self.on_message_received(peer, message).await {
+                                tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to handle message");
+                            }
+                        }
                         Err(error) => return Err(error),
                     },
                     None => return Err(Error::EssentialTaskClosed),
