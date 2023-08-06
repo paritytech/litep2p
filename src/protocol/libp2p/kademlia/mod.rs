@@ -53,6 +53,7 @@ mod bucket;
 mod config;
 mod handle;
 mod message;
+mod query;
 mod routing_table;
 mod store;
 mod types;
@@ -61,7 +62,6 @@ mod types;
 // TODO: when `FIND_NODE` is received from user, find closest peers and send message
 // TODO: when `GET_VALUE` is received from user, find closest peers and send message
 // TODO: when `GET_VALUE` is received from user, find closest peers and send message
-// TODO: routing table should contain `ConnectionService`?
 
 mod schema {
     pub(super) mod kademlia {
