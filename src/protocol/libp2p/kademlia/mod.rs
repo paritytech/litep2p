@@ -127,24 +127,12 @@ impl Kademlia {
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
 
-        let Entry::Vacant(entry) = self.peers.entry(peer) else {
-            return Err(Error::PeerAlreadyExists(peer));
-        };
-
-        match service.open_substream().await {
-            Ok(substream_id) => {
+        match self.peers.entry(peer) {
+            Entry::Vacant(entry) => {
                 entry.insert(PeerContext::new(service));
                 Ok(())
             }
-            Err(error) => {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?error,
-                    "failed to open substream to remote peer"
-                );
-                return Err(error);
-            }
+            Entry::Occupied(_) => return Err(Error::PeerAlreadyExists(peer)),
         }
     }
 
@@ -165,28 +153,6 @@ impl Kademlia {
         mut substream: Box<dyn Substream>,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "outbound substream opened");
-
-        let message = KademliaMessage::find_node(PeerId::random());
-
-        match substream.send(message.into()).await {
-            Ok(res) => {
-                tracing::info!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?res,
-                    "`FIND_NODE` message sent to peer"
-                );
-                self.substreams.insert(peer, substream);
-            }
-            Err(error) => {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?error,
-                    "failed to send `FIND_NODE` message to peer"
-                );
-            }
-        }
 
         Ok(())
     }
