@@ -1,3 +1,4 @@
+// Copyright 2018-2019 Parity Technologies (UK) Ltd.
 // Copyright 2023 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a

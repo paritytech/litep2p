@@ -54,9 +54,6 @@ mod routing_table;
 mod store;
 mod types;
 
-// TODO: implement at least some rudimentary version of routing table
-// TODO: verify the routing table works by writing lots of tests
-// TODO: figure out how to implement peer eviction from k-buckets
 // TODO: when connection is established, add the peer to routing table
 // TODO: when `FIND_NODE` is received from user, find closest peers and send message
 // TODO: when `GET_VALUE` is received from user, find closest peers and send message

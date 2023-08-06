@@ -31,7 +31,10 @@ use crate::{
 
 use multiaddr::Multiaddr;
 
-use std::{collections::VecDeque, time::Duration};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    time::Duration,
+};
 
 /// Number of k-buckets.
 const NUM_BUCKETS: usize = 256;
@@ -115,6 +118,56 @@ impl RoutingTable {
 
         self.buckets[index.get()].entry(key)
     }
+
+    /// Get `limit` closests peers to `target` from the k-buckets.
+    pub fn closest(&mut self, target: Key<PeerId>, limit: usize) -> Vec<KademliaPeer> {
+        let (index, mut peers): (_, Vec<_>) =
+            match BucketIndex::new(&self.local_key.distance(&target)) {
+                Some(index) => (
+                    index.get(),
+                    self.buckets[index.get()]
+                        .closest_iter(target.clone())
+                        .cloned()
+                        .collect(),
+                ),
+                None => (
+                    0,
+                    self.buckets[0]
+                        .closest_iter(target.clone())
+                        .cloned()
+                        .collect(),
+                ),
+            };
+
+        // TODO: this is hideous, use a more intelligent approach
+        if peers.len() < limit {
+            let mut nodes = Vec::new();
+
+            for (i, bucket) in self.buckets.iter_mut().enumerate() {
+                if i == index {
+                    continue;
+                }
+
+                nodes.extend(bucket.closest_iter(target.clone()));
+            }
+
+            nodes.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
+
+            let count = {
+                if limit > nodes.len() {
+                    nodes.len()
+                } else {
+                    (limit - peers.len())
+                }
+            };
+
+            for i in 0..count {
+                peers.push(nodes[i].clone());
+            }
+        }
+
+        peers
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +176,33 @@ mod tests {
     use crate::protocol::libp2p::kademlia::types::ConnectionType;
     use rand::Rng;
     use sha2::digest::generic_array::{typenum::U32, GenericArray};
+
+    #[test]
+    fn closest_peers() {
+        let mut rng = rand::thread_rng();
+        let own_peer_id = PeerId::random();
+        let own_key = Key::from(own_peer_id);
+        let mut table = RoutingTable::new(own_key.clone());
+
+        for i in 0..60 {
+            let peer = PeerId::random();
+            let key = Key::from(peer);
+            let mut entry = table.entry(key.clone());
+            entry.insert(KademliaPeer::new(peer, vec![], ConnectionType::Connected));
+        }
+
+        let target = Key::from(PeerId::random());
+        let closest = table.closest(target.clone(), 60usize);
+        let mut prev = None;
+
+        for peer in &closest {
+            if let Some(value) = prev {
+                assert!(value < target.distance(&peer.key));
+            }
+
+            prev = Some(target.distance(&peer.key));
+        }
+    }
 
     // generate random peer that falls in to specified k-bucket.
     //
