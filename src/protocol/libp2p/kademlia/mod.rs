@@ -167,7 +167,7 @@ impl Kademlia {
     ///
     /// The peer is kept in the routing table but its connection state is set
     /// as `NotConnected`, meaning it can be evicted from a k-bucket if another
-    /// that shares the bucket connects.
+    /// peer that shares the bucket connects.
     async fn disconnect_peer(&mut self, peer: PeerId) {
         tracing::debug!(target: LOG_TARGET, ?peer, "disconnect peer");
 
@@ -261,6 +261,9 @@ impl Kademlia {
         // attempt to send the pending query to peer and remove the peer if the send fails
         let message = KademliaMessage::find_node(peer);
 
+        // if the send operation fails, the peer is disconnected and `QueryEngine` is notified
+        // of the failure which makes it updates its internal bookkeeping about the query state.
+        // after its notified, the engine is polled again to make progress on the state of the query
         if let Err(error) = substream.send(message.into()).await {
             tracing::debug!(
                 target: LOG_TARGET,
@@ -314,6 +317,7 @@ impl Kademlia {
                     );
 
                     if let Err(error) = substream.send(message.into()).await {
+                        // TODO: check if peer has an active query in progress
                         self.disconnect_peer(peer).await;
                     }
                 }
@@ -343,44 +347,6 @@ impl Kademlia {
 
         // poll query engine and send `FIND_NODE` messages to known remote peers
         self.poll_query_engine(query_id).await
-    }
-
-    /// Add known peer to local routing table.
-    fn on_add_known_peer(&mut self, peer: PeerId, addresses: Vec<Multiaddr>) -> crate::Result<()> {
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?peer,
-            ?addresses,
-            "add known peer to routing table",
-        );
-
-        match self.routing_table.entry(Key::from(peer)) {
-            KBucketEntry::Occupied(entry) => {
-                entry.addresses = addresses;
-            }
-            mut entry @ KBucketEntry::Vacant(_) => {
-                entry.insert(KademliaPeer::new(
-                    peer,
-                    addresses,
-                    match self.peers.get(&peer) {
-                        Some(_) => ConnectionType::Connected,
-                        None => ConnectionType::NotConnected,
-                    },
-                ));
-            }
-            KBucketEntry::LocalNode => tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                "tried to add local node to routing table"
-            ),
-            KBucketEntry::NoSlot => tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                "routing table full, cannot add new entry"
-            ),
-        }
-
-        Ok(())
     }
 
     /// Failed to open substream to remote peer.
@@ -441,7 +407,17 @@ impl Kademlia {
                 command = self.cmd_rx.recv() => {
                     let result = match command {
                         Some(KademliaCommand::FindNode { peer }) => self.on_find_node(peer).await,
-                        Some(KademliaCommand::AddKnownPeer { peer, addresses }) => self.on_add_known_peer(peer, addresses),
+                        Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
+                            self.routing_table.add_known_peer(
+                                peer,
+                                addresses,
+                                self.peers
+                                    .get(&peer)
+                                    .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
+                            );
+
+                            Ok(())
+                        }
                         None => Err(Error::EssentialTaskClosed),
                     };
 
@@ -505,24 +481,5 @@ mod tests {
             kad.on_find_node(PeerId::random()).await,
             Err(Error::InsufficientPeers)
         ));
-    }
-
-    #[tokio::test]
-    async fn find_node_some_peers() {
-        let (mut kad, _context) = make_kademlia();
-
-        // add some peers to the routing table
-        for i in 0..5 {
-            assert!(std::matches!(
-                kad.on_add_known_peer(
-                    PeerId::random(),
-                    vec![format!("/ip6/::1/tcp/888{i}").parse().unwrap()]
-                ),
-                Ok(())
-            ));
-        }
-
-        let target_peer = PeerId::random();
-        let target_key = Key::from(target_peer);
     }
 }

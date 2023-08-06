@@ -128,8 +128,9 @@ impl QueryEngine {
     }
 
     /// Report that a peer failed to respond to query.
+    // TODO: documentation
     pub fn register_response_failure(&mut self, query_id: QueryId, peer: PeerId) {
-        tracing::debug!(target: LOG_TARGET, query = ?query_id, ?peer, "register response failure");
+        tracing::trace!(target: LOG_TARGET, query = ?query_id, ?peer, "register response failure");
 
         let Some(query) = self.queries.get_mut(&query_id) else {
             tracing::warn!(target: LOG_TARGET, ?query_id, ?peer, "query doesn't exist");
@@ -152,13 +153,14 @@ impl QueryEngine {
         }
     }
 
+    // TODO: documentation
     pub(super) fn register_find_node_response(
         &mut self,
         query_id: QueryId,
         peer: PeerId,
         peers: Vec<KademliaPeer>,
     ) {
-        tracing::debug!(target: LOG_TARGET, query = ?query_id, "register `FIND_NODE` response");
+        tracing::trace!(target: LOG_TARGET, query = ?query_id, "register `FIND_NODE` response");
 
         match self.queries.get_mut(&query_id) {
             None => {
@@ -207,15 +209,21 @@ impl QueryEngine {
     }
 
     /// Start `FIND_NODE` query on the network and return the first
+    // TODO: documentation
     pub fn start_find_node(
         &mut self,
         target: Key<PeerId>,
         candidates: VecDeque<KademliaPeer>,
     ) -> QueryId {
-        tracing::debug!(target: LOG_TARGET, ?target, "start `FIND_NODE` query");
-        assert!(!candidates.is_empty());
-
         let query_id = self.next_query_id();
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?target,
+            ?query_id,
+            "start `FIND_NODE` query"
+        );
+
         self.queries.insert(
             query_id,
             Query::FindNode {
@@ -231,6 +239,7 @@ impl QueryEngine {
     }
 
     /// Check if Kademlia `FIND_NODE` lookup is finished.
+    // TODO: documentation
     fn lookup_status(
         target: &Key<PeerId>,
         active: &HashMap<PeerId, KademliaPeer>,

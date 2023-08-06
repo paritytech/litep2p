@@ -25,7 +25,7 @@ use crate::{
     peer_id::PeerId,
     protocol::libp2p::kademlia::{
         bucket::{KBucket, KBucketEntry},
-        types::{Distance, KademliaPeer, Key, U256},
+        types::{ConnectionType, Distance, KademliaPeer, Key, U256},
     },
 };
 
@@ -38,6 +38,9 @@ use std::{
 
 /// Number of k-buckets.
 const NUM_BUCKETS: usize = 256;
+
+/// Logging target for the file.
+const LOG_TARGET: &str = "ipfs::kademlia::routing_table";
 
 pub struct RoutingTable {
     /// Local key.
@@ -117,6 +120,49 @@ impl RoutingTable {
         };
 
         self.buckets[index.get()].entry(key)
+    }
+
+    /// Add known peer to [`RoutingTable`].
+    ///
+    /// In order to bootstrap the lookup process, the routing table must be aware of at least one
+    /// node and of its addresses. The insert operation is ignored
+    pub fn add_known_peer(
+        &mut self,
+        peer: PeerId,
+        addresses: Vec<Multiaddr>,
+        connection: ConnectionType,
+    ) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?addresses,
+            ?connection,
+            "add known peer"
+        );
+
+        match (self.entry(Key::from(peer)), addresses.is_empty()) {
+            (KBucketEntry::Occupied(entry), false) => {
+                entry.addresses = addresses;
+            }
+            (mut entry @ KBucketEntry::Vacant(_), false) => {
+                entry.insert(KademliaPeer::new(peer, addresses, connection));
+            }
+            (KBucketEntry::LocalNode, _) => tracing::warn!(
+                target: LOG_TARGET,
+                ?peer,
+                "tried to add local node to routing table",
+            ),
+            (KBucketEntry::NoSlot, _) => tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                "routing table full, cannot add new entry",
+            ),
+            (_, true) => tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "tried to zero addresses to the routing table",
+            ),
+        }
     }
 
     /// Get `limit` closests peers to `target` from the k-buckets.
