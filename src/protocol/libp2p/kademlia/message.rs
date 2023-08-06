@@ -36,8 +36,8 @@ const LOG_TARGET: &str = "ifps::kademlia::message";
 pub(super) enum KademliaMessage {
     /// Inbound `FIND_NODE` query.
     FindNodeRequest {
-        /// Peer ID.
-        peer: PeerId,
+        /// Peer ID of the target node.
+        target: PeerId,
     },
 
     /// Response to outbound `FIND_NODE` query.
@@ -54,6 +54,22 @@ impl KademliaMessage {
             key: peer.to_bytes(),
             r#type: schema::kademlia::MessageType::FindNode.into(),
             cluster_level_raw: 10,
+            ..Default::default()
+        };
+
+        let mut buf = Vec::with_capacity(message.encoded_len());
+        message
+            .encode(&mut buf)
+            .expect("Vec<u8> to provide needed capacity");
+
+        buf
+    }
+
+    /// Create `FIND_NODE` response.
+    pub(super) fn find_node_response(peers: Vec<KademliaPeer>) -> Vec<u8> {
+        let message = schema::kademlia::Message {
+            cluster_level_raw: 10,
+            closer_peers: peers.iter().map(|peer| peer.into()).collect(),
             ..Default::default()
         };
 

@@ -197,7 +197,7 @@ impl Distance {
 }
 
 /// Connection type to peer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ConnectionType {
     /// Sender does not have a connection to peer.
     NotConnected,
@@ -222,6 +222,17 @@ impl TryFrom<i32> for ConnectionType {
             2 => Ok(ConnectionType::CanConnect),
             3 => Ok(ConnectionType::CannotConnect),
             _ => Err(()),
+        }
+    }
+}
+
+impl From<ConnectionType> for i32 {
+    fn from(connection: ConnectionType) -> Self {
+        match connection {
+            ConnectionType::NotConnected => 0,
+            ConnectionType::Connected => 1,
+            ConnectionType::CanConnect => 2,
+            ConnectionType::CannotConnect => 3,
         }
     }
 }
@@ -270,5 +281,19 @@ impl TryFrom<&schema::kademlia::Peer> for KademliaPeer {
                 .collect(),
             connection: ConnectionType::try_from(record.connection)?,
         })
+    }
+}
+
+impl From<&KademliaPeer> for schema::kademlia::Peer {
+    fn from(peer: &KademliaPeer) -> Self {
+        schema::kademlia::Peer {
+            id: peer.peer.to_bytes(),
+            addrs: peer
+                .addresses
+                .iter()
+                .map(|address| address.to_vec())
+                .collect(),
+            connection: peer.connection.into(),
+        }
     }
 }

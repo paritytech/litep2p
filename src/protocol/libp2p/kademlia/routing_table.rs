@@ -113,7 +113,7 @@ impl RoutingTable {
     /// Get an entry for `peer` into a k-bucket.
     pub fn entry<'a>(&'a mut self, key: Key<PeerId>) -> KBucketEntry<'a> {
         let Some(index) = BucketIndex::new(&self.local_key.distance(&key)) else {
-            return KBucketEntry::LocalNode
+            return KBucketEntry::LocalNode;
         };
 
         self.buckets[index.get()].entry(key)
@@ -378,7 +378,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         // try to add another peer and verify it's accepted as there is
-        // still room the k-bucket for the node
+        // still room in the k-bucket for the node
         let peer = PeerId::random();
         let distance = BucketIndex(252).rand_distance(&mut rng);
         let key_bytes = own_key.for_distance(distance);

@@ -19,14 +19,14 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::Error,
+    error::{Error, SubstreamError},
     peer_id::PeerId,
     protocol::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
             handle::{KademliaCommand, KademliaEvent},
             message::KademliaMessage,
-            query::QueryEngine,
+            query::{QueryAction, QueryEngine, QueryId},
             routing_table::RoutingTable,
             types::{ConnectionType, KademliaPeer, Key},
         },
@@ -42,12 +42,18 @@ use futures::{SinkExt, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 pub use crate::protocol::libp2p::kademlia::config::{Config, ConfigBuilder};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "ipfs::kademlia";
+
+/// Kademlia replication factor, `k`.
+const REPLICATION_FACTOR: usize = 20;
+
+/// Parallelism factor, `α`.
+const PARALLELISM_FACTOR: usize = 3;
 
 mod bucket;
 mod config;
@@ -73,12 +79,23 @@ mod schema {
 struct PeerContext {
     /// Connection service for the peer.
     service: ConnectionService,
+
+    /// Pending query ID, if any.
+    query: Option<QueryId>,
 }
 
 impl PeerContext {
     /// Create new [`PeerContext`].
     fn new(service: ConnectionService) -> Self {
-        Self { service }
+        Self {
+            service,
+            query: None,
+        }
+    }
+
+    /// Add pending query for the peer.
+    fn add_pending_query(&mut self, query: QueryId) {
+        self.query = Some(query);
     }
 }
 
@@ -104,6 +121,9 @@ pub struct Kademlia {
 
     /// Routing table.
     routing_table: RoutingTable,
+
+    /// Query engine.
+    engine: QueryEngine,
 }
 
 impl Kademlia {
@@ -116,9 +136,10 @@ impl Kademlia {
             peers: HashMap::new(),
             cmd_rx: config.cmd_rx,
             event_tx: config.event_tx,
-            substreams: SubstreamSet::new(),
             local_key: local_key.clone(),
+            substreams: SubstreamSet::new(),
             routing_table: RoutingTable::new(local_key),
+            engine: QueryEngine::new(PARALLELISM_FACTOR),
         }
     }
 
@@ -139,23 +160,118 @@ impl Kademlia {
         }
     }
 
-    /// Connection closed to remote peer.
-    fn on_connection_closed(&mut self, peer: PeerId) {
-        tracing::debug!(target: LOG_TARGET, ?peer, "connection closed");
+    /// Disconnect peer from `Kademlia`.
+    ///
+    /// Peer is disconnected either because the substream was detected closed
+    /// or because the connection was closed.
+    ///
+    /// The peer is kept in the routing table but its connection state is set
+    /// as `NotConnected`, meaning it can be evicted from a k-bucket if another
+    /// that shares the bucket connects.
+    async fn disconnect_peer(&mut self, peer: PeerId) {
+        tracing::debug!(target: LOG_TARGET, ?peer, "disconnect peer");
 
-        if let None = self.peers.remove(&peer) {
-            tracing::debug!(target: LOG_TARGET, ?peer, "peer doesn't exist");
+        self.peers.remove(&peer);
+
+        if let Some(mut substream) = self.substreams.remove(&peer) {
+            let _ = substream.close().await;
+            drop(substream);
         }
+
+        if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
+            entry.connection = ConnectionType::NotConnected;
+        }
+    }
+
+    /// Poll actions from `QueryEngine`.
+    async fn poll_query_engine(&mut self, query_id: QueryId) -> crate::Result<()> {
+        // TODO: this is such an ugly function, refactor it
+        while let Some(action) = self.engine.next_action(query_id) {
+            match action {
+                QueryAction::SendFindNode { peer } => match self.substreams.get_mut(&peer.peer) {
+                    Some(mut substream) => {
+                        let message = KademliaMessage::find_node(peer.peer);
+
+                        match substream.send(message.into()).await {
+                            Ok(_) => match self.peers.get_mut(&peer.peer) {
+                                Some(context) => context.add_pending_query(query_id),
+                                None => {
+                                    tracing::warn!(
+                                        target: LOG_TARGET,
+                                        peer = ?peer.peer,
+                                        "state mismatch: peer doesn't exist"
+                                    );
+                                    debug_assert!(false);
+                                }
+                            },
+                            Err(error) => {
+                                self.engine.register_response_failure(query_id, peer.peer)
+                            }
+                        }
+                    }
+                    None => match self.peers.get_mut(&peer.peer) {
+                        Some(context) => match context.service.open_substream().await {
+                            Ok(substream_id) => context.add_pending_query(query_id),
+                            Err(error) => {
+                                self.engine.register_response_failure(query_id, peer.peer)
+                            }
+                        },
+                        None => todo!("open connetion to {}", peer.peer),
+                    },
+                },
+                QueryAction::QuerySucceeded { peers } => {
+                    todo!("cancel pending queries");
+                }
+                QueryAction::QueryFailed { query } => {
+                    todo!("cancel pending queries");
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Local node opened a substream to remote node.
     async fn on_outbound_substream(
         &mut self,
         peer: PeerId,
-        _substream_id: SubstreamId,
+        substream_id: SubstreamId,
         mut substream: Box<dyn Substream>,
     ) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?peer, "outbound substream opened");
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?substream_id,
+            "outbound substream opened"
+        );
+
+        let Some(context) = self.peers.get_mut(&peer) else {
+            tracing::warn!(target: LOG_TARGET, ?peer, "state mismatch: outbound substream opened for non-existent peer");
+            debug_assert!(false);
+            return Err(Error::PeerDoesntExist(peer));
+        };
+
+        // if the substream was opened but there is no query pending for the peer,
+        /// just stored the opened substream in the `SubstreamSet` and return early
+        let Some(query) = context.query.take() else {
+            self.substreams.insert(peer, substream);
+            return Ok(());
+        };
+
+        // attempt to send the pending query to peer and remove the peer if the send fails
+        let message = KademliaMessage::find_node(peer);
+
+        if let Err(error) = substream.send(message.into()).await {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "failed to send `FIND_NODE` message to peer"
+            );
+
+            self.engine.register_response_failure(query, peer);
+            self.disconnect_peer(peer).await;
+            return self.poll_query_engine(query).await;
+        }
 
         Ok(())
     }
@@ -171,23 +287,62 @@ impl Kademlia {
         Ok(())
     }
 
-    fn on_inbound_message(&mut self, peer: PeerId, message: BytesMut) {
-        match KademliaMessage::from_bytes(message) {
-            Some(KademliaMessage::FindNodeResponse { peers }) => {
-                for peer in peers {
-                    let key = Key::from(peer.peer);
-                    let distance = self.local_key.distance(&key);
+    /// Handle received message.
+    async fn on_message_received(&mut self, peer: PeerId, message: BytesMut) {
+        tracing::debug!(target: LOG_TARGET, ?peer, "handle message from peer");
 
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        "peer {}, index {:?}",
-                        peer.peer,
-                        distance.ilog2(),
+        let Some(context) = self.peers.get_mut(&peer) else {
+            tracing::warn!(target: LOG_TARGET, ?peer, "state mismatch: received message from a non-existent peer");
+            debug_assert!(false);
+            return;
+        };
+
+        let Some(message) = KademliaMessage::from_bytes(message) else {
+            tracing::debug!(target: LOG_TARGET, ?peer, "failed to decode message");
+            return;
+        };
+
+        match message {
+            KademliaMessage::FindNodeRequest { target } => match self.substreams.get_mut(&peer) {
+                None => {
+                    tracing::warn!(target: LOG_TARGET, ?peer, "substream doesn't exist");
+                    debug_assert!(false);
+                }
+                Some(mut substream) => {
+                    let message = KademliaMessage::find_node_response(
+                        self.routing_table.closest(Key::from(target), 20),
                     );
+
+                    if let Err(error) = substream.send(message.into()).await {
+                        self.disconnect_peer(peer).await;
+                    }
+                }
+            },
+            KademliaMessage::FindNodeResponse { peers } => {
+                if let Some(query) = context.query.take() {
+                    self.engine.register_find_node_response(query, peer, peers)
                 }
             }
-            _ => tracing::debug!(target: LOG_TARGET, "ignoring unsupported message type"),
         }
+    }
+
+    /// Execute `FIND_NODE`.
+    async fn on_find_node(&mut self, peer: PeerId) -> crate::Result<()> {
+        let candidates: VecDeque<_> = self.routing_table.closest(Key::from(peer), 20).into();
+
+        if candidates.is_empty() {
+            tracing::warn!(
+                target: LOG_TARGET,
+                "cannot perform `FIND_NODE`, no known peers"
+            );
+            return Err(Error::InsufficientPeers);
+        }
+
+        // start new `FIND_NODE` query
+        let query_id = self.engine.start_find_node(Key::from(peer), candidates);
+
+        // poll query engine and send `FIND_NODE` messages to known remote peers
+        self.poll_query_engine(query_id).await
     }
 
     /// Add known peer to local routing table.
@@ -203,13 +358,15 @@ impl Kademlia {
             KBucketEntry::Occupied(entry) => {
                 entry.addresses = addresses;
             }
-            KBucketEntry::Vacant(mut entry) => {
-                entry.peer = peer;
-                entry.addresses = addresses;
-                entry.connection = match self.peers.get(&peer) {
-                    Some(_) => ConnectionType::Connected,
-                    None => ConnectionType::NotConnected,
-                };
+            mut entry @ KBucketEntry::Vacant(_) => {
+                entry.insert(KademliaPeer::new(
+                    peer,
+                    addresses,
+                    match self.peers.get(&peer) {
+                        Some(_) => ConnectionType::Connected,
+                        None => ConnectionType::NotConnected,
+                    },
+                ));
             }
             KBucketEntry::LocalNode => tracing::debug!(
                 target: LOG_TARGET,
@@ -236,6 +393,7 @@ impl Kademlia {
         );
     }
 
+    /// [`Kademlia`] event loop.
     pub async fn run(mut self) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, "starting kademlia event loop");
 
@@ -248,7 +406,7 @@ impl Kademlia {
                         }
                     }
                     Some(ConnectionEvent::ConnectionClosed { peer }) => {
-                        self.on_connection_closed(peer);
+                        self.disconnect_peer(peer).await;
                     }
                     Some(ConnectionEvent::SubstreamOpened { peer, direction, substream, .. }) => {
                         match direction {
@@ -278,7 +436,7 @@ impl Kademlia {
                     Some(ConnectionEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error);
                     }
-                    None => return Ok(()),
+                    None => return Err(Error::EssentialTaskClosed),
                 },
                 command = self.cmd_rx.recv() => {
                     let result = match command {
@@ -293,12 +451,78 @@ impl Kademlia {
                 },
                 event = self.substreams.next() => match event {
                     Some((peer, message)) => match message {
-                        Ok(message) => self.on_inbound_message(peer, message),
-                        Err(error) => tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to read message"),
+                        Ok(message) => self.on_message_received(peer, message).await,
+                        Err(error) => return Err(error),
                     },
-                    None => todo!(),
+                    None => return Err(Error::EssentialTaskClosed),
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{codec::ProtocolCodec, types::protocol::ProtocolName};
+    use tokio::sync::mpsc::channel;
+
+    struct Context {
+        tx: Sender<ConnectionEvent>,
+        cmd_tx: Sender<KademliaCommand>,
+        event_rx: Receiver<KademliaEvent>,
+    }
+
+    fn make_kademlia() -> (Kademlia, Context) {
+        let peer = PeerId::random();
+        let (transport_service, tx) = TransportService::new(peer);
+        let (event_tx, event_rx) = channel(64);
+        let (cmd_tx, cmd_rx) = channel(64);
+
+        let config = Config {
+            protocol: ProtocolName::from("/kad/"),
+            codec: ProtocolCodec::UnsignedVarint,
+            replication_factor: 20usize,
+            event_tx,
+            cmd_rx,
+        };
+
+        (
+            Kademlia::new(transport_service, config),
+            Context {
+                tx,
+                cmd_tx,
+                event_rx,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn find_node_no_peers() {
+        let (mut kad, _context) = make_kademlia();
+
+        assert!(std::matches!(
+            kad.on_find_node(PeerId::random()).await,
+            Err(Error::InsufficientPeers)
+        ));
+    }
+
+    #[tokio::test]
+    async fn find_node_some_peers() {
+        let (mut kad, _context) = make_kademlia();
+
+        // add some peers to the routing table
+        for i in 0..5 {
+            assert!(std::matches!(
+                kad.on_add_known_peer(
+                    PeerId::random(),
+                    vec![format!("/ip6/::1/tcp/888{i}").parse().unwrap()]
+                ),
+                Ok(())
+            ));
+        }
+
+        let target_peer = PeerId::random();
+        let target_key = Key::from(target_peer);
     }
 }

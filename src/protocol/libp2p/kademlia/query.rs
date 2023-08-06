@@ -258,13 +258,14 @@ impl QueryEngine {
 
         // check if any candidate has lower distance thant the current worst
         if !candidates.is_empty() {
-            let first_candidate_distance = target.distance(&Key::from(candidates[0].peer));
+            let first_candidate_distance = target.distance(&candidates[0].key);
             let worst_response_candidate = responses.last_entry().unwrap().key().clone();
 
             if first_candidate_distance < worst_response_candidate {
                 return LookupStatus::NextPeer;
             }
 
+            // TODO: this is probably not correct
             return LookupStatus::Success;
         }
 
@@ -342,6 +343,30 @@ mod tests {
     }
 
     #[test]
+    fn lookup_paused() {
+        let mut engine = QueryEngine::new(3usize);
+        let target_peer = PeerId::random();
+        let target_key = Key::from(target_peer);
+
+        let query = engine.start_find_node(
+            target_key,
+            vec![
+                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+            ]
+            .into(),
+        );
+
+        for i in 0..3 {
+            let _ = engine.next_action(query);
+        }
+
+        assert!(engine.next_action(query).is_none());
+    }
+
+    #[test]
     fn query_succeeds() {
         let mut engine = QueryEngine::new(3usize);
         let target_peer = PeerId::random();
@@ -360,21 +385,32 @@ mod tests {
     }
 
     #[test]
-    fn lookup_paused() {
+    fn lookup_status_paused() {
         let target = Key::from(PeerId::random());
-        let active = HashMap::new();
-        let candidates = VecDeque::new();
+        let active = HashMap::from_iter((0..3).map(|_| {
+            let peer = PeerId::random();
+            (
+                peer,
+                KademliaPeer::new(peer, vec![], ConnectionType::NotConnected),
+            )
+        }));
+        let candidates = vec![KademliaPeer::new(
+            PeerId::random(),
+            vec![],
+            ConnectionType::NotConnected,
+        )]
+        .into();
         let mut responses = BTreeMap::new();
         let mut engine = QueryEngine::new(3usize);
 
         assert_eq!(
             QueryEngine::lookup_status(&target, &active, &candidates, &mut responses),
-            LookupStatus::Failed
+            LookupStatus::Paused,
         );
     }
 
     #[test]
-    fn lookup_failed() {
+    fn lookup_status_failed() {
         let target = Key::from(PeerId::random());
         let active = HashMap::new();
         let candidates = VecDeque::new();

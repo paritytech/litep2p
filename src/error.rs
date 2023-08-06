@@ -92,6 +92,8 @@ pub enum Error {
     InputRejected,
     #[error("WebSocket error: `{0}`")]
     WebSocket(#[from] tokio_tungstenite::tungstenite::error::Error),
+    #[error("Insufficient peers")]
+    InsufficientPeers,
 }
 
 #[derive(Debug, thiserror::Error)]
