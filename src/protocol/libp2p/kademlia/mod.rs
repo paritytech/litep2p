@@ -173,7 +173,7 @@ impl Kademlia {
 
     fn on_inbound_message(&mut self, peer: PeerId, message: BytesMut) {
         match KademliaMessage::from_bytes(message) {
-            Some(KademliaMessage::FindNode { peers }) => {
+            Some(KademliaMessage::FindNodeResponse { peers }) => {
                 for peer in peers {
                     let key = Key::from(peer.peer);
                     let distance = self.local_key.distance(&key);

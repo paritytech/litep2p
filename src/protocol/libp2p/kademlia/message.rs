@@ -34,8 +34,14 @@ const LOG_TARGET: &str = "ifps::kademlia::message";
 /// Kademlia message.
 #[derive(Debug)]
 pub(super) enum KademliaMessage {
-    /// Found peer.
-    FindNode {
+    /// Inbound `FIND_NODE` query.
+    FindNodeRequest {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
+    /// Response to outbound `FIND_NODE` query.
+    FindNodeResponse {
         /// Found peers.
         peers: Vec<KademliaPeer>,
     },
@@ -80,7 +86,7 @@ impl KademliaMessage {
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
                         .collect();
 
-                    Some(Self::FindNode { peers })
+                    Some(Self::FindNodeResponse { peers })
                 }
                 _ => {
                     todo!("unsupported message type");
