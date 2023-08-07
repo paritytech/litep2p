@@ -21,6 +21,8 @@
 #[cfg(test)]
 mod identify;
 #[cfg(test)]
+mod kademlia;
+#[cfg(test)]
 mod ping;
 #[cfg(test)]
 mod quic_ping;
