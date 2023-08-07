@@ -24,7 +24,7 @@ use crate::{
     protocol::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
-            handle::{KademliaCommand, KademliaEvent},
+            handle::KademliaCommand,
             message::KademliaMessage,
             query::{QueryAction, QueryEngine, QueryId},
             routing_table::RoutingTable,
@@ -44,7 +44,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
-pub use crate::protocol::libp2p::kademlia::config::{Config, ConfigBuilder};
+pub use crate::protocol::libp2p::kademlia::{
+    config::{Config, ConfigBuilder},
+    handle::{KademliaEvent, KademliaHandle},
+};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "ipfs::kademlia";
@@ -153,6 +156,7 @@ impl Kademlia {
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
+                // TODO: add peer to routing table
                 entry.insert(PeerContext::new(service));
                 Ok(())
             }
@@ -185,12 +189,16 @@ impl Kademlia {
 
     /// Poll actions from `QueryEngine`.
     async fn poll_query_engine(&mut self, query_id: QueryId) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, ?query_id, "poll query engine");
+
         // TODO: this is such an ugly function, refactor it
         while let Some(action) = self.engine.next_action(query_id) {
             match action {
                 QueryAction::SendFindNode { peer } => match self.substreams.get_mut(&peer.peer) {
                     Some(mut substream) => {
                         let message = KademliaMessage::find_node(peer.peer);
+
+                        tracing::warn!("SEND FIND NODE TO {}", peer.peer);
 
                         match substream.send(message.into()).await {
                             Err(error) => {
@@ -211,14 +219,19 @@ impl Kademlia {
                                 self.engine.register_response_failure(query_id, peer.peer)
                             }
                         },
-                        None => todo!("open connetion to {}", peer.peer),
+                        None => {
+                            tracing::error!(target: LOG_TARGET, "open connection to peer");
+                            self.engine.register_response_failure(query_id, peer.peer)
+                        }
                     },
                 },
                 QueryAction::QuerySucceeded { peers } => {
-                    todo!("cancel pending queries");
+                    tracing::warn!(target: LOG_TARGET, ?peers, "QUERY SUCCEEDED");
+                    // todo!("cancel pending queries");
                 }
                 QueryAction::QueryFailed { query } => {
-                    todo!("cancel pending queries");
+                    tracing::error!(target: LOG_TARGET, ?query, "QUERY FAILED");
+                    // todo!("cancel pending queries");
                 }
             }
         }
@@ -257,7 +270,8 @@ impl Kademlia {
         };
 
         // attempt to send the pending query to peer and remove the peer if the send fails
-        let message = KademliaMessage::find_node(peer);
+        let target_peer = self.engine.target_peer(query).ok_or(Error::InvalidState)?;
+        let message = KademliaMessage::find_node(target_peer);
 
         // if the send operation fails, the peer is disconnected and `QueryEngine` is notified
         // of the failure which makes it updates its internal bookkeeping about the query state.
@@ -273,6 +287,13 @@ impl Kademlia {
             self.disconnect_peer(peer).await;
             return self.poll_query_engine(query).await;
         }
+
+        // TODO: ugly
+        self.substreams.insert(peer, substream);
+        self.peers
+            .get_mut(&peer)
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .add_pending_query(query);
 
         Ok(())
     }
@@ -294,6 +315,13 @@ impl Kademlia {
 
         match KademliaMessage::from_bytes(message).ok_or(Error::InvalidData)? {
             KademliaMessage::FindNodeRequest { target } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?target,
+                    "handle `FIND_NODE` request"
+                );
+
                 let mut substream = self
                     .substreams
                     .get_mut(&peer)
@@ -309,6 +337,13 @@ impl Kademlia {
                 }
             }
             KademliaMessage::FindNodeResponse { peers } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?peers,
+                    "handle `FIND_NODE` response"
+                );
+
                 if let Some(query) = self
                     .peers
                     .get_mut(&peer)
@@ -316,7 +351,10 @@ impl Kademlia {
                     .query
                     .take()
                 {
-                    self.engine.register_find_node_response(query, peer, peers)
+                    self.engine.register_find_node_response(query, peer, peers);
+                    return self.poll_query_engine(query).await;
+                } else {
+                    tracing::error!(target: LOG_TARGET, "error");
                 }
             }
         }
@@ -326,10 +364,12 @@ impl Kademlia {
 
     /// Execute `FIND_NODE`.
     async fn on_find_node(&mut self, peer: PeerId) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?peer, "starting `FIND_NODE` query");
+
         let candidates: VecDeque<_> = self.routing_table.closest(Key::from(peer), 20).into();
 
         // start new `FIND_NODE` query
-        let query_id = self.engine.start_find_node(Key::from(peer), candidates);
+        let query_id = self.engine.start_find_node(peer, candidates);
 
         // poll query engine and send `FIND_NODE` messages to known remote peers
         self.poll_query_engine(query_id).await

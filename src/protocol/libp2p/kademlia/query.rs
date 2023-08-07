@@ -39,6 +39,9 @@ enum Query {
         /// Target key.
         target: Key<PeerId>,
 
+        /// Target peer ID.
+        peer: PeerId,
+
         /// Active candidates.
         ///
         /// These are peers who the [`QueryEngine`] has selected for the next oubound queries
@@ -174,6 +177,7 @@ impl QueryEngine {
                 queried,
                 candidates,
                 responses,
+                ..
             }) => {
                 let Some(peer) = active.remove(&peer) else {
                     tracing::warn!(target: LOG_TARGET, ?query_id, ?peer, "received response from peer but didn't expect it");
@@ -210,16 +214,12 @@ impl QueryEngine {
 
     /// Start `FIND_NODE` query on the network and return the first
     // TODO: documentation
-    pub fn start_find_node(
-        &mut self,
-        target: Key<PeerId>,
-        candidates: VecDeque<KademliaPeer>,
-    ) -> QueryId {
+    pub fn start_find_node(&mut self, peer: PeerId, candidates: VecDeque<KademliaPeer>) -> QueryId {
         let query_id = self.next_query_id();
 
         tracing::debug!(
             target: LOG_TARGET,
-            ?target,
+            ?peer,
             ?query_id,
             "start `FIND_NODE` query"
         );
@@ -227,15 +227,25 @@ impl QueryEngine {
         self.queries.insert(
             query_id,
             Query::FindNode {
-                target,
+                peer,
                 candidates,
                 active: HashMap::new(),
                 queried: HashMap::new(),
+                target: Key::from(peer),
                 responses: BTreeMap::new(),
             },
         );
 
         query_id
+    }
+
+    // TODO: this is a hack
+    pub fn target_peer(&self, query: QueryId) -> Option<PeerId> {
+        if let Some(Query::FindNode { peer, .. }) = self.queries.get(&query) {
+            return Some(*peer);
+        }
+
+        None
     }
 
     /// Check if Kademlia `FIND_NODE` lookup is finished.
@@ -253,7 +263,7 @@ impl QueryEngine {
 
         // there are still possible peers to query or peers who are being queried
         if responses.len() < 20 && (!active.is_empty() || !candidates.is_empty()) {
-            if active.len() == 3 {
+            if active.len() == 3 || candidates.is_empty() {
                 return LookupStatus::Paused;
             }
 
@@ -278,6 +288,8 @@ impl QueryEngine {
             return LookupStatus::Success;
         }
 
+        tracing::error!(target: LOG_TARGET, "why here");
+
         todo!();
     }
 
@@ -294,17 +306,24 @@ impl QueryEngine {
                 ..
             } => match QueryEngine::lookup_status(&target, &active, &candidates, responses) {
                 LookupStatus::Failed => {
+                    tracing::trace!(target: LOG_TARGET, ?query_id, "lookup failed");
+
                     self.queries.remove(&query_id);
                     return Some(QueryAction::QueryFailed { query: query_id });
                 }
                 LookupStatus::Paused => None,
                 LookupStatus::NextPeer => {
+                    tracing::trace!(target: LOG_TARGET, ?query_id, "get next peer");
+
                     let candidate = candidates.pop_front().expect("entry to exist");
+                    tracing::trace!(target: LOG_TARGET, ?candidate, "current candidate");
                     active.insert(candidate.peer, candidate.clone());
 
                     Some(QueryAction::SendFindNode { peer: candidate })
                 }
                 LookupStatus::Success => {
+                    tracing::trace!(target: LOG_TARGET, ?query_id, "lookup succeeded");
+
                     let peers = responses.values().cloned().collect();
                     self.queries.remove(&query_id);
 
@@ -328,7 +347,7 @@ mod tests {
         let target_key = Key::from(target_peer);
 
         let query = engine.start_find_node(
-            target_key,
+            target_peer,
             vec![
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
@@ -358,7 +377,7 @@ mod tests {
         let target_key = Key::from(target_peer);
 
         let query = engine.start_find_node(
-            target_key,
+            target_peer,
             vec![
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
@@ -382,7 +401,7 @@ mod tests {
         let target_key = Key::from(target_peer);
 
         let query = engine.start_find_node(
-            target_key,
+            target_peer,
             vec![
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),

@@ -72,6 +72,11 @@ impl KademliaHandle {
             .await;
     }
 
+    /// Send `FIND_NODE` query to known peers.
+    pub async fn find_node(&mut self, peer: PeerId) {
+        let _ = self.cmd_tx.send(KademliaCommand::FindNode { peer }).await;
+    }
+
     /// Poll next event from [`Kademlia`].
     pub async fn next_event(&mut self) -> Option<KademliaEvent> {
         self.event_rx.recv().await
