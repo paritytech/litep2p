@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::peer_id::PeerId;
+use crate::{peer_id::PeerId, protocol::libp2p::kademlia::record::Key};
 
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -29,12 +29,6 @@ const LOG_TARGET: &str = "ifsp::kademlia::handle";
 /// Kademlia commands.
 #[derive(Debug)]
 pub(crate) enum KademliaCommand {
-    /// Send `FIND_NODE` message.
-    FindNode {
-        /// Peer ID.
-        peer: PeerId,
-    },
-
     /// Add known peer.
     AddKnownPeer {
         /// Peer ID.
@@ -42,6 +36,21 @@ pub(crate) enum KademliaCommand {
 
         /// Addresses of peer.
         addresses: Vec<Multiaddr>,
+    },
+
+    /// Send `FIND_NODE` message.
+    FindNode {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
+    /// Store value to DHT.
+    PutValue {
+        /// Key.
+        key: Key,
+
+        /// Value.
+        value: Vec<u8>,
     },
 }
 
@@ -75,6 +84,14 @@ impl KademliaHandle {
     /// Send `FIND_NODE` query to known peers.
     pub async fn find_node(&mut self, peer: PeerId) {
         let _ = self.cmd_tx.send(KademliaCommand::FindNode { peer }).await;
+    }
+
+    /// Store value to DHT.
+    pub async fn put_value(&self, key: Key, value: Vec<u8>) {
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::PutValue { key, value })
+            .await;
     }
 
     /// Poll next event from [`Kademlia`].

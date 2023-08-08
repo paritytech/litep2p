@@ -376,6 +376,13 @@ impl Kademlia {
         self.poll_query_engine(query_id).await
     }
 
+    /// Store value to DHT by executing `PUT_VALUE`.
+    async fn on_put_value(&mut self, key: RecordKey, value: Vec<u8>) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?key, "execute `PUT_VALUE`");
+
+        Ok(())
+    }
+
     /// Failed to open substream to remote peer.
     fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
         tracing::debug!(
@@ -445,6 +452,7 @@ impl Kademlia {
 
                             Ok(())
                         }
+                        Some(KademliaCommand::PutValue { key, value }) => self.on_put_value(key, value).await,
                         None => Err(Error::EssentialTaskClosed),
                     };
 
