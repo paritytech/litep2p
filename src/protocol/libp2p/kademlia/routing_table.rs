@@ -166,7 +166,7 @@ impl RoutingTable {
     }
 
     /// Get `limit` closests peers to `target` from the k-buckets.
-    pub fn closest(&mut self, target: Key<PeerId>, limit: usize) -> Vec<KademliaPeer> {
+    pub fn closest<K: Clone>(&mut self, target: Key<K>, limit: usize) -> Vec<KademliaPeer> {
         let (index, mut peers): (_, Vec<_>) =
             match BucketIndex::new(&self.local_key.distance(&target)) {
                 Some(index) => (

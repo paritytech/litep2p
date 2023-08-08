@@ -48,12 +48,12 @@ construct_uint! {
 /// `Key`s have an XOR metric as defined in the Kademlia paper, i.e. the bitwise XOR of
 /// the hash digests, interpreted as an integer. See [`Key::distance`].
 #[derive(Clone, Debug)]
-pub struct Key<T> {
+pub struct Key<T: Clone> {
     preimage: T,
     bytes: KeyBytes,
 }
 
-impl<T> Key<T> {
+impl<T: Clone> Key<T> {
     /// Constructs a new `Key` by running the given value through a random
     /// oracle.
     ///
@@ -103,7 +103,7 @@ impl<T> Key<T> {
     }
 }
 
-impl<T> From<Key<T>> for KeyBytes {
+impl<T: Clone> From<Key<T>> for KeyBytes {
     fn from(key: Key<T>) -> KeyBytes {
         key.bytes
     }
@@ -122,21 +122,21 @@ impl From<Vec<u8>> for Key<Vec<u8>> {
     }
 }
 
-impl<T> AsRef<KeyBytes> for Key<T> {
+impl<T: Clone> AsRef<KeyBytes> for Key<T> {
     fn as_ref(&self) -> &KeyBytes {
         &self.bytes
     }
 }
 
-impl<T, U> PartialEq<Key<U>> for Key<T> {
+impl<T: Clone, U: Clone> PartialEq<Key<U>> for Key<T> {
     fn eq(&self, other: &Key<U>) -> bool {
         self.bytes == other.bytes
     }
 }
 
-impl<T> Eq for Key<T> {}
+impl<T: Clone> Eq for Key<T> {}
 
-impl<T> Hash for Key<T> {
+impl<T: Clone> Hash for Key<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.bytes.0.hash(state);
     }

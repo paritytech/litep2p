@@ -72,9 +72,9 @@ impl KBucket {
 
     /// Get entry into the bucket.
     // TODO: this is horrible code
-    pub fn entry<'a>(&'a mut self, key: Key<PeerId>) -> KBucketEntry<'a> {
+    pub fn entry<'a, K: Clone>(&'a mut self, key: Key<K>) -> KBucketEntry<'a> {
         for i in 0..self.nodes.len() {
-            if &self.nodes[i].peer == key.preimage() {
+            if &self.nodes[i].key == &key {
                 return KBucketEntry::Occupied(&mut self.nodes[i]);
             }
         }
@@ -103,9 +103,9 @@ impl KBucket {
 
     /// Get iterator over the k-bucket, sorting the k-bucket entries in increasing order
     /// by distance.
-    pub fn closest_iter<'a>(
+    pub fn closest_iter<'a, K: Clone>(
         &'a mut self,
-        target: Key<PeerId>,
+        target: Key<K>,
     ) -> impl Iterator<Item = &'a KademliaPeer> {
         self.nodes
             .sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
