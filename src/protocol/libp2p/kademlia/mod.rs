@@ -63,6 +63,7 @@ mod config;
 mod handle;
 mod message;
 mod query;
+mod record;
 mod routing_table;
 mod store;
 mod types;
