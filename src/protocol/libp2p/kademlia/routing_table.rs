@@ -160,7 +160,7 @@ impl RoutingTable {
             (_, true) => tracing::debug!(
                 target: LOG_TARGET,
                 ?peer,
-                "tried to zero addresses to the routing table",
+                "tried to add zero addresses to the routing table",
             ),
         }
     }

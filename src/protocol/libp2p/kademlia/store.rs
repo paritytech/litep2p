@@ -20,11 +20,39 @@
 
 //! Memory store implementation for Kademlia.
 
+use crate::protocol::libp2p::kademlia::record::{Key, Record};
+
+use std::collections::HashMap;
+
+/// Memory store events.
+pub enum MemoryStoreEvent {}
+
 /// Memory store.
-pub struct MemoryStore {}
+pub struct MemoryStore {
+    /// Records.
+    records: HashMap<Key, Record>,
+}
 
 impl MemoryStore {
+    /// Create new [`MemoryStore`].
     pub fn new() -> Self {
-        Self {}
+        Self {
+            records: HashMap::new(),
+        }
+    }
+
+    /// Try to get record from local store for `key`.
+    fn get(&self, key: &Key) -> Option<&Record> {
+        self.records.get(key)
+    }
+
+    /// Store `value` to local store under `key`.
+    fn put(&mut self, key: Key, value: Record) {
+        self.records.insert(key, value);
+    }
+
+    /// Poll next event from the store.
+    async fn next_event() -> Option<MemoryStoreEvent> {
+        None
     }
 }

@@ -44,9 +44,11 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
+// TODO: move this to `src/lib.rs` maybe?
 pub use crate::protocol::libp2p::kademlia::{
     config::{Config, ConfigBuilder},
     handle::{KademliaEvent, KademliaHandle},
+    record::Key as RecordKey,
 };
 
 /// Logging target for the file.
