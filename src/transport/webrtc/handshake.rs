@@ -20,7 +20,12 @@
 
 use crate::{
     codec::unsigned_varint::UnsignedVarint,
-    crypto::{ed25519::Keypair, noise::STATIC_KEY_DOMAIN, PublicKey},
+    config::Role,
+    crypto::{
+        ed25519::Keypair,
+        noise::{NoiseContext, STATIC_KEY_DOMAIN},
+        PublicKey,
+    },
     error::{Error, NegotiationError},
     multistream_select::Message as MultiStreamMessage,
     peer_id::PeerId,
@@ -58,15 +63,8 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::handshake";
 
-/// Create Noise handshake state and keypair.
-// TODO: move this code to `crypto::noise`
-fn noise_prologue(
-    local_fingerprint: Fingerprint,
-    remote_fingerprint: Fingerprint,
-) -> (snow::HandshakeState, snow::Keypair) {
-    let noise = snow::Builder::new("Noise_XX_25519_ChaChaPoly_SHA256".parse().unwrap());
-    let keypair = noise.generate_keypair().unwrap();
-
+/// Create Noise prologue.
+fn noise_prologue_new(local_fingerprint: Fingerprint, remote_fingerprint: Fingerprint) -> Vec<u8> {
     const MULTIHASH_SHA256_CODE: u64 = 0x12;
     let remote_fingerprint = Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint.bytes)
         .expect("fingerprint's len to be 32 bytes")
@@ -82,85 +80,7 @@ fn noise_prologue(
     prologue.extend_from_slice(&remote_fingerprint);
     prologue.extend_from_slice(&local_fingerprint);
 
-    (
-        noise
-            .local_private_key(&keypair.private)
-            .prologue(&prologue)
-            .build_initiator()
-            .unwrap(),
-        keypair,
-    )
-}
-
-/// Create first Noise handshake message.
-fn noise_first_message(noise: &mut snow::HandshakeState) -> Vec<u8> {
-    let mut buffer = vec![0u8; 256];
-
-    let nwritten = noise.write_message(&[], &mut buffer).unwrap();
-    buffer.truncate(nwritten);
-
-    let size = nwritten as u16;
-    let mut size = size.to_be_bytes().to_vec();
-    size.append(&mut buffer);
-
-    WebRtcMessage::encode(size, None)
-}
-
-/// Read remote reply and extract remote's `PeerId` from it.
-fn read_remote_reply(data: &[u8], noise: &mut snow::HandshakeState) -> crate::Result<PeerId> {
-    let message = WebRtcMessage::decode(data)?;
-
-    let size: Result<[u8; 2], _> = message.payload.clone().unwrap()[0..2].try_into();
-    let _size = u16::from_be_bytes(size.unwrap());
-
-    let mut inner = vec![0u8; 1024];
-
-    // TODO: don't panic
-    let res = noise.read_message(&message.payload.unwrap()[2..], &mut inner)?;
-    inner.truncate(res);
-
-    // TODO: refactor this code
-    let payload = schema::noise::NoiseHandshakePayload::decode(inner.as_slice())?;
-
-    let public_key = PublicKey::from_protobuf_encoding(
-        &payload
-            .identity_key
-            .ok_or(Error::NegotiationError(NegotiationError::PeerIdMissing))?,
-    )?;
-
-    Ok(PeerId::from_public_key(&public_key))
-}
-
-/// Create second Noise handshake message.
-fn noise_second_message(
-    noise: &mut snow::HandshakeState,
-    id_keypair: &Keypair,
-    keypair: &snow::Keypair,
-) -> crate::Result<Vec<u8>> {
-    // TODO: no unwraps
-    let noise_payload = schema::noise::NoiseHandshakePayload {
-        identity_key: Some(PublicKey::Ed25519(id_keypair.public()).to_protobuf_encoding()),
-        identity_sig: Some(
-            id_keypair.sign(&[STATIC_KEY_DOMAIN.as_bytes(), keypair.public.as_ref()].concat()),
-        ),
-        ..Default::default()
-    };
-
-    let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-    noise_payload
-        .encode(&mut payload)
-        .expect("Vec<u8> to provide needed capacity");
-
-    let mut buffer = vec![0u8; 2048];
-
-    let nwritten = noise.write_message(&payload, &mut buffer).unwrap();
-    buffer.truncate(nwritten);
-
-    let size = nwritten as u16;
-    let mut size = size.to_be_bytes().to_vec();
-    size.append(&mut buffer);
-
-    Ok(WebRtcMessage::encode(size, None))
+    prologue
 }
 
 /// WebRTC connection state.
@@ -173,29 +93,20 @@ enum State {
 
     /// Connection state is opened.
     Opened {
-        /// Noise handshake state.
-        noise: snow::HandshakeState,
-
-        /// Noise keypair.
-        keypair: snow::Keypair,
+        /// Noise handshaker.
+        handshaker: NoiseContext,
     },
 
     /// Handshake has been sent
     HandshakeSent {
-        /// Noise handshake state.
-        noise: snow::HandshakeState,
-
-        /// Noise keypair.
-        keypair: snow::Keypair,
+        /// Noise handshaker.
+        handshaker: NoiseContext,
     },
 
     /// Connection is open.
     Open {
-        /// Noise handshake state.
-        _noise: snow::HandshakeState,
-
-        /// Noise keypair.
-        _keypair: snow::Keypair,
+        /// Noise handshaker.
+        handshaker: NoiseContext,
 
         /// Protocol context.
         context: ProtocolSet,
@@ -379,10 +290,12 @@ impl WebRtcHandshake {
                                 .expect("fingerprint to exist");
                             let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint();
 
-                            let (noise, keypair) =
-                                noise_prologue(local_fingerprint, remote_fingerprint);
+                            let handshaker = NoiseContext::with_prologue(
+                                &self.id_keypair,
+                                noise_prologue_new(local_fingerprint, remote_fingerprint),
+                            );
 
-                            self.state = State::Opened { noise, keypair };
+                            self.state = State::Opened { handshaker };
                         }
                         _ => panic!("invalid state for connection"),
                     }
@@ -399,14 +312,14 @@ impl WebRtcHandshake {
     fn on_noise_channel_open(&mut self) {
         tracing::trace!(target: LOG_TARGET, "send initial noise handshake");
 
-        let State::Opened { mut noise, keypair } =
+        let State::Opened { mut handshaker } =
             std::mem::replace(&mut self.state, State::Poisoned)
         else {
             panic!("invalid state for connection, expected `Opened`");
         };
 
         // create first noise handshake and send it to remote peer
-        let payload = noise_first_message(&mut noise);
+        let payload = WebRtcMessage::encode(handshaker.first_message(Role::Dialer), None);
 
         // TODO: no unwrap
         self.rtc
@@ -415,7 +328,7 @@ impl WebRtcHandshake {
             .write(true, payload.as_slice())
             .unwrap();
 
-        self.state = State::HandshakeSent { noise, keypair };
+        self.state = State::HandshakeSent { handshaker };
     }
 
     fn on_channel_open(&mut self, id: ChannelId, name: String) {
@@ -431,14 +344,19 @@ impl WebRtcHandshake {
     async fn on_noise_channel_data(&mut self, data: Vec<u8>) -> WebRtcEvent {
         tracing::trace!(target: LOG_TARGET, "handle noise handshake reply");
 
-        let State::HandshakeSent { mut noise, keypair } =
+        let State::HandshakeSent { mut handshaker } =
             std::mem::replace(&mut self.state, State::Poisoned)
         else {
             panic!("invalid state for connection, expected `HandshakeSent`");
         };
 
+        let message = WebRtcMessage::decode(&data).unwrap(); // TODO: no unwraps
+
         // TODO: no unwraps
-        let remote_peer_id = read_remote_reply(data.as_slice(), &mut noise).unwrap();
+        let public_key = handshaker
+            .get_remote_public_key(&message.payload.unwrap())
+            .unwrap();
+        let remote_peer_id = PeerId::from_public_key(&public_key);
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -447,7 +365,7 @@ impl WebRtcHandshake {
         );
 
         // create second noise handshake message and send it to remote
-        let payload = noise_second_message(&mut noise, &self.id_keypair, &keypair).unwrap();
+        let payload = WebRtcMessage::encode(handshaker.second_message(), None);
 
         let mut channel = self
             .rtc
@@ -488,8 +406,7 @@ impl WebRtcHandshake {
             .await;
 
         self.state = State::Open {
-            _noise: noise,
-            _keypair: keypair,
+            handshaker,
             context,
         };
 
