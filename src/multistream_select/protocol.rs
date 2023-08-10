@@ -43,7 +43,7 @@ use unsigned_varint as uvi;
 const MAX_PROTOCOLS: usize = 1000;
 
 /// The encoded form of a multistream-select 1.0.0 header message.
-const MSG_MULTISTREAM_1_0: &[u8] = b"/multistream/1.0.0\n";
+pub const MSG_MULTISTREAM_1_0: &[u8] = b"/multistream/1.0.0\n";
 /// The encoded form of a multistream-select 'na' message.
 const MSG_PROTOCOL_NA: &[u8] = b"na\n";
 /// The encoded form of a multistream-select 'ls' message.

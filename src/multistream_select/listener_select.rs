@@ -21,11 +21,17 @@
 //! Protocol negotiation strategies for the peer acting as the listener
 //! in a multistream-select protocol negotiation.
 
-use crate::multistream_select::protocol::{
-    HeaderLine, Message, MessageIO, Protocol, ProtocolError,
+use crate::{
+    codec::unsigned_varint::UnsignedVarint,
+    error::{self, Error},
+    multistream_select::{
+        protocol::{HeaderLine, Message, MessageIO, Protocol, ProtocolError},
+        Negotiated, NegotiationError,
+    },
+    types::protocol::ProtocolName,
 };
-use crate::multistream_select::{Negotiated, NegotiationError};
 
+use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
 use smallvec::SmallVec;
 use std::{
@@ -315,4 +321,77 @@ where
             }
         }
     }
+}
+
+/// Negotiate protocols for listener.
+///
+/// Parse protocols offered by the remote peer and check if any of the offered protocols match
+/// locally available protocols. If a match is found, return an encoded multistream-select
+/// response and the negotiated protocol. If parsing fails or no match is found, return an error.
+pub fn listener_negotiate<'a>(
+    supported_protocols: &'a mut impl Iterator<Item = &'a ProtocolName>,
+    payload: Bytes,
+) -> crate::Result<(ProtocolName, Vec<u8>)> {
+    let Message::Protocols(protocols) = Message::decode(payload).map_err(|_| Error::InvalidData)?
+    else {
+        return Err(Error::NegotiationError(
+            error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
+        ));
+    };
+
+    // skip the multistream-select header because it's not part of user protocols but verify it's present
+    let mut protocol_iter = protocols.into_iter();
+    let header =
+        Protocol::try_from(&b"/multistream/1.0.0"[..]).expect("valid multitstream-select header");
+
+    if !std::matches!(protocol_iter.next(), Some(header)) {
+        return Err(Error::NegotiationError(
+            error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
+        ));
+    }
+
+    for protocol in protocol_iter {
+        for supported in &mut *supported_protocols {
+            if protocol.as_ref() == supported.as_bytes() {
+                // encode `/multistream-select/1.0.0` header
+                let mut bytes = BytesMut::with_capacity(64);
+                let message = Message::Header(HeaderLine::V1);
+                let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
+                let mut header = UnsignedVarint::encode(bytes)?;
+
+                // encode negotiated protocol
+                let mut proto_bytes = BytesMut::with_capacity(512);
+                let message = Message::Protocol(protocol);
+                let _ = message
+                    .encode(&mut proto_bytes)
+                    .map_err(|_| Error::InvalidData)?;
+                let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
+
+                header.append(&mut proto_bytes.into());
+
+                return Ok((supported.clone(), header));
+            }
+        }
+    }
+
+    Err(Error::NegotiationError(
+        error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listener_negotiate_works() {}
+
+    #[test]
+    fn invalid_message_offered() {}
+
+    #[test]
+    fn no_supported_protocol() {}
+
+    #[test]
+    fn multistream_select_header_missing() {}
 }
