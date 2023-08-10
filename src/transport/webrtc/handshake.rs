@@ -27,7 +27,7 @@ use crate::{
         PublicKey,
     },
     error::{Error, NegotiationError},
-    multistream_select::Message as MultiStreamMessage,
+    multistream_select::{listener_negotiate, Message as MultiStreamMessage},
     peer_id::PeerId,
     protocol::{Direction, ProtocolSet},
     substream::{channel::SubstreamBackend, SubstreamType},
@@ -312,8 +312,7 @@ impl WebRtcHandshake {
     fn on_noise_channel_open(&mut self) {
         tracing::trace!(target: LOG_TARGET, "send initial noise handshake");
 
-        let State::Opened { mut handshaker } =
-            std::mem::replace(&mut self.state, State::Poisoned)
+        let State::Opened { mut handshaker } = std::mem::replace(&mut self.state, State::Poisoned)
         else {
             panic!("invalid state for connection, expected `Opened`");
         };
@@ -412,85 +411,44 @@ impl WebRtcHandshake {
     }
 
     /// Negotiate protocol for the channel
-    // TODO: move this to `multistream-select`
     async fn negotiate_protocol(&mut self, d: ChannelData) -> WebRtcEvent {
-        tracing::error!(target: LOG_TARGET, "negotiate protocol for the channel");
+        tracing::trace!(target: LOG_TARGET, channel_id = ?d.id, "negotiate protocol for the channel");
 
         // TODO: no unwraps
         let message = WebRtcMessage::decode(&d.data).unwrap();
         let payload = message.payload.unwrap();
 
-        match MultiStreamMessage::decode(payload.into()) {
-            Ok(MultiStreamMessage::Protocols(protocols)) => {
-                tracing::debug!(target: LOG_TARGET, ?protocols, "negotiate protocol");
+        // TODO: no unwraps
+        let (protocol, response) =
+            listener_negotiate(&mut self.context.protocols.keys(), payload.into()).unwrap();
 
-                for protocol in protocols {
-                    for supported in self.context.protocols.keys() {
-                        // TODO: this is so ugly
-                        let proto = protocol.clone();
-                        let proto1: &[u8] = protocol.as_ref();
-                        let proto2: &[u8] = supported.as_bytes();
+        let message = WebRtcMessage::encode(response, None);
 
-                        // TODO: no unwraps
-                        if proto1 == proto2 {
-                            let mut bytes = BytesMut::with_capacity(128);
-                            let message = MultiStreamMessage::Header(
-                                crate::multistream_select::HeaderLine::V1,
-                            );
-                            let _ = message.encode(&mut bytes).unwrap();
+        // TODO: no unwraps
+        self.rtc
+            .channel(d.id)
+            .expect("channel to exist")
+            .write(true, message.as_ref())
+            .unwrap();
 
-                            // TODO: no unwraps
-                            let mut header = UnsignedVarint::encode(bytes).unwrap();
+        let substream_id = self.substream_id.next();
+        let (substream, tx) = self.backend.substream(substream_id);
+        self.id_mapping.insert(d.id, substream_id);
+        self.channels
+            .insert(substream_id, SubstreamContext::new(d.id, tx));
 
-                            let mut proto_bytes = BytesMut::with_capacity(128);
-                            let message = MultiStreamMessage::Protocol(proto);
-                            let _ = message.encode(&mut proto_bytes).unwrap();
-                            let proto_bytes = UnsignedVarint::encode(proto_bytes).unwrap();
-
-                            header.append(&mut proto_bytes.into());
-
-                            let message = WebRtcMessage::encode(header.into(), None);
-
-                            self.rtc
-                                .channel(d.id)
-                                .expect("channel to exist")
-                                .write(true, message.as_ref())
-                                .unwrap();
-
-                            let substream_id = self.substream_id.next();
-                            let (substream, tx) = self.backend.substream(substream_id);
-                            self.id_mapping.insert(d.id, substream_id);
-                            self.channels
-                                .insert(substream_id, SubstreamContext::new(d.id, tx));
-
-                            if let State::Open { context, .. } = &mut self.state {
-                                context
-                                    .report_substream_open(
-                                        PeerId::random(),
-                                        supported.clone(),
-                                        Direction::Inbound,
-                                        SubstreamType::<tokio::net::TcpStream>::ChannelBackend(
-                                            substream,
-                                        ),
-                                    )
-                                    .await
-                                    .unwrap();
-                            }
-
-                            // TODO: inform protocol that a substream has been opened
-                            // TODO: introduce some channel-based substream type
-                            // TOOD
-
-                            return WebRtcEvent::Noop;
-                        }
-                    }
-                }
-
-                // return WebRtcEvent::Noop;
-                todo!("no supported protocol found");
-            }
-            result => todo!("unexpected result: {result:?}"),
+        if let State::Open { context, .. } = &mut self.state {
+            let _ = context
+                .report_substream_open(
+                    PeerId::random(),
+                    protocol.clone(),
+                    Direction::Inbound,
+                    SubstreamType::<tokio::net::TcpStream>::ChannelBackend(substream),
+                )
+                .await;
         }
+
+        return WebRtcEvent::Noop;
     }
 
     async fn process_multistream_select_confirmation(&mut self, d: ChannelData) -> WebRtcEvent {
