@@ -23,7 +23,7 @@ use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
-        webrtc::connection::WebRtcConnection, Transport, TransportCommand, TransportContext,
+        webrtc::handshake::WebRtcHandshake, Transport, TransportCommand, TransportContext,
     },
     types::ConnectionId,
 };
@@ -48,6 +48,17 @@ use std::{
 };
 
 mod connection;
+mod handshake;
+
+mod schema {
+    pub(super) mod webrtc {
+        include!(concat!(env!("OUT_DIR"), "/webrtc.rs"));
+    }
+
+    pub(super) mod noise {
+        include!(concat!(env!("OUT_DIR"), "/noise.rs"));
+    }
+}
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc";
@@ -221,7 +232,7 @@ impl WebRtcTransport {
                     .expect("client to handle input successfully");
 
                     let (tx, rx) = channel(64);
-                    let connection = WebRtcConnection::new(
+                    let connection = WebRtcHandshake::new(
                         rtc,
                         self.next_connection_id.next(),
                         noise_channel_id,

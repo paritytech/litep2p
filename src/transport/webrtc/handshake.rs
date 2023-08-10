@@ -56,7 +56,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "webrtc::connection";
+const LOG_TARGET: &str = "webrtc::handshake";
 
 /// Create Noise handshake state and keypair.
 // TODO: move this code to `crypto::noise`
@@ -280,7 +280,7 @@ impl SubstreamContext {
 }
 
 /// WebRTC connection.
-pub(super) struct WebRtcConnection {
+pub(super) struct WebRtcHandshake {
     /// Connection ID.
     pub(super) connection_id: ConnectionId,
 
@@ -324,7 +324,7 @@ pub(super) struct WebRtcConnection {
     id_mapping: HashMap<ChannelId, SubstreamId>,
 }
 
-impl WebRtcConnection {
+impl WebRtcHandshake {
     pub(super) fn new(
         rtc: Rtc,
         connection_id: ConnectionId,
@@ -335,8 +335,8 @@ impl WebRtcConnection {
         local_address: SocketAddr,
         socket: Arc<UdpSocket>,
         dgram_rx: Receiver<Vec<u8>>,
-    ) -> WebRtcConnection {
-        WebRtcConnection {
+    ) -> WebRtcHandshake {
+        WebRtcHandshake {
             rtc,
             socket,
             dgram_rx,
@@ -366,7 +366,7 @@ impl WebRtcConnection {
                     target: LOG_TARGET,
                     connection_id = ?self.connection_id,
                     ?error,
-                    "WebRtcConnection poll_output failed",
+                    "`WebRtcHandshake::poll_output()` failed",
                 );
                 self.rtc.disconnect();
                 WebRtcEvent::Noop
@@ -405,7 +405,7 @@ impl WebRtcConnection {
                 self.socket
                     .send_to(&transmit.contents, transmit.destination)
                     .await
-                    .expect("sending UDP data");
+                    .expect("send to succeed");
                 WebRtcEvent::Noop
             }
             Output::Timeout(t) => WebRtcEvent::Timeout(t),
@@ -558,6 +558,7 @@ impl WebRtcConnection {
     }
 
     /// Negotiate protocol for the channel
+    // TODO: move this to `multistream-select`
     async fn negotiate_protocol(&mut self, d: ChannelData) -> WebRtcEvent {
         tracing::error!(target: LOG_TARGET, "negotiate protocol for the channel");
 
