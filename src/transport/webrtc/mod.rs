@@ -319,7 +319,7 @@ impl Transport for WebRtcTransport {
                         }
 
                     }
-                    Err(error) => panic!("error: {error:?}"), // TODO: don't panic
+                    Err(error) => return Err(Error::EssentialTaskClosed),
                 },
                 event = self.rx.recv() => match event {
                     Some(_event) => {}
