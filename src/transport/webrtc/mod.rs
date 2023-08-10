@@ -49,6 +49,7 @@ use std::{
 
 mod connection;
 mod handshake;
+mod util;
 
 mod schema {
     pub(super) mod webrtc {
