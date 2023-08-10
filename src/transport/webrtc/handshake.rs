@@ -393,11 +393,9 @@ impl WebRtcHandshake {
             .with(Protocol::from(self.peer_address.ip()))
             .with(Protocol::Udp(self.peer_address.port()))
             .with(Protocol::WebRTC)
-            .with(Protocol::Certhash(certificate));
-        // TODO: add peerid
-        // .with(Protocol::P2p(
-        //     PeerId::from(PublicKey::Ed25519(self.context.keypair.public())).into(),
-        // ))
+            .with(Protocol::Certhash(certificate))
+            .with(Protocol::P2p(PeerId::from(public_key).into()));
+
         let context = ProtocolSet::from_transport_context(remote_peer_id, self.context.clone())
             .await
             .unwrap();
