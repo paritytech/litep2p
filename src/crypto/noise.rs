@@ -704,6 +704,146 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     ))
 }
 
+/// Noise handshaker.
+pub struct NoiseContext {
+    /// Noise handshake state.
+    noise: snow::HandshakeState,
+
+    /// Noise keypair.
+    keypair: snow::Keypair,
+
+    /// Noise payload.
+    payload: Vec<u8>,
+}
+
+// TODO: rename, stupid name
+impl NoiseContext {
+    /// Create new [`NoiseContext`].
+    pub fn new(id_keys: &Keypair) -> Self {
+        let noise = snow::Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise patterns"));
+        let keypair = noise.generate_keypair().unwrap();
+
+        let noise = noise
+            .local_private_key(&keypair.private)
+            .build_initiator()
+            .expect("to succeed");
+
+        NoiseContext::make_noise_and_payload(noise, keypair, id_keys)
+    }
+
+    /// Create new [`NoiseHandshake`] with prologue.
+    pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> Self {
+        let noise = snow::Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise patterns"));
+        let keypair = noise.generate_keypair().unwrap();
+
+        let noise = noise
+            .local_private_key(&keypair.private)
+            .prologue(&prologue)
+            .build_initiator()
+            .expect("to succeed");
+
+        NoiseContext::make_noise_and_payload(noise, keypair, id_keys)
+    }
+
+    /// Assemble Noise payload and return [`NoiseContext`].
+    fn make_noise_and_payload(
+        noise: snow::HandshakeState,
+        keypair: snow::Keypair,
+        id_keys: &Keypair,
+    ) -> Self {
+        let noise_payload = handshake_schema::NoiseHandshakePayload {
+            identity_key: Some(PublicKey::Ed25519(id_keys.public()).to_protobuf_encoding()),
+            identity_sig: Some(
+                id_keys.sign(&[STATIC_KEY_DOMAIN.as_bytes(), keypair.public.as_ref()].concat()),
+            ),
+            ..Default::default()
+        };
+
+        let mut payload = Vec::with_capacity(noise_payload.encoded_len());
+        noise_payload
+            .encode(&mut payload)
+            .expect("Vec<u8> to provide needed capacity");
+
+        Self {
+            noise,
+            keypair,
+            payload,
+        }
+    }
+
+    /// Get remote public key from the received Noise payload.
+    pub fn get_remote_public_key(&mut self, reply: &Vec<u8>) -> crate::Result<PublicKey> {
+        if reply.len() <= 2 {
+            return Err(error::Error::InvalidData);
+        }
+
+        // TODO: no unwraps
+        let size: Result<[u8; 2], _> = reply[0..2].try_into();
+        let _size = u16::from_be_bytes(size.unwrap());
+
+        // TODO: buffer size
+        let mut inner = vec![0u8; 1024];
+
+        let res = self.noise.read_message(&reply[2..], &mut inner)?;
+        inner.truncate(res);
+
+        let payload = handshake_schema::NoiseHandshakePayload::decode(inner.as_slice())?;
+
+        Ok(PublicKey::from_protobuf_encoding(
+            &payload.identity_key.ok_or(error::Error::NegotiationError(
+                error::NegotiationError::PeerIdMissing,
+            ))?,
+        )?)
+    }
+
+    /// Get first message.
+    ///
+    /// Listener only sends one message (the payload)
+    pub fn first_message(&mut self, role: Role) -> Vec<u8> {
+        match role {
+            Role::Dialer => {
+                tracing::trace!(target: LOG_TARGET, "get noise dialer first message");
+
+                let mut buffer = vec![0u8; 256];
+
+                let nwritten = self
+                    .noise
+                    .write_message(&[], &mut buffer)
+                    .expect("to succeed");
+                buffer.truncate(nwritten);
+
+                let size = nwritten as u16;
+                let mut size = size.to_be_bytes().to_vec();
+                size.append(&mut buffer);
+
+                size
+            }
+            Role::Listener => self.second_message(),
+        }
+    }
+
+    /// Get second message.
+    ///
+    /// Only the dialer sends the second message.
+    pub fn second_message(&mut self) -> Vec<u8> {
+        tracing::trace!(target: LOG_TARGET, "get noise paylod message");
+
+        let mut buffer = vec![0u8; 2048];
+
+        let nwritten = self
+            .noise
+            .write_message(&self.payload, &mut buffer)
+            .expect("to succeed");
+        buffer.truncate(nwritten);
+
+        let size = nwritten as u16;
+        let mut size = size.to_be_bytes().to_vec();
+        size.append(&mut buffer);
+
+        size
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
