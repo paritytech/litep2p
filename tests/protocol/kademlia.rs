@@ -18,10 +18,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use bytes::Bytes;
 use litep2p::{
-    config::Litep2pConfigBuilder, crypto::ed25519::Keypair,
-    protocol::libp2p::kademlia::ConfigBuilder as KademliaConfigBuilder,
-    transport::tcp::config::TransportConfig as TcpTransportConfig, Litep2p,
+    config::Litep2pConfigBuilder,
+    crypto::ed25519::Keypair,
+    peer_id::PeerId,
+    protocol::libp2p::kademlia::{ConfigBuilder as KademliaConfigBuilder, RecordKey},
+    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    Litep2p,
 };
 
 async fn spawn_litep2p(port: u16) {
@@ -51,7 +55,7 @@ async fn kademlia_supported() {
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/8888".parse().unwrap(),
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         })
         .with_ipfs_kademlia(kad_config1)
         .build();
@@ -70,6 +74,47 @@ async fn kademlia_supported() {
             // event = kad_handle1.next() => {
             //     tracing::info!("kademlia event received: {event:?}");
             // }
+        }
+    }
+}
+
+#[tokio::test]
+async fn put_value() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_ipfs_kademlia(kad_config1)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    for i in 0..10 {
+        kad_handle1
+            .add_known_peer(
+                PeerId::random(),
+                vec![format!("/ip6/::/tcp/{i}").parse().unwrap()],
+            )
+            .await;
+    }
+
+    let key = RecordKey::new(&Bytes::from(vec![1, 3, 3, 7]));
+    kad_handle1.put_value(key, vec![1, 2, 3, 4]).await;
+
+    loop {
+        tokio::select! {
+            event = litep2p1.next_event() => {
+                tracing::info!("litep2p event received: {event:?}");
+            }
+            event = kad_handle1.next_event() => {
+                tracing::info!("kademlia event received: {event:?}");
+            }
         }
     }
 }

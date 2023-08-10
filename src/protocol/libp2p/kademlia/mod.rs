@@ -273,6 +273,7 @@ impl Kademlia {
         };
 
         // attempt to send the pending query to peer and remove the peer if the send fails
+        // TODO: ugly
         let target_peer = self.engine.target_peer(query).ok_or(Error::InvalidState)?;
         let message = KademliaMessage::find_node(target_peer);
 
@@ -381,6 +382,21 @@ impl Kademlia {
     /// Store value to DHT by executing `PUT_VALUE`.
     async fn on_put_value(&mut self, key: RecordKey, value: Vec<u8>) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?key, "execute `PUT_VALUE`");
+
+        // TODO: store record to our store
+
+        let key = Key::new(key);
+        let candidates: VecDeque<_> = self.routing_table.closest(key.clone(), 20).into();
+
+        for peer in candidates {
+            tracing::warn!(
+                target: LOG_TARGET,
+                "distance: {:?}",
+                key.distance(&peer.key)
+            );
+        }
+
+        // tracing::info!(target: LOG_TARGET, "candidates: {candidates:?}");
 
         Ok(())
     }
