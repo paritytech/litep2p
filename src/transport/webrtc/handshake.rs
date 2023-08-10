@@ -27,7 +27,7 @@ use crate::{
     protocol::{Direction, ProtocolSet},
     substream::{channel::SubstreamBackend, SubstreamType},
     transport::{
-        webrtc::{schema, WebRtcEvent},
+        webrtc::{schema, util::WebRtcMessage, WebRtcEvent},
         TransportContext,
     },
     types::{ConnectionId, SubstreamId},
@@ -103,47 +103,20 @@ fn noise_first_message(noise: &mut snow::HandshakeState) -> Vec<u8> {
     let mut size = size.to_be_bytes().to_vec();
     size.append(&mut buffer);
 
-    let protobuf_payload = schema::webrtc::Message {
-        message: Some(size),
-        ..Default::default()
-    };
-    let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
-    protobuf_payload
-        .encode(&mut payload)
-        .expect("Vec<u8> to provide needed capacity");
-
-    let payload: bytes::Bytes = payload.into();
-
-    let mut out_buf = bytes::BytesMut::with_capacity(1024);
-    let mut codec = UnsignedVarint::new();
-    let _ = codec.encode(payload, &mut out_buf);
-
-    out_buf.into()
-}
-
-// TODO: no unwraps
-fn new_read_remote_reply(data: &[u8]) -> crate::Result<schema::webrtc::Message> {
-    let mut codec = UnsignedVarint::new();
-    let mut data = bytes::BytesMut::from(data);
-    let result = codec.decode(&mut data)?.ok_or(Error::Unknown)?; // TODO: bad error
-
-    schema::webrtc::Message::decode(result).map_err(From::from)
+    WebRtcMessage::encode(size, None)
 }
 
 /// Read remote reply and extract remote's `PeerId` from it.
 fn read_remote_reply(data: &[u8], noise: &mut snow::HandshakeState) -> crate::Result<PeerId> {
-    let mut codec = UnsignedVarint::new();
-    let mut data = bytes::BytesMut::from(data);
-    let result = codec.decode(&mut data)?.ok_or(Error::Unknown)?; // TODO: bad error
+    let message = WebRtcMessage::decode(data)?;
 
-    let payload = schema::webrtc::Message::decode(result)?;
-    let size: Result<[u8; 2], _> = payload.message.clone().unwrap()[0..2].try_into();
+    let size: Result<[u8; 2], _> = message.payload.clone().unwrap()[0..2].try_into();
     let _size = u16::from_be_bytes(size.unwrap());
 
     let mut inner = vec![0u8; 1024];
 
     // TODO: don't panic
-    let res = noise.read_message(&payload.message.unwrap()[2..], &mut inner)?;
+    let res = noise.read_message(&message.payload.unwrap()[2..], &mut inner)?;
     inner.truncate(res);
 
     // TODO: refactor this code
@@ -187,41 +160,7 @@ fn noise_second_message(
     let mut size = size.to_be_bytes().to_vec();
     size.append(&mut buffer);
 
-    let protobuf_payload = schema::webrtc::Message {
-        message: Some(size),
-        ..Default::default()
-    };
-    let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
-    protobuf_payload
-        .encode(&mut payload)
-        .expect("Vec<u8> to provide needed capacity");
-
-    let payload: bytes::Bytes = payload.into();
-
-    let mut out_buf = bytes::BytesMut::with_capacity(1024);
-    let mut codec = UnsignedVarint::new();
-    let _result = codec.encode(payload, &mut out_buf);
-
-    Ok(out_buf.into())
-}
-
-fn create_webrtc_message(payload: Vec<u8>) -> Vec<u8> {
-    let protobuf_payload = schema::webrtc::Message {
-        message: Some(payload),
-        ..Default::default()
-    };
-    let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
-    protobuf_payload
-        .encode(&mut payload)
-        .expect("Vec<u8> to provide needed capacity");
-
-    let payload: bytes::Bytes = payload.into();
-
-    let mut out_buf = bytes::BytesMut::with_capacity(1024);
-    let mut codec = UnsignedVarint::new();
-    let _result = codec.encode(payload, &mut out_buf);
-
-    out_buf.into()
+    Ok(WebRtcMessage::encode(size, None))
 }
 
 /// WebRTC connection state.
@@ -563,8 +502,8 @@ impl WebRtcHandshake {
         tracing::error!(target: LOG_TARGET, "negotiate protocol for the channel");
 
         // TODO: no unwraps
-        let message = new_read_remote_reply(&d.data).unwrap();
-        let payload = message.message.unwrap();
+        let message = WebRtcMessage::decode(&d.data).unwrap();
+        let payload = message.payload.unwrap();
 
         match MultiStreamMessage::decode(payload.into()) {
             Ok(MultiStreamMessage::Protocols(protocols)) => {
@@ -595,7 +534,7 @@ impl WebRtcHandshake {
 
                             header.append(&mut proto_bytes.into());
 
-                            let message = create_webrtc_message(header.into());
+                            let message = WebRtcMessage::encode(header.into(), None);
 
                             self.rtc
                                 .channel(d.id)
@@ -647,11 +586,11 @@ impl WebRtcHandshake {
         );
 
         // TODO: no unwraps
-        let message = new_read_remote_reply(&d.data).unwrap();
+        let message = WebRtcMessage::decode(&d.data).unwrap();
 
         tracing::warn!(target: LOG_TARGET, "MESSAGE: {message:?}");
 
-        if let Some(message) = message.message {
+        if let Some(message) = message.payload {
             match self.id_mapping.get(&d.id) {
                 Some(id) => match self.channels.get_mut(&id) {
                     Some(context) => {

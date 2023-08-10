@@ -24,17 +24,18 @@ use prost::Message;
 use tokio_util::codec::{Decoder, Encoder};
 
 /// WebRTC mesage.
-pub(super) struct WebRtcMessage {
+#[derive(Debug)]
+pub struct WebRtcMessage {
     /// Payload.
-    pub(super) payload: Option<Vec<u8>>,
+    pub payload: Option<Vec<u8>>,
 
     // Flags.
-    pub(super) flags: Option<i32>,
+    pub flags: Option<i32>,
 }
 
 impl WebRtcMessage {
     /// Encode WebRTC message.
-    pub(super) fn encode(payload: Vec<u8>, flag: Option<i32>) -> Vec<u8> {
+    pub fn encode(payload: Vec<u8>, flag: Option<i32>) -> Vec<u8> {
         let protobuf_payload = schema::webrtc::Message {
             message: (!payload.is_empty()).then_some(payload),
             flag,
@@ -52,7 +53,7 @@ impl WebRtcMessage {
     }
 
     /// Decode payload into [`WebRtcMessage`].
-    fn decode(payload: &[u8]) -> crate::Result<Self> {
+    pub fn decode(payload: &[u8]) -> crate::Result<Self> {
         let mut codec = UnsignedVarint::new();
         let mut data = bytes::BytesMut::from(payload);
         let result = codec.decode(&mut data)?.ok_or(Error::InvalidData)?;
