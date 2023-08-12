@@ -37,7 +37,7 @@ async fn webrtc_test() {
         .try_init();
 
     let (ping_config, mut ping_event_stream) = PingConfig::new(3);
-    let (notif_config, mut _notif_event_stream) = NotificationConfig::new(
+    let (notif_config, mut notif_event_stream) = NotificationConfig::new(
         ProtocolName::from(
             "/980e7cbafbcd37f8cb17be82bf8d53fa81c9a588e8a67384376e862da54285dc/block-announces/1",
         ),
@@ -63,18 +63,18 @@ async fn webrtc_test() {
     loop {
         tokio::select! {
             event = litep2p.next_event() => {
-                tracing::error!("litep2p event received: {event:?}");
+                tracing::debug!("litep2p event received: {event:?}");
             }
             event = ping_event_stream.next() => {
                 if std::matches!(event, None) {
                     tracing::error!("ping event stream termintated");
                     break
                 }
-                tracing::error!("ping event received: {event:?}");
+                tracing::info!("ping event received: {event:?}");
             }
-            // event = notif_event_stream.next_event() => {
-            //     tracing::error!("notification event received: {event:?}");
-            // }
+            event = notif_event_stream.next_event() => {
+                tracing::error!("notification event received: {event:?}");
+            }
         }
     }
 }

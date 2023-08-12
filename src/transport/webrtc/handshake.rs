@@ -103,6 +103,9 @@ enum State {
 
         /// Protocol context.
         context: ProtocolSet,
+
+        /// Remote peer ID.
+        peer: PeerId,
     },
 }
 
@@ -412,6 +415,7 @@ impl WebRtcHandshake {
         self.state = State::Open {
             handshaker,
             context,
+            peer: remote_peer_id,
         };
 
         Ok(WebRtcEvent::Noop)
@@ -442,10 +446,10 @@ impl WebRtcHandshake {
         self.channels
             .insert(substream_id, SubstreamContext::new(d.id, tx));
 
-        if let State::Open { context, .. } = &mut self.state {
+        if let State::Open { context, peer, .. } = &mut self.state {
             let _ = context
                 .report_substream_open(
-                    PeerId::random(),
+                    *peer,
                     protocol.clone(),
                     Direction::Inbound,
                     // TODO: this is wrong
@@ -551,6 +555,8 @@ impl WebRtcHandshake {
                 event = self.backend.next_event() => {
                     let (id, message) = event.ok_or(Error::EssentialTaskClosed)?;
                     let channel_id = self.channels.get_mut(&id).ok_or(Error::ChannelDoesntExist)?.channel_id;
+
+                    tracing::trace!(target: LOG_TARGET, ?id, ?message, "send message to remote peer");
 
                     self.rtc
                         .channel(channel_id)
