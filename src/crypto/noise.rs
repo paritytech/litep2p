@@ -38,7 +38,7 @@ use futures::{
 use prost::Message;
 use snow::{Builder, Error, HandshakeState, TransportState};
 
-use std::{io, pin::Pin, task::Poll};
+use std::{fmt, io, pin::Pin, task::Poll};
 
 mod handshake_schema {
     include!(concat!(env!("OUT_DIR"), "/noise.rs"));
@@ -714,6 +714,15 @@ pub struct NoiseContext {
 
     /// Noise payload.
     payload: Vec<u8>,
+}
+
+impl fmt::Debug for NoiseContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NoiseContext")
+            .field("public", &self.noise)
+            .field("payload", &self.payload)
+            .finish()
+    }
 }
 
 // TODO: rename, stupid name
