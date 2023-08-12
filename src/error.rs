@@ -96,6 +96,12 @@ pub enum Error {
     InsufficientPeers,
     #[error("Substream doens't exist")]
     SubstreamDoesntExist,
+    #[error("`str0m` error: `{0}`")]
+    WebRtc(#[from] str0m::RtcError),
+    #[error("Remote peer disconnected")]
+    Disconnected,
+    #[error("Channel does not exist")]
+    ChannelDoesntExist,
 }
 
 #[derive(Debug, thiserror::Error)]

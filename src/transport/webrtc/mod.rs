@@ -345,6 +345,7 @@ impl Transport for WebRtcTransport {
 // TODO: remove
 /// Events propagated between client.
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 enum WebRtcEvent {
     /// When we have nothing to propagate.
     Noop,

@@ -242,6 +242,8 @@ impl Ping {
                                 ?error,
                                 "failed to handle inbound substream",
                             );
+                        } else {
+                            tracing::error!(target: LOG_TARGET, "ANSWERED TO PING");
                         }
                     }
                     Direction::Outbound(substream_id) => {
