@@ -64,15 +64,7 @@ use std::{
 const LOG_TARGET: &str = "webrtc::handshake";
 
 /// Create Noise prologue.
-fn noise_prologue_new(local_fingerprint: Fingerprint, remote_fingerprint: Fingerprint) -> Vec<u8> {
-    const MULTIHASH_SHA256_CODE: u64 = 0x12;
-    let remote_fingerprint = Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint.bytes)
-        .expect("fingerprint's len to be 32 bytes")
-        .to_bytes();
-    let local_fingerprint = Multihash::wrap(MULTIHASH_SHA256_CODE, &local_fingerprint.bytes)
-        .expect("fingerprint's len to be 32 bytes")
-        .to_bytes();
-
+fn noise_prologue_new(local_fingerprint: Vec<u8>, remote_fingerprint: Vec<u8>) -> Vec<u8> {
     const PREFIX: &[u8] = b"libp2p-webrtc-noise:";
     let mut prologue =
         Vec::with_capacity(PREFIX.len() + local_fingerprint.len() + remote_fingerprint.len());
@@ -275,13 +267,8 @@ impl WebRtcHandshake {
                 Event::Connected => {
                     match std::mem::replace(&mut self.state, State::Poisoned) {
                         State::Closed => {
-                            let remote_fingerprint = self
-                                .rtc
-                                .direct_api()
-                                .remote_dtls_fingerprint()
-                                .clone()
-                                .expect("fingerprint to exist");
-                            let local_fingerprint = self.rtc.direct_api().local_dtls_fingerprint();
+                            let remote_fingerprint = self.remote_fingerprint();
+                            let local_fingerprint = self.local_fingerprint();
 
                             let handshaker = NoiseContext::with_prologue(
                                 &self.id_keypair,
@@ -307,6 +294,30 @@ impl WebRtcHandshake {
                 }
             },
         }
+    }
+
+    /// Get remote fingerprint to bytes.
+    fn remote_fingerprint(&mut self) -> Vec<u8> {
+        let fingerprint = self
+            .rtc
+            .direct_api()
+            .remote_dtls_fingerprint()
+            .clone()
+            .expect("fingerprint to exist");
+        Self::fingerprint_to_bytes(&fingerprint)
+    }
+
+    /// Get local fingerprint as bytes.
+    fn local_fingerprint(&mut self) -> Vec<u8> {
+        Self::fingerprint_to_bytes(&self.rtc.direct_api().local_dtls_fingerprint())
+    }
+
+    /// Convert `Fingerprint` to bytes.
+    fn fingerprint_to_bytes(fingerprint: &Fingerprint) -> Vec<u8> {
+        const MULTIHASH_SHA256_CODE: u64 = 0x12;
+        Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint.bytes)
+            .expect("fingerprint's len to be 32 bytes")
+            .to_bytes()
     }
 
     fn on_noise_channel_open(&mut self) -> crate::Result<()> {
