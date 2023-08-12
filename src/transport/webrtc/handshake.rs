@@ -32,7 +32,7 @@ use crate::{
     protocol::{Direction, ProtocolSet},
     substream::{channel::SubstreamBackend, SubstreamType},
     transport::{
-        webrtc::{schema, util::WebRtcMessage, WebRtcEvent},
+        webrtc::{connection::WebRtcConnection, schema, util::WebRtcMessage, WebRtcEvent},
         TransportContext,
     },
     types::{ConnectionId, SubstreamId},
@@ -483,12 +483,10 @@ impl WebRtcHandshake {
                     Ok(WebRtcEvent::Noop)
                 }
                 None => {
-                    tracing::error!(target: LOG_TARGET, "channel doesn't exist 1");
                     return Err(Error::ChannelDoesntExist);
                 }
             },
             None => {
-                tracing::error!(target: LOG_TARGET, "channel doesn't exist 2");
                 return Err(Error::ChannelDoesntExist);
             }
         }
@@ -565,6 +563,28 @@ impl WebRtcHandshake {
                         .map_err(|error| Error::WebRtc(error))?;
                 }
                 _ = tokio::time::sleep(duration) => {}
+            }
+
+            // start webrtc connection event lopp
+            if let State::Open {
+                peer,
+                handshaker,
+                context,
+            } = self.state
+            {
+                return WebRtcConnection::new(
+                    self.rtc,
+                    peer,
+                    self.peer_address,
+                    self.local_address,
+                    self.context,
+                    self.socket,
+                    self.dgram_rx,
+                    handshaker,
+                    context,
+                )
+                .run()
+                .await;
             }
 
             // drive time forward in the client

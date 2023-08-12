@@ -196,4 +196,7 @@ mod tests {
             BytesMut::from(vec![5, 6, 7, 8, 9].as_slice())
         );
     }
+
+    #[tokio::test]
+    async fn close_substream() {}
 }

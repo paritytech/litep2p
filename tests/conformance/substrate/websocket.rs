@@ -51,7 +51,7 @@ async fn websocket_works() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut litep2p, mut handle) = initialize_litep2p().await;
+    let (mut litep2p, _handle) = initialize_litep2p().await;
 
     tracing::info!("local peer id {}", litep2p.local_peer_id());
 
