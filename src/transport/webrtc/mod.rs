@@ -334,7 +334,9 @@ impl Transport for WebRtcTransport {
                     Err(error) => return Err(Error::EssentialTaskClosed),
                 },
                 event = self.rx.recv() => match event {
-                    Some(_event) => {}
+                    Some(TransportCommand::Dial { .. }) => {
+                        tracing::warn!(target: LOG_TARGET, "webrtc cannot dial peers");
+                    }
                     None => return Err(Error::EssentialTaskClosed),
                 },
             }
