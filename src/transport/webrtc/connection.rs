@@ -31,7 +31,11 @@ use crate::{
     protocol::{Direction, ProtocolEvent, ProtocolSet},
     substream::{channel::SubstreamBackend, SubstreamType},
     transport::{
-        webrtc::{schema, util::WebRtcMessage, WebRtcEvent},
+        webrtc::{
+            schema,
+            util::{SubstreamContext, WebRtcMessage},
+            WebRtcEvent,
+        },
         TransportContext,
     },
     types::{ConnectionId, SubstreamId},
@@ -61,22 +65,6 @@ use std::{
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::connection";
-
-/// Substream context.
-struct SubstreamContext {
-    /// `str0m` channel id.
-    channel_id: ChannelId,
-
-    /// TX channel for sending messages to the protocol.
-    tx: Sender<Vec<u8>>,
-}
-
-impl SubstreamContext {
-    /// Create new [`SubstreamContext`].
-    pub fn new(channel_id: ChannelId, tx: Sender<Vec<u8>>) -> Self {
-        Self { channel_id, tx }
-    }
-}
 
 /// WebRTC connection.
 pub struct WebRtcConnection {
@@ -166,6 +154,8 @@ impl WebRtcConnection {
 
     /// Handle data received from peer.
     pub(super) async fn on_input(&mut self, buffer: Vec<u8>) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, "handle input");
+
         let message = Input::Receive(
             Instant::now(),
             Receive {
@@ -279,22 +269,19 @@ impl WebRtcConnection {
             .payload
             .ok_or(Error::InvalidData)?;
 
-        match self.id_mapping.get(&d.id) {
-            Some(id) => match self.channels.get_mut(&id) {
-                Some(context) => {
-                    let _ = context.tx.send(message).await;
-                    Ok(WebRtcEvent::Noop)
-                }
-                None => {
-                    tracing::error!(target: LOG_TARGET, "channel doesn't exist 1");
-                    return Err(Error::ChannelDoesntExist);
-                }
-            },
-            None => {
-                tracing::error!(target: LOG_TARGET, "channel doesn't exist 2");
-                return Err(Error::ChannelDoesntExist);
-            }
-        }
+        let channel_id = self
+            .id_mapping
+            .get(&d.id)
+            .ok_or(Error::ChannelDoesntExist)?;
+        let _ = self
+            .channels
+            .get_mut(&channel_id)
+            .ok_or(Error::ChannelDoesntExist)?
+            .tx
+            .send(message)
+            .await;
+
+        Ok(WebRtcEvent::Noop)
     }
 
     /// Handle channel data.
@@ -311,7 +298,7 @@ impl WebRtcConnection {
             if !self.rtc.is_alive() {
                 tracing::debug!(
                     target: LOG_TARGET,
-                    "`Rtc` is not alive, closing `WebRtcHandshake`"
+                    "`Rtc` is not alive, closing `WebRtcConnection`"
                 );
                 return Ok(());
             }
@@ -337,7 +324,8 @@ impl WebRtcConnection {
             tokio::select! {
                 message = self.dgram_rx.recv() => match message {
                     Some(message) => match self.on_input(message).await {
-                        Ok(_) | Err(Error::InputRejected) => {},
+                        Ok(_) => {}
+                        Err(Error::InputRejected) => tracing::debug!(target: LOG_TARGET, "input rejected"),
                         Err(error) => {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to handle input");
                             return Err(error)

@@ -21,7 +21,25 @@
 use crate::{codec::unsigned_varint::UnsignedVarint, error::Error, transport::webrtc::schema};
 
 use prost::Message;
+use str0m::channel::ChannelId;
+use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{Decoder, Encoder};
+
+/// Substream context.
+pub struct SubstreamContext {
+    /// `str0m` channel id.
+    pub channel_id: ChannelId,
+
+    /// TX channel for sending messages to the protocol.
+    pub tx: Sender<Vec<u8>>,
+}
+
+impl SubstreamContext {
+    /// Create new [`SubstreamContext`].
+    pub fn new(channel_id: ChannelId, tx: Sender<Vec<u8>>) -> Self {
+        Self { channel_id, tx }
+    }
+}
 
 /// WebRTC mesage.
 #[derive(Debug)]

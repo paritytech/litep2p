@@ -32,7 +32,12 @@ use crate::{
     protocol::{Direction, ProtocolSet},
     substream::{channel::SubstreamBackend, SubstreamType},
     transport::{
-        webrtc::{connection::WebRtcConnection, schema, util::WebRtcMessage, WebRtcEvent},
+        webrtc::{
+            connection::WebRtcConnection,
+            schema,
+            util::{SubstreamContext, WebRtcMessage},
+            WebRtcEvent,
+        },
         TransportContext,
     },
     types::{ConnectionId, SubstreamId},
@@ -107,22 +112,6 @@ enum State {
         /// Remote peer ID.
         peer: PeerId,
     },
-}
-
-/// Substream context.
-struct SubstreamContext {
-    /// `str0m` channel id.
-    channel_id: ChannelId,
-
-    /// TX channel for sending messages to the protocol.
-    tx: Sender<Vec<u8>>,
-}
-
-impl SubstreamContext {
-    /// Create new [`SubstreamContext`].
-    pub fn new(channel_id: ChannelId, tx: Sender<Vec<u8>>) -> Self {
-        Self { channel_id, tx }
-    }
 }
 
 /// WebRTC connection.
