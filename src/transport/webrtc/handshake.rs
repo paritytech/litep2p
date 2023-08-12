@@ -561,7 +561,7 @@ impl WebRtcHandshake {
                 context,
             } = self.state
             {
-                return WebRtcConnection::new(
+                let res = WebRtcConnection::new(
                     self.rtc,
                     peer,
                     self.peer_address,
@@ -574,6 +574,12 @@ impl WebRtcHandshake {
                 )
                 .run()
                 .await;
+
+                if res.is_err() {
+                    tracing::error!(target: LOG_TARGET, "failed to handle input: {res:?}");
+                }
+
+                return res;
             }
 
             // drive time forward in the client
