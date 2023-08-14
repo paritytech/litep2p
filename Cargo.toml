@@ -23,7 +23,7 @@ multihash = { version = "0.17.0", default-features = false, features = ["std", "
 pin-project = "1.1.0"
 prost = "0.11.8"
 protoc = "2.28.0"
-rand = { version = "0.7.0", features = ["getrandom"] }
+rand = { version = "0.8.0", features = ["getrandom"] }
 rcgen = "0.10.0"
 ring = "0.16.20"
 s2n-quic = { version = "1.22.0", features = ["provider-tls-rustls"] }
@@ -51,6 +51,10 @@ socket2 = "0.5.3"
 simple-dns = "0.5.3"
 uint = "0.9.5"
 sha2 = "0.10.7"
+webrtc = "0.8.0"
+stun = "0.4.4"
+tinytemplate = "1.2.1"
+hex = "0.4.3"
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]
@@ -69,6 +73,7 @@ libp2p = { version = "0.51.3", features = [
     "noise",
     "ping",
     "tcp",
+    "kad",
     "websocket",
     "yamux",
     "quic",

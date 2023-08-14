@@ -1,3 +1,4 @@
+// Copyright 2022 Parity Technologies (UK) Ltd.
 // Copyright 2023 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -18,56 +19,38 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::transport::{Transport, TransportCommand, TransportContext};
+use crate::{
+    crypto::ed25519::Keypair,
+    transport::webrtc::{certificate::Certificate, fingerprint::Fingerprint},
+};
 
-use multiaddr::Multiaddr;
-use tokio::sync::mpsc::Receiver;
+use webrtc::peer_connection::configuration::RTCConfiguration;
 
-mod certificate;
-mod config;
-mod error;
-mod fingerprint;
-mod req_res_chan;
-mod sdp;
-mod udp_mux;
-mod upgrade;
-mod util;
+/// A config which holds peer's keys and a x509Cert used to authenticate WebRTC communications.
+#[derive(Clone)]
+pub struct Config {
+    /// Inner WebRTC configuration.
+    pub inner: RTCConfiguration,
 
-mod schema {
-    pub(super) mod webrtc {
-        include!(concat!(env!("OUT_DIR"), "/webrtc.rs"));
-    }
+    /// Local certificate fingerprint.
+    pub fingerprint: Fingerprint,
 
-    pub(super) mod noise {
-        include!(concat!(env!("OUT_DIR"), "/noise.rs"));
-    }
+    /// Keypair.
+    pub id_keys: Keypair,
 }
 
-#[derive(Debug)]
-pub struct WebRtcTransportConfig {}
+impl Config {
+    /// Create new [`Config`].
+    pub fn new(id_keys: Keypair, certificate: Certificate) -> Self {
+        let fingerprint = certificate.fingerprint();
 
-pub struct WebRtcTransport {}
-
-#[async_trait::async_trait]
-impl Transport for WebRtcTransport {
-    type Config = WebRtcTransportConfig;
-
-    /// Create new [`Transport`] object.
-    async fn new(
-        context: TransportContext,
-        config: Self::Config,
-        rx: Receiver<TransportCommand>,
-    ) -> crate::Result<Self> {
-        todo!();
-    }
-
-    /// Get assigned listen address.
-    fn listen_address(&self) -> Multiaddr {
-        todo!();
-    }
-
-    /// Start transport event loop.
-    async fn start(mut self) -> crate::Result<()> {
-        todo!();
+        Self {
+            id_keys,
+            inner: RTCConfiguration {
+                certificates: vec![certificate.to_rtc_certificate()],
+                ..RTCConfiguration::default()
+            },
+            fingerprint,
+        }
     }
 }
