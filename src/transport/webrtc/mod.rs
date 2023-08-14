@@ -25,6 +25,7 @@ use tokio::sync::mpsc::Receiver;
 
 mod certificate;
 mod config;
+mod connection;
 mod error;
 mod fingerprint;
 mod req_res_chan;

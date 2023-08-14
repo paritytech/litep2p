@@ -22,7 +22,10 @@ use crate::{
     config::Role,
     crypto::ed25519::Keypair,
     peer_id::PeerId,
-    transport::webrtc::{error::Error, fingerprint::Fingerprint, sdp, util::WebRtcMessage},
+    transport::webrtc::{
+        connection::WebRtcConnection, error::Error, fingerprint::Fingerprint, sdp,
+        util::WebRtcMessage,
+    },
 };
 
 use futures::channel::oneshot::{self, Sender};
@@ -138,7 +141,7 @@ pub(crate) async fn inbound(
     server_fingerprint: Fingerprint,
     remote_ufrag: String,
     id_keys: Keypair,
-) -> Result<(PeerId, ()), ()> {
+) -> Result<(PeerId, WebRtcConnection), ()> {
     tracing::debug!("new inbound connection from {addr} (ufrag: {remote_ufrag})");
 
     let peer_connection = new_inbound_connection(addr, config, udp_mux, &remote_ufrag)
@@ -146,22 +149,16 @@ pub(crate) async fn inbound(
         .unwrap();
 
     let offer = sdp::offer(addr, &remote_ufrag);
-    tracing::debug!("calculated SDP offer for inbound connection: {:?}", offer);
     peer_connection.set_remote_description(offer).await.unwrap();
 
     let answer = peer_connection.create_answer(None).await.unwrap();
-    tracing::debug!("created SDP answer for inbound connection: {:?}", answer);
     peer_connection.set_local_description(answer).await.unwrap(); // This will start the gathering of ICE candidates.
-
-    tracing::error!("create substream for noise handshake");
 
     let mut data_channel = create_substream_for_noise_handshake(&peer_connection)
         .await
         .unwrap();
 
-    tracing::error!("get remote fingerprint");
     let client_fingerprint = get_remote_fingerprint(&peer_connection).await;
-    tracing::error!("handshake noise");
 
     use crate::crypto::noise::NoiseContext;
 
@@ -190,19 +187,7 @@ pub(crate) async fn inbound(
 
     data_channel.write(message).await;
 
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-    // let peer_id = noise::inbound(
-    //     id_keys,
-    //     data_channel,
-    //     client_fingerprint,
-    //     server_fingerprint,
-    // )
-    // .await
-    // .unwrap();
-
-    // Ok((peer_id, Connection::new(peer_connection).await))
-    todo!();
+    Ok((remote_peer_id, WebRtcConnection::new(peer_connection).await))
 }
 
 async fn new_inbound_connection(

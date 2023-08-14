@@ -650,7 +650,7 @@ mod tests {
             }
         });
 
-        let upgrade = upgrade::inbound(
+        let (_peer_id, connection) = upgrade::inbound(
             new_addr.addr,
             config,
             udp_mux_handle,
@@ -658,7 +658,10 @@ mod tests {
             new_addr.ufrag,
             id_keys,
         )
-        .await;
+        .await
+        .unwrap();
+
+        connection.run().await;
 
         // let upgrade = upgrade::inbound(
         //     new_addr.addr,
