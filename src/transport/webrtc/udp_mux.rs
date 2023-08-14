@@ -614,35 +614,13 @@ mod tests {
                 PeerId::from(PublicKey::Ed25519(keypair.public())).into(),
             ));
 
-        tracing::warn!("{address}");
-
-        // tracing::warn!("fingerprint: {}", fingerprint.to_multihash());
-
         let res = futures::future::poll_fn(|cx| socket.poll(cx)).await;
 
         let UDPMuxEvent::NewAddr(new_addr) = res else {
             panic!("invalid event received");
         };
 
-        // tracing::info!("res: {res:?}");
-
-        // let local_addr = socketaddr_to_multiaddr(&self.listen_addr, Some(self.config.fingerprint));
-        // let send_back_addr = socketaddr_to_multiaddr(&new_addr.addr, None);
-
         let udp_mux_handle = socket.udp_mux_handle();
-        // let mut rng = rand::thread_rng();
-
-        // let keypair = Keypair::generate();
-        // let certificate = Certificate::generate(&mut rng).unwrap();
-
-        // let config = Config::new(keypair, certificate);
-
-        // let fingerprint = config.fingerprint;
-        // let id_keys = config.id_keys;
-        // let config = config.inner;
-
-        tracing::warn!("fingerprint: {fingerprint:?}");
-
         tokio::spawn(async move {
             loop {
                 let res = futures::future::poll_fn(|cx| socket.poll(cx)).await;
@@ -662,26 +640,5 @@ mod tests {
         .unwrap();
 
         connection.run().await;
-
-        // let upgrade = upgrade::inbound(
-        //     new_addr.addr,
-        //     self.config.inner.clone(),
-        //     self.udp_mux.udp_mux_handle(),
-        //     self.config.fingerprint,
-        //     new_addr.ufrag,
-        //     self.config.id_keys.clone(),
-        // )
-        // .boxed();
-
-        // pub(crate) async fn inbound(
-        //     addr: SocketAddr,
-        //     config: RTCConfiguration,
-        //     udp_mux: Arc<dyn UDPMux + Send + Sync>,
-        //     server_fingerprint: Fingerprint,
-        //     remote_ufrag: String,
-        //     id_keys: Keypair,
-        // ) -> Result<(PeerId, Connection), ()> {
-
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
 }
