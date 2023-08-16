@@ -62,7 +62,7 @@ mod schema {
 }
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "webrtc";
+const LOG_TARGET: &str = "webrtc::transport";
 
 /// WebRTC transport configuration.
 // TODO: move to config
