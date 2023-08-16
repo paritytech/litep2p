@@ -18,7 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::error::{Error, SubstreamError};
+use crate::{
+    codec::ProtocolCodec,
+    error::{Error, SubstreamError},
+};
 
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, Stream};
@@ -63,6 +66,10 @@ pub trait SubstreamSetKey: Hash + Unpin + Debug + PartialEq + Eq + Copy {}
 
 impl<K: Hash + Unpin + Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
 
+pub trait Testing {
+    fn apply_protocol_codec(&mut self, codec: ProtocolCodec);
+}
+
 /// Substream types.
 pub enum SubstreamType<R: RawSubstream> {
     /// Raw substream received from the transport.
@@ -73,6 +80,10 @@ pub enum SubstreamType<R: RawSubstream> {
     /// Transports that don't expose a substream that can be transferred to protocols
     /// directly can use the channel-backen substream to communicate with installed protocols.
     ChannelBackend(channel::Substream),
+
+    /// Ready substream.
+    // TODO: ugly
+    Ready(Box<dyn Substream>),
 }
 
 /// Substream set.

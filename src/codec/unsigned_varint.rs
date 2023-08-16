@@ -58,6 +58,13 @@ impl UnsignedVarint {
 
         Ok(bytes.into())
     }
+
+    /// Decode `payload` into `BytesMut`.
+    pub fn decode(payload: &mut BytesMut) -> crate::Result<BytesMut> {
+        Ok(UviBytes::<Bytes>::default()
+            .decode(payload)?
+            .ok_or(Error::InvalidData)?)
+    }
 }
 
 impl Decoder for UnsignedVarint {

@@ -31,7 +31,7 @@ pub trait Codec: Encoder<Bytes, Error = Error> + Decoder<Item = Bytes, Error = E
 
 impl<T: Encoder<Bytes, Error = Error> + Decoder<Item = Bytes, Error = Error>> Codec for T {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum ProtocolCodec {
     /// Identity codec where the argument denotes the payload size.
     Identity(usize),

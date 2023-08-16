@@ -24,7 +24,8 @@ use crate::{
     error::Error,
     multistream_select::listener_negotiate,
     peer_id::PeerId,
-    protocol::{ConnectionService, ProtocolSet},
+    protocol::{ConnectionService, Direction, ProtocolEvent, ProtocolSet},
+    substream::SubstreamType,
     transport::{
         webrtc::{
             fingerprint::Fingerprint,
@@ -68,6 +69,9 @@ const LOG_TARGET: &str = "webrtc::connection";
 
 /// WebRTC connection.
 pub struct WebRtcConnection {
+    /// Remote peer ID.
+    remote_peer_id: PeerId,
+
     /// [`RTCPeerConnection`] to the remote peer.
     ///
     /// Uses futures mutex because used in async code (see poll_outbound and poll_close).
@@ -135,11 +139,18 @@ impl WebRtcConnection {
             .await;
         let protocol_set = ProtocolSet::from_transport_context(remote_peer_id, context).await?;
 
-        Self::new(connection, protocol_set).await.run().await
+        Self::new(remote_peer_id, connection, protocol_set)
+            .await
+            .run()
+            .await
     }
 
     /// Create new [`WebRtcConnection`]
-    pub async fn new(connection: RTCPeerConnection, protocol_set: ProtocolSet) -> Self {
+    pub async fn new(
+        remote_peer_id: PeerId,
+        connection: RTCPeerConnection,
+        protocol_set: ProtocolSet,
+    ) -> Self {
         let (data_channel_tx, data_channel_rx) = mpsc::channel(MAX_DATA_CHANNELS_IN_FLIGHT);
 
         util::register_incoming_data_channels_handler(
@@ -150,6 +161,7 @@ impl WebRtcConnection {
 
         Self {
             protocol_set,
+            remote_peer_id,
             peer_conn: Arc::new(FutMutex::new(connection)),
             incoming_data_channels_rx: data_channel_rx,
         }
@@ -166,7 +178,7 @@ impl WebRtcConnection {
         let (protocol, response) =
             listener_negotiate(&mut self.protocol_set.protocols.keys(), message.freeze())?;
 
-        substream.send(response).await?;
+        substream.send(response.into()).await?;
 
         Ok((substream, protocol))
     }
@@ -174,27 +186,40 @@ impl WebRtcConnection {
     /// Event loop for [`WebRtcConnection`].
     pub async fn run(mut self) -> crate::Result<()> {
         loop {
-            match self.incoming_data_channels_rx.next().await {
-                Some(channel) => {
-                    tracing::trace!(target: LOG_TARGET, "channel opened, negotiate protocol");
+            tokio::select! {
+                event = self.incoming_data_channels_rx.next() => match event {
+                    None => return Ok(()),
+                    Some(channel) => {
+                        tracing::trace!(target: LOG_TARGET, "channel opened, negotiate protocol");
 
-                    match self.negotiate_substream(channel.clone()).await {
-                        Err(error) => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?error,
-                                "failed to negotiate connection"
-                            );
-                            let _ = channel.close();
-                            continue;
-                        }
-                        Ok((substream, protocol)) => {
-                            tracing::error!("negotiated protocol: {protocol:?}");
+                        match self.negotiate_substream(channel.clone()).await {
+                            Err(error) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?error,
+                                    "failed to negotiate connection"
+                                );
+                                let _ = channel.close();
+                                continue;
+                            }
+                            Ok((mut substream, protocol)) => {
+                                substream.apply_codec(self.protocol_set.protocol_codec(&protocol));
+
+                                let _ = self.protocol_set.report_substream_open(
+                                   self.remote_peer_id,
+                                    protocol,
+                                    Direction::Inbound,
+                                    SubstreamType::<tokio::net::TcpStream>::Ready(Box::new(substream)),
+                                ).await;
+                            }
                         }
                     }
-                }
-                None => {
-                    panic!("failure")
+                },
+                command = self.protocol_set.next_event() => match command {
+                    Some(ProtocolEvent::OpenSubstream { .. }) => {
+                        tracing::info!(target: LOG_TARGET, "open substream");
+                    }
+                    None => return Ok(()),
                 }
             }
         }

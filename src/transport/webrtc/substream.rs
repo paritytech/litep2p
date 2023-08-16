@@ -39,6 +39,7 @@ use std::{
 // TODO: calls need to respect the half-closed states
 
 /// WebRTC substream.
+#[derive(Debug)]
 pub struct WebRtcSubstream {
     /// Inner I/O object.
     inner: Framed<PollDataChannel, UnsignedVarint>,
@@ -62,16 +63,16 @@ impl WebRtcSubstream {
     }
 }
 
-impl Sink<BytesMut> for WebRtcSubstream {
+impl Sink<Bytes> for WebRtcSubstream {
     type Error = Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready_unpin(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: BytesMut) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
         let protobuf_payload = schema::webrtc::Message {
-            message: (!item.is_empty()).then_some(item.freeze().into()),
+            message: (!item.is_empty()).then_some(item.into()),
             ..Default::default()
         };
 
@@ -104,7 +105,14 @@ impl Stream for WebRtcSubstream {
                     // TODO: handle flags
 
                     match message.message {
-                        Some(message) => Poll::Ready(Some(Ok(BytesMut::from(&message[..])))),
+                        Some(message) => match self.codec {
+                            Some(ProtocolCodec::Identity(_)) | None => {
+                                Poll::Ready(Some(Ok(BytesMut::from(&message[..]))))
+                            }
+                            Some(ProtocolCodec::UnsignedVarint) => Poll::Ready(Some(
+                                UnsignedVarint::decode(&mut BytesMut::from(&message[..])),
+                            )),
+                        },
                         None => return Poll::Ready(None),
                     }
                 }

@@ -24,7 +24,7 @@ use crate::{
     codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     error::Error,
     peer_id::PeerId,
-    substream::{RawSubstream, Substream, SubstreamType},
+    substream::{RawSubstream, Substream, SubstreamType, Testing},
     transport::{TransportContext, TransportService},
     types::{protocol::ProtocolName, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
@@ -267,6 +267,7 @@ impl ProtocolSet {
                         substream.apply_codec(info.codec.clone());
                         Box::new(substream)
                     }
+                    SubstreamType::Ready(mut substream) => substream,
                 };
 
                 info.tx
@@ -281,6 +282,14 @@ impl ProtocolSet {
             }
             None => Err(Error::ProtocolNotSupported(protocol.to_string())),
         }
+    }
+
+    /// Get codec used by the protocol.
+    pub fn protocol_codec(&self, protocol: &ProtocolName) -> ProtocolCodec {
+        self.protocols
+            .get(&protocol)
+            .expect("protocol to exist")
+            .codec
     }
 
     /// Report to `protocol` that connection failed to open substream for `peer`.

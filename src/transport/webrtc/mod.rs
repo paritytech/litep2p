@@ -69,7 +69,7 @@ const LOG_TARGET: &str = "webrtc::transport";
 #[derive(Debug)]
 pub struct WebRtcTransportConfig {
     /// Listen address.
-    listen_address: Multiaddr,
+    pub listen_address: Multiaddr,
 }
 
 /// WebRTC transport.
@@ -226,61 +226,5 @@ impl Transport for WebRtcTransport {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        codec::ProtocolCodec, crypto::ed25519::Keypair, protocol::ProtocolInfo,
-        types::protocol::ProtocolName,
-    };
-    use std::collections::HashMap;
-    use tokio::sync::mpsc::channel;
-
-    #[tokio::test]
-    async fn webrtc_testbench() {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init();
-
-        let keypair = Keypair::generate();
-        let (tx1, _rx1) = channel(64);
-        let (tx2, _rx2) = channel(64);
-        let (event_tx, mut event_rx) = channel(64);
-        let (_command_tx, command_rx) = channel(64);
-
-        let context = TransportContext {
-            local_peer_id: PeerId::random(),
-            tx: event_tx,
-            keypair: keypair.clone(),
-            protocols: HashMap::from_iter([
-                (
-                    ProtocolName::from("/ipfs/ping/1.0.0"),
-                    ProtocolInfo {
-                        tx: tx1,
-                        codec: ProtocolCodec::Identity(32),
-                    },
-                ),
-                (
-                    ProtocolName::from("/980e7cbafbcd37f8cb17be82bf8d53fa81c9a588e8a67384376e862da54285dc/block-announces/1"),
-                    ProtocolInfo {
-                        tx: tx2,
-                        codec: ProtocolCodec::UnsignedVarint,
-                    },
-                ),
-            ]),
-        };
-        let transport_config = WebRtcTransportConfig {
-            listen_address: "/ip4/192.168.1.173/udp/8888/webrtc-direct".parse().unwrap(),
-        };
-        let transport = WebRtcTransport::new(context, transport_config, command_rx)
-            .await
-            .unwrap();
-
-        tracing::info!("{}", transport.listen_address());
-
-        transport.start().await;
     }
 }

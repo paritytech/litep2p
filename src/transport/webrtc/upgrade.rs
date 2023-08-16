@@ -135,7 +135,7 @@ pub(crate) async fn inbound(
     let mut noise = NoiseContext::with_prologue(&id_keys, prologue);
 
     data_channel
-        .send(BytesMut::from(&noise.first_message(Role::Dialer)[..]))
+        .send(Bytes::from(noise.first_message(Role::Dialer)))
         .await?;
 
     let message = data_channel
@@ -146,7 +146,7 @@ pub(crate) async fn inbound(
     let remote_peer_id = PeerId::from_public_key(&public_key);
 
     data_channel
-        .send(BytesMut::from(&noise.second_message()[..]))
+        .send(Bytes::from(noise.second_message()))
         .await?;
 
     Ok((remote_peer_id, peer_connection))
