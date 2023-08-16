@@ -30,6 +30,7 @@ mod error;
 mod fingerprint;
 mod req_res_chan;
 mod sdp;
+mod substream;
 mod udp_mux;
 mod upgrade;
 mod util;
