@@ -21,13 +21,21 @@
 
 use crate::{
     crypto::{ed25519::Keypair, PublicKey},
+    error::Error,
+    multistream_select::listener_negotiate,
     peer_id::PeerId,
+    protocol::{ConnectionService, ProtocolSet},
     transport::{
         webrtc::{
-            fingerprint::Fingerprint, substream::WebRtcSubstream, udp_mux::NewAddr, upgrade, util,
+            fingerprint::Fingerprint,
+            substream::WebRtcSubstream,
+            udp_mux::NewAddr,
+            upgrade,
+            util::{self, WebRtcMessage},
         },
         TransportContext,
     },
+    types::protocol::ProtocolName,
 };
 
 use futures::{
@@ -37,7 +45,7 @@ use futures::{
     },
     lock::Mutex as FutMutex,
     stream::FuturesUnordered,
-    StreamExt,
+    SinkExt, StreamExt,
     {future::BoxFuture, ready},
 };
 use multiaddr::{Multiaddr, Protocol};
@@ -67,6 +75,9 @@ pub struct WebRtcConnection {
 
     /// Channel onto which incoming data channels are put.
     incoming_data_channels_rx: mpsc::Receiver<Arc<DetachedDataChannel>>,
+
+    /// Protocol set.
+    protocol_set: ProtocolSet,
 }
 
 impl WebRtcConnection {
@@ -118,15 +129,17 @@ impl WebRtcConnection {
                 Multihash::from_bytes(&remote_peer_id.to_bytes()).unwrap(),
             ));
 
-        let _ = context
+        // TODO: this should be reported by `WebRtcTransport`
+        context
             .report_connection_established(remote_peer_id, address)
             .await;
+        let protocol_set = ProtocolSet::from_transport_context(remote_peer_id, context).await?;
 
-        Self::new(connection).await.run().await
+        Self::new(connection, protocol_set).await.run().await
     }
 
     /// Create new [`WebRtcConnection`]
-    pub async fn new(connection: RTCPeerConnection) -> Self {
+    pub async fn new(connection: RTCPeerConnection, protocol_set: ProtocolSet) -> Self {
         let (data_channel_tx, data_channel_rx) = mpsc::channel(MAX_DATA_CHANNELS_IN_FLIGHT);
 
         util::register_incoming_data_channels_handler(
@@ -136,9 +149,32 @@ impl WebRtcConnection {
         .await;
 
         Self {
+            protocol_set,
             peer_conn: Arc::new(FutMutex::new(connection)),
             incoming_data_channels_rx: data_channel_rx,
         }
+    }
+
+    /// Negotiate protocol for substream;
+    async fn negotiate_substream(
+        &mut self,
+        channel: Arc<DetachedDataChannel>,
+    ) -> crate::Result<(WebRtcSubstream, ProtocolName)> {
+        let mut substream = WebRtcSubstream::new(channel.clone());
+
+        let message = substream.next().await.ok_or(Error::Disconnected)??;
+        let payload = WebRtcMessage::decode(&message)?
+            .payload
+            .ok_or(Error::InvalidData)?;
+
+        let (protocol, response) =
+            listener_negotiate(&mut self.protocol_set.protocols.keys(), payload.into())?;
+
+        substream
+            .send(WebRtcMessage::encode(response, None))
+            .await?;
+
+        Ok((substream, protocol))
     }
 
     /// Event loop for [`WebRtcConnection`].
@@ -146,14 +182,22 @@ impl WebRtcConnection {
         loop {
             match self.incoming_data_channels_rx.next().await {
                 Some(channel) => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        "do something with data channel, read data"
-                    );
-                    let mut substream = WebRtcSubstream::new(channel);
-                    let data = substream.next().await.unwrap().unwrap();
+                    tracing::trace!(target: LOG_TARGET, "channel opened, negotiate protocol");
 
-                    tracing::info!("read bytes: {data:?}");
+                    match self.negotiate_substream(channel.clone()).await {
+                        Err(error) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to negotiate connection"
+                            );
+                            let _ = channel.close();
+                            continue;
+                        }
+                        Ok((substream, protocol)) => {
+                            tracing::error!("negotiated protocol: {protocol:?}");
+                        }
+                    }
                 }
                 None => {
                     panic!("failure")
