@@ -18,11 +18,18 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::transport::{Transport, TransportCommand, TransportContext};
+use crate::{
+    error::{AddressError, Error},
+    peer_id::PeerId,
+    transport::{Transport, TransportCommand, TransportContext},
+};
 
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
 use tokio::sync::mpsc::Receiver;
 
+use std::net::{IpAddr, SocketAddr};
+
+// TODO: merge some of these
 mod certificate;
 mod config;
 mod connection;
@@ -45,10 +52,67 @@ mod schema {
     }
 }
 
+/// Logging target for the file.
+const LOG_TARGET: &str = "webrtc";
+
 #[derive(Debug)]
-pub struct WebRtcTransportConfig {}
+pub struct WebRtcTransportConfig {
+    listen_addr: Multiaddr,
+}
 
 pub struct WebRtcTransport {}
+
+impl WebRtcTransport {
+    /// Extract socket address and `PeerId`, if found, from `address`.
+    fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
+        tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
+
+        let mut iter = address.iter();
+        let socket_address = match iter.next() {
+            Some(Protocol::Ip6(address)) => match iter.next() {
+                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V6(address), port),
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid transport protocol, expected `Upd`",
+                    );
+                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                }
+            },
+            Some(Protocol::Ip4(address)) => match iter.next() {
+                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V4(address), port),
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid transport protocol, expected `Udp`",
+                    );
+                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                }
+            },
+            protocol => {
+                tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        };
+
+        let maybe_peer = match iter.next() {
+            Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
+            None => None,
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid protocol, expected `P2p` or `None`"
+                );
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        };
+
+        Ok((socket_address, maybe_peer))
+    }
+}
 
 #[async_trait::async_trait]
 impl Transport for WebRtcTransport {
