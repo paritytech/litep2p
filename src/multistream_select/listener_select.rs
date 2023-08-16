@@ -331,7 +331,7 @@ where
 pub fn listener_negotiate<'a>(
     supported_protocols: &'a mut impl Iterator<Item = &'a ProtocolName>,
     payload: Bytes,
-) -> crate::Result<(ProtocolName, Vec<u8>)> {
+) -> crate::Result<(ProtocolName, BytesMut)> {
     let Message::Protocols(protocols) = Message::decode(payload).map_err(|_| Error::InvalidData)?
     else {
         return Err(Error::NegotiationError(
@@ -369,7 +369,7 @@ pub fn listener_negotiate<'a>(
 
                 header.append(&mut proto_bytes.into());
 
-                return Ok((supported.clone(), header));
+                return Ok((supported.clone(), BytesMut::from(&header[..])));
             }
         }
     }

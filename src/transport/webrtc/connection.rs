@@ -163,16 +163,10 @@ impl WebRtcConnection {
         let mut substream = WebRtcSubstream::new(channel.clone());
 
         let message = substream.next().await.ok_or(Error::Disconnected)??;
-        let payload = WebRtcMessage::decode(&message)?
-            .payload
-            .ok_or(Error::InvalidData)?;
-
         let (protocol, response) =
-            listener_negotiate(&mut self.protocol_set.protocols.keys(), payload.into())?;
+            listener_negotiate(&mut self.protocol_set.protocols.keys(), message.freeze())?;
 
-        substream
-            .send(WebRtcMessage::encode(response, None))
-            .await?;
+        substream.send(response).await?;
 
         Ok((substream, protocol))
     }

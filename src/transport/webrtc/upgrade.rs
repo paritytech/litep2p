@@ -29,6 +29,7 @@ use crate::{
     },
 };
 
+use bytes::BytesMut;
 use futures::channel::oneshot::{self, Sender};
 use futures::future::Either;
 use futures::{SinkExt, StreamExt};
@@ -134,20 +135,18 @@ pub(crate) async fn inbound(
     let mut noise = NoiseContext::with_prologue(&id_keys, prologue);
 
     data_channel
-        .send(WebRtcMessage::encode(
-            noise.first_message(Role::Dialer),
-            None,
-        ))
+        .send(BytesMut::from(&noise.first_message(Role::Dialer)[..]))
         .await?;
 
-    let message = data_channel.next().await.unwrap()?;
-    let message = WebRtcMessage::decode(&message)?;
-
-    let public_key = noise.get_remote_public_key(&message.payload.unwrap())?;
+    let message = data_channel
+        .next()
+        .await
+        .ok_or(Litep2pError::Disconnected)??;
+    let public_key = noise.get_remote_public_key(&message.freeze().into())?;
     let remote_peer_id = PeerId::from_public_key(&public_key);
 
     data_channel
-        .send(WebRtcMessage::encode(noise.second_message(), None))
+        .send(BytesMut::from(&noise.second_message()[..]))
         .await?;
 
     Ok((remote_peer_id, peer_connection))

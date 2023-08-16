@@ -46,6 +46,7 @@ impl UnsignedVarint {
     }
 
     /// Encode `payload` using `unsigned-varint`.
+    // TODO: return `BytesMut`
     pub fn encode<T: Into<Bytes>>(payload: T) -> crate::Result<Vec<u8>> {
         let payload: Bytes = payload.into();
 
