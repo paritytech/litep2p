@@ -20,6 +20,7 @@
 
 use crate::{codec::unsigned_varint::UnsignedVarint, error::Error, transport::webrtc::schema};
 
+use bytes::BytesMut;
 use prost::Message;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -34,36 +35,28 @@ pub struct WebRtcMessage {
 }
 
 impl WebRtcMessage {
-    /// Encode WebRTC message.
-    pub fn encode(payload: Vec<u8>, flag: Option<i32>) -> Vec<u8> {
+    /// Encode `payload` and `flag` into a [`WebRtcMessage`].
+    pub fn encode(payload: Vec<u8>, flag: Option<i32>) -> BytesMut {
         let protobuf_payload = schema::webrtc::Message {
             message: (!payload.is_empty()).then_some(payload),
             flag,
         };
-        let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
+        let mut payload = BytesMut::with_capacity(protobuf_payload.encoded_len());
         protobuf_payload
             .encode(&mut payload)
             .expect("Vec<u8> to provide needed capacity");
 
-        let mut out_buf = bytes::BytesMut::with_capacity(payload.len() + 4);
-        let mut codec = UnsignedVarint::new();
-        let _result = codec.encode(payload.into(), &mut out_buf);
-
-        out_buf.into()
+        payload
     }
 
     /// Decode payload into [`WebRtcMessage`].
     pub fn decode(payload: &[u8]) -> crate::Result<Self> {
-        let mut codec = UnsignedVarint::new();
-        let mut data = bytes::BytesMut::from(payload);
-        let result = codec.decode(&mut data)?.ok_or(Error::InvalidData)?;
-
-        match schema::webrtc::Message::decode(result) {
+        match schema::webrtc::Message::decode(payload) {
             Ok(message) => Ok(Self {
                 payload: message.message,
                 flags: message.flag,
             }),
-            Err(_) => return Err(Error::InvalidData),
+            Err(_) => Err(Error::InvalidData),
         }
     }
 }

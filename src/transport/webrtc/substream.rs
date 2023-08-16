@@ -21,7 +21,7 @@
 use crate::{codec::unsigned_varint::UnsignedVarint, error::Error};
 
 use bytes::{Bytes, BytesMut};
-use futures::{AsyncRead, AsyncWrite, Sink, SinkExt, Stream, StreamExt};
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use tokio_util::codec::Framed;
 use webrtc::data::data_channel::{DataChannel, PollDataChannel};
 
@@ -39,9 +39,9 @@ pub struct WebRtcSubstream {
 impl WebRtcSubstream {
     /// Create new [`Substream`].
     pub fn new(inner: Arc<DataChannel>) -> Self {
-        let inner = Framed::new(PollDataChannel::new(inner), UnsignedVarint::default());
-
-        Self { inner }
+        Self {
+            inner: Framed::new(PollDataChannel::new(inner), UnsignedVarint::default()),
+        }
     }
 }
 

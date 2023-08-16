@@ -24,12 +24,13 @@ use crate::{
     peer_id::PeerId,
     transport::webrtc::{
         connection::WebRtcConnection, error::Error, fingerprint::Fingerprint, sdp,
-        util::WebRtcMessage,
+        substream::WebRtcSubstream, util::WebRtcMessage,
     },
 };
 
 use futures::channel::oneshot::{self, Sender};
 use futures::future::Either;
+use futures::{SinkExt, StreamExt};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use webrtc::api::setting_engine::SettingEngine;
@@ -81,44 +82,6 @@ pub(crate) enum State {
     },
 }
 
-pub struct Substream {
-    // io: FramedDc,
-    io: Arc<DataChannel>,
-    state: State,
-    read_buffer: Bytes,
-    // Dropping this will close the oneshot and notify the receiver by emitting `Canceled`.
-    // drop_notifier: Option<oneshot::Sender<GracefullyClosed>>,
-}
-
-impl Substream {
-    /// Returns a new `Substream` and a listener, which will notify the receiver when/if the substream
-    /// is dropped.
-    pub(crate) fn new(data_channel: Arc<DataChannel>) -> Self {
-        // let (sender, receiver) = oneshot::channel();
-
-        let substream = Self {
-            io: data_channel,
-            state: State::Open,
-            read_buffer: Bytes::default(),
-            // drop_notifier: Some(sender),
-        };
-        // let listener = DropListener::new(framed_dc::new(data_channel), receiver);
-
-        // (substream, listener)
-        substream
-    }
-
-    /// Write data to the channel.
-    pub async fn write<T: Into<Bytes>>(&mut self, data: T) {
-        self.io.write(&data.into()).await.unwrap();
-    }
-
-    /// Read data from the channel.
-    pub async fn read(&mut self, out_buf: &mut [u8]) -> usize {
-        self.io.read(out_buf).await.unwrap()
-    }
-}
-
 pub(crate) fn noise_prologue(
     client_fingerprint: Fingerprint,
     server_fingerprint: Fingerprint,
@@ -154,6 +117,9 @@ pub(crate) async fn inbound(
     let answer = peer_connection.create_answer(None).await.unwrap();
     peer_connection.set_local_description(answer).await.unwrap(); // This will start the gathering of ICE candidates.
 
+    // TODO: this has to be removed
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
     let mut data_channel = create_substream_for_noise_handshake(&peer_connection)
         .await
         .unwrap();
@@ -168,16 +134,20 @@ pub(crate) async fn inbound(
     let message = noise.first_message(Role::Dialer);
     let message = WebRtcMessage::encode(message, None);
 
-    data_channel.write(message).await;
+    tracing::error!("write first noise message, len {}", message.len());
 
-    let mut data = vec![0u8; 1024];
-    let nread = data_channel.read(&mut data).await;
+    tracing::error!("read noise message");
 
-    let message = WebRtcMessage::decode(&data[..nread])
-        .unwrap()
-        .payload
+    data_channel.send(message).await.unwrap();
+
+    let message = data_channel.next().await.unwrap().unwrap();
+
+    let message = WebRtcMessage::decode(&message).unwrap();
+    tracing::error!("received data: {message:?}");
+
+    let public_key = noise
+        .get_remote_public_key(&message.payload.unwrap())
         .unwrap();
-    let public_key = noise.get_remote_public_key(&message).unwrap();
     let remote_peer_id = PeerId::from_public_key(&public_key);
 
     tracing::info!("remote peer id: {remote_peer_id}");
@@ -185,7 +155,9 @@ pub(crate) async fn inbound(
     let message = noise.second_message();
     let message = WebRtcMessage::encode(message, None);
 
-    data_channel.write(message).await;
+    tracing::error!("write second noise message");
+
+    data_channel.send(message).await.unwrap();
 
     Ok((remote_peer_id, WebRtcConnection::new(peer_connection).await))
 }
@@ -265,26 +237,24 @@ async fn get_remote_fingerprint(conn: &RTCPeerConnection) -> Fingerprint {
     Fingerprint::from_certificate(&cert_bytes)
 }
 
-async fn create_substream_for_noise_handshake(conn: &RTCPeerConnection) -> Result<Substream, ()> {
+async fn create_substream_for_noise_handshake(
+    conn: &RTCPeerConnection,
+) -> Result<WebRtcSubstream, ()> {
     let data_channel = conn
         .create_data_channel(
             "",
             Some(RTCDataChannelInit {
-                negotiated: Some(0), // 0 is reserved for the Noise substream
+                negotiated: Some(0),
                 ..RTCDataChannelInit::default()
             }),
         )
         .await
         .unwrap();
 
-    tracing::error!("data channel opened");
-
     let (tx, rx) = oneshot::channel::<Arc<DataChannel>>();
 
     // Wait until the data channel is opened and detach it.
     register_data_channel_open_handler(data_channel, tx).await;
-
-    tracing::error!("register data channel to open handler");
 
     let channel = match tokio::time::timeout(Duration::from_secs(10), rx).await {
         Err(error) => {
@@ -298,7 +268,7 @@ async fn create_substream_for_noise_handshake(conn: &RTCPeerConnection) -> Resul
         }
     };
 
-    let substream = Substream::new(channel);
+    let substream = WebRtcSubstream::new(channel);
 
     Ok(substream)
 }
