@@ -49,7 +49,7 @@ const RECEIVE_MTU: usize = 8192;
 
 /// A previously unseen address of a remote which has sent us an ICE binding request.
 #[derive(Debug)]
-pub(crate) struct NewAddr {
+pub struct NewAddr {
     pub(crate) addr: SocketAddr,
     pub(crate) ufrag: String,
 }
@@ -573,72 +573,4 @@ fn ufrag_from_stun_message(buffer: &[u8], local_ufrag: bool) -> Result<String, E
 enum ConnQueryError {
     #[error("ufrag is already taken (associated_addrs={associated_addrs:?})")]
     UfragAlreadyTaken { associated_addrs: Vec<SocketAddr> },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        crypto::ed25519::Keypair,
-        transport::webrtc::{certificate::Certificate, config::Config, upgrade},
-    };
-
-    #[tokio::test]
-    async fn mux_test() {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init();
-
-        let mut socket = UDPMuxNewAddr::listen_on("192.168.1.173:8888".parse().unwrap()).unwrap();
-
-        let mut rng = rand::thread_rng();
-
-        let keypair = Keypair::generate();
-        let certificate = Certificate::generate(&mut rng).unwrap();
-
-        let config = Config::new(keypair.clone(), certificate.clone());
-
-        let fingerprint = config.fingerprint;
-        let id_keys = config.id_keys;
-        let config = config.inner;
-
-        use crate::{crypto::PublicKey, peer_id::PeerId};
-        use multiaddr::{Multiaddr, Protocol};
-
-        let address = Multiaddr::empty()
-            .with(Protocol::from(std::net::Ipv4Addr::new(192, 168, 1, 173)))
-            .with(Protocol::Udp(8888))
-            .with(Protocol::WebRTC)
-            .with(Protocol::Certhash(certificate.fingerprint().to_multihash()))
-            .with(Protocol::P2p(
-                PeerId::from(PublicKey::Ed25519(keypair.public())).into(),
-            ));
-
-        let res = futures::future::poll_fn(|cx| socket.poll(cx)).await;
-
-        let UDPMuxEvent::NewAddr(new_addr) = res else {
-            panic!("invalid event received");
-        };
-
-        let udp_mux_handle = socket.udp_mux_handle();
-        tokio::spawn(async move {
-            loop {
-                let res = futures::future::poll_fn(|cx| socket.poll(cx)).await;
-                tracing::warn!("socket res: {res:?}");
-            }
-        });
-
-        let (_peer_id, connection) = upgrade::inbound(
-            new_addr.addr,
-            config,
-            udp_mux_handle,
-            fingerprint,
-            new_addr.ufrag,
-            id_keys,
-        )
-        .await
-        .unwrap();
-
-        connection.run().await;
-    }
 }

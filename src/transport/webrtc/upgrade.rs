@@ -20,7 +20,8 @@
 
 use crate::{
     config::Role,
-    crypto::ed25519::Keypair,
+    crypto::{ed25519::Keypair, noise::NoiseContext},
+    error::Error as Litep2pError,
     peer_id::PeerId,
     transport::webrtc::{
         connection::WebRtcConnection, error::Error, fingerprint::Fingerprint, sdp,
@@ -82,14 +83,17 @@ pub(crate) enum State {
     },
 }
 
+/// Create new Noise prologue.
 pub(crate) fn noise_prologue(
     client_fingerprint: Fingerprint,
     server_fingerprint: Fingerprint,
 ) -> Vec<u8> {
     let client = client_fingerprint.to_multihash().to_bytes();
     let server = server_fingerprint.to_multihash().to_bytes();
+
     const PREFIX: &[u8] = b"libp2p-webrtc-noise:";
     let mut out = Vec::with_capacity(PREFIX.len() + client.len() + server.len());
+
     out.extend_from_slice(PREFIX);
     out.extend_from_slice(&client);
     out.extend_from_slice(&server);
@@ -104,7 +108,7 @@ pub(crate) async fn inbound(
     server_fingerprint: Fingerprint,
     remote_ufrag: String,
     id_keys: Keypair,
-) -> Result<(PeerId, WebRtcConnection), ()> {
+) -> Result<(PeerId, RTCPeerConnection), Litep2pError> {
     tracing::debug!("new inbound connection from {addr} (ufrag: {remote_ufrag})");
 
     let peer_connection = new_inbound_connection(addr, config, udp_mux, &remote_ufrag)
@@ -115,7 +119,7 @@ pub(crate) async fn inbound(
     peer_connection.set_remote_description(offer).await.unwrap();
 
     let answer = peer_connection.create_answer(None).await.unwrap();
-    peer_connection.set_local_description(answer).await.unwrap(); // This will start the gathering of ICE candidates.
+    peer_connection.set_local_description(answer).await.unwrap();
 
     // TODO: this has to be removed
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -126,40 +130,27 @@ pub(crate) async fn inbound(
 
     let client_fingerprint = get_remote_fingerprint(&peer_connection).await;
 
-    use crate::crypto::noise::NoiseContext;
-
     let prologue = noise_prologue(client_fingerprint, server_fingerprint);
     let mut noise = NoiseContext::with_prologue(&id_keys, prologue);
 
-    let message = noise.first_message(Role::Dialer);
-    let message = WebRtcMessage::encode(message, None);
+    data_channel
+        .send(WebRtcMessage::encode(
+            noise.first_message(Role::Dialer),
+            None,
+        ))
+        .await?;
 
-    tracing::error!("write first noise message, len {}", message.len());
+    let message = data_channel.next().await.unwrap()?;
+    let message = WebRtcMessage::decode(&message)?;
 
-    tracing::error!("read noise message");
-
-    data_channel.send(message).await.unwrap();
-
-    let message = data_channel.next().await.unwrap().unwrap();
-
-    let message = WebRtcMessage::decode(&message).unwrap();
-    tracing::error!("received data: {message:?}");
-
-    let public_key = noise
-        .get_remote_public_key(&message.payload.unwrap())
-        .unwrap();
+    let public_key = noise.get_remote_public_key(&message.payload.unwrap())?;
     let remote_peer_id = PeerId::from_public_key(&public_key);
 
-    tracing::info!("remote peer id: {remote_peer_id}");
+    data_channel
+        .send(WebRtcMessage::encode(noise.second_message(), None))
+        .await?;
 
-    let message = noise.second_message();
-    let message = WebRtcMessage::encode(message, None);
-
-    tracing::error!("write second noise message");
-
-    data_channel.send(message).await.unwrap();
-
-    Ok((remote_peer_id, WebRtcConnection::new(peer_connection).await))
+    Ok((remote_peer_id, peer_connection))
 }
 
 async fn new_inbound_connection(

@@ -26,6 +26,7 @@ use crate::{
         webrtc::{
             certificate::Certificate,
             config::Config,
+            connection::WebRtcConnection,
             udp_mux::{UDPMuxEvent, UDPMuxNewAddr},
         },
         Transport, TransportCommand, TransportContext,
@@ -193,8 +194,27 @@ impl Transport for WebRtcTransport {
     async fn start(mut self) -> crate::Result<()> {
         loop {
             match futures::future::poll_fn(|cx| self.socket.poll(cx)).await {
-                UDPMuxEvent::NewAddr(address) => {
-                    tracing::debug!(target: LOG_TARGET, "new inbound connection received");
+                UDPMuxEvent::NewAddr(remote_info) => {
+                    let config = self.webrtc_config.inner.clone();
+                    let udp_mux_handle = self.socket.udp_mux_handle();
+                    let local_fingerprint = self.webrtc_config.fingerprint;
+                    let keypair = self.context.keypair.clone();
+                    let context = self.context.clone();
+
+                    tokio::spawn(async move {
+                        if let Err(error) = WebRtcConnection::accept_connection(
+                            remote_info,
+                            config,
+                            udp_mux_handle,
+                            local_fingerprint,
+                            keypair,
+                            context,
+                        )
+                        .await
+                        {
+                            tracing::debug!(target: LOG_TARGET, ?error, "connection failed");
+                        }
+                    });
                 }
                 UDPMuxEvent::Error(error) => {
                     tracing::warn!(
