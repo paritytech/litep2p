@@ -421,7 +421,7 @@ impl WebRtcHandshake {
         let (protocol, response) =
             listener_negotiate(&mut self.context.protocols.keys(), payload.into())?;
 
-        let message = WebRtcMessage::encode(response, None);
+        let message = WebRtcMessage::encode(response.to_vec(), None);
 
         self.rtc
             .channel(d.id)

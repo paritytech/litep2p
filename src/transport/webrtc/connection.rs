@@ -29,7 +29,7 @@ use crate::{
     multistream_select::{listener_negotiate, Message as MultiStreamMessage},
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
-    substream::{channel::SubstreamBackend, SubstreamType},
+    substream::{channel::{SubstreamBackend, Substream}, SubstreamType},
     transport::{
         webrtc::{
             schema,
@@ -66,6 +66,17 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::connection";
 
+enum SubstreamState {
+    /// Substream is open.
+    Open {
+        /// Substream ID.
+        substream_id: SubstreamId,
+
+        /// Substream.
+        substream: SubstreamContext,
+    }
+}
+
 /// WebRTC connection.
 pub struct WebRtcConnection {
     /// `str0m` WebRTC object.
@@ -101,6 +112,9 @@ pub struct WebRtcConnection {
     /// ID mappings.
     id_mapping: HashMap<ChannelId, SubstreamId>,
 
+    /// Open substreams.
+    substreams: HashMap<ChannelId, SubstreamState>,
+
     /// Noise context.
     noise_context: NoiseContext,
 
@@ -131,6 +145,7 @@ impl WebRtcConnection {
             remote_address,
             remote_peer_id,
             channels: HashMap::new(),
+            substreams: HashMap::new(),
             id_mapping: HashMap::new(),
             backend: SubstreamBackend::new(),
             substream_id: SubstreamId::new(),
@@ -154,8 +169,6 @@ impl WebRtcConnection {
 
     /// Handle data received from peer.
     pub(super) async fn on_input(&mut self, buffer: Vec<u8>) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, "handle input");
-
         let message = Input::Receive(
             Instant::now(),
             Receive {
@@ -180,7 +193,6 @@ impl WebRtcConnection {
     async fn handle_output(&mut self, output: Output) -> crate::Result<WebRtcEvent> {
         match output {
             Output::Transmit(transmit) => {
-                tracing::info!(target: LOG_TARGET, "try send data");
                 self.socket
                     .send_to(&transmit.contents, transmit.destination)
                     .await
@@ -232,7 +244,7 @@ impl WebRtcConnection {
         let (protocol, response) =
             listener_negotiate(&mut self.context.protocols.keys(), payload.into())?;
 
-        let message = WebRtcMessage::encode(response, None);
+        let message = WebRtcMessage::encode(response.to_vec(), None);
 
         self.rtc
             .channel(d.id)
@@ -242,7 +254,8 @@ impl WebRtcConnection {
 
         let substream_id = self.substream_id.next();
         let (substream, tx) = self.backend.substream(substream_id);
-        self.id_mapping.insert(d.id, substream_id);
+        self.substreams.insert(d.id, SubstreamState::Open { substream_id, substream: SubstreamContext::new(d.id, tx.clone()) });
+
         self.channels
             .insert(substream_id, SubstreamContext::new(d.id, tx));
 
@@ -290,8 +303,15 @@ impl WebRtcConnection {
 
     /// Handle channel data.
     async fn on_channel_data(&mut self, d: ChannelData) -> crate::Result<WebRtcEvent> {
-        match self.id_mapping.get(&d.id) {
-            Some(_) => self.process_protocol_event(d).await,
+        match self.substreams.get_mut(&d.id) {
+            Some(SubstreamState::Open { ref mut substream, .. }) => {
+                // TODO: might be empty message with flags
+                let message = WebRtcMessage::decode(&d.data)?
+                    .payload
+                    .ok_or(Error::InvalidData)?;
+
+                substream.tx.send(message).await.map(|_| WebRtcEvent::Noop).map_err(From::from)
+            }
             None => self.negotiate_protocol(d).await,
         }
     }
@@ -321,8 +341,6 @@ impl WebRtcConnection {
     /// Run the event loop of a negotiated WebRTC connection.
     pub(super) async fn run(mut self) -> crate::Result<()> {
         loop {
-            tracing::info!("loop start");
-
             if !self.rtc.is_alive() {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -349,8 +367,6 @@ impl WebRtcConnection {
                 }
             };
 
-            tracing::info!("get duration: {:?}", duration.as_secs());
-
             tokio::select! {
                 message = self.dgram_rx.recv() => match message {
                     Some(message) => match self.on_input(message).await {
@@ -371,8 +387,6 @@ impl WebRtcConnection {
                     }
                 },
                 event = self.backend.next_event() => {
-                    tracing::info!("get backend event");
-
                     let (id, message) = event.ok_or(Error::EssentialTaskClosed)?;
                     let channel_id = self.channels.get_mut(&id).ok_or(Error::ChannelDoesntExist)?.channel_id;
 
@@ -383,23 +397,17 @@ impl WebRtcConnection {
                         .ok_or(Error::ChannelDoesntExist)?
                         .write(true, message.as_ref())
                         .map_err(|error| Error::WebRtc(error))?;
-
-                    tracing::info!("send success");
                 }
                 command = self.protocol_set.next_event() => match command {
                     Some(ProtocolEvent::OpenSubstream { protocol, substream_id }) => {
-                        tracing::info!("open substream");
-                        self.open_substream(protocol, substream_id);
+                        // self.open_substream(protocol, substream_id);
                     }
                     None => {
-                        tracing::info!(target: LOG_TARGET, "HERE");
                         return Err(Error::EssentialTaskClosed);
                     }
                 },
                 _ = tokio::time::sleep(duration) => {}
             }
-
-            tracing::info!("after select");
 
             // drive time forward in the client
             if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
