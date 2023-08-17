@@ -133,6 +133,18 @@ impl WebRtcTransport {
             }
         };
 
+        match iter.next() {
+            Some(Protocol::WebRTC) => {}
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid protocol, expected `WebRTC`"
+                );
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        }
+
         let maybe_peer = match iter.next() {
             Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
             None => None,
@@ -193,7 +205,6 @@ impl WebRtcTransport {
     async fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<()> {
         // if the `Rtc` object already exists for `souce`, pass the message directly to that connection.
         if let Some(tx) = self.peers.get_mut(&source) {
-            tracing::info!(target: LOG_TARGET, "try to send data");
             return tx.send(buffer).await.map_err(From::from);
         }
 
