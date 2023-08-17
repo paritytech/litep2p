@@ -20,11 +20,17 @@
 
 //! Protocol negotiation strategies for the peer acting as the dialer.
 
-use crate::multistream_select::protocol::{
-    HeaderLine, Message, MessageIO, Protocol, ProtocolError,
+use crate::{
+    codec::unsigned_varint::UnsignedVarint,
+    error::Error,
+    multistream_select::{
+        protocol::{HeaderLine, Message, MessageIO, Protocol, ProtocolError},
+        Negotiated, NegotiationError, Version,
+    },
+    types::protocol::ProtocolName,
 };
-use crate::multistream_select::{Negotiated, NegotiationError, Version};
 
+use bytes::BytesMut;
 use futures::prelude::*;
 use std::{
     convert::TryFrom as _,
@@ -213,4 +219,38 @@ where
             }
         }
     }
+}
+
+/// Propose protocol to remote peer.
+///
+/// Return an encoded multistream-select message.
+pub fn dialer_propose<'a>(proposed_protocol: &ProtocolName) -> crate::Result<Vec<u8>> {
+    // encode `/multistream-select/1.0.0` header
+    let mut bytes = BytesMut::with_capacity(64);
+    let message = Message::Header(HeaderLine::V1);
+    let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
+    let mut header = UnsignedVarint::encode(bytes)?;
+
+    // encode proposed protocol
+    let mut proto_bytes = BytesMut::with_capacity(512);
+    let message = Message::Protocol(Protocol::try_from(proposed_protocol.as_bytes()).unwrap());
+    let _ = message
+        .encode(&mut proto_bytes)
+        .map_err(|_| Error::InvalidData)?;
+    let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
+
+    header.append(&mut proto_bytes.into());
+
+    Ok(header)
+}
+
+/// Accept selected protocol.
+pub fn dialer_accept<'a>(proposed_protocol: &ProtocolName) -> crate::Result<Vec<u8>> {
+    // encode proposed protocol
+    let mut proto_bytes = BytesMut::with_capacity(512);
+    let message = Message::Protocol(Protocol::try_from(proposed_protocol.as_bytes()).unwrap());
+    let _ = message
+        .encode(&mut proto_bytes)
+        .map_err(|_| Error::InvalidData)?;
+    UnsignedVarint::encode(proto_bytes)
 }

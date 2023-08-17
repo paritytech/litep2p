@@ -39,14 +39,14 @@ async fn webrtc_test() {
     let (ping_config, mut ping_event_stream) = PingConfig::new(3);
     let (notif_config, mut notif_event_stream) = NotificationConfig::new(
         ProtocolName::from(
-            "/980e7cbafbcd37f8cb17be82bf8d53fa81c9a588e8a67384376e862da54285dc/block-announces/1",
+            "/c0c89622f83f6f3c6b94bc307fec1652a3aa58ac88a564c34706633f44cbb3d1/block-announces/1",
         ),
         1024usize,
         vec![1, 2, 3, 4],
         Vec::new(),
     );
 
-    let config1 = Litep2pConfigBuilder::new()
+    let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_webrtc(WebRtcTransportConfig {
             listen_address: "/ip4/192.168.1.173/udp/8888/webrtc-direct".parse().unwrap(),
@@ -55,7 +55,7 @@ async fn webrtc_test() {
         .with_notification_protocol(notif_config)
         .build();
 
-    let mut litep2p = Litep2p::new(config1).await.unwrap();
+    let mut litep2p = Litep2p::new(config).await.unwrap();
     let address = litep2p.listen_addresses().next().unwrap().clone();
 
     tracing::info!("listen address: {address:?}");
