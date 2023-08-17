@@ -25,7 +25,7 @@ use crate::{
     peer_id::PeerId,
     transport::webrtc::{
         connection::WebRtcConnection, error::Error, fingerprint::Fingerprint, sdp,
-        substream::WebRtcSubstream, util::WebRtcMessage,
+        substream::WebRtcSubstream, util, util::WebRtcMessage,
     },
 };
 
@@ -123,7 +123,7 @@ pub(crate) async fn inbound(
     peer_connection.set_local_description(answer).await.unwrap();
 
     // TODO: this has to be removed
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let mut data_channel = create_substream_for_noise_handshake(&peer_connection)
         .await
@@ -244,7 +244,7 @@ async fn create_substream_for_noise_handshake(
     let (tx, rx) = oneshot::channel::<Arc<DataChannel>>();
 
     // Wait until the data channel is opened and detach it.
-    register_data_channel_open_handler(data_channel, tx).await;
+    util::register_data_channel_open_handler(data_channel, tx).await;
 
     let channel = match tokio::time::timeout(Duration::from_secs(10), rx).await {
         Err(error) => {
@@ -261,34 +261,4 @@ async fn create_substream_for_noise_handshake(
     let substream = WebRtcSubstream::new(channel);
 
     Ok(substream)
-}
-
-async fn register_data_channel_open_handler(
-    data_channel: Arc<RTCDataChannel>,
-    data_channel_tx: Sender<Arc<DetachedDataChannel>>,
-) {
-    data_channel.on_open({
-        let data_channel = data_channel.clone();
-        Box::new(move || {
-            tracing::debug!("Data channel {} open", data_channel.id());
-
-            Box::pin(async move {
-                let data_channel = data_channel.clone();
-                let id = data_channel.id();
-                match data_channel.detach().await {
-                    Ok(detached) => {
-                        if let Err(e) = data_channel_tx.send(detached.clone()) {
-                            tracing::error!("Can't send data channel {}: {:?}", id, e);
-                            if let Err(e) = detached.close().await {
-                                tracing::error!("Failed to close data channel {}: {}", id, e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Can't detach data channel {}: {}", id, e);
-                    }
-                };
-            })
-        })
-    });
 }

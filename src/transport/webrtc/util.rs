@@ -153,6 +153,37 @@ pub async fn register_incoming_data_channels_handler(
     }));
 }
 
+/// Register handler for channel open event.
+pub async fn register_data_channel_open_handler(
+    data_channel: Arc<RTCDataChannel>,
+    data_channel_tx: Sender<Arc<DetachedDataChannel>>,
+) {
+    data_channel.on_open({
+        let data_channel = data_channel.clone();
+        Box::new(move || {
+            tracing::debug!("Data channel {} open", data_channel.id());
+
+            Box::pin(async move {
+                let data_channel = data_channel.clone();
+                let id = data_channel.id();
+                match data_channel.detach().await {
+                    Ok(detached) => {
+                        if let Err(e) = data_channel_tx.send(detached.clone()) {
+                            tracing::error!("Can't send data channel {}: {:?}", id, e);
+                            if let Err(e) = detached.close().await {
+                                tracing::error!("Failed to close data channel {}: {}", id, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Can't detach data channel {}: {}", id, e);
+                    }
+                };
+            })
+        })
+    });
+}
+
 /// Returns the SHA-256 fingerprint of the remote.
 pub async fn get_remote_fingerprint(conn: &RTCPeerConnection) -> Fingerprint {
     let cert_bytes = conn.sctp().transport().get_remote_certificate().await;

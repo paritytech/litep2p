@@ -36,7 +36,7 @@ use crate::{
         },
         TransportContext,
     },
-    types::protocol::ProtocolName,
+    types::{protocol::ProtocolName, SubstreamId},
 };
 
 use futures::{
@@ -183,6 +183,41 @@ impl WebRtcConnection {
         Ok((substream, protocol))
     }
 
+    /// Open outbound substream.
+    async fn open_substream(
+        &mut self,
+        protocol: ProtocolName,
+        substream_id: SubstreamId,
+    ) -> crate::Result<()> {
+        tracing::warn!(target: LOG_TARGET, "open substream");
+        Ok(())
+
+        // let peer_conn = self.peer_conn.lock().await;
+
+        // let data_channel = peer_conn.create_data_channel("", None).await.unwrap();
+
+        // // No need to hold the lock during the DTLS handshake.
+        // drop(peer_conn);
+
+        // tracing::trace!(
+        //     target: LOG_TARGET,
+        //     "opening data channel {}",
+        //     data_channel.id()
+        // );
+
+        // let (tx, rx) = oneshot::channel::<Arc<DetachedDataChannel>>();
+
+        // // Wait until the data channel is opened and detach it.
+        // util::register_data_channel_open_handler(data_channel, tx).await;
+
+        // // Wait until data channel is opened and ready to use
+        // match rx.await {
+        //     Ok(detached) => Ok(detached),
+        //     Err(e) => Err(Error::Internal(e.to_string())),
+        // }
+        // Ok(())
+    }
+
     /// Event loop for [`WebRtcConnection`].
     pub async fn run(mut self) -> crate::Result<()> {
         loop {
@@ -216,8 +251,8 @@ impl WebRtcConnection {
                     }
                 },
                 command = self.protocol_set.next_event() => match command {
-                    Some(ProtocolEvent::OpenSubstream { .. }) => {
-                        tracing::info!(target: LOG_TARGET, "open substream");
+                    Some(ProtocolEvent::OpenSubstream { protocol, substream_id }) => {
+                        self.open_substream(protocol, substream_id).await;
                     }
                     None => return Ok(()),
                 }
