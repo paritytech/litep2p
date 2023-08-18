@@ -102,6 +102,8 @@ pub enum Error {
     Disconnected,
     #[error("Channel does not exist")]
     ChannelDoesntExist,
+    #[error("Tried to dial self")]
+    TriedToDialSelf,
 }
 
 #[derive(Debug, thiserror::Error)]
