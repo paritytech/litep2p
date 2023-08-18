@@ -563,9 +563,7 @@ impl Litep2p {
                     Some(TransportEvent::DialFailure { error, address }) => {
                         return Ok(Litep2pEvent::DialFailure { address, error })
                     }
-                    None => {
-                        panic!("tcp transport failed");
-                    }
+                    None => panic!("transport failed"),
                     event => {
                         tracing::info!(target: LOG_TARGET, ?event, "unhandle event from tcp");
                     }

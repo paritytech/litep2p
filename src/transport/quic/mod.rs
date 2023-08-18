@@ -281,13 +281,14 @@ impl Transport for QuicTransport {
                         tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
                         let _context = self.context.clone();
-                        let (socket_address, peer) = match Self::get_socket_address(&address)? {
-                            (address, Some(peer)) => (address, peer),
-                            _ => { // TODO: don't return an error
-                                return Err(Error::TransportError(String::from(
-                                    "Peer ID needed to open a connectino",
-                                )))
-                            }
+                        let (socket_address, Some(peer)) = Self::get_socket_address(&address)? else {
+                            let _ = self.context
+                                .report_dial_failure(
+                                    address,
+                                    Error::AddressError(AddressError::PeerIdMissing),
+                                )
+                                .await;
+                            continue
                         };
 
                         let (certificate, key) = generate(&self.context.keypair).unwrap();
