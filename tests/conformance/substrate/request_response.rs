@@ -188,3 +188,23 @@ async fn request_works() {
         }
     }
 }
+
+// TODO: implemement
+#[tokio::test]
+async fn reject_request() {}
+
+// TODO: implemement
+#[tokio::test]
+async fn request_timeout() {}
+
+// TODO: implemement
+#[tokio::test]
+async fn request_too_big() {}
+
+// TODO: implemement
+#[tokio::test]
+async fn response_too_big() {}
+
+// TODO: implemement
+#[tokio::test]
+async fn too_many_pending_requests() {}

@@ -44,7 +44,6 @@ use litep2p::{
 struct MyBehaviour {
     identify: identify::Behaviour,
     ping: ping::Behaviour,
-    // keep_alive: keep_alive::Behaviour,
 }
 
 enum MyBehaviourEvent {
@@ -112,7 +111,7 @@ fn initialize_libp2p() -> Swarm<MyBehaviour> {
 }
 
 #[tokio::test]
-async fn libp2p_dials() {
+async fn identify_works() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();

@@ -839,7 +839,7 @@ async fn both_nodes_open_substreams() {
 }
 
 #[tokio::test]
-async fn send_sync_notification_non_existent_peer() {
+async fn send_sync_notification_to_non_existent_peer() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -874,7 +874,7 @@ async fn send_sync_notification_non_existent_peer() {
 }
 
 #[tokio::test]
-async fn send_async_notification_non_existent_peer() {
+async fn send_async_notification_to_non_existent_peer() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -951,7 +951,7 @@ async fn try_to_connect_to_non_existent_peer() {
 }
 
 #[tokio::test]
-async fn try_to_disconnect_to_non_existent_peer() {
+async fn try_to_disconnect_non_existent_peer() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();

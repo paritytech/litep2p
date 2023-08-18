@@ -345,3 +345,15 @@ async fn request_timeout() {
         }
     );
 }
+
+// TODO: after unsigned-varint configuration is done
+#[tokio::test]
+async fn request_too_big() {}
+
+// TODO: after unsigned-varint configuration is done
+#[tokio::test]
+async fn response_too_big() {}
+
+// TODO: after yamux configuration is done
+#[tokio::test]
+async fn too_many_pending_requests() {}
