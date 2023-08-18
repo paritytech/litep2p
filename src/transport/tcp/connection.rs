@@ -21,7 +21,7 @@
 use crate::{
     config::Role,
     crypto::noise::{self, Encrypted, NoiseConfiguration},
-    error::{Error, SubstreamError},
+    error::{Error, NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolEvent, ProtocolSet},
@@ -41,7 +41,7 @@ use tokio_util::compat::{
     Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt,
 };
 
-use std::{fmt, io, net::SocketAddr, pin::Pin};
+use std::{fmt, io, net::SocketAddr, pin::Pin, time::Duration};
 
 // TODO: introduce `NegotiatingConnection` to clean up this code a bit?
 /// Logging target for the file.
@@ -214,14 +214,24 @@ impl TcpConnection {
     ) -> crate::Result<(Negotiated<S>, ProtocolName)> {
         tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
 
-        let (protocol, socket) = match role {
-            Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await?,
-            Role::Listener => listener_select_proto(stream, protocols).await?,
-        };
+        match tokio::time::timeout(Duration::from_secs(10), async move {
+            match role {
+                Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
+                Role::Listener => listener_select_proto(stream, protocols).await,
+            }
+        })
+        .await
+        {
+            Err(_) => Err(Error::Timeout),
+            Ok(Err(error)) => Err(Error::NegotiationError(
+                NegotiationError::MultistreamSelectError(error),
+            )),
+            Ok(Ok((protocol, socket))) => {
+                tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
 
-        tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
-
-        Ok((socket, ProtocolName::from(protocol.to_string())))
+                Ok((socket, ProtocolName::from(protocol.to_string())))
+            }
+        }
     }
 
     /// Negotiate noise + yamux for the connection.

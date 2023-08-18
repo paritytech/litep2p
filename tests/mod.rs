@@ -19,4 +19,5 @@
 // DEALINGS IN THE SOFTWARE.
 
 mod conformance;
+mod connection;
 mod protocol;
