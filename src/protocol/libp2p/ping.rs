@@ -173,17 +173,13 @@ impl Ping {
                     substream_id,
                 ))))??;
 
-        let res = self
-            .tx
+        self.tx
             .send(PingEvent::Ping {
                 peer,
                 ping: now.elapsed(),
             })
             .await
-            .map_err(From::from);
-
-        tracing::error!("PING SNETJ");
-        res
+            .map_err(From::from)
     }
 
     /// Substream opened to remote peer.

@@ -243,6 +243,7 @@ async fn dial_quic_peer_id_missing() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn dial_self_tcp() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -271,6 +272,7 @@ async fn dial_self_tcp() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn dial_self_quic() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

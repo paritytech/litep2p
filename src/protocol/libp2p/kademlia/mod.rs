@@ -223,7 +223,7 @@ impl Kademlia {
                             }
                         },
                         None => {
-                            tracing::error!(target: LOG_TARGET, "open connection to peer");
+                            tracing::trace!(target: LOG_TARGET, "open connection to peer");
                             self.engine.register_response_failure(query_id, peer.peer)
                         }
                     },
