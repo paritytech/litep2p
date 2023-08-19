@@ -54,6 +54,7 @@ sha2 = "0.10.7"
 stun = "0.4.4"
 tinytemplate = "1.2.1"
 hex = "0.4.3"
+futures-timer = "3.0.2"
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]
@@ -78,6 +79,7 @@ libp2p = { version = "0.51.3", features = [
     "quic",
 ]}
 sc-network = { path = "/home/altonen/work/substrate/client/network", version = "0.10.0-dev" }
+sc-utils = { version = "4.0.0-dev", path = "/home/altonen/work/substrate/client/utils" }
 
 [profile.release]
 debug = true
