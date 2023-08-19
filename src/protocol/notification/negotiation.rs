@@ -28,16 +28,21 @@ use crate::{
     substream::{Substream, SubstreamSet},
 };
 
-use futures::{Sink, Stream};
+use futures::{FutureExt, Sink, Stream};
+use futures_timer::Delay;
 
 use std::{
     collections::{HashMap, VecDeque},
     pin::Pin,
     task::{Context, Poll},
+    time::Duration,
 };
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "notification::negotiation";
+
+/// Maximum timeout wait before for handshake before operation is considered failed.
+const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Substream direction.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -153,7 +158,7 @@ pub(crate) struct HandshakeService {
 
     /// Pending outbound substreams.
     /// Substreams:
-    substreams: HashMap<(PeerId, Direction), (Box<dyn Substream>, HandshakeState)>,
+    substreams: HashMap<(PeerId, Direction), (Box<dyn Substream>, Delay, HandshakeState)>,
 
     new_ready: VecDeque<HandshakeEvent>,
 
@@ -181,14 +186,14 @@ impl HandshakeService {
     pub(crate) fn remove_outbound(&mut self, peer: &PeerId) -> Option<Box<dyn Substream>> {
         self.substreams
             .remove(&(*peer, Direction::Outbound))
-            .map(|(substream, _)| substream)
+            .map(|(substream, _, _)| substream)
     }
 
     /// Remove inbound substream from [`HandshakeService`].
     pub(crate) fn remove_inbound(&mut self, peer: &PeerId) -> Option<Box<dyn Substream>> {
         self.substreams
             .remove(&(*peer, Direction::Inbound))
-            .map(|(substream, _)| substream)
+            .map(|(substream, _, _)| substream)
     }
 
     /// Negotiate outbound handshake.
@@ -197,7 +202,11 @@ impl HandshakeService {
 
         self.substreams.insert(
             (peer, Direction::Outbound),
-            (substream, HandshakeState::SendHandshake),
+            (
+                substream,
+                Delay::new(NEGOTIATION_TIMEOUT),
+                HandshakeState::SendHandshake,
+            ),
         );
     }
 
@@ -207,7 +216,11 @@ impl HandshakeService {
 
         self.substreams.insert(
             (peer, Direction::InboundAccepting),
-            (substream, HandshakeState::ReadHandshake),
+            (
+                substream,
+                Delay::new(NEGOTIATION_TIMEOUT),
+                HandshakeState::ReadHandshake,
+            ),
         );
     }
 
@@ -217,7 +230,11 @@ impl HandshakeService {
 
         self.substreams.insert(
             (peer, Direction::Inbound),
-            (substream, HandshakeState::ReadHandshake),
+            (
+                substream,
+                Delay::new(NEGOTIATION_TIMEOUT),
+                HandshakeState::ReadHandshake,
+            ),
         );
     }
 
@@ -227,7 +244,11 @@ impl HandshakeService {
 
         self.substreams.insert(
             (peer, Direction::Inbound),
-            (substream, HandshakeState::SendHandshake),
+            (
+                substream,
+                Delay::new(NEGOTIATION_TIMEOUT),
+                HandshakeState::SendHandshake,
+            ),
         );
     }
 
@@ -242,7 +263,7 @@ impl HandshakeService {
 
         match direction {
             Direction::Outbound => {
-                let (substream, _) = self
+                let (substream, _, _) = self
                     .substreams
                     .remove(&(peer, direction))
                     .expect("peer to exist");
@@ -257,7 +278,7 @@ impl HandshakeService {
                 ));
             }
             Direction::Inbound => {
-                let (substream, _) = self
+                let (substream, _, _) = self
                     .substreams
                     .remove(&(peer, direction))
                     .expect("peer to exist");
@@ -272,7 +293,7 @@ impl HandshakeService {
                 ));
             }
             Direction::InboundAccepting => {
-                let (substream, _) = self
+                let (substream, _, _) = self
                     .substreams
                     .remove(&(peer, direction))
                     .expect("peer to exist");
@@ -297,7 +318,16 @@ impl Stream for HandshakeService {
             return Poll::Pending;
         }
 
-        'outer: for ((peer, direction), (ref mut substream, state)) in inner.substreams.iter_mut() {
+        'outer: for ((peer, direction), (ref mut substream, ref mut timer, state)) in
+            inner.substreams.iter_mut()
+        {
+            if let Poll::Ready(()) = timer.poll_unpin(cx) {
+                return Poll::Ready(Some((
+                    *peer,
+                    HandshakeEvent::OutboundNegotiationError { peer: *peer },
+                )));
+            }
+
             loop {
                 let pinned = Pin::new(&mut *substream);
 
@@ -368,10 +398,11 @@ impl Stream for HandshakeService {
                             }
                         },
                         Poll::Ready(Some(Err(_))) | Poll::Ready(None) => {
+                            tracing::error!("neogitation error");
                             return Poll::Ready(Some((
                                 *peer,
                                 HandshakeEvent::OutboundNegotiationError { peer: *peer },
-                            )))
+                            )));
                         }
                         Poll::Pending => continue 'outer,
                     },
@@ -382,7 +413,7 @@ impl Stream for HandshakeService {
         if let Some((peer, direction, handshake)) = inner.ready.pop_front() {
             match direction {
                 Direction::Outbound => {
-                    let (substream, _) = inner
+                    let (substream, _, _) = inner
                         .substreams
                         .remove(&(peer, direction))
                         .expect("peer to exist");
@@ -396,7 +427,7 @@ impl Stream for HandshakeService {
                     )));
                 }
                 Direction::Inbound => {
-                    let (substream, _) = inner
+                    let (substream, _, _) = inner
                         .substreams
                         .remove(&(peer, direction))
                         .expect("peer to exist");
@@ -410,7 +441,7 @@ impl Stream for HandshakeService {
                     )));
                 }
                 Direction::InboundAccepting => {
-                    let (substream, _) = inner
+                    let (substream, _, _) = inner
                         .substreams
                         .remove(&(peer, direction))
                         .expect("peer to exist");
