@@ -1,3 +1,4 @@
+// Copyright 2019 Parity Technologies (UK) Ltd.
 // Copyright 2023 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -19,10 +20,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 //! Noise handshake and transport implementations.
-
-// TODO: benchmark reads and writes
-// TODO: optimize read and writes
-// TODO: this is really ugly code
 
 use crate::{
     config::Role,
@@ -229,9 +226,6 @@ struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin, T: Unpin> {
 
     /// Read state of the stream.
     read_state: ReadState,
-
-    /// Write state of the stream.
-    _write_state: WriteState,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin, T: Unpin> NoiseSocket<S, T> {
@@ -243,7 +237,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Unpin> NoiseSocket<S, T> {
             read_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
             decrypt_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
             read_state: ReadState::Ready,
-            _write_state: WriteState::Ready,
         }
     }
 }
@@ -302,8 +295,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
                         Poll::Ready(Ok(Some(n))) => n,
                         Poll::Ready(Ok(None)) => {
                             this.read_state = ReadState::Eof(Ok(()));
-                            todo!();
-                            // return Poll::Ready(None);
+                            return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
                         }
                         Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                         Poll::Pending => {
@@ -388,13 +380,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
                 }
                 ReadState::Eof(_res) => {
                     tracing::trace!(target: LOG_TARGET, "read: eof");
-                    todo!();
-                    // return Poll::Ready(None);
+                    return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
                 }
                 ReadState::DecErr => {
                     tracing::trace!(target: LOG_TARGET, "read: decryption error");
-                    todo!();
-                    // return Poll::Ready(Some(Err(io::ErrorKind::InvalidData.into())))
+                    return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
                 }
             }
         }
@@ -484,9 +474,6 @@ pub struct Encrypted<S: AsyncRead + AsyncWrite + Unpin> {
 
     /// Read state of the stream.
     read_state: ReadState,
-
-    /// Write state of the stream.
-    _write_state: WriteState,
 }
 
 // TODO: optimize
@@ -511,8 +498,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Encrypted<S> {
                         Poll::Ready(Ok(Some(n))) => n,
                         Poll::Ready(Ok(None)) => {
                             this.read_state = ReadState::Eof(Ok(()));
-                            todo!();
-                            // return Poll::Ready(None);
+                            return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
                         }
                         Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                         Poll::Pending => {
@@ -597,13 +583,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Encrypted<S> {
                 }
                 ReadState::Eof(_res) => {
                     tracing::trace!(target: LOG_TARGET, "read: eof");
-                    todo!();
-                    // return Poll::Ready(None);
+                    return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
                 }
                 ReadState::DecErr => {
                     tracing::trace!(target: LOG_TARGET, "read: decryption error");
-                    todo!();
-                    // return Poll::Ready(Some(Err(io::ErrorKind::InvalidData.into())))
+                    return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
                 }
             }
         }
@@ -698,7 +682,6 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
             read_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
             decrypt_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
             read_state: ReadState::Ready,
-            _write_state: WriteState::Ready,
         },
         peer,
     ))
@@ -725,7 +708,6 @@ impl fmt::Debug for NoiseContext {
     }
 }
 
-// TODO: rename, stupid name
 impl NoiseContext {
     /// Create new [`NoiseContext`].
     pub fn new(id_keys: &Keypair) -> Self {
@@ -853,6 +835,7 @@ impl NoiseContext {
     }
 }
 
+// TODO: add more tests
 #[cfg(test)]
 mod tests {
     use super::*;
