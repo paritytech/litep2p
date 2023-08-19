@@ -55,6 +55,7 @@ stun = "0.4.4"
 tinytemplate = "1.2.1"
 hex = "0.4.3"
 futures-timer = "3.0.2"
+parking_lot = "0.12.1"
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]

@@ -61,6 +61,7 @@ pub mod substream;
 pub mod transport;
 pub mod types;
 
+mod connection;
 mod mock;
 mod multistream_select;
 
