@@ -45,6 +45,14 @@ impl UnsignedVarint {
         }
     }
 
+    /// Set maximum size for encoded/decodes values.
+    pub fn with_max_size(max_size: usize) -> Self {
+        let mut codec = UviBytes::<Bytes>::default();
+        codec.set_max_len(max_size);
+
+        Self { codec }
+    }
+
     /// Encode `payload` using `unsigned-varint`.
     // TODO: return `BytesMut`
     pub fn encode<T: Into<Bytes>>(payload: T) -> crate::Result<Vec<u8>> {
@@ -81,5 +89,27 @@ impl Encoder<Bytes> for UnsignedVarint {
 
     fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
         self.codec.encode(item, dst).map_err(From::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_size_respected() {
+        let mut codec = UnsignedVarint::with_max_size(1024);
+
+        {
+            let bytes_to_encode: Bytes = vec![0u8; 1024].into();
+            let mut out_bytes = BytesMut::with_capacity(2048);
+            assert!(codec.encode(bytes_to_encode, &mut out_bytes).is_ok());
+        }
+
+        {
+            let bytes_to_encode: Bytes = vec![0u8; 1025].into();
+            let mut out_bytes = BytesMut::with_capacity(2048);
+            assert!(codec.encode(bytes_to_encode, &mut out_bytes).is_err());
+        }
     }
 }
