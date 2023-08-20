@@ -66,10 +66,6 @@ pub trait SubstreamSetKey: Hash + Unpin + Debug + PartialEq + Eq + Copy {}
 
 impl<K: Hash + Unpin + Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
 
-pub trait Testing {
-    fn apply_protocol_codec(&mut self, codec: ProtocolCodec);
-}
-
 /// Substream types.
 pub enum SubstreamType<R: RawSubstream> {
     /// Raw substream received from the transport.

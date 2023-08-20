@@ -25,7 +25,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::Error,
     peer_id::PeerId,
-    substream::{RawSubstream, Substream, SubstreamType, Testing},
+    substream::{RawSubstream, Substream, SubstreamType},
     transport::manager::{TransportManagerEvent, TransportManagerHandle},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
