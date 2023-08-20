@@ -194,6 +194,12 @@ impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
     }
 }
 
+impl From<tokio::sync::oneshot::error::RecvError> for Error {
+    fn from(_: tokio::sync::oneshot::error::RecvError) -> Self {
+        Error::EssentialTaskClosed
+    }
+}
+
 impl From<prost::DecodeError> for Error {
     fn from(error: prost::DecodeError) -> Self {
         Error::ParseError(ParseError::ProstDecodeError(error))

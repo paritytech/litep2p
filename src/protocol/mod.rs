@@ -27,7 +27,7 @@ use crate::{
     peer_id::PeerId,
     substream::{RawSubstream, Substream, SubstreamType, Testing},
     transport::manager::{TransportManagerEvent, TransportManagerHandle},
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
 

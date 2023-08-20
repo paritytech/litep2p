@@ -30,7 +30,10 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    oneshot,
+};
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
     error::ResolveError,
@@ -101,6 +104,22 @@ pub enum TransportManagerEvent {
     },
 }
 
+/// Inner commands sent from [`TransportManagerHandle`] to [`TransportManager`].
+#[derive(Debug)]
+pub enum InnerTransportManagerCommand {
+    /// Dial peer.
+    DialPeer {
+        /// Remote peer ID.
+        peer: PeerId,
+    },
+
+    /// Dial address.
+    DialAddress {
+        /// Remote address.
+        address: Multiaddr,
+    },
+}
+
 #[derive(Debug)]
 pub enum TransportManagerCommand {
     Dial {
@@ -120,6 +139,9 @@ pub struct TransportManagerHandle {
 
     /// Known but unconnected peers.
     unconnected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
+
+    /// TX channel for sending commands to [`TransportManager`].
+    cmd_tx: Sender<InnerTransportManagerCommand>,
 }
 
 impl TransportManagerHandle {
@@ -127,8 +149,10 @@ impl TransportManagerHandle {
     pub fn new(
         connected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
         unconnected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
+        cmd_tx: Sender<InnerTransportManagerCommand>,
     ) -> Self {
         Self {
+            cmd_tx,
             connected,
             unconnected,
         }
@@ -158,22 +182,34 @@ impl TransportManagerHandle {
         if self.connected.read().contains_key(peer) {
             return Err(Error::AlreadyConnected);
         }
-        let unconnected = self.unconnected.read();
 
-        match unconnected.get(&peer) {
-            None => return Err(Error::NoAddressAvailable(*peer)),
-            Some(addresses) => {
-                drop(unconnected);
-                todo!("send command to `TransportManager`");
+        // verify there is at least one known address before calling [`TransportManager`].
+        {
+            let unconnected = self.unconnected.read();
+
+            match unconnected.get(&peer) {
+                None => return Err(Error::NoAddressAvailable(*peer)),
+                Some(addresses) if addresses.is_empty() => {
+                    return Err(Error::NoAddressAvailable(*peer))
+                }
+                _ => {}
             }
         }
+
+        self.cmd_tx
+            .send(InnerTransportManagerCommand::DialPeer { peer: *peer })
+            .await
+            .map_err(From::from)
     }
 
     /// Dial peer using `Multiaddr`.
     ///
     /// Returns an error if address it not valid.
     pub async fn dial_address(&self, address: Multiaddr) -> crate::Result<()> {
-        Ok(())
+        self.cmd_tx
+            .send(InnerTransportManagerCommand::DialAddress { address })
+            .await
+            .map_err(From::from)
     }
 }
 
@@ -274,6 +310,9 @@ pub struct TransportManager {
     /// RX channel for receiving events from installed transports.
     event_rx: Receiver<TransportManagerEvent>,
 
+    /// RX channel for receiving commands from installed protocols.
+    cmd_rx: Receiver<InnerTransportManagerCommand>,
+
     /// TX channel for transport events that is given to installed transports.
     event_tx: Sender<TransportManagerEvent>,
 
@@ -295,11 +334,14 @@ impl TransportManager {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let connected = Arc::new(RwLock::new(HashMap::new()));
         let unconnected = Arc::new(RwLock::new(HashMap::new()));
-        let handle = TransportManagerHandle::new(Arc::clone(&connected), Arc::clone(&unconnected));
+        let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
+        let handle =
+            TransportManagerHandle::new(Arc::clone(&connected), Arc::clone(&unconnected), cmd_tx);
 
         (
             Self {
+                cmd_rx,
                 keypair,
                 event_tx,
                 event_rx,
@@ -408,7 +450,7 @@ impl TransportManager {
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
-    pub fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
+    pub async fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
         Ok(())
     }
 
@@ -469,7 +511,6 @@ impl TransportManager {
                 Protocol::QuicV1 => {
                     let connection_id = self.dial_quic(address.clone()).await?;
                     self.pending_connections.insert(connection_id, address);
-
                     Ok(())
                 }
                 _ => Err(Error::TransportNotSupported(address.clone())),
@@ -565,6 +606,18 @@ impl TransportManager {
                             self.pending_connections.insert(connection_id, address);
                         }
                         Err(error) => return Some(TransportManagerEvent::DialFailure { address: event.0, error }),
+                    }
+                }
+                command = self.cmd_rx.recv() => match command? {
+                    InnerTransportManagerCommand::DialPeer { peer } => {
+                        if let Err(error) = self.dial(&peer).await {
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer")
+                        }
+                    }
+                    InnerTransportManagerCommand::DialAddress { address } => {
+                        if let Err(error) = self.dial_address(address).await {
+                            tracing::debug!(target: LOG_TARGET, ?error, "failed to dial peer")
+                        }
                     }
                 }
             }
