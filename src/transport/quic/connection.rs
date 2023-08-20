@@ -74,7 +74,7 @@ pub(crate) struct QuicConnection {
     _connection_id: ConnectionId,
 
     /// Transport context.
-    context: ProtocolSet,
+    protocol_set: ProtocolSet,
 
     /// Next substream ID.
     next_substream_id: SubstreamId,
@@ -100,7 +100,7 @@ impl QuicConnection {
     /// Create new [`QuiConnection`].
     pub(crate) fn new(
         peer: PeerId,
-        context: ProtocolSet,
+        protocol_set: ProtocolSet,
         connection: Connection,
         _connection_id: ConnectionId,
     ) -> Self {
@@ -110,7 +110,7 @@ impl QuicConnection {
             _connection_id,
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
-            context,
+            protocol_set,
         }
     }
 
@@ -212,7 +212,7 @@ impl QuicConnection {
                 substream = self.connection.accept_bidirectional_stream() => match substream {
                     Ok(Some(stream)) => {
                         let substream = self.next_substream_id.next();
-                        let protocols = self.context.protocols.keys().cloned().collect();
+                        let protocols = self.protocol_set.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
@@ -235,11 +235,20 @@ impl QuicConnection {
                         }));
                     }
                     Ok(None) => {
-                        tracing::warn!(target: LOG_TARGET, "quic transport has exited");
+                        tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
+                        self.protocol_set.report_connection_closed(self.peer).await?;
+
                         return Ok(())
                     }
                     Err(error) => {
-                        tracing::warn!(target: LOG_TARGET, ?error, "quic transport has exited");
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            ?error,
+                            "connection closed with error"
+                        );
+                        self.protocol_set.report_connection_closed(self.peer).await?;
+
                         return Ok(())
                     }
                 },
@@ -262,7 +271,7 @@ impl QuicConnection {
                             };
 
                             if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
-                                if let Err(error) = self.context
+                                if let Err(error) = self.protocol_set
                                     .report_substream_open_failure(protocol, substream_id, error)
                                     .await
                                 {
@@ -279,7 +288,7 @@ impl QuicConnection {
                             let direction = substream.direction;
                             let substream = substream.io;
 
-                            if let Err(error) = self.context
+                            if let Err(error) = self.protocol_set
                                 .report_substream_open(self.peer, protocol, direction, SubstreamType::Raw(substream))
                                 .await
                             {
@@ -292,7 +301,7 @@ impl QuicConnection {
                         }
                     }
                 }
-                protocol = self.context.next_event() => match protocol {
+                protocol = self.protocol_set.next_event() => match protocol {
                     Some(ProtocolCommand::OpenSubstream { protocol, substream_id }) => {
                         let handle = self.connection.handle();
 

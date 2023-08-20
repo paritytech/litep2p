@@ -19,6 +19,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 #[cfg(test)]
+mod connection;
+#[cfg(test)]
 mod notifications;
 #[cfg(test)]
 mod request_response;

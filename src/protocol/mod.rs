@@ -528,11 +528,18 @@ impl ProtocolSet {
     }
 
     /// Report to `Litep2p` that a peer disconnected.
-    pub(crate) async fn _report_connection_closed(&mut self, peer: PeerId) {
-        let _ = self
-            .mgr_tx
+    pub(crate) async fn report_connection_closed(&mut self, peer: PeerId) -> crate::Result<()> {
+        for (protocol, sender) in &self.protocols {
+            let _ = sender
+                .tx
+                .send(InnerTransportEvent::ConnectionClosed { peer })
+                .await?;
+        }
+
+        self.mgr_tx
             .send(TransportManagerEvent::ConnectionClosed { peer })
-            .await;
+            .await
+            .map_err(From::from)
     }
 
     /// Poll next substream open query from one of the installed protocols.

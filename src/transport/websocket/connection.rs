@@ -368,12 +368,22 @@ impl WebSocketConnection {
                         }));
                     },
                     Some(Err(error)) => {
-                        tracing::error!(target: LOG_TARGET, ?error, "failed to poll inbound substream");
-                        // TODO: this is probably not correct
-                        return Err(Error::SubstreamError(SubstreamError::YamuxError(error)));
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            ?error,
+                            "connection closed with error"
+                        );
+                        self.protocol_set.report_connection_closed(self.peer).await?;
+
+                        return Ok(())
                     }
-                    // TODO: this is probably not correct
-                    None => return Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
+                    None => {
+                        tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
+                        self.protocol_set.report_connection_closed(self.peer).await?;
+
+                        return Ok(())
+                    }
                 },
                 // TODO: move this to a function
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
