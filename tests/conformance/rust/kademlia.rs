@@ -89,7 +89,6 @@ fn initialize_libp2p() -> Swarm<Behaviour> {
 }
 
 #[tokio::test]
-#[ignore]
 async fn libp2p_dials() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -97,7 +96,7 @@ async fn libp2p_dials() {
 
     let mut addresses = vec![];
     let mut peer_ids = vec![];
-    for _ in 0..10 {
+    for _ in 0..3 {
         let mut libp2p = initialize_libp2p();
 
         loop {
@@ -162,9 +161,8 @@ async fn libp2p_dials() {
         )
         .await;
 
-    kad_handle
-        .find_node(litep2p::peer_id::PeerId::random())
-        .await;
+    let target = litep2p::peer_id::PeerId::random();
+    kad_handle.find_node(target).await;
 
     loop {
         let event = kad_handle.next_event().await;

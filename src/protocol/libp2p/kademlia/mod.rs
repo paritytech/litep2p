@@ -69,11 +69,6 @@ mod routing_table;
 mod store;
 mod types;
 
-// TODO: when connection is established, add the peer to routing table
-// TODO: when `FIND_NODE` is received from user, find closest peers and send message
-// TODO: when `GET_VALUE` is received from user, find closest peers and send message
-// TODO: when `GET_VALUE` is received from user, find closest peers and send message
-
 mod schema {
     pub(super) mod kademlia {
         include!(concat!(env!("OUT_DIR"), "/kademlia.rs"));
@@ -127,6 +122,9 @@ pub struct Kademlia {
     /// Routing table.
     routing_table: RoutingTable,
 
+    /// Pending dials.
+    pending_dials: HashMap<PeerId, QueryId>,
+
     /// Query engine.
     engine: QueryEngine,
 }
@@ -142,6 +140,7 @@ impl Kademlia {
             cmd_rx: config.cmd_rx,
             event_tx: config.event_tx,
             local_key: local_key.clone(),
+            pending_dials: HashMap::new(),
             substreams: SubstreamSet::new(),
             routing_table: RoutingTable::new(local_key),
             engine: QueryEngine::new(PARALLELISM_FACTOR),
@@ -155,7 +154,13 @@ impl Kademlia {
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
                 // TODO: add peer to routing table
-                entry.insert(PeerContext::new(()));
+                let query = self.pending_dials.remove(&peer);
+                entry.insert(PeerContext { service: (), query });
+
+                if query.is_some() {
+                    self.service.open_substream(peer).await?;
+                }
+
                 Ok(())
             }
             Entry::Occupied(_) => return Err(Error::PeerAlreadyExists(peer)),
@@ -218,8 +223,13 @@ impl Kademlia {
                             }
                         },
                         None => {
-                            tracing::trace!(target: LOG_TARGET, "open connection to peer");
-                            self.engine.register_response_failure(query_id, peer.peer)
+                            tracing::error!(target: LOG_TARGET, addresses = ?peer.addresses, "open connection to peer");
+
+                            self.service
+                                .dial_address(peer.addresses[0].clone())
+                                .await
+                                .unwrap();
+                            self.pending_dials.insert(peer.peer, query_id);
                         }
                     },
                 },
@@ -390,8 +400,6 @@ impl Kademlia {
                 key.distance(&peer.key)
             );
         }
-
-        // tracing::info!(target: LOG_TARGET, "candidates: {candidates:?}");
 
         Ok(())
     }
