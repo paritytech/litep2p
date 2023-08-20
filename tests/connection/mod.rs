@@ -63,7 +63,11 @@ async fn connection_timeout_tcp() {
 
     litep2p.connect(address.clone()).await.unwrap();
 
-    let Ok(Litep2pEvent::DialFailure { address: dial_address, error }) = litep2p.next_event().await else {
+    let Some(Litep2pEvent::DialFailure {
+        address: dial_address,
+        error,
+    }) = litep2p.next_event().await
+    else {
         panic!("invalid event received");
     };
 
@@ -101,7 +105,11 @@ async fn connection_timeout_quic() {
 
     litep2p.connect(address.clone()).await.unwrap();
 
-    let Ok(Litep2pEvent::DialFailure { address: dial_address, error }) = litep2p.next_event().await else {
+    let Some(Litep2pEvent::DialFailure {
+        address: dial_address,
+        error,
+    }) = litep2p.next_event().await
+    else {
         panic!("invalid event received");
     };
 
@@ -233,7 +241,11 @@ async fn dial_quic_peer_id_missing() {
 
     litep2p.connect(address.clone()).await.unwrap();
 
-    let Ok(Litep2pEvent::DialFailure { address: dial_address, error }) = litep2p.next_event().await else {
+    let Some(Litep2pEvent::DialFailure {
+        address: dial_address,
+        error,
+    }) = litep2p.next_event().await
+    else {
         panic!("invalid event received");
     };
 

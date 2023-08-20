@@ -24,9 +24,9 @@ use crate::{
     error::{Error, NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
-    protocol::{Direction, ProtocolEvent, ProtocolSet},
+    protocol::{Direction, ProtocolCommand, ProtocolSet},
     substream::SubstreamType,
-    transport::{tcp::socket_addr_to_multi_addr, TransportContext},
+    transport::tcp::socket_addr_to_multi_addr,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
@@ -78,7 +78,7 @@ pub struct TcpConnection {
     _connection_id: ConnectionId,
 
     /// Protocol context.
-    context: ProtocolSet,
+    protocol_set: ProtocolSet,
 
     /// Yamux connection.
     connection: yamux::ControlledConnection<Encrypted<Compat<TcpStream>>>,
@@ -111,7 +111,7 @@ impl fmt::Debug for TcpConnection {
 impl TcpConnection {
     /// Open connection to remote peer at `address`.
     pub async fn open_connection(
-        context: TransportContext,
+        context: ProtocolSet,
         connection_id: ConnectionId,
         address: SocketAddr,
         peer: Option<PeerId>,
@@ -164,7 +164,7 @@ impl TcpConnection {
 
     /// Accept a new connection.
     pub async fn accept_connection(
-        context: TransportContext,
+        context: ProtocolSet,
         stream: TcpStream,
         connection_id: ConnectionId,
         address: SocketAddr,
@@ -238,7 +238,7 @@ impl TcpConnection {
     async fn negotiate_connection(
         stream: TcpStream,
         connection_id: ConnectionId,
-        context: TransportContext,
+        mut protocol_set: ProtocolSet,
         noise_config: NoiseConfiguration,
         address: SocketAddr,
     ) -> crate::Result<Self> {
@@ -273,17 +273,21 @@ impl TcpConnection {
         let connection =
             yamux::Connection::new(stream.inner(), yamux::Config::default(), role.into());
         let (control, connection) = yamux::Control::new(connection);
-        let context = ProtocolSet::from_transport_context(peer, context).await?;
+
+        let address = socket_addr_to_multi_addr(&address);
+        protocol_set
+            .report_connection_established(peer, address.clone())
+            .await?;
 
         Ok(Self {
             peer,
-            context,
+            address,
             control,
             connection,
+            protocol_set,
             _connection_id: connection_id,
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
-            address: socket_addr_to_multi_addr(&address),
         })
     }
 
@@ -304,11 +308,11 @@ impl TcpConnection {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
                         let substream = self.next_substream_id.next();
-                        let protocols = self.context.protocols.keys().cloned().collect();
+                        let protocols = self.protocol_set.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
+                                std::time::Duration::from_secs(5), // TODO: make this configurable
                                 Self::accept_substream(stream, substream, protocols),
                             )
                             .await
@@ -356,7 +360,7 @@ impl TcpConnection {
 
                             match (protocol, substream_id) {
                                 (Some(protocol), Some(substream_id)) => {
-                                    if let Err(error) = self.context
+                                    if let Err(error) = self.protocol_set
                                         .report_substream_open_failure(protocol, substream_id, error)
                                         .await
                                     {
@@ -375,7 +379,7 @@ impl TcpConnection {
                             let direction = substream.direction;
                             let substream = FuturesAsyncReadCompatExt::compat(substream);
 
-                            if let Err(error) = self.context
+                            if let Err(error) = self.protocol_set
                                 .report_substream_open(self.peer, protocol, direction, SubstreamType::Raw(substream))
                                 .await
                             {
@@ -388,8 +392,8 @@ impl TcpConnection {
                         }
                     }
                 }
-                protocol = self.context.next_event() => match protocol {
-                    Some(ProtocolEvent::OpenSubstream { protocol, substream_id }) => {
+                protocol = self.protocol_set.next_event() => match protocol {
+                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id }) => {
                         let control = self.control.clone();
 
                         tracing::trace!(

@@ -22,9 +22,8 @@ use crate::{
     codec::ProtocolCodec,
     error::{Error, SubstreamError},
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ConnectionService, Direction},
+    protocol::{Direction, Transport, TransportEvent, TransportService},
     substream::Substream,
-    transport::TransportService,
     types::{protocol::ProtocolName, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
@@ -34,7 +33,7 @@ use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -111,7 +110,7 @@ pub struct Ping {
     tx: Sender<PingEvent>,
 
     /// Connected peers.
-    peers: HashMap<PeerId, ConnectionService>,
+    peers: HashSet<PeerId>,
 
     /// Pending outbound substreams.
     pending_outbound: HashMap<SubstreamId, PeerId>, // TODO: does this really need to be a hashmap?
@@ -123,23 +122,19 @@ impl Ping {
         Self {
             service,
             tx: config.tx_event,
-            peers: HashMap::new(),
+            peers: HashSet::new(),
             pending_outbound: HashMap::new(),
             _max_failures: config.max_failures,
         }
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(
-        &mut self,
-        peer: PeerId,
-        mut service: ConnectionService,
-    ) -> crate::Result<()> {
+    async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-        let substream_id = service.open_substream().await?;
+        let substream_id = self.service.open_substream(peer).await?;
         self.pending_outbound.insert(substream_id, peer);
-        self.peers.insert(peer, service);
+        self.peers.insert(peer);
 
         Ok(())
     }
@@ -215,8 +210,8 @@ impl Ping {
 
         while let Some(event) = self.service.next_event().await {
             match event {
-                ConnectionEvent::ConnectionEstablished { peer, service } => {
-                    if let Err(error) = self.on_connection_established(peer, service).await {
+                TransportEvent::ConnectionEstablished { peer, address } => {
+                    if let Err(error) = self.on_connection_established(peer).await {
                         tracing::debug!(
                             target: LOG_TARGET,
                             ?peer,
@@ -225,10 +220,10 @@ impl Ping {
                         );
                     }
                 }
-                ConnectionEvent::ConnectionClosed { peer } => {
+                TransportEvent::ConnectionClosed { peer } => {
                     self.on_connection_closed(peer);
                 }
-                ConnectionEvent::SubstreamOpened {
+                TransportEvent::SubstreamOpened {
                     peer,
                     substream,
                     direction,
@@ -266,9 +261,10 @@ impl Ping {
                         }
                     }
                 },
-                ConnectionEvent::SubstreamOpenFailure { substream, error } => {
+                TransportEvent::SubstreamOpenFailure { substream, error } => {
                     self.on_substream_open_failure(substream, error);
                 }
+                TransportEvent::DialFailure { peer, address } => {}
             }
         }
     }

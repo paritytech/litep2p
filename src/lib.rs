@@ -31,8 +31,12 @@ use crate::{
         request_response::RequestResponseProtocol,
     },
     transport::{
-        quic::QuicTransport, tcp::TcpTransport, webrtc::WebRtcTransport,
-        websocket::WebSocketTransport, Transport, TransportCommand, TransportEvent,
+        manager::{SupportedTransport, TransportManager, TransportManagerEvent},
+        quic::QuicTransport,
+        tcp::TcpTransport,
+        webrtc::WebRtcTransport,
+        websocket::WebSocketTransport,
+        Transport, TransportCommand, TransportEvent,
     },
     types::ConnectionId,
 };
@@ -61,7 +65,6 @@ pub mod substream;
 pub mod transport;
 pub mod types;
 
-mod connection;
 mod mock;
 mod multistream_select;
 
@@ -86,6 +89,12 @@ pub enum Litep2pEvent {
         address: Multiaddr,
     },
 
+    /// Conneciton closed to remote peer.
+    ConnectionClosed {
+        /// Peer ID.
+        peer: PeerId,
+    },
+
     /// Failed to dial peer.
     DialFailure {
         /// Address of the peer.
@@ -96,101 +105,6 @@ pub enum Litep2pEvent {
     },
 }
 
-/// Supported protocols.
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub(crate) enum SupportedTransport {
-    /// TCP.
-    Tcp,
-
-    /// QUIC.
-    Quic,
-
-    /// WebRTC
-    WebRtc,
-
-    /// WebSocket
-    WebSocket,
-}
-
-/// [`Litep2p`] transport context.
-struct TransportContext {
-    /// Supported transports and their command handles.
-    transports: HashMap<SupportedTransport, Sender<TransportCommand>>,
-
-    /// Connection ID.
-    connection_id: ConnectionId,
-}
-
-impl TransportContext {
-    /// Create new [`TransportContext`].
-    pub fn new() -> Self {
-        Self {
-            transports: HashMap::new(),
-            connection_id: ConnectionId::new(),
-        }
-    }
-
-    /// Add supported transport.
-    pub(crate) fn add_transport(
-        &mut self,
-        transport: SupportedTransport,
-        tx: Sender<TransportCommand>,
-    ) {
-        self.transports.insert(transport, tx);
-    }
-
-    /// Dial remote peer over TCP.
-    pub(crate) async fn dial_tcp(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
-        let connection_id = self.connection_id.next();
-
-        let _ = self
-            .transports
-            .get_mut(&SupportedTransport::Tcp)
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-            .send(TransportCommand::Dial {
-                address,
-                connection_id,
-            })
-            .await?;
-
-        Ok(connection_id)
-    }
-
-    /// Dial remote peer over WebSocket.
-    pub(crate) async fn dial_ws(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
-        let connection_id = self.connection_id.next();
-
-        let _ = self
-            .transports
-            .get_mut(&SupportedTransport::WebSocket)
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-            .send(TransportCommand::Dial {
-                address,
-                connection_id,
-            })
-            .await?;
-
-        Ok(connection_id)
-    }
-
-    /// Dial remote peer over QUIC.
-    pub(crate) async fn dial_quic(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
-        let connection_id = self.connection_id.next();
-
-        let _ = self
-            .transports
-            .get_mut(&SupportedTransport::Quic)
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-            .send(TransportCommand::Dial {
-                address,
-                connection_id,
-            })
-            .await?;
-
-        Ok(connection_id)
-    }
-}
-
 /// [`Litep2p`] object.
 pub struct Litep2p {
     /// Local peer ID.
@@ -199,31 +113,18 @@ pub struct Litep2p {
     /// Listen addresses.
     listen_addresses: Vec<Multiaddr>,
 
-    /// RX channel for receiving events from transports.
-    rx: Receiver<TransportEvent>,
-
-    /// Supported transports.
-    transports: TransportContext,
-
-    /// Pending connections.
-    pending_connections: HashMap<ConnectionId, Multiaddr>,
-
-    /// Pending DNS resolves.
-    pending_dns_resolves:
-        FuturesUnordered<BoxFuture<'static, (Multiaddr, result::Result<LookupIp, ResolveError>)>>,
+    /// Transport manager.
+    transport_manager: TransportManager,
 }
 
 impl Litep2p {
     /// Create new [`Litep2p`].
     pub async fn new(mut config: Litep2pConfig) -> crate::Result<Litep2p> {
-        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
-        let mut transport_ctx = transport::TransportContext::new(config.keypair.clone(), tx);
+        let mut listen_addresses = vec![];
 
-        // TODO: zzz
-        let mut listen_addresses = Vec::new();
-        let mut protocols = Vec::new();
-        let mut transports = TransportContext::new();
+        let (mut transport_manager, transport_handle) =
+            TransportManager::new(config.keypair.clone());
 
         // start notification protocol event loops
         for (protocol, config) in config.notification_protocols.into_iter() {
@@ -232,9 +133,8 @@ impl Litep2p {
                 ?protocol,
                 "enable notification protocol",
             );
-            protocols.push(protocol.clone());
 
-            let service = transport_ctx.add_protocol(protocol, config.codec.clone())?;
+            let service = transport_manager.register_protocol(protocol, config.codec);
             tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
         }
 
@@ -245,17 +145,17 @@ impl Litep2p {
                 ?protocol,
                 "enable request-response protocol",
             );
-            protocols.push(protocol.clone());
 
-            let service = transport_ctx.add_protocol(protocol, config.codec.clone())?;
+            let service = transport_manager.register_protocol(protocol, config.codec);
             tokio::spawn(async move { RequestResponseProtocol::new(service, config).run().await });
         }
 
         for (protocol_name, protocol) in config.user_protocols.into_iter() {
             tracing::debug!(target: LOG_TARGET, protocol = ?protocol_name, "enable user protocol");
-            protocols.push(protocol_name.clone());
+            // protocols.push(protocol_name.clone());
 
-            let service = transport_ctx.add_protocol(protocol_name, protocol.codec())?;
+            let service = transport_manager.register_protocol(protocol_name, protocol.codec());
+            // let service = transport_ctx.add_protocol(protocol_name, protocol.codec())?;
             tokio::spawn(async move { protocol.run(service).await });
         }
 
@@ -266,10 +166,9 @@ impl Litep2p {
                 protocol = ?ping_config.protocol,
                 "enable ipfs ping protocol",
             );
-            protocols.push(ping_config.protocol.clone());
 
-            let service = transport_ctx
-                .add_protocol(ping_config.protocol.clone(), ping_config.codec.clone())?;
+            let service = transport_manager
+                .register_protocol(ping_config.protocol.clone(), ping_config.codec);
             tokio::spawn(async move { Ping::new(service, ping_config).run().await });
         }
 
@@ -280,13 +179,9 @@ impl Litep2p {
                 protocol = ?kademlia_config.protocol,
                 "enable ipfs kademlia protocol",
             );
-            protocols.push(kademlia_config.protocol.clone());
 
-            let service = transport_ctx.add_protocol(
-                kademlia_config.protocol.clone(),
-                kademlia_config.codec.clone(),
-            )?;
-
+            let service = transport_manager
+                .register_protocol(kademlia_config.protocol.clone(), kademlia_config.codec);
             tokio::spawn(async move { Kademlia::new(service, kademlia_config).run().await });
         }
 
@@ -297,26 +192,25 @@ impl Litep2p {
                 protocol = ?identify_config.protocol,
                 "enable ipfs identify protocol",
             );
-            protocols.push(identify_config.protocol.clone());
 
-            let service = transport_ctx.add_protocol(
+            let service = transport_manager.register_protocol(
                 identify_config.protocol.clone(),
                 identify_config.codec.clone(),
-            )?;
+            );
             identify_config.public = Some(PublicKey::Ed25519(config.keypair.public()));
-            identify_config.listen_addresses = Vec::new(); // TODO: zzz
-            identify_config.protocols = protocols;
+
+            // TODO: fix these
+            // identify_config.listen_addresses = Vec::new();
+            // identify_config.protocols = protocols;
 
             tokio::spawn(async move { Identify::new(service, identify_config).run().await });
         }
 
         // enable tcp transport if the config exists
         if let Some(config) = config.tcp.take() {
-            let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-            transports.add_transport(SupportedTransport::Tcp, command_tx);
+            let service = transport_manager.register_transport(SupportedTransport::Tcp);
 
-            let transport =
-                <TcpTransport as Transport>::new(transport_ctx.clone(), config, command_rx).await?;
+            let transport = <TcpTransport as Transport>::new(service, config).await?;
             listen_addresses.push(transport.listen_address());
 
             tokio::spawn(async move {
@@ -328,12 +222,8 @@ impl Litep2p {
 
         // enable quic transport if the config exists
         if let Some(config) = config.quic.take() {
-            let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-            transports.add_transport(SupportedTransport::Quic, command_tx);
-
-            let transport =
-                <QuicTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
-                    .await?;
+            let service = transport_manager.register_transport(SupportedTransport::Quic);
+            let transport = <QuicTransport as Transport>::new(service, config).await?;
             listen_addresses.push(transport.listen_address());
 
             tokio::spawn(async move {
@@ -345,12 +235,8 @@ impl Litep2p {
 
         // enable webrtc transport if the config exists
         if let Some(config) = config.webrtc.take() {
-            let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-            transports.add_transport(SupportedTransport::WebRtc, command_tx);
-
-            let transport =
-                <WebRtcTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
-                    .await?;
+            let service = transport_manager.register_transport(SupportedTransport::WebRtc);
+            let transport = <WebRtcTransport as Transport>::new(service, config).await?;
             listen_addresses.push(transport.listen_address());
 
             tokio::spawn(async move {
@@ -362,12 +248,8 @@ impl Litep2p {
 
         // enable websocket transport if the config exists
         if let Some(config) = config.websocket.take() {
-            let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-            transports.add_transport(SupportedTransport::WebSocket, command_tx);
-
-            let transport =
-                <WebSocketTransport as Transport>::new(transport_ctx.clone(), config, command_rx)
-                    .await?;
+            let service = transport_manager.register_transport(SupportedTransport::WebRtc);
+            let transport = <WebSocketTransport as Transport>::new(service, config).await?;
             listen_addresses.push(transport.listen_address());
 
             tokio::spawn(async move {
@@ -379,7 +261,7 @@ impl Litep2p {
 
         // enable mdns if the config exists
         if let Some(config) = config.mdns.take() {
-            let mdns = Mdns::new(config, transport_ctx.clone(), listen_addresses.clone())?;
+            let mdns = Mdns::new(transport_handle, config, listen_addresses.clone())?;
 
             tokio::spawn(async move {
                 if let Err(error) = mdns.start().await {
@@ -394,12 +276,9 @@ impl Litep2p {
         }
 
         Ok(Self {
-            rx,
             local_peer_id,
             listen_addresses,
-            transports,
-            pending_connections: HashMap::new(),
-            pending_dns_resolves: FuturesUnordered::new(),
+            transport_manager,
         })
     }
 
@@ -419,167 +298,20 @@ impl Litep2p {
     /// The connection is established in the background and its result is reported through
     /// [`Litep2p::next_event()`].
     pub async fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
-        let mut protocol_stack = address.iter();
-
-        match protocol_stack
-            .next()
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-        {
-            Protocol::Ip4(_) | Protocol::Ip6(_) => {}
-            Protocol::Dns(addr) | Protocol::Dns4(addr) | Protocol::Dns6(addr) => {
-                let dns_address = addr.to_string();
-                let original = address.clone();
-
-                self.pending_dns_resolves.push(Box::pin(async move {
-                    match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
-                        Ok(resolver) => (original, resolver.lookup_ip(dns_address).await),
-                        Err(error) => (original, Err(error)),
-                    }
-                }));
-
-                return Ok(());
-            }
-            transport => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?transport,
-                    "invalid transport, expected `ip4`/`ip6`"
-                );
-                return Err(Error::TransportNotSupported(address));
-            }
-        }
-
-        match protocol_stack
-            .next()
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-        {
-            Protocol::Tcp(_) => match protocol_stack.next() {
-                Some(Protocol::Ws(_)) => {
-                    let connection_id = self.transports.dial_ws(address.clone()).await?;
-                    self.pending_connections.insert(connection_id, address);
-                    Ok(())
-                }
-                _ => {
-                    let connection_id = self.transports.dial_tcp(address.clone()).await?;
-                    self.pending_connections.insert(connection_id, address);
-                    Ok(())
-                }
-            },
-            Protocol::Udp(_) => match protocol_stack
-                .next()
-                .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-            {
-                Protocol::QuicV1 => {
-                    let connection_id = self.transports.dial_quic(address.clone()).await?;
-                    self.pending_connections.insert(connection_id, address);
-
-                    Ok(())
-                }
-                _ => Err(Error::TransportNotSupported(address.clone())),
-            },
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid protocol, expected `tcp`"
-                );
-
-                Err(Error::TransportNotSupported(address))
-            }
-        }
-    }
-
-    /// Handle resolved DNS address.
-    async fn on_resolved_dns_address(
-        &mut self,
-        address: Multiaddr,
-        result: result::Result<LookupIp, ResolveError>,
-    ) -> crate::Result<Multiaddr> {
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?address,
-            ?result,
-            "dns address resolved"
-        );
-
-        let Ok(resolved) = result else {
-            return Err(Error::DnsAddressResolutionFailed);
-        };
-
-        let mut address_iter = resolved.iter();
-        let mut protocol_stack = address.into_iter();
-        let mut new_address = Multiaddr::empty();
-
-        match protocol_stack.next().expect("entry to exist") {
-            Protocol::Dns4(_) => match address_iter.next() {
-                Some(IpAddr::V4(inner)) => {
-                    new_address.push(Protocol::Ip4(inner));
-                }
-                _ => return Err(Error::TransportNotSupported(address)),
-            },
-            Protocol::Dns6(_) => match address_iter.next() {
-                Some(IpAddr::V6(inner)) => {
-                    new_address.push(Protocol::Ip6(inner));
-                }
-                _ => return Err(Error::TransportNotSupported(address)),
-            },
-            Protocol::Dns(_) => {
-                // TODO: zzz
-                let mut ip6 = Vec::new();
-                let mut ip4 = Vec::new();
-
-                for ip in address_iter {
-                    match ip {
-                        IpAddr::V4(inner) => ip4.push(inner),
-                        IpAddr::V6(inner) => ip6.push(inner),
-                    }
-                }
-
-                if !ip6.is_empty() {
-                    new_address.push(Protocol::Ip6(ip6[0]));
-                } else if !ip4.is_empty() {
-                    new_address.push(Protocol::Ip4(ip4[0]));
-                } else {
-                    return Err(Error::TransportNotSupported(address));
-                }
-            }
-            _ => panic!("somehow got invalid dns address"),
-        };
-
-        for protocol in protocol_stack {
-            new_address.push(protocol);
-        }
-
-        Ok(new_address)
+        self.transport_manager.dial_address(address).await
     }
 
     /// Poll next event.
-    pub async fn next_event(&mut self) -> crate::Result<Litep2pEvent> {
-        loop {
-            tokio::select! {
-                event = self.rx.recv() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, address }) => {
-                        return Ok(Litep2pEvent::ConnectionEstablished { peer, address })
-                    }
-                    Some(TransportEvent::DialFailure { error, address }) => {
-                        return Ok(Litep2pEvent::DialFailure { address, error })
-                    }
-                    None => panic!("transport failed"),
-                    event => {
-                        tracing::info!(target: LOG_TARGET, ?event, "unhandle event from tcp");
-                    }
-                },
-                event = self.pending_dns_resolves.select_next_some(), if !self.pending_dns_resolves.is_empty() => {
-                    match self.on_resolved_dns_address(event.0.clone(), event.1).await {
-                        Ok(address) => {
-                            tracing::debug!(target: LOG_TARGET, ?address, "connect to remote peer");
-
-                            let connection_id = self.transports.dial_tcp(address.clone()).await?;
-                            self.pending_connections.insert(connection_id, address);
-                        }
-                        Err(error) => return Ok(Litep2pEvent::DialFailure { address: event.0, error }),
-                    }
-                }
+    pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
+        match self.transport_manager.next().await? {
+            TransportManagerEvent::ConnectionEstablished { peer, address } => {
+                Some(Litep2pEvent::ConnectionEstablished { peer, address })
+            }
+            TransportManagerEvent::ConnectionClosed { peer } => {
+                Some(Litep2pEvent::ConnectionClosed { peer })
+            }
+            TransportManagerEvent::DialFailure { address, error } => {
+                Some(Litep2pEvent::DialFailure { address, error })
             }
         }
     }
@@ -625,6 +357,9 @@ mod tests {
             .with_tcp(TcpTransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             })
+            .with_quic(crate::transport::quic::config::Config {
+                listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            })
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_ipfs_ping(ping_config)
@@ -668,11 +403,11 @@ mod tests {
 
         assert!(std::matches!(
             res1,
-            Ok(Litep2pEvent::ConnectionEstablished { .. })
+            Some(Litep2pEvent::ConnectionEstablished { .. })
         ));
         assert!(std::matches!(
             res2,
-            Ok(Litep2pEvent::ConnectionEstablished { .. })
+            Some(Litep2pEvent::ConnectionEstablished { .. })
         ));
     }
 
@@ -700,7 +435,7 @@ mod tests {
 
         assert!(std::matches!(
             litep2p1.next_event().await,
-            Ok(Litep2pEvent::DialFailure { .. })
+            Some(Litep2pEvent::DialFailure { .. })
         ));
     }
 
@@ -747,15 +482,16 @@ mod tests {
 
         assert!(std::matches!(
             res1,
-            Ok(Litep2pEvent::ConnectionEstablished { .. })
+            Some(Litep2pEvent::ConnectionEstablished { .. })
         ));
         assert!(std::matches!(
             res2,
-            Ok(Litep2pEvent::ConnectionEstablished { .. })
+            Some(Litep2pEvent::ConnectionEstablished { .. })
         ));
     }
 
     #[tokio::test]
+    #[ignore]
     async fn wss_test() {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

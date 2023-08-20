@@ -23,9 +23,8 @@ use crate::{
     crypto::PublicKey,
     error::{Error, SubstreamError},
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ConnectionService, Direction},
+    protocol::{Direction, Transport, TransportEvent, TransportService},
     substream::Substream,
-    transport::TransportService,
     types::{protocol::ProtocolName, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
@@ -119,7 +118,7 @@ pub struct Identify {
     tx: Sender<IdentifyEvent>,
 
     /// Connected peers.
-    peers: HashMap<PeerId, ConnectionService>,
+    peers: HashSet<PeerId>,
 
     // Public key of the local node, filled by `Litep2p`.
     public: PublicKey,
@@ -140,7 +139,7 @@ impl Identify {
         Self {
             service,
             tx: config.tx_event,
-            peers: HashMap::new(),
+            peers: HashSet::new(),
             public: config.public.expect("public key to be supplied"),
             listen_addresses: config.listen_addresses,
             pending_outbound: HashMap::new(),
@@ -153,16 +152,11 @@ impl Identify {
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(
-        &mut self,
-        peer: PeerId,
-        mut service: ConnectionService,
-    ) -> crate::Result<()> {
+    async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-        let substream_id = service.open_substream().await?;
+        let substream_id = self.service.open_substream(peer).await?;
         self.pending_outbound.insert(substream_id, peer);
-        self.peers.insert(peer, service);
 
         Ok(())
     }
@@ -260,8 +254,8 @@ impl Identify {
 
         while let Some(event) = self.service.next_event().await {
             match event {
-                ConnectionEvent::ConnectionEstablished { peer, service } => {
-                    if let Err(error) = self.on_connection_established(peer, service).await {
+                TransportEvent::ConnectionEstablished { peer, address } => {
+                    if let Err(error) = self.on_connection_established(peer).await {
                         tracing::debug!(
                             target: LOG_TARGET,
                             ?peer,
@@ -270,10 +264,10 @@ impl Identify {
                         );
                     }
                 }
-                ConnectionEvent::ConnectionClosed { peer } => {
+                TransportEvent::ConnectionClosed { peer } => {
                     self.on_connection_closed(peer);
                 }
-                ConnectionEvent::SubstreamOpened {
+                TransportEvent::SubstreamOpened {
                     peer,
                     protocol,
                     direction,
@@ -306,9 +300,10 @@ impl Identify {
                         }
                     }
                 },
-                ConnectionEvent::SubstreamOpenFailure { substream, error } => {
+                TransportEvent::SubstreamOpenFailure { substream, error } => {
                     self.on_substream_open_failure(substream, error);
                 }
+                _ => {}
             }
         }
     }

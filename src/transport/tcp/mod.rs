@@ -22,8 +22,9 @@ use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
+        manager::TransportManagerCommand,
         tcp::{config::TransportConfig, connection::TcpConnection},
-        Transport, TransportCommand, TransportContext,
+        Transport, TransportCommand,
     },
     types::ConnectionId,
 };
@@ -76,7 +77,7 @@ impl TcpError {
 #[derive(Debug)]
 pub struct TcpTransport {
     /// Transport context.
-    context: TransportContext,
+    context: crate::transport::manager::TransportHandle,
 
     /// TCP listener.
     listener: TcpListener,
@@ -92,9 +93,6 @@ pub struct TcpTransport {
 
     /// Pending connections.
     pending_connections: FuturesUnordered<BoxFuture<'static, Result<TcpConnection, TcpError>>>,
-
-    /// RX channel for receiving commands from `Litep2p`.
-    rx: Receiver<TransportCommand>,
 }
 
 impl TcpTransport {
@@ -160,9 +158,8 @@ impl Transport for TcpTransport {
 
     /// Create new [`TcpTransport`].
     async fn new(
-        context: TransportContext,
+        context: crate::transport::manager::TransportHandle,
         config: Self::Config,
-        rx: Receiver<TransportCommand>,
     ) -> crate::Result<Self> {
         tracing::info!(
             target: LOG_TARGET,
@@ -175,7 +172,6 @@ impl Transport for TcpTransport {
         let listen_address = listener.local_addr()?;
 
         Ok(Self {
-            rx,
             context,
             listener,
             listen_address,
@@ -196,12 +192,12 @@ impl Transport for TcpTransport {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
-                        let context = self.context.clone();
                         // TODO: verify that this won't clash with connection IDs received from `Litep2p`
+                        let protocol_set = self.context.protocol_set();
                         let connection_id = self.next_connection_id.next();
 
                         self.pending_connections.push(Box::pin(async move {
-                            TcpConnection::accept_connection(context, connection, connection_id, address)
+                            TcpConnection::accept_connection(protocol_set, connection, connection_id, address)
                                 .await
                                 .map_err(|error| TcpError::new(error, Some(connection_id)))
                         }));
@@ -220,7 +216,7 @@ impl Transport for TcpTransport {
                                 }
                             });
 
-                            self.context.report_connection_established(peer, address).await;
+                            // self.context.report_connection_established(peer, address).await;
                         }
                         Err(error) => {
                             match error.connection_id {
@@ -239,21 +235,21 @@ impl Transport for TcpTransport {
                         }
                     }
                 }
-                command = self.rx.recv() => match command {
+                command = self.context.next() => match command {
                     None => return Err(Error::EssentialTaskClosed),
                     Some(command) => match command {
-                        TransportCommand::Dial { address, connection_id } => {
+                        TransportManagerCommand::Dial { address, connection } => {
                             tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
-                            let context = self.context.clone();
-                            // TODO: this can't be right
+                            let protocol_set = self.context.protocol_set();
+                            // TODO: this can't be right (TODO: ???)
                             let (socket_address, peer) = Self::get_socket_address(&address)?;
 
-                            self.pending_dials.insert(connection_id, address);
+                            self.pending_dials.insert(connection, address);
                             self.pending_connections.push(Box::pin(async move {
-                                TcpConnection::open_connection(context, connection_id, socket_address, peer)
+                                TcpConnection::open_connection(protocol_set, connection, socket_address, peer)
                                     .await
-                                    .map_err(|error| TcpError::new(error, Some(connection_id)))
+                                    .map_err(|error| TcpError::new(error, Some(connection)))
                             }));
                         }
                     }
@@ -269,8 +265,12 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
-        protocol::ProtocolInfo,
-        transport::TransportEvent,
+        transport::{
+            manager::{
+                ProtocolContext, TransportHandle, TransportManagerCommand, TransportManagerEvent,
+            },
+            TransportEvent,
+        },
         types::protocol::ProtocolName,
     };
     use tokio::sync::mpsc::channel;
@@ -322,15 +322,16 @@ mod tests {
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
-        let (_command_tx1, command_rx1) = channel(64);
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
 
-        let context1 = TransportContext {
-            local_peer_id: PeerId::random(),
-            tx: event_tx1,
+        let handle1 = crate::transport::manager::TransportHandle {
             keypair: keypair1.clone(),
+            tx: event_tx1,
+            rx: cmd_rx1,
+
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
-                ProtocolInfo {
+                ProtocolContext {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                 },
@@ -340,9 +341,7 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let transport1 = TcpTransport::new(context1, transport_config1, command_rx1)
-            .await
-            .unwrap();
+        let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
 
         let listen_address = Transport::listen_address(&transport1);
         tokio::spawn(async move {
@@ -352,15 +351,16 @@ mod tests {
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
         let (event_tx2, mut event_rx2) = channel(64);
-        let (command_tx2, command_rx2) = channel(64);
+        let (cmd_tx2, cmd_rx2) = channel(64);
 
-        let context2 = TransportContext {
-            local_peer_id: PeerId::random(),
-            tx: event_tx2,
+        let handle2 = crate::transport::manager::TransportHandle {
             keypair: keypair2.clone(),
+            tx: event_tx2,
+            rx: cmd_rx2,
+
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
-                ProtocolInfo {
+                ProtocolContext {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                 },
@@ -370,9 +370,7 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let transport2 = TcpTransport::new(context2, transport_config2, command_rx2)
-            .await
-            .unwrap();
+        let transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
 
         tokio::spawn(async move {
             let _ = transport2.start().await;
@@ -381,10 +379,10 @@ mod tests {
         let _peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let _peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
 
-        command_tx2
-            .send(TransportCommand::Dial {
+        cmd_tx2
+            .send(TransportManagerCommand::Dial {
                 address: listen_address,
-                connection_id: ConnectionId::new(),
+                connection: ConnectionId::new(),
             })
             .await
             .unwrap();
@@ -393,11 +391,11 @@ mod tests {
 
         assert!(std::matches!(
             res1,
-            Some(TransportEvent::ConnectionEstablished { .. })
+            Some(TransportManagerEvent::ConnectionEstablished { .. })
         ));
         assert!(std::matches!(
             res2,
-            Some(TransportEvent::ConnectionEstablished { .. })
+            Some(TransportManagerEvent::ConnectionEstablished { .. })
         ));
     }
 
@@ -410,15 +408,16 @@ mod tests {
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
-        let (_command_tx1, command_rx1) = channel(64);
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
 
-        let context1 = TransportContext {
-            local_peer_id: PeerId::random(),
-            tx: event_tx1,
+        let handle1 = crate::transport::manager::TransportHandle {
             keypair: keypair1.clone(),
+            tx: event_tx1,
+            rx: cmd_rx1,
+
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
-                ProtocolInfo {
+                ProtocolContext {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                 },
@@ -428,24 +427,23 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let transport1 = TcpTransport::new(context1, transport_config1, command_rx1)
-            .await
-            .unwrap();
+        let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
 
         tokio::spawn(transport1.start());
 
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
         let (event_tx2, mut event_rx2) = channel(64);
-        let (command_tx2, command_rx2) = channel(64);
+        let (cmd_tx2, cmd_rx2) = channel(64);
 
-        let context2 = TransportContext {
-            local_peer_id: PeerId::random(),
-            tx: event_tx2,
+        let handle2 = crate::transport::manager::TransportHandle {
             keypair: keypair2.clone(),
+            tx: event_tx2,
+            rx: cmd_rx2,
+
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
-                ProtocolInfo {
+                ProtocolContext {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                 },
@@ -455,9 +453,7 @@ mod tests {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
         };
 
-        let transport2 = TcpTransport::new(context2, transport_config2, command_rx2)
-            .await
-            .unwrap();
+        let transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
         tokio::spawn(transport2.start());
 
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
@@ -465,10 +461,10 @@ mod tests {
 
         tracing::info!(target: LOG_TARGET, "peer1 {peer1}, peer2 {peer2}");
 
-        command_tx2
-            .send(TransportCommand::Dial {
+        cmd_tx2
+            .send(TransportManagerCommand::Dial {
                 address: "/ip6/::1/tcp/1".parse().unwrap(),
-                connection_id: ConnectionId::new(),
+                connection: ConnectionId::new(),
             })
             .await
             .unwrap();
@@ -482,7 +478,7 @@ mod tests {
 
         assert!(std::matches!(
             event_rx2.recv().await,
-            Some(TransportEvent::DialFailure { .. })
+            Some(TransportManagerEvent::DialFailure { .. })
         ));
     }
 

@@ -30,10 +30,9 @@ use crate::{
             routing_table::RoutingTable,
             types::{ConnectionType, KademliaPeer, Key},
         },
-        ConnectionEvent, ConnectionService, Direction,
+        Direction, Transport, TransportEvent, TransportService,
     },
     substream::{Substream, SubstreamSet},
-    transport::TransportService,
     types::SubstreamId,
 };
 
@@ -84,7 +83,7 @@ mod schema {
 /// Peer context.
 struct PeerContext {
     /// Connection service for the peer.
-    service: ConnectionService,
+    service: (),
 
     /// Pending query ID, if any.
     query: Option<QueryId>,
@@ -92,7 +91,7 @@ struct PeerContext {
 
 impl PeerContext {
     /// Create new [`PeerContext`].
-    fn new(service: ConnectionService) -> Self {
+    fn new(service: ()) -> Self {
         Self {
             service,
             query: None,
@@ -135,7 +134,7 @@ pub struct Kademlia {
 impl Kademlia {
     /// Create new [`Kademlia`].
     pub fn new(service: TransportService, config: Config) -> Self {
-        let local_key = Key::from(service.local_peer_id());
+        let local_key = Key::from(service.local_peer_id);
 
         Self {
             service,
@@ -150,17 +149,13 @@ impl Kademlia {
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(
-        &mut self,
-        peer: PeerId,
-        mut service: ConnectionService,
-    ) -> crate::Result<()> {
+    async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
                 // TODO: add peer to routing table
-                entry.insert(PeerContext::new(service));
+                entry.insert(PeerContext::new(()));
                 Ok(())
             }
             Entry::Occupied(_) => return Err(Error::PeerAlreadyExists(peer)),
@@ -215,7 +210,7 @@ impl Kademlia {
                         }
                     }
                     None => match self.peers.get_mut(&peer.peer) {
-                        Some(context) => match context.service.open_substream().await {
+                        Some(context) => match self.service.open_substream(peer.peer).await {
                             Ok(substream_id) => context.add_pending_query(query_id),
                             Err(error) => {
                                 // TODO: disconenct peer?
@@ -418,15 +413,15 @@ impl Kademlia {
         loop {
             tokio::select! {
                 event = self.service.next_event() => match event {
-                    Some(ConnectionEvent::ConnectionEstablished { peer, service }) => {
-                        if let Err(error) = self.on_connection_established(peer, service).await {
+                    Some(TransportEvent::ConnectionEstablished { peer, address }) => {
+                        if let Err(error) = self.on_connection_established(peer).await {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to handle established connection");
                         }
                     }
-                    Some(ConnectionEvent::ConnectionClosed { peer }) => {
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.disconnect_peer(peer).await;
                     }
-                    Some(ConnectionEvent::SubstreamOpened { peer, direction, substream, .. }) => {
+                    Some(TransportEvent::SubstreamOpened { peer, direction, substream, .. }) => {
                         match direction {
                             Direction::Inbound => {
                                 if let Err(error) = self.on_inbound_substream(peer, substream).await {
@@ -451,9 +446,10 @@ impl Kademlia {
                             }
                         }
                     },
-                    Some(ConnectionEvent::SubstreamOpenFailure { substream, error }) => {
+                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error);
                     }
+                    Some(TransportEvent::DialFailure { .. }) => todo!(),
                     None => return Err(Error::EssentialTaskClosed),
                 },
                 command = self.cmd_rx.recv() => {
@@ -497,23 +493,28 @@ impl Kademlia {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{codec::ProtocolCodec, types::protocol::ProtocolName};
+    use crate::{
+        codec::ProtocolCodec, crypto::ed25519::Keypair, transport::manager::TransportManager,
+        types::protocol::ProtocolName,
+    };
     use tokio::sync::mpsc::channel;
 
     struct Context {
-        tx: Sender<ConnectionEvent>,
         cmd_tx: Sender<KademliaCommand>,
         event_rx: Receiver<KademliaEvent>,
     }
 
-    fn make_kademlia() -> (Kademlia, Context) {
+    fn make_kademlia() -> (Kademlia, Context, TransportManager) {
+        let (manager, handle) = TransportManager::new(Keypair::generate());
+
         let peer = PeerId::random();
-        let (transport_service, tx) = TransportService::new(peer);
+        let (transport_service, tx) =
+            TransportService::new(peer, ProtocolName::from("/kad/1"), handle);
         let (event_tx, event_rx) = channel(64);
         let (cmd_tx, cmd_rx) = channel(64);
 
         let config = Config {
-            protocol: ProtocolName::from("/kad/"),
+            protocol: ProtocolName::from("/kad/1"),
             codec: ProtocolCodec::UnsignedVarint,
             replication_factor: 20usize,
             event_tx,
@@ -522,18 +523,15 @@ mod tests {
 
         (
             Kademlia::new(transport_service, config),
-            Context {
-                tx,
-                cmd_tx,
-                event_rx,
-            },
+            Context { cmd_tx, event_rx },
+            manager,
         )
     }
 
     #[tokio::test]
     #[ignore]
     async fn find_node_no_peers() {
-        let (mut kad, _context) = make_kademlia();
+        let (mut kad, _context, _) = make_kademlia();
 
         assert!(std::matches!(
             kad.on_find_node(PeerId::random()).await,

@@ -23,8 +23,9 @@ use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
+        manager::TransportManagerCommand,
         quic::{config::Config, connection::QuicConnection},
-        Transport, TransportCommand, TransportContext, TransportEvent,
+        Transport, TransportCommand, TransportEvent,
     },
     types::ConnectionId,
 };
@@ -66,7 +67,7 @@ pub(crate) struct QuicTransport {
     server: Server,
 
     /// Transport context.
-    context: TransportContext,
+    context: crate::transport::manager::TransportHandle,
 
     /// Assigned listen addresss.
     listen_address: SocketAddr,
@@ -83,9 +84,6 @@ pub(crate) struct QuicTransport {
     pending_connections: FuturesUnordered<
         BoxFuture<'static, (ConnectionId, PeerId, Result<Connection, ConnectionError>)>,
     >,
-
-    /// RX channel for receiving commands from `Litep2p`.
-    command_rx: Receiver<TransportCommand>,
 
     /// RX channel for receiving the client `PeerId`.
     rx: Receiver<PeerId>,
@@ -158,9 +156,8 @@ impl Transport for QuicTransport {
 
     /// Create new [`QuicTransport`] object.
     async fn new(
-        context: TransportContext,
+        context: crate::transport::manager::TransportHandle,
         config: Self::Config,
-        command_rx: Receiver<TransportCommand>,
     ) -> crate::Result<Self>
     where
         Self: Sized,
@@ -188,7 +185,6 @@ impl Transport for QuicTransport {
             _tx,
             server,
             context,
-            command_rx,
             listen_address,
             connection_id: ConnectionId::new(),
             pending_dials: HashMap::new(),
@@ -209,7 +205,7 @@ impl Transport for QuicTransport {
                     Some(connection) => {
                         // TODO: verify that this can't clash with `Litep2p`'s connection id
                         let connection_id = self.connection_id.next();
-                        let context = self.context.clone();
+                        // let context = self.context.clone();
                         let address = socket_addr_to_multi_addr(&connection.remote_addr().expect("remote address to be known"));
 
                         let peer = match self.rx.try_recv() {
@@ -222,12 +218,15 @@ impl Transport for QuicTransport {
 
                         // the only way `QuiConnection::new()` can fail if the protocols have exited.
                         // at which point the transport can be closed as well
+                        let mut protocol_set = self.context.protocol_set();
+                        protocol_set.report_connection_established(peer, address.clone()).await?;
+
                         let quic_connection = QuicConnection::new(
                             peer,
-                            context,
+                            protocol_set,
                             connection,
                             connection_id
-                        ).await?;
+                        );
 
                         tracing::info!(target: LOG_TARGET, ?address, ?peer, "accepted connection from remote peer");
 
@@ -236,8 +235,6 @@ impl Transport for QuicTransport {
                                 tracing::debug!(target: LOG_TARGET, ?error, "quic connection exited with an error");
                             }
                         });
-
-                        self.context.report_connection_established(peer, address).await;
                     }
                     None => {
                         tracing::error!(target: LOG_TARGET, "failed to accept connection, closing quic transport");
@@ -250,21 +247,15 @@ impl Transport for QuicTransport {
                     match result {
                         Ok(connection) => {
                             // TODO: remove from pending diadls
-                            let context = self.context.clone();
+                            let mut protocol_set = self.context.protocol_set();
+                            protocol_set.report_connection_established(peer, Multiaddr::empty()).await?; // TODO: fix address
+
                             tokio::spawn(async move {
-                                // TODO: no unwraps
-                                let quic_connection = QuicConnection::new(peer, context, connection, connection_id).await.unwrap();
+                                let quic_connection = QuicConnection::new(peer, protocol_set, connection, connection_id);
                                 if let Err(error) = quic_connection.start().await {
                                     tracing::debug!(target: LOG_TARGET, ?error, "quic connection exited with an error");
                                 }
                             });
-
-                            // the only way this can fail is if the `Litep2p` has shut down at which
-                            // point transport can be closed as well.
-                            self.context.tx.send(TransportEvent::ConnectionEstablished {
-                                peer: PeerId::random(),
-                                address: Multiaddr::empty()
-                            }).await?;
                         }
                         Err(error) => match self.pending_dials.remove(&connection_id) {
                             Some(address) => self.context.report_dial_failure(
@@ -279,11 +270,10 @@ impl Transport for QuicTransport {
                         },
                     }
                 }
-                command = self.command_rx.recv() => match command.ok_or(Error::EssentialTaskClosed)? {
-                    TransportCommand::Dial { address, connection_id } => {
+                command = self.context.next() => match command.ok_or(Error::EssentialTaskClosed)? {
+                    TransportManagerCommand::Dial { address, connection } => {
                         tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
-                        let _context = self.context.clone();
                         let (socket_address, Some(peer)) = Self::get_socket_address(&address)? else {
                             let _ = self.context
                                 .report_dial_failure(
@@ -305,9 +295,9 @@ impl Transport for QuicTransport {
 
                         let connect = Connect::new(socket_address).with_server_name("localhost");
 
-                        self.pending_dials.insert(connection_id, address);
+                        self.pending_dials.insert(connection, address);
                         self.pending_connections.push(Box::pin(async move {
-                            (connection_id, peer, client.connect(connect).await)
+                            (connection, peer, client.connect(connect).await)
                         }));
                     }
                 }
@@ -322,7 +312,9 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
-        protocol::ProtocolInfo,
+        transport::manager::{
+            ProtocolContext, TransportHandle, TransportManagerCommand, TransportManagerEvent,
+        },
         types::protocol::ProtocolName,
     };
     use tokio::sync::mpsc::channel;
@@ -338,13 +330,13 @@ mod tests {
         let (event_tx1, mut event_rx1) = channel(64);
         let (_command_tx1, command_rx1) = channel(64);
 
-        let context1 = TransportContext {
-            local_peer_id: PeerId::random(),
+        let handle1 = TransportHandle {
             tx: event_tx1,
+            rx: command_rx1,
             keypair: keypair1.clone(),
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
-                ProtocolInfo {
+                ProtocolContext {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                 },
@@ -354,7 +346,7 @@ mod tests {
             listen_address: "/ip4/127.0.0.1/udp/8888/quic-v1".parse().unwrap(),
         };
 
-        let transport1 = QuicTransport::new(context1, transport_config1, command_rx1)
+        let transport1 = QuicTransport::new(handle1, transport_config1)
             .await
             .unwrap();
 
@@ -370,13 +362,13 @@ mod tests {
         let (event_tx2, mut event_rx2) = channel(64);
         let (command_tx2, command_rx2) = channel(64);
 
-        let context2 = TransportContext {
-            local_peer_id: PeerId::random(),
+        let handle2 = TransportHandle {
             tx: event_tx2,
+            rx: command_rx2,
             keypair: keypair2.clone(),
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
-                ProtocolInfo {
+                ProtocolContext {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                 },
@@ -386,15 +378,15 @@ mod tests {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         };
 
-        let transport2 = QuicTransport::new(context2, transport_config2, command_rx2)
+        let transport2 = QuicTransport::new(handle2, transport_config2)
             .await
             .unwrap();
         tokio::spawn(transport2.start());
 
         command_tx2
-            .send(TransportCommand::Dial {
+            .send(TransportManagerCommand::Dial {
                 address: listen_address,
-                connection_id: ConnectionId::new(),
+                connection: ConnectionId::new(),
             })
             .await
             .unwrap();
@@ -403,11 +395,11 @@ mod tests {
 
         assert!(std::matches!(
             res1,
-            Some(TransportEvent::ConnectionEstablished { .. })
+            Some(TransportManagerEvent::ConnectionEstablished { .. })
         ));
         assert!(std::matches!(
             res2,
-            Some(TransportEvent::ConnectionEstablished { .. })
+            Some(TransportManagerEvent::ConnectionEstablished { .. })
         ));
     }
 }

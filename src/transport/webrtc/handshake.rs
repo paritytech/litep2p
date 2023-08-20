@@ -31,14 +31,11 @@ use crate::{
     peer_id::PeerId,
     protocol::{Direction, ProtocolSet},
     substream::{channel::SubstreamBackend, SubstreamType},
-    transport::{
-        webrtc::{
-            connection::WebRtcConnection,
-            schema,
-            util::{SubstreamContext, WebRtcMessage},
-            WebRtcEvent,
-        },
-        TransportContext,
+    transport::webrtc::{
+        connection::WebRtcConnection,
+        schema,
+        util::{SubstreamContext, WebRtcMessage},
+        WebRtcEvent,
     },
     types::{ConnectionId, SubstreamId},
 };
@@ -106,9 +103,6 @@ enum State {
         /// Noise handshaker.
         handshaker: NoiseContext,
 
-        /// Protocol context.
-        context: ProtocolSet,
-
         /// Remote peer ID.
         peer: PeerId,
     },
@@ -131,8 +125,8 @@ pub(super) struct WebRtcHandshake {
     /// Connection state.
     state: State,
 
-    /// Transport context.
-    context: TransportContext,
+    /// Protocol set.
+    protocol_set: ProtocolSet,
 
     /// WebRTC data channels.
     channels: HashMap<SubstreamId, SubstreamContext>,
@@ -165,7 +159,7 @@ impl WebRtcHandshake {
         connection_id: ConnectionId,
         _noise_channel_id: ChannelId,
         id_keypair: Keypair,
-        context: TransportContext,
+        protocol_set: ProtocolSet,
         peer_address: SocketAddr,
         local_address: SocketAddr,
         socket: Arc<UdpSocket>,
@@ -175,7 +169,7 @@ impl WebRtcHandshake {
             rtc,
             socket,
             dgram_rx,
-            context,
+            protocol_set,
             id_keypair,
             peer_address,
             local_address,
@@ -395,15 +389,12 @@ impl WebRtcHandshake {
             .with(Protocol::Certhash(certificate))
             .with(Protocol::P2p(PeerId::from(public_key).into()));
 
-        let context =
-            ProtocolSet::from_transport_context(remote_peer_id, self.context.clone()).await?;
-        self.context
+        self.protocol_set
             .report_connection_established(remote_peer_id, address)
-            .await;
+            .await?;
 
         self.state = State::Open {
             handshaker,
-            context,
             peer: remote_peer_id,
         };
 
@@ -419,7 +410,7 @@ impl WebRtcHandshake {
             .ok_or(Error::InvalidData)?;
 
         let (protocol, response) =
-            listener_negotiate(&mut self.context.protocols.keys(), payload.into())?;
+            listener_negotiate(&mut self.protocol_set.protocols.keys(), payload.into())?;
 
         let message = WebRtcMessage::encode(response.to_vec(), None);
 
@@ -435,8 +426,9 @@ impl WebRtcHandshake {
         self.channels
             .insert(substream_id, SubstreamContext::new(d.id, tx));
 
-        if let State::Open { context, peer, .. } = &mut self.state {
-            let _ = context
+        if let State::Open { peer, .. } = &mut self.state {
+            let _ = self
+                .protocol_set
                 .report_substream_open(
                     *peer,
                     protocol.clone(),
@@ -555,22 +547,16 @@ impl WebRtcHandshake {
             }
 
             // start webrtc connection event lopp
-            if let State::Open {
-                peer,
-                handshaker,
-                context,
-            } = self.state
-            {
+            if let State::Open { peer, handshaker } = self.state {
                 let res = WebRtcConnection::new(
                     self.rtc,
                     peer,
                     self.peer_address,
                     self.local_address,
-                    self.context,
                     self.socket,
                     self.dgram_rx,
                     handshaker,
-                    context,
+                    self.protocol_set,
                 )
                 .run()
                 .await;

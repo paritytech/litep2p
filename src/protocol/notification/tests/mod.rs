@@ -19,12 +19,13 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    crypto::ed25519::Keypair,
     peer_id::PeerId,
     protocol::{
         notification::{handle::NotificationHandle, types::Config, NotificationProtocol},
-        ConnectionEvent, ConnectionService, ProtocolEvent,
+        ProtocolCommand, TransportEvent, TransportService,
     },
-    transport::TransportService,
+    transport::manager::TransportManager,
     types::protocol::ProtocolName,
 };
 
@@ -36,13 +37,11 @@ mod notification;
 mod substream_validation;
 
 /// create new `NotificationProtocol`
-fn make_notification_protocol() -> (
-    NotificationProtocol,
-    NotificationHandle,
-    Sender<ConnectionEvent>,
-) {
-    // TODO: fix
-    let (service, sender) = TransportService::new(PeerId::random());
+fn make_notification_protocol() -> (NotificationProtocol, NotificationHandle, TransportManager) {
+    let (manager, handle) = TransportManager::new(Keypair::generate());
+
+    let peer = PeerId::random();
+    let (transport_service, tx) = TransportService::new(peer, ProtocolName::from("/kad/1"), handle);
     let (config, handle) = Config::new(
         ProtocolName::from("/notif/1"),
         1024usize,
@@ -50,16 +49,16 @@ fn make_notification_protocol() -> (
         Vec::new(),
     );
 
-    (NotificationProtocol::new(service, config), handle, sender)
+    (
+        NotificationProtocol::new(transport_service, config),
+        handle,
+        manager,
+    )
 }
 
 /// add new peer to `NotificationProtocol`
-fn add_peer() -> (PeerId, ConnectionService, Receiver<ProtocolEvent>) {
+fn add_peer() -> (PeerId, (), Receiver<ProtocolCommand>) {
     let (tx, rx) = channel(64);
 
-    (
-        PeerId::random(),
-        ConnectionService::new(ProtocolName::from("/notif/1"), tx),
-        rx,
-    )
+    (PeerId::random(), (), rx)
 }

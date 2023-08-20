@@ -30,10 +30,9 @@ use crate::{
                 SYNC_CHANNEL_SIZE,
             },
         },
-        ConnectionEvent, ConnectionService, Direction,
+        Direction, Transport, TransportEvent, TransportService,
     },
     substream::{Substream, SubstreamSet},
-    transport::TransportService,
     types::{protocol::ProtocolName, SubstreamId},
 };
 
@@ -155,7 +154,7 @@ pub enum PeerState {
 #[derive(Debug)]
 struct PeerContext {
     /// Connection service.
-    service: ConnectionService,
+    service: (),
 
     /// Peer state.
     state: PeerState,
@@ -163,7 +162,7 @@ struct PeerContext {
 
 impl PeerContext {
     /// Create new [`PeerContext`].
-    fn new(service: ConnectionService) -> Self {
+    fn new(service: ()) -> Self {
         Self {
             service,
             state: PeerState::Closed { pending_open: None },
@@ -213,16 +212,12 @@ impl NotificationProtocol {
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(
-        &mut self,
-        peer: PeerId,
-        service: ConnectionService,
-    ) -> crate::Result<()> {
+    async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                entry.insert(PeerContext::new(service));
+                entry.insert(PeerContext::new(()));
                 Ok(())
             }
             Entry::Occupied(_) => {
@@ -431,7 +426,7 @@ impl NotificationProtocol {
         // protocol can only request a new outbound substream to be opened if the state is `Closed`
         if let PeerState::Closed { .. } = std::mem::replace(&mut context.state, PeerState::Poisoned)
         {
-            let substream = context.service.open_substream().await?;
+            let substream = self.service.open_substream(peer).await?;
             context.state = PeerState::OutboundInitiated { substream };
         }
 
@@ -580,7 +575,7 @@ impl NotificationProtocol {
                     Ok(())
                 }
                 ValidationResult::Accept => match outbound {
-                    OutboundState::Closed => match context.service.open_substream().await {
+                    OutboundState::Closed => match self.service.open_substream(peer).await {
                         Ok(substream) => {
                             self.negotiation.send_handshake(peer, inbound);
                             context.state = PeerState::Validating {
@@ -786,8 +781,8 @@ impl NotificationProtocol {
         loop {
             tokio::select! {
                 event = self.service.next_event() => match event {
-                    Some(ConnectionEvent::ConnectionEstablished { peer, service }) => {
-                        if let Err(error) = self.on_connection_established(peer, service).await {
+                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
+                        if let Err(error) = self.on_connection_established(peer).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
@@ -796,7 +791,7 @@ impl NotificationProtocol {
                             );
                         }
                     }
-                    Some(ConnectionEvent::ConnectionClosed { peer }) => {
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
                         if let Err(error) = self.on_connection_closed(peer).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -806,7 +801,7 @@ impl NotificationProtocol {
                             );
                         }
                     }
-                    Some(ConnectionEvent::SubstreamOpened {
+                    Some(TransportEvent::SubstreamOpened {
                         peer,
                         substream,
                         direction,
@@ -836,9 +831,10 @@ impl NotificationProtocol {
                             }
                         }
                     },
-                    Some(ConnectionEvent::SubstreamOpenFailure { substream, error }) => {
+                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error);
                     }
+                    Some(TransportEvent::DialFailure { .. }) => todo!(),
                     None => return,
                 },
                 command = self.command_rx.recv() => match command {

@@ -26,10 +26,9 @@ use crate::{
         request_response::types::{
             RequestResponseCommand, RequestResponseError, RequestResponseEvent,
         },
-        ConnectionEvent, ConnectionService, Direction,
+        Direction, Transport, TransportEvent, TransportService,
     },
     substream::Substream,
-    transport::TransportService,
     types::{RequestId, SubstreamId},
 };
 
@@ -77,7 +76,7 @@ impl RequestContext {
 /// Peer context.
 struct PeerContext {
     /// Connection service.
-    service: ConnectionService,
+    service: (),
 
     /// Active requests.
     active: HashSet<RequestId>,
@@ -85,7 +84,7 @@ struct PeerContext {
 
 impl PeerContext {
     /// Create new [`PeerContext`].
-    fn new(service: ConnectionService) -> Self {
+    fn new(service: ()) -> Self {
         Self {
             service,
             active: HashSet::new(),
@@ -147,16 +146,12 @@ impl RequestResponseProtocol {
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(
-        &mut self,
-        peer: PeerId,
-        service: ConnectionService,
-    ) -> crate::Result<()> {
+    async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                entry.insert(PeerContext::new(service));
+                entry.insert(PeerContext::new(()));
                 Ok(())
             }
             Entry::Occupied(_) => {
@@ -329,7 +324,7 @@ impl RequestResponseProtocol {
 
         // open substream and push it pending outbound substreams
         // once the substream is opened, send the request.
-        let substream_id = context.service.open_substream().await?;
+        let substream_id = self.service.open_substream(peer).await?;
         self.pending_outbound
             .insert(substream_id, RequestContext::new(request_id, request));
 
@@ -387,8 +382,8 @@ impl RequestResponseProtocol {
         loop {
             tokio::select! {
                 event = self.service.next_event() => match event {
-                    Some(ConnectionEvent::ConnectionEstablished { peer, service }) => {
-                        if let Err(error) = self.on_connection_established(peer, service).await {
+                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
+                        if let Err(error) = self.on_connection_established(peer).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
@@ -397,10 +392,10 @@ impl RequestResponseProtocol {
                             );
                         }
                     }
-                    Some(ConnectionEvent::ConnectionClosed { peer }) => {
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.on_connection_closed(peer);
                     }
-                    Some(ConnectionEvent::SubstreamOpened {
+                    Some(TransportEvent::SubstreamOpened {
                         peer,
                         substream,
                         direction,
@@ -430,9 +425,10 @@ impl RequestResponseProtocol {
                             }
                         }
                     },
-                    Some(ConnectionEvent::SubstreamOpenFailure { substream, error }) => {
+                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error);
                     }
+                    Some(TransportEvent::DialFailure { .. }) => todo!(),
                     None => return,
                 },
                 command = self.command_rx.recv() => match command {

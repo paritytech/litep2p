@@ -23,7 +23,8 @@ use crate::{
     crypto::{ed25519::Keypair, PublicKey},
     error::Error,
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ProtocolEvent, ProtocolInfo},
+    protocol::ProtocolSet,
+    transport::manager::TransportHandle,
     types::{protocol::ProtocolName, ConnectionId},
     DEFAULT_CHANNEL_SIZE,
 };
@@ -37,6 +38,8 @@ pub mod quic;
 pub mod tcp;
 pub mod webrtc;
 pub mod websocket;
+
+pub(crate) mod manager;
 
 /// Commands send by `Litep2p` to the transport.
 #[derive(Debug)]
@@ -82,9 +85,8 @@ pub(crate) trait Transport {
 
     /// Create new [`Transport`] object.
     async fn new(
-        context: TransportContext,
+        context: crate::transport::manager::TransportHandle,
         config: Self::Config,
-        rx: Receiver<TransportCommand>,
     ) -> crate::Result<Self>
     where
         Self: Sized;
@@ -94,108 +96,4 @@ pub(crate) trait Transport {
 
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()>;
-}
-
-#[derive(Debug)]
-pub struct TransportService {
-    rx: Receiver<ConnectionEvent>,
-    local_peer_id: PeerId,
-    // TODO: what is this used for?
-    _peers: HashMap<PeerId, Sender<ProtocolEvent>>,
-}
-
-impl TransportService {
-    /// Create new [`ConnectionService`].
-    pub fn new(local_peer_id: PeerId) -> (Self, Sender<ConnectionEvent>) {
-        // TODO: maybe specify some other channel size
-        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
-
-        (
-            Self {
-                rx,
-                local_peer_id,
-                _peers: HashMap::new(),
-            },
-            tx,
-        )
-    }
-
-    /// Get local peer ID.
-    pub fn local_peer_id(&self) -> PeerId {
-        self.local_peer_id
-    }
-
-    /// Get next event from the transport.
-    pub async fn next_event(&mut self) -> Option<ConnectionEvent> {
-        self.rx.recv().await
-    }
-}
-
-/// Transport context.
-#[derive(Debug, Clone)]
-pub struct TransportContext {
-    /// Enabled protocols.
-    pub(crate) protocols: HashMap<ProtocolName, ProtocolInfo>,
-
-    /// Keypair.
-    pub(crate) keypair: Keypair,
-
-    /// Local peer ID.
-    pub(crate) local_peer_id: PeerId,
-
-    /// TX channel for sending events to [`Litep2p`].
-    tx: Sender<TransportEvent>,
-}
-
-impl TransportContext {
-    /// Create new [`TransportContext`].
-    pub fn new(keypair: Keypair, tx: Sender<TransportEvent>) -> Self {
-        Self {
-            tx,
-            keypair: keypair.clone(),
-            protocols: HashMap::new(),
-            local_peer_id: PeerId::from_public_key(&PublicKey::Ed25519(keypair.public())),
-        }
-    }
-
-    /// Add new protocol.
-    pub fn add_protocol(
-        &mut self,
-        protocol: ProtocolName,
-        codec: ProtocolCodec,
-    ) -> crate::Result<TransportService> {
-        let (service, tx) = TransportService::new(self.local_peer_id);
-
-        match self
-            .protocols
-            .insert(protocol.clone(), ProtocolInfo { tx, codec })
-        {
-            Some(_) => Err(Error::ProtocolAlreadyExists(protocol)),
-            None => Ok(service),
-        }
-    }
-
-    /// Report to `Litep2p` that a peer connected.
-    pub(crate) async fn report_connection_established(&mut self, peer: PeerId, address: Multiaddr) {
-        let _ = self
-            .tx
-            .send(TransportEvent::ConnectionEstablished { peer, address })
-            .await;
-    }
-
-    /// Report to `Litep2p` that a peer disconnected.
-    pub(crate) async fn _report_connection_closed(&mut self, peer: PeerId) {
-        let _ = self
-            .tx
-            .send(TransportEvent::ConnectionClosed { peer })
-            .await;
-    }
-
-    /// Report to `Litep2p` that dialing a remote peer failed.
-    pub(crate) async fn report_dial_failure(&mut self, address: Multiaddr, error: Error) {
-        let _ = self
-            .tx
-            .send(TransportEvent::DialFailure { address, error })
-            .await;
-    }
 }

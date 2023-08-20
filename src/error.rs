@@ -104,6 +104,10 @@ pub enum Error {
     ChannelDoesntExist,
     #[error("Tried to dial self")]
     TriedToDialSelf,
+    #[error("Litep2p is already connected to the peer")]
+    AlreadyConnected,
+    #[error("No addres available for `{0}`")]
+    NoAddressAvailable(PeerId),
 }
 
 #[derive(Debug, thiserror::Error)]

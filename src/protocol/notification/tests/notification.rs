@@ -35,7 +35,7 @@ use crate::{
             },
             InboundState, OutboundState, PeerContext, PeerState,
         },
-        ProtocolEvent,
+        ProtocolCommand,
     },
     types::protocol::ProtocolName,
 };
@@ -57,7 +57,7 @@ async fn sync_notifications_clogged() {
     notif.peers.insert(
         peer,
         PeerContext {
-            service,
+            service: (),
             state: PeerState::Validating {
                 protocol: ProtocolName::from("/notif/1"),
                 outbound: OutboundState::Open {
@@ -113,7 +113,7 @@ async fn async_notifications_clogged() {
     notif.peers.insert(
         peer,
         PeerContext {
-            service,
+            service: (),
             state: PeerState::Validating {
                 protocol: ProtocolName::from("/notif/1"),
                 outbound: OutboundState::Open {

@@ -23,9 +23,8 @@ use crate::{
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
-    protocol::{Direction, ProtocolEvent, ProtocolSet},
+    protocol::{Direction, ProtocolCommand, ProtocolSet},
     substream::SubstreamType,
-    transport::TransportContext,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
@@ -99,20 +98,20 @@ pub struct Substream {
 
 impl QuicConnection {
     /// Create new [`QuiConnection`].
-    pub(crate) async fn new(
+    pub(crate) fn new(
         peer: PeerId,
-        context: TransportContext,
+        context: ProtocolSet,
         connection: Connection,
         _connection_id: ConnectionId,
-    ) -> crate::Result<Self> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             peer,
             connection,
             _connection_id,
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
-            context: ProtocolSet::from_transport_context(peer, context).await?,
-        })
+            context,
+        }
     }
 
     /// Negotiate protocol.
@@ -217,7 +216,7 @@ impl QuicConnection {
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
+                                std::time::Duration::from_secs(5), // TODO: make this configurable
                                 Self::accept_substream(stream, substream, protocols),
                             )
                             .await
@@ -294,7 +293,7 @@ impl QuicConnection {
                     }
                 }
                 protocol = self.context.next_event() => match protocol {
-                    Some(ProtocolEvent::OpenSubstream { protocol, substream_id }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id }) => {
                         let handle = self.connection.handle();
 
                         tracing::trace!(

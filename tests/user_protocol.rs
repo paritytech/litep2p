@@ -23,24 +23,24 @@ use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     peer_id::PeerId,
-    protocol::{ConnectionEvent, ConnectionService, UserProtocol},
-    transport::{tcp::config::TransportConfig as TcpTransportConfig, TransportService},
+    protocol::{Transport, TransportEvent, TransportService, UserProtocol},
+    transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName,
     Litep2p,
 };
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 #[derive(Debug)]
 struct CustomProtocol {
     protocol: ProtocolName,
     codec: ProtocolCodec,
-    peers: HashMap<PeerId, ConnectionService>,
+    peers: HashSet<PeerId>,
 }
 
 impl CustomProtocol {
     pub fn new() -> Self {
         Self {
-            peers: HashMap::new(),
+            peers: HashSet::new(),
             protocol: ProtocolName::from("/custom-protocol/1"),
             codec: ProtocolCodec::UnsignedVarint,
         }
@@ -61,21 +61,22 @@ impl UserProtocol for CustomProtocol {
         loop {
             while let Some(event) = service.next_event().await {
                 match event {
-                    ConnectionEvent::ConnectionEstablished { peer, service } => {
+                    TransportEvent::ConnectionEstablished { peer, .. } => {
+                        self.peers.insert(peer);
                         tracing::error!("connection established to {peer}");
-                        self.peers.insert(peer, service);
                     }
-                    ConnectionEvent::ConnectionClosed { peer: _ } => {}
-                    ConnectionEvent::SubstreamOpened {
+                    TransportEvent::ConnectionClosed { peer: _ } => {}
+                    TransportEvent::SubstreamOpened {
                         peer: _,
                         protocol: _,
                         direction: _,
                         substream: _,
                     } => {}
-                    ConnectionEvent::SubstreamOpenFailure {
+                    TransportEvent::SubstreamOpenFailure {
                         substream: _,
                         error: _,
                     } => {}
+                    TransportEvent::DialFailure { .. } => {}
                 }
             }
         }

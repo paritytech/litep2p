@@ -23,7 +23,9 @@ use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
-        webrtc::handshake::WebRtcHandshake, Transport, TransportCommand, TransportContext,
+        manager::{TransportHandle, TransportManagerCommand},
+        webrtc::handshake::WebRtcHandshake,
+        Transport, TransportCommand,
     },
     types::ConnectionId,
 };
@@ -77,7 +79,7 @@ pub struct WebRtcTransportConfig {
 /// WebRTC transport.
 pub(crate) struct WebRtcTransport {
     /// Transport context.
-    context: TransportContext,
+    context: TransportHandle,
 
     /// UDP socket.
     socket: Arc<UdpSocket>,
@@ -93,9 +95,6 @@ pub(crate) struct WebRtcTransport {
 
     /// Connected peers.
     peers: HashMap<SocketAddr, Sender<Vec<u8>>>,
-
-    /// RX channel for receiving commands from `Litep2p`.
-    rx: Receiver<TransportCommand>,
 }
 
 impl WebRtcTransport {
@@ -250,7 +249,7 @@ impl WebRtcTransport {
                         self.next_connection_id.next(),
                         noise_channel_id,
                         self.context.keypair.clone(),
-                        self.context.clone(),
+                        self.context.protocol_set(),
                         source,
                         self.listen_address,
                         Arc::clone(&self.socket),
@@ -280,11 +279,7 @@ impl Transport for WebRtcTransport {
     type Config = WebRtcTransportConfig;
 
     /// Create new [`Transport`] object.
-    async fn new(
-        context: TransportContext,
-        config: Self::Config,
-        rx: Receiver<TransportCommand>,
-    ) -> crate::Result<Self>
+    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized,
     {
@@ -300,7 +295,6 @@ impl Transport for WebRtcTransport {
         let dtls_cert = DtlsCert::new();
 
         Ok(Self {
-            rx,
             context,
             dtls_cert,
             listen_address,
@@ -331,6 +325,7 @@ impl Transport for WebRtcTransport {
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()> {
         loop {
+            // TODO: correct buf size + don't reallocate
             let mut buf = vec![0; 2000];
 
             tokio::select! {
@@ -345,8 +340,8 @@ impl Transport for WebRtcTransport {
                     }
                     Err(error) => return Err(Error::EssentialTaskClosed),
                 },
-                event = self.rx.recv() => match event {
-                    Some(TransportCommand::Dial { .. }) => {
+                event = self.context.next() => match event {
+                    Some(TransportManagerCommand::Dial { .. }) => {
                         tracing::warn!(target: LOG_TARGET, "webrtc cannot dial peers");
                     }
                     None => return Err(Error::EssentialTaskClosed),

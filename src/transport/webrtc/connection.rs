@@ -30,18 +30,15 @@ use crate::{
         dialer_accept, dialer_propose, listener_negotiate, Message as MultiStreamMessage,
     },
     peer_id::PeerId,
-    protocol::{Direction, ProtocolEvent, ProtocolSet},
+    protocol::{Direction, ProtocolCommand, ProtocolSet},
     substream::{
         channel::{Substream, SubstreamBackend},
         SubstreamType,
     },
-    transport::{
-        webrtc::{
-            schema,
-            util::{SubstreamContext, WebRtcMessage},
-            WebRtcEvent,
-        },
-        TransportContext,
+    transport::webrtc::{
+        schema,
+        util::{SubstreamContext, WebRtcMessage},
+        WebRtcEvent,
     },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
@@ -101,9 +98,6 @@ pub struct WebRtcConnection {
     /// `str0m` WebRTC object.
     rtc: Rtc,
 
-    /// Transport context.
-    context: TransportContext,
-
     /// WebRTC data channels.
     channels: HashMap<SubstreamId, SubstreamContext>,
 
@@ -150,7 +144,6 @@ impl WebRtcConnection {
         remote_peer_id: PeerId,
         remote_address: SocketAddr,
         local_address: SocketAddr,
-        context: TransportContext,
         socket: Arc<UdpSocket>,
         dgram_rx: Receiver<Vec<u8>>,
         noise_context: NoiseContext,
@@ -160,7 +153,6 @@ impl WebRtcConnection {
             rtc,
             socket,
             dgram_rx,
-            context,
             protocol_set,
             noise_context,
             local_address,
@@ -284,7 +276,7 @@ impl WebRtcConnection {
             .ok_or(Error::InvalidData)?;
 
         let (protocol, response) =
-            listener_negotiate(&mut self.context.protocols.keys(), payload.into())?;
+            listener_negotiate(&mut self.protocol_set.protocols.keys(), payload.into())?;
 
         let message = WebRtcMessage::encode(response.to_vec(), None);
 
@@ -500,7 +492,7 @@ impl WebRtcConnection {
                         .map_err(|error| Error::WebRtc(error))?;
                 }
                 command = self.protocol_set.next_event() => match command {
-                    Some(ProtocolEvent::OpenSubstream { protocol, substream_id }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id }) => {
                         self.open_substream(protocol, substream_id);
                     }
                     None => {

@@ -19,7 +19,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{error::Error, transport::TransportContext, DEFAULT_CHANNEL_SIZE};
+use crate::{error::Error, transport::manager::TransportManagerHandle, DEFAULT_CHANNEL_SIZE};
 
 use futures::Stream;
 use multiaddr::Multiaddr;
@@ -98,8 +98,8 @@ pub struct Mdns {
     /// TX channel for sending events to user.
     event_tx: Sender<MdnsEvent>,
 
-    /// Transport context.
-    _context: TransportContext,
+    /// Handle to `TransportManager`.
+    transport_handle: TransportManagerHandle,
 
     // Username.
     username: String,
@@ -120,8 +120,8 @@ pub struct Mdns {
 impl Mdns {
     /// Create new [`Mdns`].
     pub fn new(
+        transport_handle: TransportManagerHandle,
         config: Config,
-        _context: TransportContext,
         listen_addresses: Vec<Multiaddr>,
     ) -> crate::Result<Self> {
         let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -137,7 +137,7 @@ impl Mdns {
         socket.set_nonblocking(true)?;
 
         Ok(Self {
-            _context,
+            transport_handle,
             event_tx: config.tx,
             next_query_id: 1337u16,
             discovered: HashSet::new(),
@@ -333,7 +333,7 @@ impl Mdns {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::ed25519::Keypair;
+    use crate::{crypto::ed25519::Keypair, transport::manager::TransportManager};
     use futures::StreamExt;
     use multiaddr::Protocol;
     use tokio::sync::mpsc::channel;
@@ -344,12 +344,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (tx1, _rx1) = channel(64);
         let (config1, mut stream1) = Config::new(Duration::from_secs(5));
+        let (manager1, handle1) = TransportManager::new(Keypair::generate());
 
         let mdns1 = Mdns::new(
+            handle1,
             config1,
-            TransportContext::new(Keypair::generate(), tx1),
             vec![
                 "/ip6/::1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTaaaa"
                     .parse()
@@ -361,12 +361,12 @@ mod tests {
         )
         .unwrap();
 
-        let (tx2, _rx2) = channel(64);
         let (config2, mut stream2) = Config::new(Duration::from_secs(5));
+        let (manager1, handle2) = TransportManager::new(Keypair::generate());
 
         let mdns2 = Mdns::new(
+            handle2,
             config2,
-            TransportContext::new(Keypair::generate(), tx2),
             vec![
                 "/ip6/::1/tcp/9999/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTbbbb"
                     .parse()

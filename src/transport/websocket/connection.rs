@@ -24,9 +24,9 @@ use crate::{
     error::{Error, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
-    protocol::{Direction, ProtocolEvent, ProtocolSet},
+    protocol::{Direction, ProtocolCommand, ProtocolSet},
     substream::SubstreamType,
-    transport::{websocket::stream::BufferedStream, TransportContext},
+    transport::websocket::stream::BufferedStream,
     types::{protocol::ProtocolName, SubstreamId},
 };
 
@@ -102,7 +102,7 @@ enum ConnectionError {
 /// WebSocket connection.
 pub(crate) struct WebSocketConnection {
     /// Protocol context.
-    context: ProtocolSet,
+    protocol_set: ProtocolSet,
 
     /// Yamux connection.
     connection: yamux::ControlledConnection<Encrypted<BufferedStream<MaybeTlsStream<TcpStream>>>>,
@@ -155,7 +155,7 @@ impl WebSocketConnection {
     /// Open WebSocket connection.
     pub(crate) async fn open_connection(
         address: Multiaddr,
-        context: TransportContext,
+        mut protocol_set: ProtocolSet,
     ) -> crate::Result<Self> {
         let (stream, _) =
             tokio_tungstenite::connect_async(multiaddr_into_url(address.clone())?).await?;
@@ -168,7 +168,7 @@ impl WebSocketConnection {
         );
 
         // negotiate `noise`
-        let noise_config = NoiseConfiguration::new(&context.keypair, Role::Dialer);
+        let noise_config = NoiseConfiguration::new(&protocol_set.keypair, Role::Dialer);
         let (stream, _) =
             Self::negotiate_protocol(stream, &noise_config.role, vec!["/noise"]).await?;
 
@@ -193,13 +193,15 @@ impl WebSocketConnection {
             Role::Dialer.into(),
         );
         let (control, connection) = yamux::Control::new(connection);
-        let context = ProtocolSet::from_transport_context(peer, context).await?;
+        protocol_set
+            .report_connection_established(peer, address.clone())
+            .await?;
 
         Ok(Self {
             peer,
             control,
             connection,
-            context,
+            protocol_set,
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
             address,
@@ -210,7 +212,7 @@ impl WebSocketConnection {
     pub(crate) async fn accept_connection(
         stream: TcpStream,
         address: SocketAddr,
-        context: TransportContext,
+        mut protocol_set: ProtocolSet,
     ) -> crate::Result<Self> {
         let stream = MaybeTlsStream::Plain(stream);
         let stream = tokio_tungstenite::accept_async(stream).await?;
@@ -223,7 +225,7 @@ impl WebSocketConnection {
         );
 
         // negotiate `noise`
-        let noise_config = NoiseConfiguration::new(&context.keypair, Role::Listener);
+        let noise_config = NoiseConfiguration::new(&protocol_set.keypair, Role::Listener);
         let (stream, _) =
             Self::negotiate_protocol(stream, &noise_config.role, vec!["/noise"]).await?;
 
@@ -248,20 +250,26 @@ impl WebSocketConnection {
             Role::Listener.into(),
         );
         let (control, connection) = yamux::Control::new(connection);
-        let context = ProtocolSet::from_transport_context(peer, context).await?;
+
+        // create `Multiaddr` from `SocketAddr` and report to protocols
+        // and `TransportManager` that a new connection was established
+        let address = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())))
+            .with(Protocol::P2p(Multihash::from(peer)));
+        protocol_set
+            .report_connection_established(peer, address.clone())
+            .await?;
 
         Ok(Self {
             peer,
             control,
             connection,
-            context,
+            protocol_set,
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
-            address: Multiaddr::empty()
-                .with(Protocol::from(address.ip()))
-                .with(Protocol::Tcp(address.port()))
-                .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())))
-                .with(Protocol::P2p(Multihash::from(peer))),
+            address,
         })
     }
 
@@ -337,11 +345,11 @@ impl WebSocketConnection {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
                         let substream = self.next_substream_id.next();
-                        let protocols = self.context.protocols.keys().cloned().collect();
+                        let protocols = self.protocol_set.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
+                                std::time::Duration::from_secs(5), // TODO: make this configurable
                                 Self::accept_substream(stream, substream, protocols),
                             )
                             .await
@@ -387,20 +395,17 @@ impl WebSocketConnection {
                                 }
                             };
 
-                            match (protocol, substream_id) {
-                                (Some(protocol), Some(substream_id)) => {
-                                    if let Err(error) = self.context
-                                        .report_substream_open_failure(protocol, substream_id, error)
-                                        .await
-                                    {
-                                        tracing::error!(
-                                            target: LOG_TARGET,
-                                            ?error,
-                                            "failed to register opened substream to protocol"
-                                        );
-                                    }
+                            if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
+                                if let Err(error) = self.protocol_set
+                                    .report_substream_open_failure(protocol, substream_id, error)
+                                    .await
+                                {
+                                    tracing::error!(
+                                        target: LOG_TARGET,
+                                        ?error,
+                                        "failed to register opened substream to protocol"
+                                    );
                                 }
-                                _ => {}
                             }
                         }
                         Ok(substream) => {
@@ -408,7 +413,7 @@ impl WebSocketConnection {
                             let direction = substream.direction;
                             let substream = FuturesAsyncReadCompatExt::compat(substream);
 
-                            if let Err(error) = self.context
+                            if let Err(error) = self.protocol_set
                                 .report_substream_open(self.peer, protocol, direction, SubstreamType::Raw(substream))
                                 .await
                             {
@@ -421,8 +426,8 @@ impl WebSocketConnection {
                         }
                     }
                 }
-                protocol = self.context.next_event() => match protocol {
-                    Some(ProtocolEvent::OpenSubstream { protocol, substream_id }) => {
+                protocol = self.protocol_set.next_event() => match protocol {
+                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id }) => {
                         let control = self.control.clone();
 
                         tracing::trace!(
@@ -434,7 +439,7 @@ impl WebSocketConnection {
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
+                                std::time::Duration::from_secs(5), // TODO: make this configurable
                                 Self::open_substream(control, Direction::Outbound(substream_id), protocol.clone()),
                             )
                             .await

@@ -22,8 +22,9 @@ use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
+        manager::TransportManagerCommand,
         websocket::{config::Config, connection::WebSocketConnection},
-        Transport, TransportCommand, TransportContext,
+        Transport, TransportCommand,
     },
     types::ConnectionId,
 };
@@ -66,7 +67,7 @@ const LOG_TARGET: &str = "websocket";
 /// WebSocket transport.
 pub(crate) struct WebSocketTransport {
     /// Transport context.
-    context: TransportContext,
+    context: crate::transport::manager::TransportHandle,
 
     /// TCP listener.
     listener: TcpListener,
@@ -83,9 +84,6 @@ pub(crate) struct WebSocketTransport {
     /// Pending connections.
     pending_connections:
         FuturesUnordered<BoxFuture<'static, Result<WebSocketConnection, WebSocketError>>>,
-
-    /// RX channel for receiving commands from `Litep2p`.
-    rx: Receiver<TransportCommand>,
 }
 
 impl WebSocketTransport {
@@ -160,9 +158,8 @@ impl Transport for WebSocketTransport {
 
     /// Create new [`Transport`] object.
     async fn new(
-        context: TransportContext,
+        context: crate::transport::manager::TransportHandle,
         config: Self::Config,
-        rx: Receiver<TransportCommand>,
     ) -> crate::Result<Self>
     where
         Self: Sized,
@@ -178,7 +175,6 @@ impl Transport for WebSocketTransport {
         let listen_address = listener.local_addr()?;
 
         Ok(Self {
-            rx,
             context,
             listener,
             listen_address,
@@ -200,7 +196,7 @@ impl Transport for WebSocketTransport {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((stream, address)) => {
-                        let context = self.context.clone();
+                        let context = self.context.protocol_set();
 
                         self.pending_connections.push(Box::pin(async move {
                             WebSocketConnection::accept_connection(stream, address, context)
@@ -212,17 +208,17 @@ impl Transport for WebSocketTransport {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to accept connection");
                     }
                 },
-                command = self.rx.recv() => match command.ok_or(Error::EssentialTaskClosed)? {
-                    TransportCommand::Dial { address, connection_id } => {
-                        let context = self.context.clone();
+                command = self.context.next() => match command.ok_or(Error::EssentialTaskClosed)? {
+                    TransportManagerCommand::Dial { address, connection } => {
+                        let context = self.context.protocol_set();
 
-                        tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, "open connection");
+                        tracing::debug!(target: LOG_TARGET, ?address, ?connection, "open connection");
 
-                        self.pending_dials.insert(connection_id, address.clone());
+                        self.pending_dials.insert(connection, address.clone());
                         self.pending_connections.push(Box::pin(async move {
                             WebSocketConnection::open_connection(address, context)
                                 .await
-                                .map_err(|error| WebSocketError::new(error, Some(connection_id)))
+                                .map_err(|error| WebSocketError::new(error, Some(connection)))
                         }));
                     }
                 },
@@ -237,8 +233,6 @@ impl Transport for WebSocketTransport {
                                     tracing::debug!(target: LOG_TARGET, ?error, "connection failed");
                                 }
                             });
-
-                            self.context.report_connection_established(peer, address).await;
                         }
                         Err(error) => match error.connection_id {
                             Some(connection_id) => match self.pending_dials.remove(&connection_id) {
