@@ -59,7 +59,7 @@ async fn substream_accepted() {
         .try_init();
 
     let (mut notif, mut handle, _sender) = make_notification_protocol();
-    let (peer, service, mut receiver) = add_peer();
+    let (peer, _service, mut receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
     let mut substream = MockSubstream::new();
     substream
@@ -154,7 +154,7 @@ async fn substream_rejected() {
         .try_init();
 
     let (mut notif, mut handle, _sender) = make_notification_protocol();
-    let (peer, service, mut receiver) = add_peer();
+    let (peer, _service, mut receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
     let mut substream = MockSubstream::new();
     substream
@@ -224,7 +224,7 @@ async fn accept_fails_due_to_closed_substream() {
         .try_init();
 
     let (mut notif, mut handle, _sender) = make_notification_protocol();
-    let (peer, service, _receiver) = add_peer();
+    let (peer, _service, _receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
     let mut substream = MockSubstream::new();
     substream
@@ -298,7 +298,7 @@ async fn accept_fails_due_to_closed_connection() {
         .try_init();
 
     let (mut notif, mut handle, _sender) = make_notification_protocol();
-    let (peer, service, receiver) = add_peer();
+    let (peer, _service, receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
     let mut substream = MockSubstream::new();
     substream
@@ -367,13 +367,12 @@ async fn accept_fails_due_to_closed_connection() {
 #[cfg(debug_assertions)]
 async fn open_substream_accepted() {
     let (mut notif, _handle, _sender) = make_notification_protocol();
-    let (peer, service, _receiver) = add_peer();
+    let (peer, _service, _receiver) = add_peer();
     let outbound = Box::new(MockSubstream::new());
 
     notif.peers.insert(
         peer,
         PeerContext {
-            service: (),
             state: PeerState::Open { outbound },
         },
     );
@@ -392,13 +391,12 @@ async fn open_substream_accepted() {
 #[cfg(debug_assertions)]
 async fn open_substream_rejected() {
     let (mut notif, _handle, _sender) = make_notification_protocol();
-    let (peer, service, _receiver) = add_peer();
+    let (peer, _service, _receiver) = add_peer();
     let outbound = Box::new(MockSubstream::new());
 
     notif.peers.insert(
         peer,
         PeerContext {
-            service: (),
             state: PeerState::Open { outbound },
         },
     );

@@ -73,7 +73,7 @@ pub struct Libp2pCertificateVerifier {
 /// - The certificate must have a valid libp2p extension that includes a
 ///   signature of its public key.
 impl Libp2pCertificateVerifier {
-    pub fn new() -> Self {
+    pub fn _new() -> Self {
         Self {
             remote_peer_id: None,
             sender: None,

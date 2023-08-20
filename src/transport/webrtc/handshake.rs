@@ -19,41 +19,29 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::unsigned_varint::UnsignedVarint,
     config::Role,
-    crypto::{
-        ed25519::Keypair,
-        noise::{NoiseContext, STATIC_KEY_DOMAIN},
-        PublicKey,
-    },
-    error::{Error, NegotiationError},
-    multistream_select::{listener_negotiate, Message as MultiStreamMessage},
+    crypto::{ed25519::Keypair, noise::NoiseContext},
+    error::Error,
+    multistream_select::listener_negotiate,
     peer_id::PeerId,
     protocol::{Direction, ProtocolSet},
     substream::{channel::SubstreamBackend, SubstreamType},
     transport::webrtc::{
         connection::WebRtcConnection,
-        schema,
         util::{SubstreamContext, WebRtcMessage},
         WebRtcEvent,
     },
     types::{ConnectionId, SubstreamId},
 };
 
-use bytes::BytesMut;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
-use prost::Message;
 use str0m::{
     change::Fingerprint,
     channel::{ChannelData, ChannelId},
     net::Receive,
     Event, IceConnectionState, Input, Output, Rtc,
 };
-use tokio::{
-    net::UdpSocket,
-    sync::mpsc::{Receiver, Sender},
-};
-use tokio_util::codec::{Decoder, Encoder};
+use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 
 use std::{
     collections::HashMap,

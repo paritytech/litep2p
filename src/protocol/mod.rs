@@ -27,7 +27,7 @@ use crate::{
     peer_id::PeerId,
     substream::{RawSubstream, Substream, SubstreamType},
     transport::manager::{TransportManagerEvent, TransportManagerHandle},
-    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    types::{protocol::ProtocolName, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
 
@@ -269,7 +269,7 @@ enum ConnectionType {
 
     /// Protocol is not interested in the connection and the connection will be closed
     /// due to keep-alive timeout if all protocols consider the connection inactive.
-    Inactive(WeakSender<ProtocolCommand>),
+    _Inactive(WeakSender<ProtocolCommand>),
 }
 
 #[derive(Debug)]
@@ -300,7 +300,7 @@ impl TransportService {
         protocol: ProtocolName,
         transport_handle: TransportManagerHandle,
     ) -> (Self, Sender<InnerTransportEvent>) {
-        let (tx, rx) = channel(256);
+        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
         (
             Self {
@@ -330,12 +330,12 @@ impl Transport for TransportService {
         self.transport_handle.add_know_address(peer, addresses);
     }
 
-    fn disconnect(&mut self, peer: &PeerId) -> crate::Result<()> {
+    fn disconnect(&mut self, _peer: &PeerId) -> crate::Result<()> {
         todo!();
     }
 
     async fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
-        let mut connection = self
+        let connection = self
             .connections
             .get_mut(&peer)
             .ok_or(Error::PeerDoesntExist(peer))?;
@@ -350,7 +350,7 @@ impl Transport for TransportService {
         );
 
         match connection {
-            ConnectionType::Inactive(_) => todo!(),
+            ConnectionType::_Inactive(_) => todo!(),
             ConnectionType::Active(tx) => tx
                 .send(ProtocolCommand::OpenSubstream {
                     protocol: self.protocol.clone(),
@@ -452,7 +452,7 @@ impl ProtocolSet {
                         substream.apply_codec(info.codec.clone());
                         Box::new(substream)
                     }
-                    SubstreamType::Ready(mut substream) => substream,
+                    SubstreamType::Ready(substream) => substream,
                 };
 
                 info.tx
@@ -510,7 +510,7 @@ impl ProtocolSet {
         peer: PeerId,
         address: Multiaddr,
     ) -> crate::Result<()> {
-        for (protocol, sender) in &self.protocols {
+        for (_, sender) in &self.protocols {
             let _ = sender
                 .tx
                 .send(InnerTransportEvent::ConnectionEstablished {
@@ -529,7 +529,7 @@ impl ProtocolSet {
 
     /// Report to `Litep2p` that a peer disconnected.
     pub(crate) async fn report_connection_closed(&mut self, peer: PeerId) -> crate::Result<()> {
-        for (protocol, sender) in &self.protocols {
+        for (_, sender) in &self.protocols {
             let _ = sender
                 .tx
                 .send(InnerTransportEvent::ConnectionClosed { peer })

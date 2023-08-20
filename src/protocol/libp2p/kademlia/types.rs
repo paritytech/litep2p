@@ -23,7 +23,7 @@
 
 use crate::{peer_id::PeerId, protocol::libp2p::kademlia::schema};
 
-use multiaddr::{multihash::Multihash, Multiaddr};
+use multiaddr::Multiaddr;
 use sha2::{
     digest::generic_array::{typenum::U32, GenericArray},
     Digest, Sha256,
@@ -49,7 +49,7 @@ construct_uint! {
 /// the hash digests, interpreted as an integer. See [`Key::distance`].
 #[derive(Clone, Debug)]
 pub struct Key<T: Clone> {
-    preimage: T,
+    _preimage: T,
     bytes: KeyBytes,
 }
 
@@ -59,22 +59,12 @@ impl<T: Clone> Key<T> {
     ///
     /// The preimage of type `T` is preserved. See [`Key::preimage`] and
     /// [`Key::into_preimage`].
-    pub fn new(preimage: T) -> Key<T>
+    pub fn new(_preimage: T) -> Key<T>
     where
         T: Borrow<[u8]>,
     {
-        let bytes = KeyBytes::new(preimage.borrow());
-        Key { preimage, bytes }
-    }
-
-    /// Borrows the preimage of the key.
-    pub fn preimage(&self) -> &T {
-        &self.preimage
-    }
-
-    /// Converts the key into its preimage.
-    pub fn into_preimage(self) -> T {
-        self.preimage
+        let bytes = KeyBytes::new(_preimage.borrow());
+        Key { _preimage, bytes }
     }
 
     /// Computes the distance of the keys according to the XOR metric.
@@ -90,6 +80,7 @@ impl<T: Clone> Key<T> {
     /// This implements the following equivalence:
     ///
     /// `self xor other = distance <==> other = self xor distance`
+    #[cfg(test)]
     pub fn for_distance(&self, d: Distance) -> KeyBytes {
         self.bytes.for_distance(d)
     }
@@ -98,8 +89,8 @@ impl<T: Clone> Key<T> {
     ///
     /// Only used for testing
     #[cfg(test)]
-    pub fn from_bytes(bytes: KeyBytes, preimage: T) -> Key<T> {
-        Self { bytes, preimage }
+    pub fn from_bytes(bytes: KeyBytes, _preimage: T) -> Key<T> {
+        Self { bytes, _preimage }
     }
 }
 
@@ -112,7 +103,10 @@ impl<T: Clone> From<Key<T>> for KeyBytes {
 impl From<PeerId> for Key<PeerId> {
     fn from(p: PeerId) -> Self {
         let bytes = KeyBytes(Sha256::digest(p.to_bytes()));
-        Key { preimage: p, bytes }
+        Key {
+            _preimage: p,
+            bytes,
+        }
     }
 }
 
@@ -171,6 +165,7 @@ impl KeyBytes {
     /// This implements the following equivalence:
     ///
     /// `self xor other = distance <==> other = self xor distance`
+    #[cfg(test)]
     pub fn for_distance(&self, d: Distance) -> KeyBytes {
         let key_int = U256::from(self.0.as_slice()) ^ d.0;
         KeyBytes(GenericArray::from(<[u8; 32]>::from(key_int)))

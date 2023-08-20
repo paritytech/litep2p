@@ -19,44 +19,25 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::unsigned_varint::UnsignedVarint,
-    crypto::{
-        ed25519::Keypair,
-        noise::{NoiseContext, STATIC_KEY_DOMAIN},
-        PublicKey,
-    },
-    error::{Error, NegotiationError},
-    multistream_select::{
-        dialer_accept, dialer_propose, listener_negotiate, Message as MultiStreamMessage,
-    },
+    crypto::noise::NoiseContext,
+    error::Error,
+    multistream_select::{dialer_propose, listener_negotiate},
     peer_id::PeerId,
     protocol::{Direction, ProtocolCommand, ProtocolSet},
-    substream::{
-        channel::{Substream, SubstreamBackend},
-        SubstreamType,
-    },
+    substream::{channel::SubstreamBackend, SubstreamType},
     transport::webrtc::{
-        schema,
         util::{SubstreamContext, WebRtcMessage},
         WebRtcEvent,
     },
-    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    types::{protocol::ProtocolName, SubstreamId},
 };
 
-use bytes::BytesMut;
-use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
-use prost::Message;
 use str0m::{
-    change::Fingerprint,
     channel::{ChannelConfig, ChannelData, ChannelId},
     net::Receive,
     Event, IceConnectionState, Input, Output, Rtc,
 };
-use tokio::{
-    net::UdpSocket,
-    sync::mpsc::{Receiver, Sender},
-};
-use tokio_util::codec::{Decoder, Encoder};
+use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 
 use std::{
     collections::HashMap,
@@ -122,14 +103,11 @@ pub struct WebRtcConnection {
     /// Next substream ID.
     substream_id: SubstreamId,
 
-    /// ID mappings.
-    id_mapping: HashMap<ChannelId, SubstreamId>,
-
     /// Open substreams.
     substreams: HashMap<ChannelId, SubstreamState>,
 
     /// Noise context.
-    noise_context: NoiseContext,
+    _noise_context: NoiseContext,
 
     /// Protocol set.
     protocol_set: ProtocolSet,
@@ -146,7 +124,7 @@ impl WebRtcConnection {
         local_address: SocketAddr,
         socket: Arc<UdpSocket>,
         dgram_rx: Receiver<Vec<u8>>,
-        noise_context: NoiseContext,
+        _noise_context: NoiseContext,
         protocol_set: ProtocolSet,
     ) -> WebRtcConnection {
         WebRtcConnection {
@@ -154,13 +132,12 @@ impl WebRtcConnection {
             socket,
             dgram_rx,
             protocol_set,
-            noise_context,
+            _noise_context,
             local_address,
             remote_address,
             remote_peer_id,
             channels: HashMap::new(),
             substreams: HashMap::new(),
-            id_mapping: HashMap::new(),
             backend: SubstreamBackend::new(),
             substream_id: SubstreamId::new(),
             pending_outbound: HashMap::new(),
@@ -313,37 +290,9 @@ impl WebRtcConnection {
         Ok(WebRtcEvent::Noop)
     }
 
-    /// Send received data to the protocol.
-    async fn process_protocol_event(&mut self, d: ChannelData) -> crate::Result<WebRtcEvent> {
-        tracing::debug!(
-            target: LOG_TARGET,
-            channel_id = ?d.id,
-            "process protocol event",
-        );
-
-        // TODO: might be empty message with flags
-        let message = WebRtcMessage::decode(&d.data)?
-            .payload
-            .ok_or(Error::InvalidData)?;
-
-        let channel_id = self
-            .id_mapping
-            .get(&d.id)
-            .ok_or(Error::ChannelDoesntExist)?;
-        let _ = self
-            .channels
-            .get_mut(&channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
-            .tx
-            .send(message)
-            .await;
-
-        Ok(WebRtcEvent::Noop)
-    }
-
     /// Handle channel data.
     async fn on_channel_data(&mut self, d: ChannelData) -> crate::Result<WebRtcEvent> {
-        let Some(mut state) = self.substreams.get_mut(&d.id) else {
+        let Some(state) = self.substreams.get_mut(&d.id) else {
             return self.negotiate_protocol(d).await;
         };
 
@@ -351,7 +300,7 @@ impl WebRtcConnection {
             SubstreamState::Poisoned => todo!(),
             SubstreamState::Open {
                 substream_id,
-                mut substream,
+                substream,
             } => {
                 // TODO: might be empty message with flags
                 let message = WebRtcMessage::decode(&d.data)?
@@ -493,7 +442,7 @@ impl WebRtcConnection {
                 }
                 command = self.protocol_set.next_event() => match command {
                     Some(ProtocolCommand::OpenSubstream { protocol, substream_id }) => {
-                        self.open_substream(protocol, substream_id);
+                        let _ = self.open_substream(protocol, substream_id);
                     }
                     None => {
                         return Err(Error::EssentialTaskClosed);

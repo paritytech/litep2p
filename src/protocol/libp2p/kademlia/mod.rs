@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::{Error, SubstreamError},
+    error::Error,
     peer_id::PeerId,
     protocol::{
         libp2p::kademlia::{
@@ -28,7 +28,7 @@ use crate::{
             message::KademliaMessage,
             query::{QueryAction, QueryEngine, QueryId},
             routing_table::RoutingTable,
-            types::{ConnectionType, KademliaPeer, Key},
+            types::{ConnectionType, Key},
         },
         Direction, Transport, TransportEvent, TransportService,
     },
@@ -38,7 +38,6 @@ use crate::{
 
 use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
-use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
@@ -54,7 +53,7 @@ pub use crate::protocol::libp2p::kademlia::{
 const LOG_TARGET: &str = "ipfs::kademlia";
 
 /// Kademlia replication factor, `k`.
-const REPLICATION_FACTOR: usize = 20;
+const _REPLICATION_FACTOR: usize = 20;
 
 /// Parallelism factor, `α`.
 const PARALLELISM_FACTOR: usize = 3;
@@ -77,22 +76,11 @@ mod schema {
 
 /// Peer context.
 struct PeerContext {
-    /// Connection service for the peer.
-    service: (),
-
     /// Pending query ID, if any.
     query: Option<QueryId>,
 }
 
 impl PeerContext {
-    /// Create new [`PeerContext`].
-    fn new(service: ()) -> Self {
-        Self {
-            service,
-            query: None,
-        }
-    }
-
     /// Add pending query for the peer.
     fn add_pending_query(&mut self, query: QueryId) {
         self.query = Some(query);
@@ -105,7 +93,7 @@ pub struct Kademlia {
     service: TransportService,
 
     /// Local Kademlia key.
-    local_key: Key<PeerId>,
+    _local_key: Key<PeerId>,
 
     /// Connected peers,
     peers: HashMap<PeerId, PeerContext>,
@@ -114,7 +102,7 @@ pub struct Kademlia {
     substreams: SubstreamSet<PeerId>,
 
     /// TX channel for sending events to `KademliaHandle`.
-    event_tx: Sender<KademliaEvent>,
+    _event_tx: Sender<KademliaEvent>,
 
     /// RX channel for receiving commands from `KademliaHandle`.
     cmd_rx: Receiver<KademliaCommand>,
@@ -138,8 +126,8 @@ impl Kademlia {
             service,
             peers: HashMap::new(),
             cmd_rx: config.cmd_rx,
-            event_tx: config.event_tx,
-            local_key: local_key.clone(),
+            _event_tx: config.event_tx,
+            _local_key: local_key.clone(),
             pending_dials: HashMap::new(),
             substreams: SubstreamSet::new(),
             routing_table: RoutingTable::new(local_key),
@@ -155,7 +143,7 @@ impl Kademlia {
             Entry::Vacant(entry) => {
                 // TODO: add peer to routing table
                 let query = self.pending_dials.remove(&peer);
-                entry.insert(PeerContext { service: (), query });
+                entry.insert(PeerContext { query });
 
                 if query.is_some() {
                     self.service.open_substream(peer).await?;
@@ -198,13 +186,13 @@ impl Kademlia {
         while let Some(action) = self.engine.next_action(query_id) {
             match action {
                 QueryAction::SendFindNode { peer } => match self.substreams.get_mut(&peer.peer) {
-                    Some(mut substream) => {
+                    Some(substream) => {
                         let message = KademliaMessage::find_node(peer.peer);
 
                         tracing::warn!("SEND FIND NODE TO {}", peer.peer);
 
                         match substream.send(message.into()).await {
-                            Err(error) => {
+                            Err(_error) => {
                                 self.engine.register_response_failure(query_id, peer.peer)
                             }
                             Ok(_) => self
@@ -216,8 +204,8 @@ impl Kademlia {
                     }
                     None => match self.peers.get_mut(&peer.peer) {
                         Some(context) => match self.service.open_substream(peer.peer).await {
-                            Ok(substream_id) => context.add_pending_query(query_id),
-                            Err(error) => {
+                            Ok(_substream_id) => context.add_pending_query(query_id),
+                            Err(_error) => {
                                 // TODO: disconenct peer?
                                 self.engine.register_response_failure(query_id, peer.peer)
                             }
@@ -289,6 +277,7 @@ impl Kademlia {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?peer,
+                ?error,
                 "failed to send `FIND_NODE` message to peer"
             );
 
@@ -331,7 +320,7 @@ impl Kademlia {
                     "handle `FIND_NODE` request"
                 );
 
-                let mut substream = self
+                let substream = self
                     .substreams
                     .get_mut(&peer)
                     .ok_or(Error::SubstreamDoesntExist)?;
@@ -340,7 +329,7 @@ impl Kademlia {
                     self.routing_table.closest(Key::from(target), 20),
                 );
 
-                if let Err(error) = substream.send(message.into()).await {
+                if let Err(_error) = substream.send(message.into()).await {
                     // TODO: check if peer has an active query in progress
                     self.disconnect_peer(peer).await;
                 }
@@ -385,7 +374,7 @@ impl Kademlia {
     }
 
     /// Store value to DHT by executing `PUT_VALUE`.
-    async fn on_put_value(&mut self, key: RecordKey, value: Vec<u8>) -> crate::Result<()> {
+    async fn on_put_value(&mut self, key: RecordKey, _value: Vec<u8>) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?key, "execute `PUT_VALUE`");
 
         // TODO: store record to our store
@@ -421,7 +410,7 @@ impl Kademlia {
         loop {
             tokio::select! {
                 event = self.service.next_event() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, address }) => {
+                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         if let Err(error) = self.on_connection_established(peer).await {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to handle established connection");
                         }
@@ -508,18 +497,18 @@ mod tests {
     use tokio::sync::mpsc::channel;
 
     struct Context {
-        cmd_tx: Sender<KademliaCommand>,
-        event_rx: Receiver<KademliaEvent>,
+        _cmd_tx: Sender<KademliaCommand>,
+        _event_rx: Receiver<KademliaEvent>,
     }
 
     fn make_kademlia() -> (Kademlia, Context, TransportManager) {
         let (manager, handle) = TransportManager::new(Keypair::generate());
 
         let peer = PeerId::random();
-        let (transport_service, tx) =
+        let (transport_service, _tx) =
             TransportService::new(peer, ProtocolName::from("/kad/1"), handle);
-        let (event_tx, event_rx) = channel(64);
-        let (cmd_tx, cmd_rx) = channel(64);
+        let (event_tx, _event_rx) = channel(64);
+        let (_cmd_tx, cmd_rx) = channel(64);
 
         let config = Config {
             protocol: ProtocolName::from("/kad/1"),
@@ -531,7 +520,7 @@ mod tests {
 
         (
             Kademlia::new(transport_service, config),
-            Context { cmd_tx, event_rx },
+            Context { _cmd_tx, _event_rx },
             manager,
         )
     }

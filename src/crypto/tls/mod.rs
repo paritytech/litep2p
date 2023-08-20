@@ -24,20 +24,16 @@
 //! See <https://github.com/libp2p/specs/blob/master/tls/tls.md>.
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-#![allow(unused)]
 
-// TODO: remove all unneeded stuff
-
-use crate::{crypto::ed25519::Keypair, peer_id::PeerId};
+use crate::peer_id::PeerId;
 use rustls::{ClientConfig, ServerConfig};
 use s2n_quic::provider::tls::{
     rustls::{Client as TlsClient, Server as TlsServer},
     Provider,
 };
-use s2n_quic::{client::Connect, Client, Server};
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::Sender;
 
-use std::{error::Error, net::SocketAddr, path::Path, sync::Arc};
+use std::sync::Arc;
 
 pub mod certificate;
 mod upgrade;
@@ -116,105 +112,4 @@ impl Provider for TlsProvider {
         cfg.alpn_protocols = vec![P2P_ALPN.to_vec()];
         Ok(cfg.into())
     }
-}
-
-// TODO: remove
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::crypto::ed25519::Keypair;
-    use rustls::{ClientConfig, ServerConfig};
-    use s2n_quic::provider::tls::{
-        rustls::{Client as TlsClient, Server as TlsServer},
-        Provider,
-    };
-    use s2n_quic::{client::Connect, Client, Server};
-    use std::{error::Error, net::SocketAddr, path::Path};
-
-    // #[tokio::test]
-    // async fn test_quic_server() {
-    //     let _ = tracing_subscriber::fmt()
-    //         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-    //         .try_init();
-
-    //     let keypair = Keypair::generate();
-    //     let (certificate, key) = certificate::generate(&keypair).unwrap();
-
-    //     let (tx, rx) = channel(1);
-    //     let provider = TlsProvider::new(key, certificate, None, Some(tx));
-    //     let mut server = Server::builder()
-    //         .with_tls(provider)
-    //         .unwrap()
-    //         .with_io("127.0.0.1:4433")
-    //         .unwrap()
-    //         .start()
-    //         .unwrap();
-
-    //     while let Some(mut connection) = server.accept().await {
-    //         tracing::info!("start quic server");
-    //         // spawn a new task for the connection
-    //         tokio::spawn(async move {
-    //             while let Ok(Some(mut stream)) = connection.accept_bidirectional_stream().await {
-    //                 tracing::info!("accept bidirectional stream");
-
-    //                 // spawn a new task for the stream
-    //                 tokio::spawn(async move {
-    //                     // echo any data back to the stream
-    //                     while let Ok(Some(data)) = stream.receive().await {
-    //                         stream.send(data).await.expect("stream should be open");
-    //                     }
-    //                 });
-    //             }
-    //         });
-    //     }
-    // }
-
-    // #[tokio::test]
-    // async fn test_quic_client() {
-    //     let _ = tracing_subscriber::fmt()
-    //         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-    //         .try_init();
-
-    //     let keypair = Keypair::generate();
-    //     let (certificate, key) = certificate::generate(&keypair).unwrap();
-    //     let remote_peer_id = Some(
-    //         PeerId::try_from_multiaddr(
-    //             &multiaddr::Multiaddr::try_from(
-    //                 "/p2p/12D3KooWLwag8ykamnDdwAQvTMx3i1i4BakdZqzfzvJm3t4knSda",
-    //             )
-    //             .unwrap(),
-    //         )
-    //         .unwrap(),
-    //     );
-
-    //     let provider = TlsProvider::new(key, certificate, remote_peer_id, None);
-    //     let mut client = Client::builder()
-    //         .with_tls(provider)
-    //         .unwrap()
-    //         .with_io("127.0.0.1:4433")
-    //         .unwrap()
-    //         .start()
-    //         .unwrap();
-
-    //     let addr: SocketAddr = "127.0.0.1:8888".parse().unwrap();
-    //     let connect = Connect::new(addr).with_server_name("localhost");
-    //     let mut connection = client.connect(connect).await.unwrap();
-
-    //     // ensure the connection doesn't time out with inactivity
-    //     connection.keep_alive(true).unwrap();
-
-    //     // open a new stream and split the receiving and sending sides
-    //     let stream = connection.open_bidirectional_stream().await.unwrap();
-    //     let (mut receive_stream, mut send_stream) = stream.split();
-
-    //     // spawn a task that copies responses from the server to stdout
-    //     tokio::spawn(async move {
-    //         let mut stdout = tokio::io::stdout();
-    //         let _ = tokio::io::copy(&mut receive_stream, &mut stdout).await;
-    //     });
-
-    //     // copy data from stdin and send it to the server
-    //     let mut stdin = tokio::io::stdin();
-    //     tokio::io::copy(&mut stdin, &mut send_stream).await.unwrap();
-    // }
 }

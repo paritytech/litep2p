@@ -42,6 +42,7 @@ pub struct Config {
     pub(crate) codec: ProtocolCodec,
 
     /// Replication factor.
+    #[allow(unused)]
     pub(super) replication_factor: usize,
 
     /// TX channel for sending events to `KademliaHandle`.

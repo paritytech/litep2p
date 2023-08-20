@@ -99,7 +99,7 @@ pub struct Mdns {
     event_tx: Sender<MdnsEvent>,
 
     /// Handle to `TransportManager`.
-    transport_handle: TransportManagerHandle,
+    _transport_handle: TransportManagerHandle,
 
     // Username.
     username: String,
@@ -120,7 +120,7 @@ pub struct Mdns {
 impl Mdns {
     /// Create new [`Mdns`].
     pub fn new(
-        transport_handle: TransportManagerHandle,
+        _transport_handle: TransportManagerHandle,
         config: Config,
         listen_addresses: Vec<Multiaddr>,
     ) -> crate::Result<Self> {
@@ -137,7 +137,7 @@ impl Mdns {
         socket.set_nonblocking(true)?;
 
         Ok(Self {
-            transport_handle,
+            _transport_handle,
             event_tx: config.tx,
             next_query_id: 1337u16,
             discovered: HashSet::new(),
@@ -336,7 +336,6 @@ mod tests {
     use crate::{crypto::ed25519::Keypair, transport::manager::TransportManager};
     use futures::StreamExt;
     use multiaddr::Protocol;
-    use tokio::sync::mpsc::channel;
 
     #[tokio::test]
     async fn mdns_works() {
@@ -345,7 +344,7 @@ mod tests {
             .try_init();
 
         let (config1, mut stream1) = Config::new(Duration::from_secs(5));
-        let (manager1, handle1) = TransportManager::new(Keypair::generate());
+        let (_manager1, handle1) = TransportManager::new(Keypair::generate());
 
         let mdns1 = Mdns::new(
             handle1,
@@ -362,7 +361,7 @@ mod tests {
         .unwrap();
 
         let (config2, mut stream2) = Config::new(Duration::from_secs(5));
-        let (manager1, handle2) = TransportManager::new(Keypair::generate());
+        let (_manager1, handle2) = TransportManager::new(Keypair::generate());
 
         let mdns2 = Mdns::new(
             handle2,
@@ -404,7 +403,7 @@ mod tests {
                                 _ => continue,
                             }
 
-                            peer2_discovered = true;
+                            peer1_discovered = true;
                         }
                     }
                 },

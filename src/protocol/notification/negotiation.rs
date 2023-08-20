@@ -21,12 +21,7 @@
 //! Implementation of the notification handshaking.
 
 #![allow(unused)]
-
-use crate::{
-    error::{Error, SubstreamError},
-    peer_id::PeerId,
-    substream::{Substream, SubstreamSet},
-};
+use crate::{peer_id::PeerId, substream::Substream};
 
 use futures::{FutureExt, Sink, Stream};
 use futures_timer::Delay;
@@ -102,38 +97,6 @@ pub enum HandshakeEvent {
     },
 }
 
-/// Events used by [`Negotiatio`] to communicate progress.
-#[derive(Debug)]
-pub enum InnerHandshakeEvent {
-    /// Outbound substream has been negotiated.
-    OutboundNegotiated {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Handshake.
-        handshake: Vec<u8>,
-    },
-
-    /// Inbound substream has been negotiated.
-    InboundNegotiated {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Handshake.
-        handshake: Vec<u8>,
-    },
-
-    InboundAccepted {
-        peer: PeerId,
-    },
-
-    /// Substream was closed while negotiating.
-    NegotiationError {
-        /// Peer ID.
-        peer: PeerId,
-    },
-}
-
 /// Outbound substream's handshake state
 #[derive(Debug)]
 enum HandshakeState {
@@ -160,8 +123,6 @@ pub(crate) struct HandshakeService {
     /// Substreams:
     substreams: HashMap<(PeerId, Direction), (Box<dyn Substream>, Delay, HandshakeState)>,
 
-    new_ready: VecDeque<HandshakeEvent>,
-
     /// Ready substreams.
     ready: VecDeque<(PeerId, Direction, Vec<u8>)>,
 }
@@ -173,7 +134,6 @@ impl HandshakeService {
             handshake,
             ready: VecDeque::new(),
             substreams: HashMap::new(),
-            new_ready: VecDeque::new(),
         }
     }
 
@@ -211,7 +171,7 @@ impl HandshakeService {
     }
 
     /// Negotiate outbound handshake.
-    pub fn accept_inbound(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
+    pub fn _accept_inbound(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
         tracing::trace!(target: LOG_TARGET, ?peer, "accept inbound substream");
 
         self.substreams.insert(

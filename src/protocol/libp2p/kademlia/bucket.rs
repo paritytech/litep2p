@@ -23,10 +23,8 @@
 
 use crate::{
     peer_id::PeerId,
-    protocol::libp2p::kademlia::types::{ConnectionType, Distance, KademliaPeer, Key},
+    protocol::libp2p::kademlia::types::{ConnectionType, KademliaPeer, Key},
 };
-
-use std::time::Duration;
 
 /// K-bucket entry.
 #[derive(Debug, PartialEq, Eq)]
@@ -122,7 +120,7 @@ mod tests {
         let mut bucket = KBucket::new();
 
         // add some random nodes to the bucket
-        let peers = (0..10)
+        let _ = (0..10)
             .map(|_| {
                 let peer = PeerId::random();
                 bucket
@@ -133,7 +131,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let mut target = Key::from(PeerId::random());
+        let target = Key::from(PeerId::random());
         let mut iter = bucket.closest_iter(target.clone());
         let mut prev = None;
 

@@ -20,6 +20,7 @@
 
 //! Memory store implementation for Kademlia.
 
+#![allow(unused)]
 use crate::protocol::libp2p::kademlia::record::{Key, Record};
 
 use std::collections::HashMap;

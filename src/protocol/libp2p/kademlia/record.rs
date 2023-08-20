@@ -85,7 +85,7 @@ pub struct Record {
 
 impl Record {
     /// Creates a new record for insertion into the DHT.
-    pub fn new<K>(key: K, value: Vec<u8>) -> Self
+    pub fn _new<K>(key: K, value: Vec<u8>) -> Self
     where
         K: Into<Key>,
     {
@@ -98,7 +98,7 @@ impl Record {
     }
 
     /// Checks whether the record is expired w.r.t. the given `Instant`.
-    pub fn is_expired(&self, now: Instant) -> bool {
+    pub fn _is_expired(&self, now: Instant) -> bool {
         self.expires.map_or(false, |t| now >= t)
     }
 }

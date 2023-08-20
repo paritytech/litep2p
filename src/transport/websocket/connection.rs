@@ -21,7 +21,7 @@
 use crate::{
     config::Role,
     crypto::noise::{self, Encrypted, NoiseConfiguration},
-    error::{Error, SubstreamError},
+    error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolCommand, ProtocolSet},

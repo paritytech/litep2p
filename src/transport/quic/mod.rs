@@ -25,7 +25,7 @@ use crate::{
     transport::{
         manager::TransportManagerCommand,
         quic::{config::Config, connection::QuicConnection},
-        Transport, TransportCommand, TransportEvent,
+        Transport,
     },
     types::ConnectionId,
 };

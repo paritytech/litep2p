@@ -20,10 +20,7 @@
 
 use crate::{
     peer_id::PeerId,
-    protocol::libp2p::kademlia::{
-        message::KademliaMessage,
-        types::{Distance, KademliaPeer, Key},
-    },
+    protocol::libp2p::kademlia::types::{Distance, KademliaPeer, Key},
 };
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -106,7 +103,7 @@ pub struct QueryEngine {
     next_query_id: usize,
 
     /// Parallelism factor.
-    parallelism: usize,
+    _parallelism: usize,
 
     /// Active queries.
     queries: HashMap<QueryId, Query>,
@@ -114,9 +111,9 @@ pub struct QueryEngine {
 
 impl QueryEngine {
     /// Create new [`QueryEngine`].
-    pub fn new(parallelism: usize) -> Self {
+    pub fn new(_parallelism: usize) -> Self {
         Self {
-            parallelism,
+            _parallelism,
             next_query_id: 0usize,
             queries: HashMap::new(),
         }
@@ -174,7 +171,6 @@ impl QueryEngine {
             Some(Query::FindNode {
                 target,
                 active,
-                queried,
                 candidates,
                 responses,
                 ..
@@ -330,7 +326,6 @@ impl QueryEngine {
                     Some(QueryAction::QuerySucceeded { peers })
                 }
             },
-            _ => None,
         }
     }
 }
@@ -344,7 +339,7 @@ mod tests {
     fn query_fails() {
         let mut engine = QueryEngine::new(3usize);
         let target_peer = PeerId::random();
-        let target_key = Key::from(target_peer);
+        let _target_key = Key::from(target_peer);
 
         let query = engine.start_find_node(
             target_peer,
@@ -357,7 +352,7 @@ mod tests {
             .into(),
         );
 
-        for i in 0..4 {
+        for _ in 0..4 {
             if let Some(QueryAction::SendFindNode { peer }) = engine.next_action(query) {
                 engine.register_response_failure(query, peer.peer);
             }
@@ -374,7 +369,7 @@ mod tests {
     fn lookup_paused() {
         let mut engine = QueryEngine::new(3usize);
         let target_peer = PeerId::random();
-        let target_key = Key::from(target_peer);
+        let _target_key = Key::from(target_peer);
 
         let query = engine.start_find_node(
             target_peer,
@@ -387,7 +382,7 @@ mod tests {
             .into(),
         );
 
-        for i in 0..3 {
+        for _ in 0..3 {
             let _ = engine.next_action(query);
         }
 
@@ -398,9 +393,9 @@ mod tests {
     fn query_succeeds() {
         let mut engine = QueryEngine::new(3usize);
         let target_peer = PeerId::random();
-        let target_key = Key::from(target_peer);
+        let _target_key = Key::from(target_peer);
 
-        let query = engine.start_find_node(
+        let _query = engine.start_find_node(
             target_peer,
             vec![
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
@@ -429,7 +424,7 @@ mod tests {
         )]
         .into();
         let mut responses = BTreeMap::new();
-        let mut engine = QueryEngine::new(3usize);
+        let _engine = QueryEngine::new(3usize);
 
         assert_eq!(
             QueryEngine::lookup_status(&target, &active, &candidates, &mut responses),
@@ -443,7 +438,7 @@ mod tests {
         let active = HashMap::new();
         let candidates = VecDeque::new();
         let mut responses = BTreeMap::new();
-        let mut engine = QueryEngine::new(3usize);
+        let _engine = QueryEngine::new(3usize);
 
         assert_eq!(
             QueryEngine::lookup_status(&target, &active, &candidates, &mut responses),

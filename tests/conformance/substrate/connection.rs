@@ -18,39 +18,28 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
 use litep2p::{
     config::Litep2pConfigBuilder,
-    crypto::{ed25519::Keypair, PublicKey},
-    peer_id::PeerId as Litep2pPeerId,
-    protocol::notification::{
-        handle::NotificationHandle,
-        types::{
-            Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
-        },
-        NotificationProtocol,
-    },
+    crypto::ed25519::Keypair,
+    protocol::notification::{handle::NotificationHandle, types::Config as NotificationConfig},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName as Litep2pProtocol,
     Litep2p, Litep2pEvent,
 };
 
-use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt};
+use futures::StreamExt;
 use libp2p::{
     identity,
     swarm::{SwarmBuilder, SwarmEvent},
     PeerId, Swarm,
 };
-use multiaddr::Protocol;
-use multihash::Multihash;
 use sc_network::{
-    peer_store::{PeerStore, PeerStoreHandle, PeerStoreProvider, BANNED_THRESHOLD},
-    protocol::notifications::behaviour::{Notifications, NotificationsOut, ProtocolConfig},
+    peer_store::{PeerStore, PeerStoreHandle},
+    protocol::notifications::behaviour::{Notifications, ProtocolConfig},
     protocol_controller::{ProtoSetConfig, ProtocolController, SetId},
     types::ProtocolName,
-    ReputationChange,
 };
-use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver};
+use sc_utils::mpsc::tracing_unbounded;
 
 use std::collections::HashSet;
 
@@ -117,13 +106,10 @@ async fn substrate_keep_alive_timeout() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut libp2p, mut peer_store_handle) = initialize_libp2p(1u32, 1u32);
+    let (mut libp2p, _peer_store_handle) = initialize_libp2p(1u32, 1u32);
     let (mut litep2p, mut handle) = initialize_litep2p().await;
 
-    let libp2p_peer = *libp2p.local_peer_id();
-    let litep2p_peer = *litep2p.local_peer_id();
-
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut libp2p_connection_open = false;

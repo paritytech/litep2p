@@ -254,7 +254,7 @@ impl Identify {
 
         while let Some(event) = self.service.next_event().await {
             match event {
-                TransportEvent::ConnectionEstablished { peer, address } => {
+                TransportEvent::ConnectionEstablished { peer, .. } => {
                     if let Err(error) = self.on_connection_established(peer).await {
                         tracing::debug!(
                             target: LOG_TARGET,

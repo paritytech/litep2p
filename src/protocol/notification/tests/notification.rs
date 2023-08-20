@@ -18,32 +18,18 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-// TODO: remove
-#![allow(unused)]
-
 use crate::{
-    error::{Error, SubstreamError},
     mock::substream::MockSubstream,
-    peer_id::PeerId,
-    protocol::{
-        notification::{
-            negotiation::HandshakeEvent,
-            tests::{add_peer, make_notification_protocol},
-            types::{
-                NotificationError, NotificationEvent, ValidationResult, ASYNC_CHANNEL_SIZE,
-                SYNC_CHANNEL_SIZE,
-            },
-            InboundState, OutboundState, PeerContext, PeerState,
-        },
-        ProtocolCommand,
+    protocol::notification::{
+        negotiation::HandshakeEvent,
+        tests::{add_peer, make_notification_protocol},
+        types::{NotificationError, NotificationEvent, ASYNC_CHANNEL_SIZE, SYNC_CHANNEL_SIZE},
+        InboundState, OutboundState, PeerContext, PeerState,
     },
     types::protocol::ProtocolName,
 };
 
-use bytes::BytesMut;
 use futures::StreamExt;
-
-use std::task::Poll;
 
 #[tokio::test]
 async fn sync_notifications_clogged() {
@@ -52,12 +38,11 @@ async fn sync_notifications_clogged() {
         .try_init();
 
     let (mut notif, mut handle, _sender) = make_notification_protocol();
-    let (peer, service, mut receiver) = add_peer();
+    let (peer, _service, _receiver) = add_peer();
 
     notif.peers.insert(
         peer,
         PeerContext {
-            service: (),
             state: PeerState::Validating {
                 protocol: ProtocolName::from("/notif/1"),
                 outbound: OutboundState::Open {
@@ -88,7 +73,7 @@ async fn sync_notifications_clogged() {
         },
     );
 
-    for i in 0..SYNC_CHANNEL_SIZE {
+    for _ in 0..SYNC_CHANNEL_SIZE {
         handle
             .send_sync_notification(peer, vec![1, 3, 3, 7])
             .unwrap();
@@ -108,12 +93,11 @@ async fn async_notifications_clogged() {
         .try_init();
 
     let (mut notif, mut handle, _sender) = make_notification_protocol();
-    let (peer, service, mut receiver) = add_peer();
+    let (peer, _service, _receiver) = add_peer();
 
     notif.peers.insert(
         peer,
         PeerContext {
-            service: (),
             state: PeerState::Validating {
                 protocol: ProtocolName::from("/notif/1"),
                 outbound: OutboundState::Open {
@@ -144,7 +128,7 @@ async fn async_notifications_clogged() {
         },
     );
 
-    for i in 0..ASYNC_CHANNEL_SIZE {
+    for _ in 0..ASYNC_CHANNEL_SIZE {
         handle
             .send_async_notification(peer, vec![1, 3, 3, 7])
             .await

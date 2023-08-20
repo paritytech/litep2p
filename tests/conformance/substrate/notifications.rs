@@ -18,39 +18,35 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
 use litep2p::{
     config::Litep2pConfigBuilder,
-    crypto::{ed25519::Keypair, PublicKey},
+    crypto::ed25519::Keypair,
     peer_id::PeerId as Litep2pPeerId,
     protocol::notification::{
         handle::NotificationHandle,
         types::{
             Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
         },
-        NotificationProtocol,
     },
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName as Litep2pProtocol,
     Litep2p, Litep2pEvent,
 };
 
-use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt};
+use futures::StreamExt;
 use libp2p::{
     identity,
     swarm::{SwarmBuilder, SwarmEvent},
     PeerId, Swarm,
 };
-use multiaddr::Protocol;
-use multihash::Multihash;
 use sc_network::{
-    peer_store::{PeerStore, PeerStoreHandle, PeerStoreProvider, BANNED_THRESHOLD},
+    peer_store::{PeerStore, PeerStoreHandle, PeerStoreProvider},
     protocol::notifications::behaviour::{Notifications, NotificationsOut, ProtocolConfig},
     protocol_controller::{ProtoSetConfig, ProtocolController, SetId},
     types::ProtocolName,
     ReputationChange,
 };
-use sc_utils::mpsc::{tracing_unbounded, TracingUnboundedReceiver};
+use sc_utils::mpsc::tracing_unbounded;
 
 use std::collections::HashSet;
 
@@ -123,7 +119,7 @@ async fn substrate_open_substream() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut libp2p_ready = false;
@@ -154,7 +150,7 @@ async fn substrate_open_substream() {
                     assert!(negotiated_fallback.is_none());
                     assert!(!inbound);
 
-                    notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]);
+                    notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]).unwrap();
                     notifications_sink.send_sync_notification(vec![4, 4, 4, 4]);
 
                     libp2p_ready = true;
@@ -188,7 +184,7 @@ async fn substrate_open_substream() {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
                     assert_eq!(handshake, vec![1, 3, 3, 7]);
 
-                    handle.send_sync_notification(peer, vec![1, 1, 1, 1]);
+                    handle.send_sync_notification(peer, vec![1, 1, 1, 1]).unwrap();
                     handle.send_async_notification(peer, vec![2, 2, 2, 2]).await.unwrap();
                 }
                 NotificationEvent::NotificationReceived { peer, notification } => {
@@ -212,13 +208,13 @@ async fn litep2p_open_substream() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut libp2p, mut peer_store_handle) = initialize_libp2p(1u32, 1u32);
+    let (mut libp2p, _peer_store_handle) = initialize_libp2p(1u32, 1u32);
     let (mut litep2p, mut handle) = initialize_litep2p().await;
 
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut libp2p_ready = false;
@@ -246,7 +242,7 @@ async fn litep2p_open_substream() {
                     assert!(negotiated_fallback.is_none());
                     assert!(inbound);
 
-                    notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]);
+                    notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]).unwrap();
                     notifications_sink.send_sync_notification(vec![4, 4, 4, 4]);
 
                     libp2p_ready = true;
@@ -267,7 +263,7 @@ async fn litep2p_open_substream() {
                 Litep2pEvent::ConnectionEstablished { peer, .. } => {
                     // TODO: zzz
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    handle.open_substream(peer).await;
+                    handle.open_substream(peer).await.unwrap();
                 }
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
@@ -285,7 +281,7 @@ async fn litep2p_open_substream() {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
                     assert_eq!(handshake, vec![1, 3, 3, 7]);
 
-                    handle.send_sync_notification(peer, vec![1, 1, 1, 1]);
+                    handle.send_sync_notification(peer, vec![1, 1, 1, 1]).unwrap();
                     handle.send_async_notification(peer, vec![2, 2, 2, 2]).await.unwrap();
                 }
                 NotificationEvent::NotificationReceived { peer, notification } => {
@@ -305,6 +301,7 @@ async fn litep2p_open_substream() {
 
 // TODO: implemement
 #[tokio::test]
+#[ignore]
 async fn substrate_reject_substream() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -313,13 +310,12 @@ async fn substrate_reject_substream() {
     // set inbound peer to count 0 so `ProtocolController` will reject the peer
     // TODO: once keep alive timeout detection is fixed, open two substreams
     // and reject only on the second substream so the connection is kept open
-    let (mut libp2p, mut peer_store_handle) = initialize_libp2p(0u32, 1u32);
+    let (mut libp2p, _peer_store_handle) = initialize_libp2p(0u32, 1u32);
     let (mut litep2p, mut handle) = initialize_litep2p().await;
 
     let libp2p_peer = *libp2p.local_peer_id();
-    let litep2p_peer = *litep2p.local_peer_id();
 
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.dial(address).unwrap();
 
     loop {
@@ -331,7 +327,7 @@ async fn substrate_reject_substream() {
                 Litep2pEvent::ConnectionEstablished { peer, .. } => {
                     // TODO: zzz
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    handle.open_substream(peer).await;
+                    handle.open_substream(peer).await.unwrap();
                 }
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
@@ -360,7 +356,7 @@ async fn litep2p_reject_substream() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.dial(address).unwrap();
 
     // TODO: once keep alive timeout detection is fixed, use the keep-alive
@@ -403,13 +399,10 @@ async fn substrate_close_substream() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.dial(address).unwrap();
 
-    let mut libp2p_ready = false;
-    let mut litep2p_ready = false;
     let mut libp2p_notification_count = 0;
-    let mut litep2p_notification_count = 0;
 
     loop {
         tokio::select! {
@@ -426,12 +419,10 @@ async fn substrate_close_substream() {
                     assert!(negotiated_fallback.is_none());
                     assert!(!inbound);
 
-                    notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]);
+                    notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]).unwrap();
                     notifications_sink.send_sync_notification(vec![4, 4, 4, 4]);
-
-                    libp2p_ready = true;
                 }
-                SwarmEvent::Behaviour(NotificationsOut::Notification { peer_id, set_id, message }) => {
+                SwarmEvent::Behaviour(NotificationsOut::Notification { peer_id, set_id, .. }) => {
                     assert_eq!(peer_id.to_bytes(), litep2p_peer.to_bytes());
                     assert_eq!(set_id, SetId::from(0usize));
 
@@ -448,8 +439,8 @@ async fn substrate_close_substream() {
                 SwarmEvent::Behaviour(NotificationsOut::CustomProtocolClosed { .. }) => {
                     handle.send_sync_notification(
                         Litep2pPeerId::from_bytes(&libp2p_peer.to_bytes()).unwrap(),
-                        vec![1 ,2 , 3, 4])
-                    ;
+                        vec![1 ,2 , 3, 4]
+                    ).unwrap();
                 }
                 event => tracing::info!("unhanled libp2p event: {event:?}"),
             },
@@ -463,19 +454,17 @@ async fn substrate_close_substream() {
                     assert_eq!(handshake, vec![1, 3, 3, 7]);
 
                     handle.send_validation_result(peer, ValidationResult::Accept).await;
-                    litep2p_ready = true;
                 }
                 NotificationEvent::NotificationStreamOpened { protocol, peer, handshake } => {
                     assert_eq!(protocol, Litep2pProtocol::from("/notif/1"));
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
                     assert_eq!(handshake, vec![1, 3, 3, 7]);
 
-                    handle.send_sync_notification(peer, vec![1, 1, 1, 1]);
+                    handle.send_sync_notification(peer, vec![1, 1, 1, 1]).unwrap();
                     handle.send_async_notification(peer, vec![2, 2, 2, 2]).await.unwrap();
                 }
-                NotificationEvent::NotificationReceived { peer, notification } => {
+                NotificationEvent::NotificationReceived { peer, .. } => {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
-                    litep2p_notification_count += 1;
                 }
                 NotificationEvent::NotificationStreamClosed { peer } => {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
@@ -501,7 +490,7 @@ async fn litep2p_close_substream() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.dial(address).unwrap();
 
     loop {
@@ -519,10 +508,10 @@ async fn litep2p_close_substream() {
                     assert!(negotiated_fallback.is_none());
                     assert!(!inbound);
 
-                    notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]);
+                    notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]).unwrap();
                     notifications_sink.send_sync_notification(vec![4, 4, 4, 4]);
                 }
-                SwarmEvent::Behaviour(NotificationsOut::Notification { peer_id, set_id, message }) => {
+                SwarmEvent::Behaviour(NotificationsOut::Notification { peer_id, set_id, .. }) => {
                     assert_eq!(peer_id.to_bytes(), litep2p_peer.to_bytes());
                     assert_eq!(set_id, SetId::from(0usize));
                 }
@@ -544,16 +533,12 @@ async fn litep2p_close_substream() {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
                     assert_eq!(handshake, vec![1, 3, 3, 7]);
 
-                    handle.send_sync_notification(peer, vec![1, 1, 1, 1]);
+                    handle.send_sync_notification(peer, vec![1, 1, 1, 1]).unwrap();
                     handle.send_async_notification(peer, vec![2, 2, 2, 2]).await.unwrap();
                 }
-                NotificationEvent::NotificationReceived { peer, notification } => {
+                NotificationEvent::NotificationReceived { peer, .. } => {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
                 }
-                // NotificationEvent::NotificationStreamClosed { peer } => {
-                //     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
-                //     break;
-                // }
                 event => tracing::error!("unhanled notification event: {event:?}"),
             }
         }
@@ -572,7 +557,7 @@ async fn both_nodes_open_substreams() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut libp2p_ready = false;
@@ -587,7 +572,7 @@ async fn both_nodes_open_substreams() {
                     handle.open_substream(Litep2pPeerId::from_bytes(&libp2p_peer.to_bytes()).unwrap()).await.unwrap();
                 }
                 SwarmEvent::Behaviour(NotificationsOut::CustomProtocolOpen {
-                    peer_id, set_id, negotiated_fallback, received_handshake, notifications_sink, inbound,
+                    peer_id, set_id, negotiated_fallback, received_handshake, ..
                 }) => {
                     assert_eq!(peer_id.to_bytes(), litep2p_peer.to_bytes());
                     assert_eq!(set_id, SetId::from(0usize));

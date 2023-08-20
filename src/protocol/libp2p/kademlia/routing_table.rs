@@ -31,11 +31,6 @@ use crate::{
 
 use multiaddr::Multiaddr;
 
-use std::{
-    collections::{BTreeMap, VecDeque},
-    time::Duration,
-};
-
 /// Number of k-buckets.
 const NUM_BUCKETS: usize = 256;
 
@@ -74,7 +69,7 @@ impl BucketIndex {
 
     /// Returns the minimum inclusive and maximum inclusive [`Distance`]
     /// included in the bucket for this index.
-    fn range(&self) -> (Distance, Distance) {
+    fn _range(&self) -> (Distance, Distance) {
         let min = Distance(U256::pow(U256::from(2), U256::from(self.0)));
         if self.0 == usize::from(u8::MAX) {
             (min, Distance(U256::MAX))
@@ -85,6 +80,7 @@ impl BucketIndex {
     }
 
     /// Generates a random distance that falls into the bucket for this index.
+    #[cfg(test)]
     fn rand_distance(&self, rng: &mut impl rand::Rng) -> Distance {
         let mut bytes = [0u8; 32];
         let quot = self.0 / 8;
@@ -110,7 +106,7 @@ impl RoutingTable {
     }
 
     /// Returns the local key.
-    pub fn local_key(&self) -> &Key<PeerId> {
+    pub fn _local_key(&self) -> &Key<PeerId> {
         &self.local_key
     }
 
@@ -204,7 +200,7 @@ impl RoutingTable {
                 if limit > nodes.len() {
                     nodes.len()
                 } else {
-                    (limit - peers.len())
+                    limit - peers.len()
                 }
             };
 
@@ -221,17 +217,14 @@ impl RoutingTable {
 mod tests {
     use super::*;
     use crate::protocol::libp2p::kademlia::types::ConnectionType;
-    use rand::Rng;
-    use sha2::digest::generic_array::{typenum::U32, GenericArray};
 
     #[test]
     fn closest_peers() {
-        let mut rng = rand::thread_rng();
         let own_peer_id = PeerId::random();
         let own_key = Key::from(own_peer_id);
         let mut table = RoutingTable::new(own_key.clone());
 
-        for i in 0..60 {
+        for _ in 0..60 {
             let peer = PeerId::random();
             let key = Key::from(peer);
             let mut entry = table.entry(key.clone());
@@ -300,7 +293,7 @@ mod tests {
             KBucketEntry::Occupied(entry) => {
                 entry.connection = ConnectionType::NotConnected;
             }
-            state => panic!("invalid state for `KBucketEntry`"),
+            state => panic!("invalid state for `KBucketEntry`: {state:?}"),
         }
 
         assert_eq!(
@@ -321,7 +314,7 @@ mod tests {
         let mut table = RoutingTable::new(own_key.clone());
 
         // add 20 nodes to the same k-bucket
-        for i in 0..20 {
+        for _ in 0..20 {
             let (key, peer) = random_peer(&mut rng, own_key.clone(), 254);
             let mut entry = table.entry(key.clone());
 
@@ -336,7 +329,7 @@ mod tests {
         let key_bytes = own_key.for_distance(distance);
         let key = Key::from_bytes(key_bytes, peer);
 
-        let mut entry = table.entry(key.clone());
+        let entry = table.entry(key.clone());
         assert!(std::matches!(entry, KBucketEntry::NoSlot));
     }
 
@@ -368,7 +361,7 @@ mod tests {
         let key_bytes = own_key.for_distance(distance);
         let key = Key::from_bytes(key_bytes, peer);
 
-        let mut entry = table.entry(key.clone());
+        let entry = table.entry(key.clone());
         assert!(std::matches!(entry, KBucketEntry::NoSlot));
 
         // disconnect random peer
@@ -389,7 +382,7 @@ mod tests {
         ));
 
         // verify the node is still there
-        let mut entry = table.entry(key.clone());
+        let entry = table.entry(key.clone());
         let addresses = vec!["/ip6/::1/tcp/8888".parse().unwrap()];
         assert_eq!(
             entry,
@@ -409,7 +402,7 @@ mod tests {
         let mut table = RoutingTable::new(own_key.clone());
 
         // add 19 disconnected nodes to the same k-bucket
-        let peers = (0..19)
+        let _peers = (0..19)
             .map(|_| {
                 let (key, peer) = random_peer(&mut rng, own_key.clone(), 252);
                 let mut entry = table.entry(key.clone());

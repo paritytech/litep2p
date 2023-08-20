@@ -30,10 +30,7 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
-use tokio::sync::{
-    mpsc::{channel, Receiver, Sender},
-    oneshot,
-};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
     error::ResolveError,
@@ -49,9 +46,6 @@ use std::{
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "transport-manager";
-
-/// Connection limit.
-pub const MAX_CONNECTIONS: usize = 10_000;
 
 /// Supported protocols.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -234,7 +228,7 @@ impl TransportHandle {
         }
     }
 
-    pub async fn report_connection_established(&mut self, peer: PeerId, address: Multiaddr) {
+    pub async fn _report_connection_established(&mut self, peer: PeerId, address: Multiaddr) {
         let _ = self
             .tx
             .send(TransportManagerEvent::ConnectionEstablished { peer, address })
@@ -299,10 +293,10 @@ pub struct TransportManager {
     transports: HashMap<SupportedTransport, TransportContext>,
 
     /// Connected peers.
-    connected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
+    _connected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
 
     /// Known but unconnected peers.
-    unconnected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
+    _unconnected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
 
     /// Handle to [`TransportManager`].
     transport_manager_handle: TransportManagerHandle,
@@ -345,8 +339,8 @@ impl TransportManager {
                 keypair,
                 event_tx,
                 event_rx,
-                connected,
-                unconnected,
+                _connected: connected,
+                _unconnected: unconnected,
                 local_peer_id,
                 protocols: HashMap::new(),
                 transports: HashMap::new(),
@@ -450,7 +444,7 @@ impl TransportManager {
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
-    pub async fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
+    pub async fn dial(&mut self, _peer: &PeerId) -> crate::Result<()> {
         Ok(())
     }
 

@@ -75,18 +75,14 @@ impl RequestContext {
 
 /// Peer context.
 struct PeerContext {
-    /// Connection service.
-    service: (),
-
     /// Active requests.
     active: HashSet<RequestId>,
 }
 
 impl PeerContext {
     /// Create new [`PeerContext`].
-    fn new(service: ()) -> Self {
+    fn new() -> Self {
         Self {
-            service,
             active: HashSet::new(),
         }
     }
@@ -151,7 +147,7 @@ impl RequestResponseProtocol {
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                entry.insert(PeerContext::new(()));
+                entry.insert(PeerContext::new());
                 Ok(())
             }
             Entry::Occupied(_) => {

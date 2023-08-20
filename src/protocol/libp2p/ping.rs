@@ -210,7 +210,7 @@ impl Ping {
 
         while let Some(event) = self.service.next_event().await {
             match event {
-                TransportEvent::ConnectionEstablished { peer, address } => {
+                TransportEvent::ConnectionEstablished { peer, .. } => {
                     if let Err(error) = self.on_connection_established(peer).await {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -264,7 +264,7 @@ impl Ping {
                 TransportEvent::SubstreamOpenFailure { substream, error } => {
                     self.on_substream_open_failure(substream, error);
                 }
-                TransportEvent::DialFailure { peer, address } => {}
+                TransportEvent::DialFailure { .. } => {}
             }
         }
     }

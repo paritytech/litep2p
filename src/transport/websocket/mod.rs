@@ -24,14 +24,14 @@ use crate::{
     transport::{
         manager::TransportManagerCommand,
         websocket::{config::Config, connection::WebSocketConnection},
-        Transport, TransportCommand,
+        Transport,
     },
     types::ConnectionId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use tokio::{net::TcpListener, sync::mpsc::Receiver};
+use tokio::net::TcpListener;
 
 use std::{
     collections::HashMap,
@@ -73,10 +73,10 @@ pub(crate) struct WebSocketTransport {
     listener: TcpListener,
 
     /// Assigned listen addresss.
-    listen_address: SocketAddr,
+    _listen_address: SocketAddr,
 
     /// Next connection ID.
-    next_connection_id: ConnectionId,
+    _next_connection_id: ConnectionId,
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
@@ -172,13 +172,13 @@ impl Transport for WebSocketTransport {
 
         let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
         let listener = TcpListener::bind(listen_address).await?;
-        let listen_address = listener.local_addr()?;
+        let _listen_address = listener.local_addr()?;
 
         Ok(Self {
             context,
             listener,
-            listen_address,
-            next_connection_id: ConnectionId::new(),
+            _listen_address,
+            _next_connection_id: ConnectionId::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
@@ -225,8 +225,8 @@ impl Transport for WebSocketTransport {
                 event = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
                     match event {
                         Ok(connection) => {
-                            let peer = *connection.peer();
-                            let address = connection.address().clone();
+                            let _peer = *connection.peer();
+                            let _address = connection.address().clone();
 
                             tokio::spawn(async move {
                                 if let Err(error) = connection.start().await {

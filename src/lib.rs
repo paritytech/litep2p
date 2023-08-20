@@ -18,8 +18,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
 use crate::{
     config::Litep2pConfig,
     crypto::PublicKey,
@@ -36,23 +34,12 @@ use crate::{
         tcp::TcpTransport,
         webrtc::WebRtcTransport,
         websocket::WebSocketTransport,
-        Transport, TransportCommand, TransportEvent,
+        Transport,
     },
-    types::ConnectionId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use multiaddr::{Multiaddr, Protocol};
+use multiaddr::Multiaddr;
 use protocol::mdns::Mdns;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    error::ResolveError,
-    lookup_ip::LookupIp,
-    AsyncResolver,
-};
-
-use std::{collections::HashMap, net::IpAddr, result};
 
 // TODO: which of these need to be pub?
 pub mod codec;
@@ -69,7 +56,7 @@ mod mock;
 mod multistream_select;
 
 /// Public result type used by the crate.
-pub type Result<T> = result::Result<T, error::Error>;
+pub type Result<T> = std::result::Result<T, error::Error>;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p";

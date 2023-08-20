@@ -19,13 +19,11 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::unsigned_varint::UnsignedVarint,
     peer_id::PeerId,
     protocol::libp2p::kademlia::{schema, types::KademliaPeer},
 };
 
 use bytes::BytesMut;
-use multiaddr::Multiaddr;
 use prost::Message;
 
 /// Logging target for the file.
@@ -35,6 +33,7 @@ const LOG_TARGET: &str = "ifps::kademlia::message";
 #[derive(Debug)]
 pub(super) enum KademliaMessage {
     /// Inbound `FIND_NODE` query.
+    #[allow(unused)]
     FindNodeRequest {
         /// Peer ID of the target node.
         target: PeerId,
@@ -82,12 +81,12 @@ impl KademliaMessage {
     }
 
     /// Create `GET_VALUE` message.
-    pub(super) fn get_value() -> Vec<u8> {
+    pub(super) fn _get_value() -> Vec<u8> {
         todo!();
     }
 
     /// Create `PUT_VALUE` message.
-    pub(super) fn put_value() -> Vec<u8> {
+    pub(super) fn _put_value() -> Vec<u8> {
         todo!();
     }
 

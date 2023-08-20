@@ -18,21 +18,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    codec::ProtocolCodec,
-    crypto::{ed25519::Keypair, PublicKey},
-    error::Error,
-    peer_id::PeerId,
-    protocol::ProtocolSet,
-    transport::manager::TransportHandle,
-    types::{protocol::ProtocolName, ConnectionId},
-    DEFAULT_CHANNEL_SIZE,
-};
+use crate::transport::manager::TransportHandle;
 
 use multiaddr::Multiaddr;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 
 pub mod quic;
 pub mod tcp;
@@ -41,53 +31,12 @@ pub mod websocket;
 
 pub(crate) mod manager;
 
-/// Commands send by `Litep2p` to the transport.
-#[derive(Debug)]
-pub(crate) enum TransportCommand {
-    /// Dial remote peer at `address`.
-    Dial {
-        /// Address.
-        address: Multiaddr,
-
-        /// Connection ID allocated for this connection.
-        connection_id: ConnectionId,
-    },
-}
-
-/// Events emitted by the underlying transport.
-#[derive(Debug)]
-pub enum TransportEvent {
-    ConnectionEstablished {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Remote address.
-        address: Multiaddr,
-    },
-
-    ConnectionClosed {
-        /// Peer ID.
-        peer: PeerId,
-    },
-
-    DialFailure {
-        /// Dialed address.
-        address: Multiaddr,
-
-        /// Error.
-        error: Error,
-    },
-}
-
 #[async_trait::async_trait]
 pub(crate) trait Transport {
     type Config: Debug;
 
     /// Create new [`Transport`] object.
-    async fn new(
-        context: crate::transport::manager::TransportHandle,
-        config: Self::Config,
-    ) -> crate::Result<Self>
+    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized;
 

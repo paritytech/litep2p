@@ -24,7 +24,7 @@ use crate::{
     transport::{
         manager::TransportManagerCommand,
         tcp::{config::TransportConfig, connection::TcpConnection},
-        Transport, TransportCommand,
+        Transport,
     },
     types::ConnectionId,
 };
@@ -34,7 +34,7 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
 };
 use multiaddr::{Multiaddr, Protocol};
-use tokio::{net::TcpListener, sync::mpsc::Receiver};
+use tokio::net::TcpListener;
 
 use std::{
     collections::HashMap,
@@ -207,16 +207,14 @@ impl Transport for TcpTransport {
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
                     match connection {
                         Ok(connection) => {
-                            let peer = *connection.peer();
-                            let address = connection.address().clone();
+                            let _peer = *connection.peer();
+                            let _address = connection.address().clone();
 
                             tokio::spawn(async move {
                                 if let Err(error) = connection.start().await {
-                                    tracing::error!(target: LOG_TARGET, ?peer, ?error, "connection failure");
+                                    tracing::error!(target: LOG_TARGET, ?error, "connection failure");
                                 }
                             });
-
-                            // self.context.report_connection_established(peer, address).await;
                         }
                         Err(error) => {
                             match error.connection_id {
@@ -265,12 +263,7 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
-        transport::{
-            manager::{
-                ProtocolContext, TransportHandle, TransportManagerCommand, TransportManagerEvent,
-            },
-            TransportEvent,
-        },
+        transport::manager::{ProtocolContext, TransportManagerCommand, TransportManagerEvent},
         types::protocol::ProtocolName,
     };
     use tokio::sync::mpsc::channel;
@@ -322,7 +315,7 @@ mod tests {
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
-        let (cmd_tx1, mut cmd_rx1) = channel(64);
+        let (_cmd_tx1, cmd_rx1) = channel(64);
 
         let handle1 = crate::transport::manager::TransportHandle {
             keypair: keypair1.clone(),
@@ -408,7 +401,7 @@ mod tests {
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
-        let (cmd_tx1, mut cmd_rx1) = channel(64);
+        let (_cmd_tx1, cmd_rx1) = channel(64);
 
         let handle1 = crate::transport::manager::TransportHandle {
             keypair: keypair1.clone(),

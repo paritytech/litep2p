@@ -25,7 +25,7 @@ use crate::{
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         webrtc::handshake::WebRtcHandshake,
-        Transport, TransportCommand,
+        Transport,
     },
     types::ConnectionId,
 };
@@ -39,7 +39,7 @@ use str0m::{
 };
 use tokio::{
     net::UdpSocket,
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{channel, Sender},
 };
 
 use std::{
@@ -338,7 +338,7 @@ impl Transport for WebRtcTransport {
                         }
 
                     }
-                    Err(error) => return Err(Error::EssentialTaskClosed),
+                    Err(_error) => return Err(Error::EssentialTaskClosed),
                 },
                 event = self.context.next() => match event {
                     Some(TransportManagerCommand::Dial { .. }) => {

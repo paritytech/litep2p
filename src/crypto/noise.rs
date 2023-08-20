@@ -200,9 +200,10 @@ enum ReadState {
     DecErr,
 }
 
+// TODO: remove maybe?
 #[derive(Debug)]
 enum WriteState {
-    Ready,
+    _Ready,
     _WriteLen { buf: [u8; 2], off: usize },
     _WriteData { len: usize, off: usize },
 }
@@ -693,7 +694,7 @@ pub struct NoiseContext {
     noise: snow::HandshakeState,
 
     /// Noise keypair.
-    keypair: snow::Keypair,
+    _keypair: snow::Keypair,
 
     /// Noise payload.
     payload: Vec<u8>,
@@ -757,7 +758,7 @@ impl NoiseContext {
 
         Self {
             noise,
-            keypair,
+            _keypair: keypair,
             payload,
         }
     }

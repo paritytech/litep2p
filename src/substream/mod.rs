@@ -18,10 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    codec::ProtocolCodec,
-    error::{Error, SubstreamError},
-};
+use crate::error::{Error, SubstreamError};
 
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, Stream};

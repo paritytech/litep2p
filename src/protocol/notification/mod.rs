@@ -153,18 +153,14 @@ pub enum PeerState {
 /// Peer context.
 #[derive(Debug)]
 struct PeerContext {
-    /// Connection service.
-    service: (),
-
     /// Peer state.
     state: PeerState,
 }
 
 impl PeerContext {
     /// Create new [`PeerContext`].
-    fn new(service: ()) -> Self {
+    fn new() -> Self {
         Self {
-            service,
             state: PeerState::Closed { pending_open: None },
         }
     }
@@ -217,7 +213,7 @@ impl NotificationProtocol {
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                entry.insert(PeerContext::new(()));
+                entry.insert(PeerContext::new());
                 Ok(())
             }
             Entry::Occupied(_) => {

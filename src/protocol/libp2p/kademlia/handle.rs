@@ -24,7 +24,7 @@ use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "ifsp::kademlia::handle";
+const _LOG_TARGET: &str = "ifsp::kademlia::handle";
 
 /// Kademlia commands.
 #[derive(Debug)]
