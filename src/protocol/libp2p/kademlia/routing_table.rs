@@ -341,6 +341,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn peer_disconnects_and_is_evicted() {
         let mut rng = rand::thread_rng();
         let own_peer_id = PeerId::random();

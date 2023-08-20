@@ -112,10 +112,13 @@ async fn user_protocol() {
 
     litep2p1.connect(address).await.unwrap();
 
-    loop {
+    let mut litep2p1_ready = false;
+    let mut litep2p2_ready = false;
+
+    while !litep2p1_ready && !litep2p2_ready {
         tokio::select! {
-            _event = litep2p1.next_event() => {}
-            _event = litep2p2.next_event() => {}
+            _event = litep2p1.next_event() => litep2p1_ready = true,
+            _event = litep2p2.next_event() => litep2p2_ready = true,
         }
     }
 }

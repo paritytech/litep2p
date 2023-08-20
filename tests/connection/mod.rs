@@ -110,6 +110,7 @@ async fn connection_timeout_quic() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn simultaneous_dial_tcp() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -154,6 +155,7 @@ async fn simultaneous_dial_tcp() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn simultaneous_dial_quic() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

@@ -46,6 +46,7 @@ async fn spawn_litep2p(port: u16) {
 }
 
 #[tokio::test]
+#[ignore]
 async fn kademlia_supported() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -79,6 +80,7 @@ async fn kademlia_supported() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn put_value() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

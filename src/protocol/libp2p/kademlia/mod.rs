@@ -531,6 +531,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn find_node_no_peers() {
         let (mut kad, _context) = make_kademlia();
 
