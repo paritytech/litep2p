@@ -211,7 +211,7 @@ impl Transport for QuicTransport {
                         let connection_id = self.connection_id.next();
                         let context = self.context.clone();
                         let address = socket_addr_to_multi_addr(&connection.remote_addr().expect("remote address to be known"));
-                        // TODO: so ugly
+
                         let peer = match self.rx.try_recv() {
                             Ok(peer) => peer,
                             Err(_) => {
@@ -219,13 +219,15 @@ impl Transport for QuicTransport {
                                 continue
                             }
                         };
-                        // TODO: no unwraps
+
+                        // the only way `QuiConnection::new()` can fail if the protocols have exited.
+                        // at which point the transport can be closed as well
                         let quic_connection = QuicConnection::new(
                             peer,
                             context,
                             connection,
                             connection_id
-                        ).await.unwrap();
+                        ).await?;
 
                         tracing::info!(target: LOG_TARGET, ?address, ?peer, "accepted connection from remote peer");
 
@@ -238,8 +240,8 @@ impl Transport for QuicTransport {
                         self.context.report_connection_established(peer, address).await;
                     }
                     None => {
-                        // TODO: close transport
-                        tracing::error!(target: LOG_TARGET, "failed to accept connection");
+                        tracing::error!(target: LOG_TARGET, "failed to accept connection, closing quic transport");
+                        return Ok(())
                     }
                 },
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
@@ -257,7 +259,8 @@ impl Transport for QuicTransport {
                                 }
                             });
 
-                            // TODO: fix
+                            // the only way this can fail is if the `Litep2p` has shut down at which
+                            // point transport can be closed as well.
                             self.context.tx.send(TransportEvent::ConnectionEstablished {
                                 peer: PeerId::random(),
                                 address: Multiaddr::empty()

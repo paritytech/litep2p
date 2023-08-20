@@ -143,7 +143,12 @@ impl QuicConnection {
 
         let stream = match handle.open_bidirectional_stream().await {
             Ok(stream) => {
-                tracing::trace!(target: LOG_TARGET, ?direction, "substream opened");
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    ?direction,
+                    "substream opened"
+                );
                 stream
             }
             Err(error) => {
@@ -154,7 +159,6 @@ impl QuicConnection {
                     "failed to open substream"
                 );
                 return Err(Error::Unknown);
-                // return Err(Error::YamuxError(direction, error));
             }
         };
 
@@ -189,6 +193,7 @@ impl QuicConnection {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
+            ?protocol,
             "substream accepted and negotiated"
         );
 
@@ -230,13 +235,17 @@ impl QuicConnection {
                             }
                         }));
                     }
-                    // TODO: shut down the connection?
-                    Ok(None) => todo!(),
-                    Err(_error) => todo!(),
+                    Ok(None) => {
+                        tracing::warn!(target: LOG_TARGET, "quic transport has exited");
+                        return Ok(())
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: LOG_TARGET, ?error, "quic transport has exited");
+                        return Ok(())
+                    }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
                     match substream {
-                        // TODO: return error to protocol
                         Err(error) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -253,20 +262,17 @@ impl QuicConnection {
                                 }
                             };
 
-                            match (protocol, substream_id) {
-                                (Some(protocol), Some(substream_id)) => {
-                                    if let Err(error) = self.context
-                                        .report_substream_open_failure(protocol, substream_id, error)
-                                        .await
-                                    {
-                                        tracing::error!(
-                                            target: LOG_TARGET,
-                                            ?error,
-                                            "failed to register opened substream to protocol"
-                                        );
-                                    }
+                            if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
+                                if let Err(error) = self.context
+                                    .report_substream_open_failure(protocol, substream_id, error)
+                                    .await
+                                {
+                                    tracing::error!(
+                                        target: LOG_TARGET,
+                                        ?error,
+                                        "failed to register opened substream to protocol"
+                                    );
                                 }
-                                _ => {}
                             }
                         }
                         Ok(substream) => {
@@ -298,6 +304,7 @@ impl QuicConnection {
                             "open substream"
                         );
 
+                        // TODO: make timeout configurable
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(5),
