@@ -19,13 +19,14 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
     crypto::noise::{self, Encrypted, NoiseConfiguration},
     error::{Error, NegotiationError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolCommand, ProtocolSet},
-    substream::SubstreamType,
+    substream::Substream as SubstreamT,
     transport::tcp::socket_addr_to_multi_addr,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
@@ -37,8 +38,11 @@ use futures::{
 };
 use multiaddr::Multiaddr;
 use tokio::net::TcpStream;
-use tokio_util::compat::{
-    Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt,
+use tokio_util::{
+    codec::Framed,
+    compat::{
+        Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt,
+    },
 };
 
 use std::{fmt, io, net::SocketAddr, pin::Pin, time::Duration};
@@ -388,9 +392,17 @@ impl TcpConnection {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
                             let substream = FuturesAsyncReadCompatExt::compat(substream);
+                            let substream: Box<dyn SubstreamT> = match self.protocol_set.protocol_codec(&protocol) {
+                                ProtocolCodec::Identity(payload_size) => {
+                                    Box::new(Framed::new(substream, Identity::new(payload_size)))
+                                }
+                                ProtocolCodec::UnsignedVarint => {
+                                    Box::new(Framed::new(substream, UnsignedVarint::new()))
+                                }
+                            };
 
                             if let Err(error) = self.protocol_set
-                                .report_substream_open(self.peer, protocol, direction, SubstreamType::Raw(substream))
+                                .report_substream_open(self.peer, protocol, direction, substream)
                                 .await
                             {
                                 tracing::error!(

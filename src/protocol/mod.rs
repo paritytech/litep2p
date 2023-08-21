@@ -21,11 +21,11 @@
 //! Protocol-related defines.
 
 use crate::{
-    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
+    codec::ProtocolCodec,
     crypto::ed25519::Keypair,
     error::Error,
     peer_id::PeerId,
-    substream::{RawSubstream, Substream, SubstreamType},
+    substream::Substream,
     transport::manager::{TransportManagerEvent, TransportManagerHandle},
     types::{protocol::ProtocolName, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
@@ -33,7 +33,6 @@ use crate::{
 
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender, WeakSender};
-use tokio_util::codec::Framed;
 
 use std::{collections::HashMap, fmt::Debug};
 
@@ -467,47 +466,27 @@ impl ProtocolSet {
     }
 
     /// Report to `protocol` that substream was opened for `peer`.
-    pub async fn report_substream_open<R: RawSubstream>(
+    pub async fn report_substream_open(
         &mut self,
         peer: PeerId,
         protocol: ProtocolName,
         direction: Direction,
-        substream: SubstreamType<R>,
+        substream: Box<dyn Substream>,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
 
-        // TODO: transport should create the substream as it knows the internal representation
-        // of the underlying I/O stream
-        match self.protocols.get_mut(&protocol) {
-            Some(info) => {
-                let substream: Box<dyn Substream> = match substream {
-                    SubstreamType::Raw(substream) => match info.codec {
-                        ProtocolCodec::Identity(payload_size) => {
-                            Box::new(Framed::new(substream, Identity::new(payload_size)))
-                        }
-                        ProtocolCodec::UnsignedVarint => {
-                            Box::new(Framed::new(substream, UnsignedVarint::new()))
-                        }
-                    },
-                    SubstreamType::ChannelBackend(mut substream) => {
-                        substream.apply_codec(info.codec.clone());
-                        Box::new(substream)
-                    }
-                    SubstreamType::Ready(substream) => substream,
-                };
-
-                info.tx
-                    .send(InnerTransportEvent::SubstreamOpened {
-                        peer,
-                        protocol: protocol.clone(),
-                        direction,
-                        substream,
-                    })
-                    .await
-                    .map_err(From::from)
-            }
-            None => Err(Error::ProtocolNotSupported(protocol.to_string())),
-        }
+        self.protocols
+            .get_mut(&protocol)
+            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
+            .tx
+            .send(InnerTransportEvent::SubstreamOpened {
+                peer,
+                protocol: protocol.clone(),
+                direction,
+                substream,
+            })
+            .await
+            .map_err(From::from)
     }
 
     /// Get codec used by the protocol.

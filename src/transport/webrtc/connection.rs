@@ -24,7 +24,7 @@ use crate::{
     multistream_select::{dialer_propose, listener_negotiate},
     peer_id::PeerId,
     protocol::{Direction, ProtocolCommand, ProtocolSet},
-    substream::{channel::SubstreamBackend, SubstreamType},
+    substream::{channel::SubstreamBackend, Substream as SubstreamT},
     transport::webrtc::{
         util::{SubstreamContext, WebRtcMessage},
         WebRtcEvent,
@@ -264,7 +264,7 @@ impl WebRtcConnection {
             .map_err(|error| Error::WebRtc(error))?;
 
         let substream_id = self.substream_id.next();
-        let (substream, tx) = self.backend.substream(substream_id);
+        let (mut substream, tx) = self.backend.substream(substream_id);
         self.substreams.insert(
             d.id,
             SubstreamState::Open {
@@ -272,6 +272,10 @@ impl WebRtcConnection {
                 substream: SubstreamContext::new(d.id, tx.clone()),
             },
         );
+        let substream: Box<dyn SubstreamT> = {
+            substream.apply_codec(self.protocol_set.protocol_codec(&protocol));
+            Box::new(substream)
+        };
 
         self.channels
             .insert(substream_id, SubstreamContext::new(d.id, tx));
@@ -282,8 +286,7 @@ impl WebRtcConnection {
                 self.remote_peer_id,
                 protocol.clone(),
                 Direction::Inbound,
-                // TODO: this is wrong
-                SubstreamType::<tokio::net::TcpStream>::ChannelBackend(substream),
+                substream,
             )
             .await;
 
@@ -332,10 +335,14 @@ impl WebRtcConnection {
 
                 // TODO: process response
                 let substream_id = self.substream_id.next();
-                let (substream, tx) = self.backend.substream(substream_id);
+                let (mut substream, tx) = self.backend.substream(substream_id);
                 *state = SubstreamState::Open {
                     substream_id,
                     substream: SubstreamContext::new(d.id, tx.clone()),
+                };
+                let substream: Box<dyn SubstreamT> = {
+                    substream.apply_codec(self.protocol_set.protocol_codec(&protocol));
+                    Box::new(substream)
                 };
                 self.channels
                     .insert(substream_id, SubstreamContext::new(d.id, tx));
@@ -346,8 +353,7 @@ impl WebRtcConnection {
                         self.remote_peer_id,
                         protocol.clone(),
                         Direction::Outbound(user_substream_id),
-                        // TODO: this is wrong
-                        SubstreamType::<tokio::net::TcpStream>::ChannelBackend(substream),
+                        substream,
                     )
                     .await;
 

@@ -19,12 +19,13 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
     protocol::{Direction, ProtocolCommand, ProtocolSet},
-    substream::SubstreamType,
+    substream::Substream as SubstreamT,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
@@ -33,6 +34,7 @@ use s2n_quic::{
     connection::{Connection, Handle},
     stream::BidirectionalStream,
 };
+use tokio_util::codec::Framed;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "quic::connection";
@@ -286,10 +288,17 @@ impl QuicConnection {
                         Ok(substream) => {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
-                            let substream = substream.io;
+                            let substream: Box<dyn SubstreamT> = match self.protocol_set.protocol_codec(&protocol) {
+                                ProtocolCodec::Identity(payload_size) => {
+                                    Box::new(Framed::new(substream.io, Identity::new(payload_size)))
+                                }
+                                ProtocolCodec::UnsignedVarint => {
+                                    Box::new(Framed::new(substream.io, UnsignedVarint::new()))
+                                }
+                            };
 
                             if let Err(error) = self.protocol_set
-                                .report_substream_open(self.peer, protocol, direction, SubstreamType::Raw(substream))
+                                .report_substream_open(self.peer, protocol, direction, substream)
                                 .await
                             {
                                 tracing::error!(

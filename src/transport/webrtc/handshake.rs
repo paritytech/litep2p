@@ -25,7 +25,7 @@ use crate::{
     multistream_select::listener_negotiate,
     peer_id::PeerId,
     protocol::{Direction, ProtocolSet},
-    substream::{channel::SubstreamBackend, SubstreamType},
+    substream::{channel::SubstreamBackend, Substream as SubstreamT},
     transport::webrtc::{
         connection::WebRtcConnection,
         util::{SubstreamContext, WebRtcMessage},
@@ -409,7 +409,12 @@ impl WebRtcHandshake {
             .map_err(|error| Error::WebRtc(error))?;
 
         let substream_id = self.substream_id.next();
-        let (substream, tx) = self.backend.substream(substream_id);
+        let (mut substream, tx) = self.backend.substream(substream_id);
+        let substream: Box<dyn SubstreamT> = {
+            substream.apply_codec(self.protocol_set.protocol_codec(&protocol));
+            Box::new(substream)
+        };
+
         self.id_mapping.insert(d.id, substream_id);
         self.channels
             .insert(substream_id, SubstreamContext::new(d.id, tx));
@@ -417,13 +422,7 @@ impl WebRtcHandshake {
         if let State::Open { peer, .. } = &mut self.state {
             let _ = self
                 .protocol_set
-                .report_substream_open(
-                    *peer,
-                    protocol.clone(),
-                    Direction::Inbound,
-                    // TODO: this is wrong
-                    SubstreamType::<tokio::net::TcpStream>::ChannelBackend(substream),
-                )
+                .report_substream_open(*peer, protocol.clone(), Direction::Inbound, substream)
                 .await;
         }
 
