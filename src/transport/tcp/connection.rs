@@ -434,7 +434,7 @@ impl TcpConnection {
                         }));
                     }
                     None => {
-                        tracing::error!(target: LOG_TARGET, "protocols have exited, shutting down connection");
+                        tracing::trace!(target: LOG_TARGET, "protocols have disconnected, closing connection");
                         return Ok(())
                     }
                 }

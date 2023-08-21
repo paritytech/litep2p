@@ -168,13 +168,18 @@ impl Ping {
                     substream_id,
                 ))))??;
 
-        self.tx
+        let res = self
+            .tx
             .send(PingEvent::Ping {
                 peer,
                 ping: now.elapsed(),
             })
             .await
-            .map_err(From::from)
+            .map_err(From::from);
+
+        self.service.disconnect(&peer);
+
+        res
     }
 
     /// Substream opened to remote peer.

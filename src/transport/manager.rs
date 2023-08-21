@@ -217,15 +217,11 @@ pub struct TransportHandle {
 
 impl TransportHandle {
     pub fn protocol_set(&self) -> ProtocolSet {
-        let (tx, rx) = channel(256);
-
-        ProtocolSet {
-            rx,
-            tx,
-            mgr_tx: self.tx.clone(),
-            keypair: self.keypair.clone(),
-            protocols: self.protocols.clone(),
-        }
+        ProtocolSet::new(
+            self.keypair.clone(),
+            self.tx.clone(),
+            self.protocols.clone(),
+        )
     }
 
     pub async fn _report_connection_established(&mut self, peer: PeerId, address: Multiaddr) {

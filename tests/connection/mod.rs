@@ -30,6 +30,8 @@ use litep2p::{
     },
     Litep2p, Litep2pEvent,
 };
+
+use futures::{Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use tokio::net::{TcpListener, UdpSocket};
@@ -341,4 +343,59 @@ async fn attempt_to_dial_using_unsupported_transport() {
         litep2p.connect(address.clone()).await,
         Err(Error::TransportNotSupported(_))
     ));
+}
+
+#[tokio::test]
+async fn keep_alive_timeout_tcp() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (ping_config1, mut ping_event_stream1) = PingConfig::new(3);
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_ipfs_ping(ping_config1)
+        .build();
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    let (ping_config2, mut ping_event_stream2) = PingConfig::new(3);
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        })
+        .with_ipfs_ping(ping_config2)
+        .build();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let address1 = litep2p1.listen_addresses().next().unwrap().clone();
+    litep2p2.connect(address1).await.unwrap();
+    let mut litep2p1_ping = false;
+    let mut litep2p2_ping = false;
+
+    loop {
+        tokio::select! {
+            event = litep2p1.next_event() => match event {
+                Some(Litep2pEvent::ConnectionClosed { .. }) if litep2p1_ping || litep2p2_ping => {
+                    break;
+                }
+                _ => {}
+            },
+            event = litep2p2.next_event() => match event {
+                Some(Litep2pEvent::ConnectionClosed { .. }) if litep2p1_ping || litep2p2_ping => {
+                    break;
+                }
+                _ => {}
+            },
+            _event = ping_event_stream1.next() => {
+                litep2p1_ping = true;
+            }
+            _event = ping_event_stream2.next() => {
+                litep2p2_ping = true;
+            }
+        }
+    }
 }
