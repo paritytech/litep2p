@@ -29,6 +29,7 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use trust_dns_resolver::{
@@ -285,6 +286,9 @@ pub struct TransportManager {
     /// Installed protocols.
     protocols: HashMap<ProtocolName, ProtocolContext>,
 
+    /// Listen addresses.
+    listen_addresses: HashSet<Multiaddr>,
+
     /// Installed transports.
     transports: HashMap<SupportedTransport, TransportContext>,
 
@@ -340,6 +344,7 @@ impl TransportManager {
                 local_peer_id,
                 protocols: HashMap::new(),
                 transports: HashMap::new(),
+                listen_addresses: HashSet::new(),
                 next_connection_id: ConnectionId::new(),
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
@@ -381,6 +386,14 @@ impl TransportManager {
             keypair: self.keypair.clone(),
             protocols: self.protocols.clone(),
         }
+    }
+
+    /// Register local listen address.
+    pub fn register_listen_address(&mut self, address: Multiaddr) {
+        self.listen_addresses.insert(address.clone());
+        self.listen_addresses.insert(address.with(Protocol::P2p(
+            Multihash::from_bytes(&self.local_peer_id.to_bytes()).unwrap(),
+        )));
     }
 
     /// Dial remote peer over TCP.
@@ -440,7 +453,12 @@ impl TransportManager {
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
-    pub async fn dial(&mut self, _peer: &PeerId) -> crate::Result<()> {
+    pub async fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
+        if peer == &self.local_peer_id {
+            return Err(Error::TriedToDialSelf);
+        }
+
+        // TODO: implement
         Ok(())
     }
 
@@ -448,6 +466,10 @@ impl TransportManager {
     ///
     /// Returns an error if address it not valid.
     pub async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
+        if self.listen_addresses.contains(&address) {
+            return Err(Error::TriedToDialSelf);
+        }
+
         let mut protocol_stack = address.iter();
 
         match protocol_stack

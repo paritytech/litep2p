@@ -259,7 +259,6 @@ async fn dial_quic_peer_id_missing() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn dial_self_tcp() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -277,10 +276,17 @@ async fn dial_self_tcp() {
     let mut litep2p = Litep2p::new(config).await.unwrap();
 
     let mut address = litep2p.listen_addresses().next().unwrap().clone();
+
+    // dial without peer id attached
+    assert!(std::matches!(
+        litep2p.connect(address.clone()).await,
+        Err(Error::TriedToDialSelf)
+    ));
+
+    // dial with peer id attached
     address.push(Protocol::P2p(
         Multihash::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap(),
     ));
-
     assert!(std::matches!(
         litep2p.connect(address.clone()).await,
         Err(Error::TriedToDialSelf)
@@ -288,7 +294,6 @@ async fn dial_self_tcp() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn dial_self_quic() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -306,10 +311,17 @@ async fn dial_self_quic() {
     let mut litep2p = Litep2p::new(config).await.unwrap();
 
     let mut address = litep2p.listen_addresses().next().unwrap().clone();
+
+    // dial without peer id attached
+    assert!(std::matches!(
+        litep2p.connect(address.clone()).await,
+        Err(Error::TriedToDialSelf)
+    ));
+
+    // dial with peer id attached
     address.push(Protocol::P2p(
         Multihash::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap(),
     ));
-
     assert!(std::matches!(
         litep2p.connect(address.clone()).await,
         Err(Error::TriedToDialSelf)

@@ -196,8 +196,9 @@ impl Litep2p {
         // enable tcp transport if the config exists
         if let Some(config) = config.tcp.take() {
             let service = transport_manager.register_transport(SupportedTransport::Tcp);
-
             let transport = <TcpTransport as Transport>::new(service, config).await?;
+
+            transport_manager.register_listen_address(transport.listen_address());
             listen_addresses.push(transport.listen_address());
 
             tokio::spawn(async move {
@@ -211,6 +212,8 @@ impl Litep2p {
         if let Some(config) = config.quic.take() {
             let service = transport_manager.register_transport(SupportedTransport::Quic);
             let transport = <QuicTransport as Transport>::new(service, config).await?;
+
+            transport_manager.register_listen_address(transport.listen_address());
             listen_addresses.push(transport.listen_address());
 
             tokio::spawn(async move {
@@ -224,6 +227,8 @@ impl Litep2p {
         if let Some(config) = config.webrtc.take() {
             let service = transport_manager.register_transport(SupportedTransport::WebRtc);
             let transport = <WebRtcTransport as Transport>::new(service, config).await?;
+
+            transport_manager.register_listen_address(transport.listen_address());
             listen_addresses.push(transport.listen_address());
 
             tokio::spawn(async move {
@@ -237,6 +242,8 @@ impl Litep2p {
         if let Some(config) = config.websocket.take() {
             let service = transport_manager.register_transport(SupportedTransport::WebRtc);
             let transport = <WebSocketTransport as Transport>::new(service, config).await?;
+
+            transport_manager.register_listen_address(transport.listen_address());
             listen_addresses.push(transport.listen_address());
 
             tokio::spawn(async move {
