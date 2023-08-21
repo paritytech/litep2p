@@ -56,7 +56,16 @@ pub(crate) enum KademliaCommand {
 
 /// Kademlia events.
 #[derive(Debug, Clone)]
-pub enum KademliaEvent {}
+pub enum KademliaEvent {
+    /// Result for the issued `FIND_NODE` query.
+    FindNodeResult {
+        /// Target of the query
+        target: PeerId,
+
+        /// Found nodes and their addresses.
+        peers: Vec<(PeerId, Vec<Multiaddr>)>,
+    },
+}
 
 /// Handle for communicating with `Kademlia`.
 pub struct KademliaHandle {
