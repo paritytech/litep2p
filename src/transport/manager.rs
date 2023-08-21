@@ -42,7 +42,10 @@ use trust_dns_resolver::{
 use std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 /// Logging target for the file.
@@ -208,12 +211,14 @@ impl TransportManagerHandle {
     }
 }
 
+// TODO: add getters for these
 #[derive(Debug)]
 pub struct TransportHandle {
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,
     pub rx: Receiver<TransportManagerCommand>,
     pub protocols: HashMap<ProtocolName, ProtocolContext>,
+    pub next_connection_id: Arc<AtomicUsize>,
 }
 
 impl TransportHandle {
@@ -223,6 +228,13 @@ impl TransportHandle {
             self.tx.clone(),
             self.protocols.clone(),
         )
+    }
+
+    /// Get next connection ID.
+    pub fn next_connection_id(&mut self) -> ConnectionId {
+        let connection_id = self.next_connection_id.fetch_add(1usize, Ordering::Relaxed);
+
+        ConnectionId::from(connection_id)
     }
 
     pub async fn _report_connection_established(&mut self, peer: PeerId, address: Multiaddr) {
@@ -289,6 +301,9 @@ pub struct TransportManager {
     /// Listen addresses.
     listen_addresses: HashSet<Multiaddr>,
 
+    /// Next connection ID.
+    next_connection_id: Arc<AtomicUsize>,
+
     /// Installed transports.
     transports: HashMap<SupportedTransport, TransportContext>,
 
@@ -309,9 +324,6 @@ pub struct TransportManager {
 
     /// TX channel for transport events that is given to installed transports.
     event_tx: Sender<TransportManagerEvent>,
-
-    /// Next connection ID.
-    next_connection_id: ConnectionId,
 
     /// Pending connections.
     pending_connections: HashMap<ConnectionId, Multiaddr>,
@@ -345,10 +357,10 @@ impl TransportManager {
                 protocols: HashMap::new(),
                 transports: HashMap::new(),
                 listen_addresses: HashSet::new(),
-                next_connection_id: ConnectionId::new(),
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
                 pending_dns_resolves: FuturesUnordered::new(),
+                next_connection_id: Arc::new(AtomicUsize::new(0usize)),
             },
             handle,
         )
@@ -385,6 +397,7 @@ impl TransportManager {
             tx: self.event_tx.clone(),
             keypair: self.keypair.clone(),
             protocols: self.protocols.clone(),
+            next_connection_id: self.next_connection_id.clone(),
         }
     }
 
@@ -472,7 +485,8 @@ impl TransportManager {
             }
         };
 
-        let connection = self.next_connection_id.next();
+        let connection =
+            ConnectionId::from(self.next_connection_id.fetch_add(1usize, Ordering::Relaxed));
         let _ = self
             .transports
             .get_mut(&supported_transport)

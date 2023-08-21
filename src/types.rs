@@ -58,11 +58,18 @@ impl ConnectionId {
     }
 
     /// Get next [`ConnectionID`].
+    // TODO: remove
     pub fn next(&mut self) -> ConnectionId {
         let connection_id = self.0;
         self.0 += 1usize;
 
         ConnectionId(connection_id)
+    }
+}
+
+impl From<usize> for ConnectionId {
+    fn from(value: usize) -> Self {
+        ConnectionId(value)
     }
 }
 

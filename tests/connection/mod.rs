@@ -31,7 +31,7 @@ use litep2p::{
     Litep2p, Litep2pEvent,
 };
 
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use tokio::net::{TcpListener, UdpSocket};

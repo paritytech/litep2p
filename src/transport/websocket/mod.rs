@@ -78,9 +78,6 @@ pub(crate) struct WebSocketTransport {
     /// Assigned listen addresss.
     _listen_address: SocketAddr,
 
-    /// Next connection ID.
-    _next_connection_id: ConnectionId,
-
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
@@ -179,7 +176,6 @@ impl Transport for WebSocketTransport {
             context,
             listener,
             _listen_address,
-            _next_connection_id: ConnectionId::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })

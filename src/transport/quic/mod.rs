@@ -331,6 +331,7 @@ mod tests {
         let (_command_tx1, command_rx1) = channel(64);
 
         let handle1 = TransportHandle {
+            next_connection_id: Default::default(),
             tx: event_tx1,
             rx: command_rx1,
             keypair: keypair1.clone(),
@@ -363,6 +364,7 @@ mod tests {
         let (command_tx2, command_rx2) = channel(64);
 
         let handle2 = TransportHandle {
+            next_connection_id: Default::default(),
             tx: event_tx2,
             rx: command_rx2,
             keypair: keypair2.clone(),

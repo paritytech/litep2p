@@ -88,9 +88,6 @@ pub struct TcpTransport {
     /// Assigned listen addresss.
     listen_address: SocketAddr,
 
-    /// Next connection ID.
-    next_connection_id: ConnectionId,
-
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
@@ -179,7 +176,6 @@ impl Transport for TcpTransport {
             context,
             listener,
             listen_address,
-            next_connection_id: ConnectionId::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
@@ -196,9 +192,8 @@ impl Transport for TcpTransport {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((connection, address)) => {
-                        // TODO: verify that this won't clash with connection IDs received from `Litep2p`
                         let protocol_set = self.context.protocol_set();
-                        let connection_id = self.next_connection_id.next();
+                        let connection_id = self.context.next_connection_id();
                         let yamux_config = self.config.yamux_config.clone();
 
                         self.pending_connections.push(Box::pin(async move {
@@ -336,6 +331,7 @@ mod tests {
         let (_cmd_tx1, cmd_rx1) = channel(64);
 
         let handle1 = crate::transport::manager::TransportHandle {
+            next_connection_id: Default::default(),
             keypair: keypair1.clone(),
             tx: event_tx1,
             rx: cmd_rx1,
@@ -366,6 +362,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            next_connection_id: Default::default(),
             keypair: keypair2.clone(),
             tx: event_tx2,
             rx: cmd_rx2,
@@ -424,6 +421,7 @@ mod tests {
         let (_cmd_tx1, cmd_rx1) = channel(64);
 
         let handle1 = crate::transport::manager::TransportHandle {
+            next_connection_id: Default::default(),
             keypair: keypair1.clone(),
             tx: event_tx1,
             rx: cmd_rx1,
@@ -451,6 +449,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            next_connection_id: Default::default(),
             keypair: keypair2.clone(),
             tx: event_tx2,
             rx: cmd_rx2,

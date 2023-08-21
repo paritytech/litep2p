@@ -27,7 +27,6 @@ use crate::{
         webrtc::handshake::WebRtcHandshake,
         Transport,
     },
-    types::ConnectionId,
 };
 
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
@@ -89,9 +88,6 @@ pub(crate) struct WebRtcTransport {
 
     /// Assigned listen addresss.
     listen_address: SocketAddr,
-
-    /// Next connection id.
-    next_connection_id: ConnectionId,
 
     /// Connected peers.
     peers: HashMap<SocketAddr, Sender<Vec<u8>>>,
@@ -246,7 +242,7 @@ impl WebRtcTransport {
                     let (tx, rx) = channel(64);
                     let connection = WebRtcHandshake::new(
                         rtc,
-                        self.next_connection_id.next(),
+                        self.context.next_connection_id(),
                         noise_channel_id,
                         self.context.keypair.clone(),
                         self.context.protocol_set(),
@@ -300,7 +296,6 @@ impl Transport for WebRtcTransport {
             listen_address,
             peers: HashMap::new(),
             socket: Arc::new(socket),
-            next_connection_id: ConnectionId::new(),
         })
     }
 
