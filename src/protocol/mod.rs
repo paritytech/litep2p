@@ -373,6 +373,10 @@ impl Transport for TransportService {
                     .insert(peer, ConnectionType::Active(sender));
                 Some(TransportEvent::ConnectionEstablished { peer, address })
             }
+            InnerTransportEvent::ConnectionClosed { peer } => {
+                self.connections.remove(&peer);
+                Some(TransportEvent::ConnectionClosed { peer })
+            }
             event => Some(event.into()),
         }
     }
