@@ -396,60 +396,6 @@ impl TransportManager {
         )));
     }
 
-    /// Dial remote peer over TCP.
-    async fn dial_tcp(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
-        let connection = self.next_connection_id.next();
-
-        let _ = self
-            .transports
-            .get_mut(&SupportedTransport::Tcp)
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-            .tx
-            .send(TransportManagerCommand::Dial {
-                address,
-                connection,
-            })
-            .await?;
-
-        Ok(connection)
-    }
-
-    /// Dial remote peer over WebSocket.
-    async fn dial_ws(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
-        let connection = self.next_connection_id.next();
-
-        let _ = self
-            .transports
-            .get_mut(&SupportedTransport::WebSocket)
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-            .tx
-            .send(TransportManagerCommand::Dial {
-                address,
-                connection,
-            })
-            .await?;
-
-        Ok(connection)
-    }
-
-    /// Dial remote peer over QUIC.
-    async fn dial_quic(&mut self, address: Multiaddr) -> crate::Result<ConnectionId> {
-        let connection = self.next_connection_id.next();
-
-        let _ = self
-            .transports
-            .get_mut(&SupportedTransport::Quic)
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-            .tx
-            .send(TransportManagerCommand::Dial {
-                address,
-                connection,
-            })
-            .await?;
-
-        Ok(connection)
-    }
-
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
@@ -500,32 +446,20 @@ impl TransportManager {
             }
         }
 
-        match protocol_stack
+        let supported_transport = match protocol_stack
             .next()
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Tcp(_) => match protocol_stack.next() {
-                Some(Protocol::Ws(_)) => {
-                    let connection_id = self.dial_ws(address.clone()).await?;
-                    self.pending_connections.insert(connection_id, address);
-                    Ok(())
-                }
-                _ => {
-                    let connection_id = self.dial_tcp(address.clone()).await?;
-                    self.pending_connections.insert(connection_id, address);
-                    Ok(())
-                }
+                Some(Protocol::Ws(_)) => SupportedTransport::WebSocket,
+                _ => SupportedTransport::Tcp,
             },
             Protocol::Udp(_) => match protocol_stack
                 .next()
                 .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
             {
-                Protocol::QuicV1 => {
-                    let connection_id = self.dial_quic(address.clone()).await?;
-                    self.pending_connections.insert(connection_id, address);
-                    Ok(())
-                }
-                _ => Err(Error::TransportNotSupported(address.clone())),
+                Protocol::QuicV1 => SupportedTransport::Quic,
+                _ => return Err(Error::TransportNotSupported(address.clone())),
             },
             protocol => {
                 tracing::error!(
@@ -534,9 +468,24 @@ impl TransportManager {
                     "invalid protocol, expected `tcp`"
                 );
 
-                Err(Error::TransportNotSupported(address))
+                return Err(Error::TransportNotSupported(address));
             }
-        }
+        };
+
+        let connection = self.next_connection_id.next();
+        let _ = self
+            .transports
+            .get_mut(&supported_transport)
+            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+            .tx
+            .send(TransportManagerCommand::Dial {
+                address: address.clone(),
+                connection,
+            })
+            .await?;
+        self.pending_connections.insert(connection, address);
+
+        Ok(())
     }
 
     /// Handle resolved DNS address.
@@ -614,8 +563,7 @@ impl TransportManager {
                             tracing::debug!(target: LOG_TARGET, ?address, "connect to remote peer");
 
                             // TODO: no unwraps
-                            let connection_id = self.dial_tcp(address.clone()).await.unwrap();
-                            self.pending_connections.insert(connection_id, address);
+                            self.dial_address(address.clone()).await.unwrap();
                         }
                         Err(error) => return Some(TransportManagerEvent::DialFailure { address: event.0, error }),
                     }
