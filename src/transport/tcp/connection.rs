@@ -119,6 +119,7 @@ impl TcpConnection {
         connection_id: ConnectionId,
         address: SocketAddr,
         peer: Option<PeerId>,
+        yamux_config: yamux::Config,
     ) -> crate::Result<Self> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -129,7 +130,15 @@ impl TcpConnection {
 
         let noise_config = NoiseConfiguration::new(&context.keypair, Role::Dialer);
         let stream = TcpStream::connect(address).await?;
-        Self::negotiate_connection(stream, connection_id, context, noise_config, address).await
+        Self::negotiate_connection(
+            stream,
+            connection_id,
+            context,
+            noise_config,
+            address,
+            yamux_config,
+        )
+        .await
     }
 
     /// Open substream for `protocol`.
@@ -172,11 +181,20 @@ impl TcpConnection {
         stream: TcpStream,
         connection_id: ConnectionId,
         address: SocketAddr,
+        yamux_config: yamux::Config,
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
         let noise_config = NoiseConfiguration::new(&context.keypair, Role::Listener);
-        Self::negotiate_connection(stream, connection_id, context, noise_config, address).await
+        Self::negotiate_connection(
+            stream,
+            connection_id,
+            context,
+            noise_config,
+            address,
+            yamux_config,
+        )
+        .await
     }
 
     /// Accept substream.
@@ -245,6 +263,7 @@ impl TcpConnection {
         mut protocol_set: ProtocolSet,
         noise_config: NoiseConfiguration,
         address: SocketAddr,
+        yamux_config: yamux::Config,
     ) -> crate::Result<Self> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -274,8 +293,7 @@ impl TcpConnection {
         let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"]).await?;
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-        let connection =
-            yamux::Connection::new(stream.inner(), yamux::Config::default(), role.into());
+        let connection = yamux::Connection::new(stream.inner(), yamux_config, role.into());
         let (control, connection) = yamux::Control::new(connection);
 
         let address = socket_addr_to_multi_addr(&address);

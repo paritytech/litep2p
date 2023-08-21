@@ -75,6 +75,7 @@ async fn send_request_receive_response() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_request_response_protocol(req_resp_config1)
         .build();
@@ -85,6 +86,7 @@ async fn send_request_receive_response() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_request_response_protocol(req_resp_config2)
         .build();
@@ -144,6 +146,7 @@ async fn reject_request() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_request_response_protocol(req_resp_config1)
         .build();
@@ -154,6 +157,7 @@ async fn reject_request() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_request_response_protocol(req_resp_config2)
         .build();
@@ -212,6 +216,7 @@ async fn multiple_simultaneous_requests() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_request_response_protocol(req_resp_config1)
         .build();
@@ -222,6 +227,7 @@ async fn multiple_simultaneous_requests() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_request_response_protocol(req_resp_config2)
         .build();
@@ -300,6 +306,7 @@ async fn request_timeout() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_request_response_protocol(req_resp_config1)
         .build();
@@ -310,6 +317,7 @@ async fn request_timeout() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_request_response_protocol(req_resp_config2)
         .build();

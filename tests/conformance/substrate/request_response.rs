@@ -83,6 +83,7 @@ async fn initialize_litep2p() -> (Litep2p, RequestResponseHandle) {
         Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+                yamux_config: Default::default(),
             })
             .with_request_response_protocol(config)
             .build(),

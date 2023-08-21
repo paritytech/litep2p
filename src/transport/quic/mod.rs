@@ -24,7 +24,7 @@ use crate::{
     peer_id::PeerId,
     transport::{
         manager::TransportManagerCommand,
-        quic::{config::Config, connection::QuicConnection},
+        quic::{config::TransportConfig, connection::QuicConnection},
         Transport,
     },
     types::ConnectionId,
@@ -152,7 +152,7 @@ impl QuicTransport {
 
 #[async_trait::async_trait]
 impl Transport for QuicTransport {
-    type Config = Config;
+    type Config = TransportConfig;
 
     /// Create new [`QuicTransport`] object.
     async fn new(
@@ -342,7 +342,7 @@ mod tests {
                 },
             )]),
         };
-        let transport_config1 = config::Config {
+        let transport_config1 = config::TransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/8888/quic-v1".parse().unwrap(),
         };
 
@@ -374,7 +374,7 @@ mod tests {
                 },
             )]),
         };
-        let transport_config2 = config::Config {
+        let transport_config2 = config::TransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         };
 

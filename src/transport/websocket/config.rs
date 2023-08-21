@@ -19,9 +19,14 @@
 // DEALINGS IN THE SOFTWARE.
 
 use multiaddr::Multiaddr;
+use yamux::Config;
 
 /// WebSocket config.
 #[derive(Debug)]
-pub struct Config {
+pub struct TransportConfig {
+    /// Listen address address for the transport.
     pub listen_address: Multiaddr,
+
+    /// Yamux configuration.
+    pub yamux_config: Config,
 }

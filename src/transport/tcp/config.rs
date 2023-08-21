@@ -19,10 +19,14 @@
 // DEALINGS IN THE SOFTWARE.
 
 use multiaddr::Multiaddr;
+use yamux::Config;
 
 // Transport configuration.
 #[derive(Debug, Clone)]
 pub struct TransportConfig {
-    /// Listening address for the transport.
+    /// Listen address for the transport.
     pub listen_address: Multiaddr,
+
+    /// Yamux configuration.
+    pub yamux_config: Config,
 }

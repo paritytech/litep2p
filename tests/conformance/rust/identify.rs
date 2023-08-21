@@ -78,6 +78,7 @@ async fn initialize_litep2p() -> (
             .with_keypair(keypair)
             .with_tcp(TcpTransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+                yamux_config: Default::default(),
             })
             .with_ipfs_ping(ping_config)
             .with_ipfs_identify(identify_config)

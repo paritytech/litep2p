@@ -36,6 +36,7 @@ async fn ping_supported() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_ipfs_ping(ping_config1)
         .build();
@@ -45,6 +46,7 @@ async fn ping_supported() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_ipfs_ping(ping_config2)
         .build();

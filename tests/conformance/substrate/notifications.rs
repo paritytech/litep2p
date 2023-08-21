@@ -99,6 +99,7 @@ async fn initialize_litep2p() -> (Litep2p, NotificationHandle) {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();

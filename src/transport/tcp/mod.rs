@@ -22,7 +22,7 @@ use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
-        manager::TransportManagerCommand,
+        manager::{TransportHandle, TransportManagerCommand},
         tcp::{config::TransportConfig, connection::TcpConnection},
         Transport,
     },
@@ -77,7 +77,10 @@ impl TcpError {
 #[derive(Debug)]
 pub struct TcpTransport {
     /// Transport context.
-    context: crate::transport::manager::TransportHandle,
+    context: TransportHandle,
+
+    /// Transport configuration.
+    config: TransportConfig,
 
     /// TCP listener.
     listener: TcpListener,
@@ -172,6 +175,7 @@ impl Transport for TcpTransport {
         let listen_address = listener.local_addr()?;
 
         Ok(Self {
+            config,
             context,
             listener,
             listen_address,
@@ -195,11 +199,18 @@ impl Transport for TcpTransport {
                         // TODO: verify that this won't clash with connection IDs received from `Litep2p`
                         let protocol_set = self.context.protocol_set();
                         let connection_id = self.next_connection_id.next();
+                        let yamux_config = self.config.yamux_config.clone();
 
                         self.pending_connections.push(Box::pin(async move {
-                            TcpConnection::accept_connection(protocol_set, connection, connection_id, address)
-                                .await
-                                .map_err(|error| TcpError::new(error, Some(connection_id)))
+                            TcpConnection::accept_connection(
+                                protocol_set,
+                                connection,
+                                connection_id,
+                                address,
+                                yamux_config,
+                            )
+                            .await
+                            .map_err(|error| TcpError::new(error, Some(connection_id)))
                         }));
                     }
                     Err(_error) => todo!(),
@@ -239,15 +250,22 @@ impl Transport for TcpTransport {
                         TransportManagerCommand::Dial { address, connection } => {
                             tracing::debug!(target: LOG_TARGET, ?address, "open connection");
 
-                            let protocol_set = self.context.protocol_set();
                             // TODO: this can't be right (TODO: ???)
+                            let protocol_set = self.context.protocol_set();
                             let (socket_address, peer) = Self::get_socket_address(&address)?;
+                            let yamux_config = self.config.yamux_config.clone();
 
                             self.pending_dials.insert(connection, address);
                             self.pending_connections.push(Box::pin(async move {
-                                TcpConnection::open_connection(protocol_set, connection, socket_address, peer)
-                                    .await
-                                    .map_err(|error| TcpError::new(error, Some(connection)))
+                                TcpConnection::open_connection(
+                                    protocol_set,
+                                    connection,
+                                    socket_address,
+                                    peer,
+                                    yamux_config,
+                                )
+                                .await
+                                .map_err(|error| TcpError::new(error, Some(connection)))
                             }));
                         }
                     }
@@ -332,6 +350,7 @@ mod tests {
         };
         let transport_config1 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         };
 
         let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
@@ -361,6 +380,7 @@ mod tests {
         };
         let transport_config2 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         };
 
         let transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
@@ -418,6 +438,7 @@ mod tests {
         };
         let transport_config1 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         };
 
         let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
@@ -444,6 +465,7 @@ mod tests {
         };
         let transport_config2 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         };
 
         let transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();

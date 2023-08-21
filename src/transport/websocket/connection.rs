@@ -156,6 +156,7 @@ impl WebSocketConnection {
     /// Open WebSocket connection.
     pub(crate) async fn open_connection(
         address: Multiaddr,
+        yamux_config: yamux::Config,
         mut protocol_set: ProtocolSet,
     ) -> crate::Result<Self> {
         let (stream, _) =
@@ -188,11 +189,7 @@ impl WebSocketConnection {
             Self::negotiate_protocol(stream, &Role::Dialer, vec!["/yamux/1.0.0"]).await?;
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-        let connection = yamux::Connection::new(
-            stream.inner(),
-            yamux::Config::default(),
-            Role::Dialer.into(),
-        );
+        let connection = yamux::Connection::new(stream.inner(), yamux_config, Role::Dialer.into());
         let (control, connection) = yamux::Control::new(connection);
         protocol_set
             .report_connection_established(peer, address.clone())
@@ -213,6 +210,7 @@ impl WebSocketConnection {
     pub(crate) async fn accept_connection(
         stream: TcpStream,
         address: SocketAddr,
+        yamux_config: yamux::Config,
         mut protocol_set: ProtocolSet,
     ) -> crate::Result<Self> {
         let stream = MaybeTlsStream::Plain(stream);
@@ -245,11 +243,8 @@ impl WebSocketConnection {
             Self::negotiate_protocol(stream, &Role::Listener, vec!["/yamux/1.0.0"]).await?;
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-        let connection = yamux::Connection::new(
-            stream.inner(),
-            yamux::Config::default(),
-            Role::Listener.into(),
-        );
+        let connection =
+            yamux::Connection::new(stream.inner(), yamux_config, Role::Listener.into());
         let (control, connection) = yamux::Control::new(connection);
 
         // create `Multiaddr` from `SocketAddr` and report to protocols

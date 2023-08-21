@@ -22,8 +22,8 @@ use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
-        manager::TransportManagerCommand,
-        websocket::{config::Config, connection::WebSocketConnection},
+        manager::{TransportHandle, TransportManagerCommand},
+        websocket::{config::TransportConfig, connection::WebSocketConnection},
         Transport,
     },
     types::ConnectionId,
@@ -67,7 +67,10 @@ const LOG_TARGET: &str = "websocket";
 /// WebSocket transport.
 pub(crate) struct WebSocketTransport {
     /// Transport context.
-    context: crate::transport::manager::TransportHandle,
+    context: TransportHandle,
+
+    /// Transport configuration.
+    config: TransportConfig,
 
     /// TCP listener.
     listener: TcpListener,
@@ -154,13 +157,10 @@ impl WebSocketTransport {
 
 #[async_trait::async_trait]
 impl Transport for WebSocketTransport {
-    type Config = Config;
+    type Config = TransportConfig;
 
     /// Create new [`Transport`] object.
-    async fn new(
-        context: crate::transport::manager::TransportHandle,
-        config: Self::Config,
-    ) -> crate::Result<Self>
+    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized,
     {
@@ -175,6 +175,7 @@ impl Transport for WebSocketTransport {
         let _listen_address = listener.local_addr()?;
 
         Ok(Self {
+            config,
             context,
             listener,
             _listen_address,
@@ -197,9 +198,10 @@ impl Transport for WebSocketTransport {
                 connection = self.listener.accept() => match connection {
                     Ok((stream, address)) => {
                         let context = self.context.protocol_set();
+                        let yamux_config = self.config.yamux_config.clone();
 
                         self.pending_connections.push(Box::pin(async move {
-                            WebSocketConnection::accept_connection(stream, address, context)
+                            WebSocketConnection::accept_connection(stream, address, yamux_config, context)
                                 .await
                                 .map_err(|error| WebSocketError::new(error, None))
                         }));
@@ -211,12 +213,13 @@ impl Transport for WebSocketTransport {
                 command = self.context.next() => match command.ok_or(Error::EssentialTaskClosed)? {
                     TransportManagerCommand::Dial { address, connection } => {
                         let context = self.context.protocol_set();
+                        let yamux_config = self.config.yamux_config.clone();
 
                         tracing::debug!(target: LOG_TARGET, ?address, ?connection, "open connection");
 
                         self.pending_dials.insert(connection, address.clone());
                         self.pending_connections.push(Box::pin(async move {
-                            WebSocketConnection::open_connection(address, context)
+                            WebSocketConnection::open_connection(address, yamux_config, context)
                                 .await
                                 .map_err(|error| WebSocketError::new(error, Some(connection)))
                         }));

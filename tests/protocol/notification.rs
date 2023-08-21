@@ -78,6 +78,7 @@ async fn open_substreams() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -92,6 +93,7 @@ async fn open_substreams() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config2)
         .build();
@@ -195,6 +197,7 @@ async fn reject_substream() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -209,6 +212,7 @@ async fn reject_substream() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config2)
         .build();
@@ -269,6 +273,7 @@ async fn notification_stream_closed() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -283,6 +288,7 @@ async fn notification_stream_closed() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config2)
         .build();
@@ -393,6 +399,7 @@ async fn reconnect_after_disconnect() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -407,6 +414,7 @@ async fn reconnect_after_disconnect() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config2)
         .build();
@@ -572,6 +580,7 @@ async fn set_new_handshake() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -586,6 +595,7 @@ async fn set_new_handshake() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config2)
         .build();
@@ -733,6 +743,7 @@ async fn both_nodes_open_substreams() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -747,6 +758,7 @@ async fn both_nodes_open_substreams() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config2)
         .build();
@@ -854,6 +866,7 @@ async fn send_sync_notification_to_non_existent_peer() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -889,6 +902,7 @@ async fn send_async_notification_to_non_existent_peer() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -925,6 +939,7 @@ async fn try_to_connect_to_non_existent_peer() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -966,6 +981,7 @@ async fn try_to_disconnect_non_existent_peer() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -999,6 +1015,7 @@ async fn try_to_reopen_substream() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -1013,6 +1030,7 @@ async fn try_to_reopen_substream() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config2)
         .build();
@@ -1101,6 +1119,7 @@ async fn substream_validation_timeout() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config1)
         .build();
@@ -1115,6 +1134,7 @@ async fn substream_validation_timeout() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_notification_protocol(notif_config2)
         .build();

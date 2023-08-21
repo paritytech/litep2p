@@ -26,9 +26,9 @@ use crate::{
         notification, request_response, UserProtocol,
     },
     transport::{
-        quic::config::Config as QuicTransportConfig,
+        quic::config::TransportConfig as QuicTransportConfig,
         tcp::config::TransportConfig as TcpTransportConfig, webrtc::WebRtcTransportConfig,
-        websocket::config::Config as WebSocketTransportConfig,
+        websocket::config::TransportConfig as WebSocketTransportConfig,
     },
     types::protocol::ProtocolName,
 };

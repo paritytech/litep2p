@@ -25,7 +25,7 @@ use litep2p::{
     peer_id::PeerId,
     protocol::libp2p::ping::Config as PingConfig,
     transport::{
-        quic::config::Config as QuicTransportConfig,
+        quic::config::TransportConfig as QuicTransportConfig,
         tcp::config::TransportConfig as TcpTransportConfig,
     },
     Litep2p, Litep2pEvent,
@@ -47,6 +47,7 @@ async fn connection_timeout_tcp() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_ipfs_ping(ping_config)
         .build();
@@ -131,6 +132,7 @@ async fn simultaneous_dial_tcp() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_ipfs_ping(ping_config1)
         .build();
@@ -141,6 +143,7 @@ async fn simultaneous_dial_tcp() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_ipfs_ping(ping_config2)
         .build();
@@ -269,6 +272,7 @@ async fn dial_self_tcp() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_ipfs_ping(ping_config)
         .build();
@@ -368,6 +372,7 @@ async fn keep_alive_timeout_tcp() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_ipfs_ping(ping_config1)
         .build();
@@ -378,6 +383,7 @@ async fn keep_alive_timeout_tcp() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
         })
         .with_ipfs_ping(ping_config2)
         .build();
