@@ -114,9 +114,6 @@ pub(crate) struct WebSocketConnection {
     /// Remote peer ID.
     peer: PeerId,
 
-    /// Next substream ID.
-    next_substream_id: SubstreamId,
-
     /// Remote address.
     address: Multiaddr,
 
@@ -200,7 +197,6 @@ impl WebSocketConnection {
             control,
             connection,
             protocol_set,
-            next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
             address,
         })
@@ -263,7 +259,6 @@ impl WebSocketConnection {
             control,
             connection,
             protocol_set,
-            next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
             address,
         })
@@ -340,7 +335,7 @@ impl WebSocketConnection {
             tokio::select! {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
-                        let substream = self.next_substream_id.next();
+                        let substream = self.protocol_set.next_substream_id();
                         let protocols = self.protocol_set.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {

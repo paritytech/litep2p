@@ -33,7 +33,14 @@ use crate::{
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender, WeakSender};
 
-use std::{collections::HashMap, fmt::Debug};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "protocol-set";
@@ -167,7 +174,7 @@ pub struct TransportService {
     rx: Receiver<InnerTransportEvent>,
 
     /// Next substream ID.
-    next_substream_id: SubstreamId,
+    next_substream_id: Arc<AtomicUsize>,
 }
 
 impl TransportService {
@@ -175,6 +182,7 @@ impl TransportService {
     pub(crate) fn new(
         local_peer_id: PeerId,
         protocol: ProtocolName,
+        next_substream_id: Arc<AtomicUsize>,
         transport_handle: TransportManagerHandle,
     ) -> (Self, Sender<InnerTransportEvent>) {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -185,8 +193,8 @@ impl TransportService {
                 protocol,
                 local_peer_id,
                 transport_handle,
+                next_substream_id,
                 connections: HashMap::new(),
-                next_substream_id: SubstreamId::from(0usize),
             },
             tx,
         )
@@ -224,7 +232,8 @@ impl Transport for TransportService {
             .connections
             .get_mut(&peer)
             .ok_or(Error::PeerDoesntExist(peer))?;
-        let substream_id = self.next_substream_id.next();
+        let substream_id =
+            SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -312,23 +321,31 @@ pub struct ProtocolSet {
     mgr_tx: Sender<TransportManagerEvent>,
     tx: ConnectionType,
     rx: Receiver<ProtocolCommand>,
+    next_substream_id: Arc<AtomicUsize>,
 }
 
 impl ProtocolSet {
     pub fn new(
         keypair: Keypair,
         mgr_tx: Sender<TransportManagerEvent>,
+        next_substream_id: Arc<AtomicUsize>,
         protocols: HashMap<ProtocolName, crate::transport::manager::ProtocolContext>,
     ) -> Self {
         let (tx, rx) = channel(256);
 
         ProtocolSet {
             rx,
-            tx: ConnectionType::Active(tx),
             mgr_tx,
             keypair,
             protocols,
+            next_substream_id,
+            tx: ConnectionType::Active(tx),
         }
+    }
+
+    /// Get next substream ID.
+    pub fn next_substream_id(&self) -> SubstreamId {
+        SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed))
     }
 
     /// Report to `protocol` that substream was opened for `peer`.

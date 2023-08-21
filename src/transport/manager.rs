@@ -219,6 +219,7 @@ pub struct TransportHandle {
     pub rx: Receiver<TransportManagerCommand>,
     pub protocols: HashMap<ProtocolName, ProtocolContext>,
     pub next_connection_id: Arc<AtomicUsize>,
+    pub next_substream_id: Arc<AtomicUsize>,
 }
 
 impl TransportHandle {
@@ -226,6 +227,7 @@ impl TransportHandle {
         ProtocolSet::new(
             self.keypair.clone(),
             self.tx.clone(),
+            self.next_substream_id.clone(),
             self.protocols.clone(),
         )
     }
@@ -304,6 +306,9 @@ pub struct TransportManager {
     /// Next connection ID.
     next_connection_id: Arc<AtomicUsize>,
 
+    /// Next substream ID.
+    next_substream_id: Arc<AtomicUsize>,
+
     /// Installed transports.
     transports: HashMap<SupportedTransport, TransportContext>,
 
@@ -360,6 +365,7 @@ impl TransportManager {
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
                 pending_dns_resolves: FuturesUnordered::new(),
+                next_substream_id: Arc::new(AtomicUsize::new(0usize)),
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
             },
             handle,
@@ -378,6 +384,7 @@ impl TransportManager {
         let (service, sender) = TransportService::new(
             self.local_peer_id,
             protocol.clone(),
+            self.next_substream_id.clone(),
             self.transport_manager_handle.clone(),
         );
 
@@ -397,6 +404,7 @@ impl TransportManager {
             tx: self.event_tx.clone(),
             keypair: self.keypair.clone(),
             protocols: self.protocols.clone(),
+            next_substream_id: self.next_substream_id.clone(),
             next_connection_id: self.next_connection_id.clone(),
         }
     }

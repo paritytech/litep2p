@@ -78,9 +78,6 @@ pub(crate) struct QuicConnection {
     /// Transport context.
     protocol_set: ProtocolSet,
 
-    /// Next substream ID.
-    next_substream_id: SubstreamId,
-
     /// Pending substreams.
     pending_substreams: FuturesUnordered<BoxFuture<'static, Result<Substream, ConnectionError>>>,
 }
@@ -110,7 +107,6 @@ impl QuicConnection {
             peer,
             connection,
             _connection_id,
-            next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
             protocol_set,
         }
@@ -213,7 +209,7 @@ impl QuicConnection {
             tokio::select! {
                 substream = self.connection.accept_bidirectional_stream() => match substream {
                     Ok(Some(stream)) => {
-                        let substream = self.next_substream_id.next();
+                        let substream = self.protocol_set.next_substream_id();
                         let protocols = self.protocol_set.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {
