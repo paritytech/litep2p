@@ -331,6 +331,7 @@ mod tests {
         let (_cmd_tx1, cmd_rx1) = channel(64);
 
         let handle1 = crate::transport::manager::TransportHandle {
+            next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair1.clone(),
             tx: event_tx1,
@@ -362,6 +363,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair2.clone(),
             tx: event_tx2,
@@ -421,6 +423,7 @@ mod tests {
         let (_cmd_tx1, cmd_rx1) = channel(64);
 
         let handle1 = crate::transport::manager::TransportHandle {
+            next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair1.clone(),
             tx: event_tx1,
@@ -449,6 +452,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair2.clone(),
             tx: event_tx2,

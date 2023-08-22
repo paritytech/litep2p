@@ -505,8 +505,12 @@ mod tests {
         let (manager, handle) = TransportManager::new(Keypair::generate());
 
         let peer = PeerId::random();
-        let (transport_service, _tx) =
-            TransportService::new(peer, ProtocolName::from("/kad/1"), handle);
+        let (transport_service, _tx) = TransportService::new(
+            peer,
+            ProtocolName::from("/kad/1"),
+            Default::default(),
+            handle,
+        );
         let (event_tx, _event_rx) = channel(64);
         let (_cmd_tx, cmd_rx) = channel(64);
 

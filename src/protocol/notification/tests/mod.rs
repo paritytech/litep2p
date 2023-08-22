@@ -41,8 +41,12 @@ fn make_notification_protocol() -> (NotificationProtocol, NotificationHandle, Tr
     let (manager, handle) = TransportManager::new(Keypair::generate());
 
     let peer = PeerId::random();
-    let (transport_service, _tx) =
-        TransportService::new(peer, ProtocolName::from("/kad/1"), handle);
+    let (transport_service, _tx) = TransportService::new(
+        peer,
+        ProtocolName::from("/kad/1"),
+        std::sync::Arc::new(Default::default()),
+        handle,
+    );
     let (config, handle) = Config::new(
         ProtocolName::from("/notif/1"),
         1024usize,
