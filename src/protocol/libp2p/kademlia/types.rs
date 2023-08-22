@@ -67,6 +67,11 @@ impl<T: Clone> Key<T> {
         Key { _preimage, bytes }
     }
 
+    /// Convert [`Key`] into its preimage.
+    pub fn into_preimage(self) -> T {
+        self._preimage
+    }
+
     /// Computes the distance of the keys according to the XOR metric.
     pub fn distance<U>(&self, other: &U) -> Distance
     where

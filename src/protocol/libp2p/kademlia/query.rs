@@ -70,6 +70,9 @@ pub enum QueryAction {
 
     /// Query succeeded.
     QuerySucceeded {
+        /// Target peer.
+        target: PeerId,
+
         /// Found peers.
         peers: Vec<KademliaPeer>,
     },
@@ -321,9 +324,10 @@ impl QueryEngine {
                     tracing::trace!(target: LOG_TARGET, ?query_id, "lookup succeeded");
 
                     let peers = responses.values().cloned().collect();
+                    let target = target.clone().into_preimage();
                     self.queries.remove(&query_id);
 
-                    Some(QueryAction::QuerySucceeded { peers })
+                    Some(QueryAction::QuerySucceeded { target, peers })
                 }
             },
         }

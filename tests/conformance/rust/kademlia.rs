@@ -28,7 +28,7 @@ use libp2p::{
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::libp2p::kademlia::{ConfigBuilder, KademliaHandle},
+    protocol::libp2p::kademlia::{ConfigBuilder, KademliaEvent, KademliaHandle},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p,
 };
@@ -90,7 +90,6 @@ fn initialize_libp2p() -> Swarm<Behaviour> {
 }
 
 #[tokio::test]
-#[ignore]
 async fn libp2p_dials() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -167,7 +166,16 @@ async fn libp2p_dials() {
     kad_handle.find_node(target).await;
 
     loop {
-        let event = kad_handle.next_event().await;
-        tracing::info!("litep2p kad event: {event:?}");
+        match kad_handle.next_event().await {
+            Some(KademliaEvent::FindNodeResult {
+                target: query_target,
+                peers,
+            }) => {
+                assert_eq!(target, query_target);
+                assert!(!peers.is_empty());
+                break;
+            }
+            _ => {}
+        }
     }
 }

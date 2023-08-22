@@ -166,12 +166,12 @@ impl Kademlia {
     async fn disconnect_peer(&mut self, peer: PeerId) {
         tracing::debug!(target: LOG_TARGET, ?peer, "disconnect peer");
 
-        self.peers.remove(&peer);
-
         if let Some(mut substream) = self.substreams.remove(&peer) {
             let _ = substream.close().await;
-            drop(substream);
         }
+
+        self.service.disconnect(&peer);
+        self.peers.remove(&peer);
 
         if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
             entry.connection = ConnectionType::NotConnected;
@@ -206,8 +206,8 @@ impl Kademlia {
                         Some(context) => match self.service.open_substream(peer.peer).await {
                             Ok(_substream_id) => context.add_pending_query(query_id),
                             Err(_error) => {
-                                // TODO: disconenct peer?
-                                self.engine.register_response_failure(query_id, peer.peer)
+                                self.engine.register_response_failure(query_id, peer.peer);
+                                self.disconnect_peer(peer.peer).await;
                             }
                         },
                         None => {
@@ -221,9 +221,14 @@ impl Kademlia {
                         }
                     },
                 },
-                QueryAction::QuerySucceeded { peers } => {
-                    tracing::warn!(target: LOG_TARGET, ?peers, "QUERY SUCCEEDED");
-                    // todo!("cancel pending queries");
+                QueryAction::QuerySucceeded { target, peers } => {
+                    let peers = peers
+                        .into_iter()
+                        .map(|info| (info.peer, info.addresses))
+                        .collect();
+                    self._event_tx
+                        .send(KademliaEvent::FindNodeResult { target, peers })
+                        .await?;
                 }
                 QueryAction::QueryFailed { query } => {
                     tracing::error!(target: LOG_TARGET, ?query, "QUERY FAILED");
@@ -408,6 +413,8 @@ impl Kademlia {
         tracing::debug!(target: LOG_TARGET, "starting kademlia event loop");
 
         loop {
+            // TODO: poll query engine here?
+
             tokio::select! {
                 event = self.service.next_event() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
