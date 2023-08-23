@@ -53,6 +53,7 @@ sha2 = "0.10.7"
 hex = "0.4.3"
 futures-timer = "3.0.2"
 parking_lot = "0.12.1"
+quickcheck = "1.0.3"
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]
@@ -76,6 +77,7 @@ libp2p = { version = "0.51.3", features = [
     "yamux",
     "quic",
 ]}
+quickcheck = "1.0.3"
 sc-network = { path = "/home/altonen/work/substrate/client/network", version = "0.10.0-dev" }
 sc-utils = { version = "4.0.0-dev", path = "/home/altonen/work/substrate/client/utils" }
 
