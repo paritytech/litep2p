@@ -31,6 +31,8 @@ use litep2p::{
     Litep2p, Litep2pEvent,
 };
 
+use futures::StreamExt;
+
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let address = litep2p2.listen_addresses().next().unwrap().clone();
     litep2p1.connect(address).await.unwrap();
@@ -118,7 +120,7 @@ async fn open_substreams() {
     // open substream for `peer2` and accept it
     handle1.open_substream(peer2).await.unwrap();
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -130,7 +132,7 @@ async fn open_substreams() {
         .await;
 
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -142,7 +144,7 @@ async fn open_substreams() {
         .await;
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -150,7 +152,7 @@ async fn open_substreams() {
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -166,14 +168,14 @@ async fn open_substreams() {
         .unwrap();
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
             notification: vec![1, 3, 3, 7],
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
             notification: vec![1, 3, 3, 8],
@@ -237,7 +239,7 @@ async fn reject_substream() {
     // open substream for `peer2` and accept it
     handle1.open_substream(peer2).await.unwrap();
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -249,7 +251,7 @@ async fn reject_substream() {
         .await;
 
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpenFailure {
             peer: peer2,
             error: NotificationError::Rejected,
@@ -313,7 +315,7 @@ async fn notification_stream_closed() {
     // open substream for `peer2` and accept it
     handle1.open_substream(peer2).await.unwrap();
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -325,7 +327,7 @@ async fn notification_stream_closed() {
         .await;
 
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -337,7 +339,7 @@ async fn notification_stream_closed() {
         .await;
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -345,7 +347,7 @@ async fn notification_stream_closed() {
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -361,14 +363,14 @@ async fn notification_stream_closed() {
         .unwrap();
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
             notification: vec![1, 3, 3, 7],
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
             notification: vec![1, 3, 3, 8],
@@ -377,7 +379,7 @@ async fn notification_stream_closed() {
 
     handle1.close_substream(peer2).await;
 
-    match handle2.next_event().await.unwrap() {
+    match handle2.next().await.unwrap() {
         NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer1),
         _ => panic!("invalid event received"),
     }
@@ -441,7 +443,7 @@ async fn reconnect_after_disconnect() {
 
     // accept the inbound substreams
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -454,7 +456,7 @@ async fn reconnect_after_disconnect() {
 
     // accept the inbound substreams
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -466,7 +468,7 @@ async fn reconnect_after_disconnect() {
         .await;
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -474,7 +476,7 @@ async fn reconnect_after_disconnect() {
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -485,12 +487,12 @@ async fn reconnect_after_disconnect() {
     // close the substream
     handle2.close_substream(peer1).await;
 
-    match handle2.next_event().await.unwrap() {
+    match handle2.next().await.unwrap() {
         NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer1),
         _ => panic!("invalid event received"),
     }
 
-    match handle1.next_event().await.unwrap() {
+    match handle1.next().await.unwrap() {
         NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer2),
         _ => panic!("invalid event received"),
     }
@@ -499,7 +501,7 @@ async fn reconnect_after_disconnect() {
     handle2.open_substream(peer1).await.unwrap();
 
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -511,7 +513,7 @@ async fn reconnect_after_disconnect() {
         .await;
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -524,7 +526,7 @@ async fn reconnect_after_disconnect() {
 
     // verify that both peers get the open event
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -532,7 +534,7 @@ async fn reconnect_after_disconnect() {
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -549,14 +551,14 @@ async fn reconnect_after_disconnect() {
         .unwrap();
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
             notification: vec![1, 3, 3, 7],
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
             notification: vec![1, 3, 3, 8],
@@ -622,7 +624,7 @@ async fn set_new_handshake() {
 
     // accept the substreams
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -635,7 +637,7 @@ async fn set_new_handshake() {
 
     // accept the substreams
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -647,7 +649,7 @@ async fn set_new_handshake() {
         .await;
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -655,7 +657,7 @@ async fn set_new_handshake() {
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -666,12 +668,12 @@ async fn set_new_handshake() {
     // close the substream
     handle2.close_substream(peer1).await;
 
-    match handle2.next_event().await.unwrap() {
+    match handle2.next().await.unwrap() {
         NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer1),
         _ => panic!("invalid event received"),
     }
 
-    match handle1.next_event().await.unwrap() {
+    match handle1.next().await.unwrap() {
         NotificationEvent::NotificationStreamClosed { peer } => assert_eq!(peer, peer2),
         _ => panic!("invalid event received"),
     }
@@ -683,7 +685,7 @@ async fn set_new_handshake() {
 
     // accept the substreams
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -696,7 +698,7 @@ async fn set_new_handshake() {
 
     // accept the substreams
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -709,7 +711,7 @@ async fn set_new_handshake() {
 
     // verify that both peers get the open event
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -717,7 +719,7 @@ async fn set_new_handshake() {
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -786,7 +788,7 @@ async fn both_nodes_open_substreams() {
 
     // accept the substreams
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -799,7 +801,7 @@ async fn both_nodes_open_substreams() {
 
     // accept the substreams
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -811,7 +813,7 @@ async fn both_nodes_open_substreams() {
         .await;
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -819,7 +821,7 @@ async fn both_nodes_open_substreams() {
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -835,14 +837,14 @@ async fn both_nodes_open_substreams() {
         .unwrap();
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
             notification: vec![1, 3, 3, 7],
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
             notification: vec![1, 3, 3, 8],
@@ -957,7 +959,7 @@ async fn try_to_connect_to_non_existent_peer() {
     let peer = PeerId::random();
     handle1.open_substream(peer).await.unwrap();
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpenFailure {
             peer,
             error: NotificationError::NoConnection
@@ -1056,7 +1058,7 @@ async fn try_to_reopen_substream() {
     handle1.open_substream(peer2).await.unwrap();
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -1068,7 +1070,7 @@ async fn try_to_reopen_substream() {
         .await;
 
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -1080,7 +1082,7 @@ async fn try_to_reopen_substream() {
         .await;
 
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -1088,7 +1090,7 @@ async fn try_to_reopen_substream() {
         }
     );
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer2,
@@ -1159,7 +1161,7 @@ async fn substream_validation_timeout() {
     // open substream for `peer2` and accept it
     handle1.open_substream(peer2).await.unwrap();
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer: peer1,
@@ -1169,7 +1171,7 @@ async fn substream_validation_timeout() {
 
     // don't reject the substream but let it timeout
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpenFailure {
             peer: peer2,
             error: NotificationError::Rejected,

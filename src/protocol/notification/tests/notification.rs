@@ -65,7 +65,7 @@ async fn sync_notifications_clogged() {
         .await;
 
     assert_eq!(
-        handle.next_event().await.unwrap(),
+        handle.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer,
@@ -120,7 +120,7 @@ async fn async_notifications_clogged() {
         .await;
 
     assert_eq!(
-        handle.next_event().await.unwrap(),
+        handle.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             peer,

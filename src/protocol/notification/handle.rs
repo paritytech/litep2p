@@ -30,7 +30,11 @@ use crate::{
 
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "notification::handle";
@@ -263,42 +267,56 @@ impl NotificationHandle {
             None => Err(Error::PeerDoesntExist(peer)),
         }
     }
+}
 
-    /// Poll next event from the protocol.
-    pub async fn next_event(&mut self) -> Option<NotificationEvent> {
-        match self.event_rx.recv().await? {
-            InnerNotificationEvent::ValidateSubstream {
-                protocol,
-                peer,
-                handshake,
-            } => Some(NotificationEvent::ValidateSubstream {
-                protocol,
-                peer,
-                handshake,
-            }),
-            InnerNotificationEvent::NotificationStreamOpened {
-                protocol,
-                peer,
-                handshake,
-                sink,
-            } => {
-                self.peers.insert(peer, sink);
-                Some(NotificationEvent::NotificationStreamOpened {
+impl futures::Stream for NotificationHandle {
+    type Item = NotificationEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match futures::ready!(self.event_rx.poll_recv(cx)) {
+            None => return Poll::Ready(None),
+            Some(event) => match event {
+                InnerNotificationEvent::ValidateSubstream {
                     protocol,
                     peer,
                     handshake,
-                })
-            }
-            InnerNotificationEvent::NotificationStreamClosed { peer } => {
-                self.peers.remove(&peer);
-                Some(NotificationEvent::NotificationStreamClosed { peer })
-            }
-            InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
-                Some(NotificationEvent::NotificationStreamOpenFailure { peer, error })
-            }
-            InnerNotificationEvent::NotificationReceived { peer, notification } => {
-                Some(NotificationEvent::NotificationReceived { peer, notification })
-            }
+                } => Poll::Ready(Some(NotificationEvent::ValidateSubstream {
+                    protocol,
+                    peer,
+                    handshake,
+                })),
+                InnerNotificationEvent::NotificationStreamOpened {
+                    protocol,
+                    peer,
+                    handshake,
+                    sink,
+                } => {
+                    self.peers.insert(peer, sink);
+
+                    Poll::Ready(Some(NotificationEvent::NotificationStreamOpened {
+                        protocol,
+                        peer,
+                        handshake,
+                    }))
+                }
+                InnerNotificationEvent::NotificationStreamClosed { peer } => {
+                    self.peers.remove(&peer);
+
+                    Poll::Ready(Some(NotificationEvent::NotificationStreamClosed { peer }))
+                }
+                InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
+                    Poll::Ready(Some(NotificationEvent::NotificationStreamOpenFailure {
+                        peer,
+                        error,
+                    }))
+                }
+                InnerNotificationEvent::NotificationReceived { peer, notification } => {
+                    Poll::Ready(Some(NotificationEvent::NotificationReceived {
+                        peer,
+                        notification,
+                    }))
+                }
+            },
         }
     }
 }

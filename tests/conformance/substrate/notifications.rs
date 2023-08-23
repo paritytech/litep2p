@@ -171,7 +171,7 @@ async fn substrate_open_substream() {
             event = litep2p.next_event() => match event {
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 NotificationEvent::ValidateSubstream { protocol, peer, handshake } => {
                     assert_eq!(protocol, Litep2pProtocol::from("/notif/1"));
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
@@ -268,7 +268,7 @@ async fn litep2p_open_substream() {
                 }
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 NotificationEvent::ValidateSubstream { protocol, peer, handshake } => {
                     assert_eq!(protocol, Litep2pProtocol::from("/notif/1"));
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
@@ -332,7 +332,7 @@ async fn substrate_reject_substream() {
                 }
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 NotificationEvent::NotificationStreamOpenFailure { peer, error } => {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
                     assert_eq!(error, NotificationError::Rejected);
@@ -374,7 +374,7 @@ async fn litep2p_reject_substream() {
             event = litep2p.next_event() => match event {
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 NotificationEvent::ValidateSubstream { protocol, peer, handshake } => {
                     assert_eq!(protocol, Litep2pProtocol::from("/notif/1"));
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
@@ -448,7 +448,7 @@ async fn substrate_close_substream() {
             event = litep2p.next_event() => match event.unwrap() {
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 NotificationEvent::ValidateSubstream { protocol, peer, handshake } => {
                     assert_eq!(protocol, Litep2pProtocol::from("/notif/1"));
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
@@ -521,7 +521,7 @@ async fn litep2p_close_substream() {
             event = litep2p.next_event() => match event.unwrap() {
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 NotificationEvent::ValidateSubstream { protocol, peer, handshake } => {
                     assert_eq!(protocol, Litep2pProtocol::from("/notif/1"));
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
@@ -587,7 +587,7 @@ async fn both_nodes_open_substreams() {
             event = litep2p.next_event() => match event.unwrap() {
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 NotificationEvent::ValidateSubstream { protocol, peer, handshake } => {
                     assert_eq!(protocol, Litep2pProtocol::from("/notif/1"));
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());

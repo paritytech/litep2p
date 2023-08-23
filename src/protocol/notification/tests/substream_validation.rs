@@ -108,7 +108,7 @@ async fn substream_accepted() {
 
     // user protocol receives the protocol accepts it
     assert_eq!(
-        handle.next_event().await.unwrap(),
+        handle.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer,
@@ -195,7 +195,7 @@ async fn substream_rejected() {
 
     // user protocol receives the protocol accepts it
     assert_eq!(
-        handle.next_event().await.unwrap(),
+        handle.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer,
@@ -265,7 +265,7 @@ async fn accept_fails_due_to_closed_substream() {
 
     // user protocol receives the protocol accepts it
     assert_eq!(
-        handle.next_event().await.unwrap(),
+        handle.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer,
@@ -339,7 +339,7 @@ async fn accept_fails_due_to_closed_connection() {
 
     // user protocol receives the protocol accepts it
     assert_eq!(
-        handle.next_event().await.unwrap(),
+        handle.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
             peer,
