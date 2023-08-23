@@ -22,6 +22,11 @@ use crate::{peer_id::PeerId, types::RequestId};
 
 use tokio::sync::mpsc::{Receiver, Sender};
 
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "request-response::handle";
 
@@ -195,9 +200,12 @@ impl RequestResponseHandle {
             .await
             .map_err(From::from)
     }
+}
 
-    /// Poll next event from the request-response protocol.
-    pub async fn next_event(&mut self) -> Option<RequestResponseEvent> {
-        self.event_rx.recv().await
+impl futures::Stream for RequestResponseHandle {
+    type Item = RequestResponseEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.event_rx.poll_recv(cx)
     }
 }

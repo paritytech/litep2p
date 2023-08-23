@@ -27,8 +27,7 @@ use libp2p::{
 use litep2p::{
     config::Litep2pConfigBuilder,
     protocol::request_response::{
-        RequestResponseConfig,
-        RequestResponseError, RequestResponseEvent, RequestResponseHandle,
+        RequestResponseConfig, RequestResponseError, RequestResponseEvent, RequestResponseHandle,
     },
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p, Litep2pEvent,
@@ -130,7 +129,7 @@ async fn request_works() {
                 }
                 event => tracing::info!("litep2p: received {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 RequestResponseEvent::ResponseReceived {
                     peer,
                     request_id,
@@ -224,7 +223,7 @@ async fn substrate_reject_request() {
                 }
                 event => tracing::info!("litep2p: received {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 RequestResponseEvent::RequestFailed { peer, error, .. } => {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
                     assert_eq!(error, RequestResponseError::Rejected);
@@ -289,7 +288,7 @@ async fn litep2p_reject_request() {
             event = litep2p.next_event() => match event.unwrap() {
                 event => tracing::info!("litep2p: received {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 RequestResponseEvent::RequestReceived {
                     request_id,
                     ..
@@ -349,7 +348,7 @@ async fn substrate_request_timeout() {
                 }
                 event => tracing::info!("litep2p: received {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 RequestResponseEvent::RequestFailed { peer, error, .. } => {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
                     assert_eq!(error, RequestResponseError::Timeout);
@@ -414,7 +413,7 @@ async fn litep2p_request_timeout() {
             event = litep2p.next_event() => match event.unwrap() {
                 event => tracing::info!("litep2p: received {event:?}"),
             },
-            event = handle.next_event() => match event.unwrap() {
+            event = handle.next() => match event.unwrap() {
                 RequestResponseEvent::RequestReceived { .. } => {},
                 event => tracing::warn!("unhandle event: {event:?}"),
             },

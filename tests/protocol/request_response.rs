@@ -28,6 +28,8 @@ use litep2p::{
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent,
 };
+
+use futures::StreamExt;
 use tokio::time::sleep;
 
 use std::{collections::HashMap, time::Duration};
@@ -111,7 +113,7 @@ async fn send_request_receive_response() {
     // send request to remote peer
     let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
     assert_eq!(
-        handle2.next_event().await.unwrap(),
+        handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
             peer: peer1,
             request_id,
@@ -125,7 +127,7 @@ async fn send_request_receive_response() {
         .await
         .unwrap();
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         RequestResponseEvent::ResponseReceived {
             peer: peer2,
             request_id,
@@ -185,7 +187,7 @@ async fn reject_request() {
         peer,
         request_id,
         request,
-    } = handle2.next_event().await.unwrap()
+    } = handle2.next().await.unwrap()
     {
         assert_eq!(peer, peer1);
         assert_eq!(request, vec![1, 3, 3, 7]);
@@ -195,7 +197,7 @@ async fn reject_request() {
     };
 
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
@@ -266,7 +268,7 @@ async fn multiple_simultaneous_requests() {
             peer,
             request_id,
             request,
-        } = handle2.next_event().await.unwrap()
+        } = handle2.next().await.unwrap()
         {
             assert_eq!(peer, peer1);
             assert_eq!(request, vec![1, 3, 3, 6 + i]);
@@ -284,7 +286,7 @@ async fn multiple_simultaneous_requests() {
             peer,
             request_id,
             response,
-        } = handle1.next_event().await.unwrap()
+        } = handle1.next().await.unwrap()
         {
             assert_eq!(peer, peer2);
             assert_eq!(response, expected.get(&request_id).unwrap().to_vec());
@@ -345,7 +347,7 @@ async fn request_timeout() {
     sleep(Duration::from_secs(7)).await;
 
     assert_eq!(
-        handle1.next_event().await.unwrap(),
+        handle1.next().await.unwrap(),
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
