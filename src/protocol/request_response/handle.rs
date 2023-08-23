@@ -18,14 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    codec::ProtocolCodec,
-    peer_id::PeerId,
-    types::{protocol::ProtocolName, RequestId},
-    DEFAULT_CHANNEL_SIZE,
-};
+use crate::{peer_id::PeerId, types::RequestId};
 
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "request-response::handle";
@@ -204,50 +199,5 @@ impl RequestResponseHandle {
     /// Poll next event from the request-response protocol.
     pub async fn next_event(&mut self) -> Option<RequestResponseEvent> {
         self.event_rx.recv().await
-    }
-}
-
-/// Request-response configuration.
-#[derive(Debug)]
-pub struct Config {
-    /// Protocol name.
-    protocol_name: ProtocolName,
-
-    /// Codec used by the protocol.
-    pub(crate) codec: ProtocolCodec,
-
-    /// Maximum slots allocated for inbound requests.
-    pub(crate) _max_slots: usize,
-
-    /// TX channel for sending events to the user protocol.
-    pub(crate) event_tx: Sender<RequestResponseEvent>,
-
-    /// RX channel for receiving commands from the user protocol.
-    pub(crate) command_rx: Receiver<RequestResponseCommand>,
-}
-
-impl Config {
-    /// Create new [`Config`].
-    pub fn new(protocol_name: ProtocolName, _max_slots: usize) -> (Self, RequestResponseHandle) {
-        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let handle = RequestResponseHandle::new(event_rx, command_tx);
-
-        (
-            Self {
-                protocol_name,
-                _max_slots,
-                event_tx,
-                command_rx,
-                codec: ProtocolCodec::UnsignedVarint,
-            },
-            handle,
-        )
-    }
-
-    /// Get protocol name.
-    // TODO: can this be removed?
-    pub(crate) fn protocol_name(&self) -> &ProtocolName {
-        &self.protocol_name
     }
 }

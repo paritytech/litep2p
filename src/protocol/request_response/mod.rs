@@ -21,12 +21,9 @@
 use crate::{
     error::{Error, SubstreamError},
     peer_id::PeerId,
-    protocol::request_response::types::Config,
     protocol::{
-        request_response::types::{
-            RequestResponseCommand, RequestResponseError, RequestResponseEvent,
-        },
-        Direction, Transport, TransportEvent, TransportService,
+        request_response::handle::RequestResponseCommand, Direction, Transport, TransportEvent,
+        TransportService,
     },
     substream::Substream,
     types::{RequestId, SubstreamId},
@@ -43,7 +40,11 @@ use std::{
     time::Duration,
 };
 
-pub mod types;
+pub use config::RequestResponseConfig;
+pub use handle::{RequestResponseError, RequestResponseEvent, RequestResponseHandle};
+
+mod config;
+mod handle;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "request-response::protocol";
@@ -119,7 +120,7 @@ pub(crate) struct RequestResponseProtocol {
 
 impl RequestResponseProtocol {
     /// Create new [`RequestResponseProtocol`].
-    pub(crate) fn new(service: TransportService, config: Config) -> Self {
+    pub(crate) fn new(service: TransportService, config: RequestResponseConfig) -> Self {
         Self {
             service,
             peers: HashMap::new(),

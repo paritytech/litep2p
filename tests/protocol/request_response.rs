@@ -21,8 +21,8 @@
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::request_response::types::{
-        Config as RequestResponseConfig, RequestResponseError, RequestResponseEvent,
+    protocol::request_response::{
+        RequestResponseConfig, RequestResponseError, RequestResponseEvent,
     },
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName,

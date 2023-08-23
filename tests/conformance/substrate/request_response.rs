@@ -26,9 +26,9 @@ use libp2p::{
 };
 use litep2p::{
     config::Litep2pConfigBuilder,
-    protocol::request_response::types::{
-        Config as RequestResponseConfig, RequestResponseError, RequestResponseEvent,
-        RequestResponseHandle,
+    protocol::request_response::{
+        RequestResponseConfig,
+        RequestResponseError, RequestResponseEvent, RequestResponseHandle,
     },
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p, Litep2pEvent,

@@ -84,7 +84,7 @@ pub struct Litep2pConfigBuilder {
     notification_protocols: HashMap<ProtocolName, notification::types::Config>,
 
     /// Request-response protocols.
-    request_response_protocols: HashMap<ProtocolName, request_response::types::Config>,
+    request_response_protocols: HashMap<ProtocolName, request_response::RequestResponseConfig>,
 
     /// User protocols.
     user_protocols: HashMap<ProtocolName, Box<dyn UserProtocol>>,
@@ -176,7 +176,7 @@ impl Litep2pConfigBuilder {
     /// Install request-response protocol.
     pub fn with_request_response_protocol(
         mut self,
-        config: request_response::types::Config,
+        config: request_response::RequestResponseConfig,
     ) -> Self {
         self.request_response_protocols
             .insert(config.protocol_name().clone(), config);
@@ -251,7 +251,8 @@ pub struct Litep2pConfig {
     pub(crate) notification_protocols: HashMap<ProtocolName, notification::types::Config>,
 
     /// Request-response protocols.
-    pub(crate) request_response_protocols: HashMap<ProtocolName, request_response::types::Config>,
+    pub(crate) request_response_protocols:
+        HashMap<ProtocolName, request_response::RequestResponseConfig>,
 
     /// User protocols.
     pub(crate) user_protocols: HashMap<ProtocolName, Box<dyn UserProtocol>>,
