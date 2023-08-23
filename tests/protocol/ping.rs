@@ -20,7 +20,8 @@
 
 use futures::StreamExt;
 use litep2p::{
-    config::Litep2pConfigBuilder, crypto::ed25519::Keypair, protocol::libp2p::ping::PingConfig,
+    config::Litep2pConfigBuilder, crypto::ed25519::Keypair,
+    protocol::libp2p::ping::PingConfigBuilder,
     transport::tcp::config::TransportConfig as TcpTransportConfig, Litep2p,
 };
 
@@ -30,7 +31,8 @@ async fn ping_supported() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config1, mut ping_event_stream1) = PingConfig::default();
+    let (ping_config1, mut ping_event_stream1) =
+        PingConfigBuilder::new().with_keep_alive(true).build();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -40,7 +42,8 @@ async fn ping_supported() {
         .with_libp2p_ping(ping_config1)
         .build();
 
-    let (ping_config2, mut ping_event_stream2) = PingConfig::default();
+    let (ping_config2, mut ping_event_stream2) =
+        PingConfigBuilder::new().with_keep_alive(true).build();
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -61,8 +64,12 @@ async fn ping_supported() {
 
     loop {
         tokio::select! {
-            _event = litep2p1.next_event() => {}
-            _event = litep2p2.next_event() => {}
+            _event = litep2p1.next_event() => {
+                println!("event: {_event:?}");
+            }
+            _event = litep2p2.next_event() => {
+                println!("event: {_event:?}");
+            }
             _event = ping_event_stream1.next() => {
                 litep2p1_done = true;
 
