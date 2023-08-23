@@ -37,6 +37,151 @@ use multihash::Multihash;
 use tokio::net::{TcpListener, UdpSocket};
 
 #[tokio::test]
+async fn two_litep2ps_work() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (ping_config1, _ping_event_stream1) = PingConfig::default();
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_libp2p_ping(ping_config1)
+        .build();
+
+    let (ping_config2, _ping_event_stream2) = PingConfig::default();
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_libp2p_ping(ping_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    litep2p1.connect(address).await.unwrap();
+
+    let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
+
+    assert!(std::matches!(
+        res1,
+        Some(Litep2pEvent::ConnectionEstablished { .. })
+    ));
+    assert!(std::matches!(
+        res2,
+        Some(Litep2pEvent::ConnectionEstablished { .. })
+    ));
+}
+
+#[tokio::test]
+async fn dial_failure() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (ping_config1, _ping_event_stream1) = PingConfig::default();
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_libp2p_ping(ping_config1)
+        .build();
+
+    let (ping_config2, _ping_event_stream2) = PingConfig::default();
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_libp2p_ping(ping_config2)
+        .build();
+
+    // let (config1, _ping_event_stream1) = generate_config();
+    // let (config2, _ping_event_stream2) = generate_config();
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    litep2p1
+        .connect("/ip6/::1/tcp/1".parse().unwrap())
+        .await
+        .unwrap();
+
+    tokio::spawn(async move {
+        loop {
+            let _ = litep2p2.next_event().await;
+        }
+    });
+
+    assert!(std::matches!(
+        litep2p1.next_event().await,
+        Some(Litep2pEvent::DialFailure { .. })
+    ));
+}
+
+#[tokio::test]
+async fn connect_over_dns() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let keypair1 = Keypair::generate();
+    let (ping_config1, _ping_event_stream1) = PingConfig::default();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(keypair1)
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_libp2p_ping(ping_config1)
+        .build();
+
+    let keypair2 = Keypair::generate();
+    let (ping_config2, _ping_event_stream2) = PingConfig::default();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(keypair2)
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_libp2p_ping(ping_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    let tcp = address.iter().skip(1).next().unwrap();
+
+    let mut new_address = Multiaddr::empty();
+    new_address.push(Protocol::Dns("localhost".into()));
+    new_address.push(tcp);
+
+    litep2p1.connect(new_address).await.unwrap();
+    let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
+
+    assert!(std::matches!(
+        res1,
+        Some(Litep2pEvent::ConnectionEstablished { .. })
+    ));
+    assert!(std::matches!(
+        res2,
+        Some(Litep2pEvent::ConnectionEstablished { .. })
+    ));
+}
+
+#[tokio::test]
 async fn connection_timeout_tcp() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
