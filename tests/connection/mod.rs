@@ -23,7 +23,7 @@ use litep2p::{
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     peer_id::PeerId,
-    protocol::libp2p::ping::Config as PingConfig,
+    protocol::libp2p::ping::PingConfig,
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
         tcp::config::TransportConfig as TcpTransportConfig,
@@ -42,7 +42,7 @@ async fn connection_timeout_tcp() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config, _ping_event_stream) = PingConfig::new(3);
+    let (ping_config, _ping_event_stream) = PingConfig::default();
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -84,7 +84,7 @@ async fn connection_timeout_quic() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config, _ping_event_stream) = PingConfig::new(3);
+    let (ping_config, _ping_event_stream) = PingConfig::default();
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
@@ -127,7 +127,7 @@ async fn simultaneous_dial_tcp() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config1, _ping_event_stream1) = PingConfig::new(3);
+    let (ping_config1, _ping_event_stream1) = PingConfig::default();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -138,7 +138,7 @@ async fn simultaneous_dial_tcp() {
         .build();
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
-    let (ping_config2, _ping_event_stream2) = PingConfig::new(3);
+    let (ping_config2, _ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -174,7 +174,7 @@ async fn simultaneous_dial_quic() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config1, _ping_event_stream1) = PingConfig::new(3);
+    let (ping_config1, _ping_event_stream1) = PingConfig::default();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
@@ -184,7 +184,7 @@ async fn simultaneous_dial_quic() {
         .build();
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
-    let (ping_config2, _ping_event_stream2) = PingConfig::new(3);
+    let (ping_config2, _ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
@@ -225,7 +225,7 @@ async fn dial_quic_peer_id_missing() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config, _ping_event_stream) = PingConfig::new(3);
+    let (ping_config, _ping_event_stream) = PingConfig::default();
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
@@ -267,7 +267,7 @@ async fn dial_self_tcp() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config, _ping_event_stream) = PingConfig::new(3);
+    let (ping_config, _ping_event_stream) = PingConfig::default();
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -303,7 +303,7 @@ async fn dial_self_quic() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config, _ping_event_stream) = PingConfig::new(3);
+    let (ping_config, _ping_event_stream) = PingConfig::default();
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
@@ -338,7 +338,7 @@ async fn attempt_to_dial_using_unsupported_transport() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config, _ping_event_stream) = PingConfig::new(3);
+    let (ping_config, _ping_event_stream) = PingConfig::default();
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
@@ -367,7 +367,7 @@ async fn keep_alive_timeout_tcp() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config1, mut ping_event_stream1) = PingConfig::new(3);
+    let (ping_config1, mut ping_event_stream1) = PingConfig::default();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -378,7 +378,7 @@ async fn keep_alive_timeout_tcp() {
         .build();
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
-    let (ping_config2, mut ping_event_stream2) = PingConfig::new(3);
+    let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {

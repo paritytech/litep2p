@@ -317,7 +317,7 @@ mod tests {
         config::{Litep2pConfig, Litep2pConfigBuilder},
         crypto::ed25519::Keypair,
         protocol::{
-            libp2p::ping::{Config as PingConfig, PingEvent},
+            libp2p::ping::{PingConfig, PingEvent},
             notification::types::Config as NotificationConfig,
         },
         transport::tcp::config::TransportConfig as TcpTransportConfig,
@@ -345,7 +345,7 @@ mod tests {
             vec![1, 2, 3, 4],
             Vec::new(),
         );
-        let (ping_config, _ping_event_stream) = PingConfig::new(3);
+        let (ping_config, _ping_event_stream) = PingConfig::default();
 
         let config = Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
@@ -366,7 +366,7 @@ mod tests {
     // generate config for testing
     fn generate_config() -> (Litep2pConfig, Box<dyn Stream<Item = PingEvent> + Send>) {
         let keypair = Keypair::generate();
-        let (ping_config, ping_event_stream) = PingConfig::new(3);
+        let (ping_config, ping_event_stream) = PingConfig::default();
 
         (
             Litep2pConfigBuilder::new()
@@ -442,7 +442,7 @@ mod tests {
             .try_init();
 
         let keypair1 = Keypair::generate();
-        let (ping_config1, _ping_event_stream1) = PingConfig::new(3);
+        let (ping_config1, _ping_event_stream1) = PingConfig::default();
 
         let config1 = Litep2pConfigBuilder::new()
             .with_keypair(keypair1)
@@ -454,7 +454,7 @@ mod tests {
             .build();
 
         let keypair2 = Keypair::generate();
-        let (ping_config2, _ping_event_stream2) = PingConfig::new(3);
+        let (ping_config2, _ping_event_stream2) = PingConfig::default();
 
         let config2 = Litep2pConfigBuilder::new()
             .with_keypair(keypair2)
@@ -496,7 +496,7 @@ mod tests {
             .try_init();
 
         let keypair1 = Keypair::generate();
-        let (ping_config1, _ping_event_stream1) = PingConfig::new(3);
+        let (ping_config1, _ping_event_stream1) = PingConfig::default();
 
         let config1 = Litep2pConfigBuilder::new()
             .with_keypair(keypair1)

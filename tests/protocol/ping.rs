@@ -20,8 +20,7 @@
 
 use futures::StreamExt;
 use litep2p::{
-    config::Litep2pConfigBuilder, crypto::ed25519::Keypair,
-    protocol::libp2p::ping::Config as PingConfig,
+    config::Litep2pConfigBuilder, crypto::ed25519::Keypair, protocol::libp2p::ping::PingConfig,
     transport::tcp::config::TransportConfig as TcpTransportConfig, Litep2p,
 };
 
@@ -31,7 +30,7 @@ async fn ping_supported() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config1, mut ping_event_stream1) = PingConfig::new(3);
+    let (ping_config1, mut ping_event_stream1) = PingConfig::default();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -41,7 +40,7 @@ async fn ping_supported() {
         .with_libp2p_ping(ping_config1)
         .build();
 
-    let (ping_config2, mut ping_event_stream2) = PingConfig::new(3);
+    let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {

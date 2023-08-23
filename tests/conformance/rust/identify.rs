@@ -32,7 +32,7 @@ use litep2p::{
     crypto::ed25519::Keypair,
     protocol::libp2p::{
         identify::{Config as IdentifyConfig, IdentifyEvent},
-        ping::{Config as PingConfig, PingEvent},
+        ping::{PingConfig, PingEvent},
     },
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p,
@@ -70,7 +70,7 @@ async fn initialize_litep2p() -> (
     Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>,
 ) {
     let keypair = Keypair::generate();
-    let (ping_config, ping_event_stream) = PingConfig::new(3);
+    let (ping_config, ping_event_stream) = PingConfig::default();
     let (identify_config, identify_event_stream) = IdentifyConfig::new();
 
     let litep2p = Litep2p::new(

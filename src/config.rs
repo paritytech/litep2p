@@ -72,7 +72,7 @@ pub struct Litep2pConfigBuilder {
     keypair: Option<Keypair>,
 
     /// Ping protocol config.
-    ping: Option<ping::Config>,
+    ping: Option<ping::PingConfig>,
 
     /// Identify protocol config.
     identify: Option<identify::Config>,
@@ -156,7 +156,7 @@ impl Litep2pConfigBuilder {
     }
 
     /// Enable IPFS Ping protocol.
-    pub fn with_libp2p_ping(mut self, config: ping::Config) -> Self {
+    pub fn with_libp2p_ping(mut self, config: ping::PingConfig) -> Self {
         self.ping = Some(config);
         self
     }
@@ -239,7 +239,7 @@ pub struct Litep2pConfig {
     pub(crate) keypair: Keypair,
 
     /// Ping protocol configuration, if enabled.
-    pub(crate) ping: Option<ping::Config>,
+    pub(crate) ping: Option<ping::PingConfig>,
 
     /// Identify protocol configuration, if enabled.
     pub(crate) identify: Option<identify::Config>,

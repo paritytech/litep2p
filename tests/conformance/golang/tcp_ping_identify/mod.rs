@@ -22,7 +22,7 @@ use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::libp2p::{identify::Config as IdentifyConfig, ping::Config as PingConfig},
+    protocol::libp2p::{identify::Config as IdentifyConfig, ping::PingConfig},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p,
 };
@@ -47,7 +47,7 @@ async fn go_libp2p_dials() {
     let mut stream = UnixStream::connect("/tmp/ping-test.sock").unwrap();
 
     let keypair = Keypair::generate();
-    let (ping_config, mut ping_event_stream) = PingConfig::new(3);
+    let (ping_config, mut ping_event_stream) = PingConfig::default();
     let (identify_config, mut identify_event_stream) = IdentifyConfig::new();
 
     let mut litep2p = Litep2p::new(

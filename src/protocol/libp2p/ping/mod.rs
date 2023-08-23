@@ -19,71 +19,30 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::ProtocolCodec,
     error::{Error, SubstreamError},
     peer_id::PeerId,
     protocol::{Direction, Transport, TransportEvent, TransportService},
     substream::Substream,
-    types::{protocol::ProtocolName, SubstreamId},
-    DEFAULT_CHANNEL_SIZE,
+    types::SubstreamId,
 };
 
-use futures::{SinkExt, Stream, StreamExt};
-use tokio::sync::mpsc::{channel, Sender};
-use tokio_stream::wrappers::ReceiverStream;
+use futures::{SinkExt, StreamExt};
+use tokio::sync::mpsc::Sender;
 
 use std::{
     collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
+pub use config::{PingConfig, PingConfigBuilder};
+
+mod config;
+
 // TODO: handle max failures
 // TODO: don't block the event loop on a single substream
 
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::ping";
-
-/// IPFS Ping protocol name as a string.
-pub const PROTOCOL_NAME: &str = "/ipfs/ping/1.0.0";
-
-/// Size for `/ipfs/ping/1.0.0` payloads.
-const PING_PAYLOAD_SIZE: usize = 32;
-
-/// Ping configuration.
-// TODO: figure out a better abstraction for protocol configs
-#[derive(Debug)]
-pub struct Config {
-    /// Protocol name.
-    pub(crate) protocol: ProtocolName,
-
-    /// Codec used by the protocol.
-    pub(crate) codec: ProtocolCodec,
-
-    /// Maximum failures before the peer is considered unreachable.
-    max_failures: usize,
-
-    /// TX channel for sending events to the user protocol.
-    tx_event: Sender<PingEvent>,
-}
-
-impl Config {
-    /// Create new [`PingConfig`].
-    ///
-    /// Returns a config that is given to `Litep2pConfig` and an event stream for ping events.
-    pub fn new(max_failures: usize) -> (Self, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
-        let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
-
-        (
-            Self {
-                tx_event,
-                max_failures,
-                protocol: ProtocolName::from(PROTOCOL_NAME),
-                codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
-            },
-            Box::new(ReceiverStream::new(rx_event)),
-        )
-    }
-}
 
 /// Events emitted by the ping protocol.
 #[derive(Debug)]
@@ -118,7 +77,7 @@ pub struct Ping {
 
 impl Ping {
     /// Create new [`Ping`] protocol.
-    pub fn new(service: TransportService, config: Config) -> Self {
+    pub fn new(service: TransportService, config: PingConfig) -> Self {
         Self {
             service,
             tx: config.tx_event,

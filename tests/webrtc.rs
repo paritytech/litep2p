@@ -23,7 +23,7 @@ use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::{
-        libp2p::ping::Config as PingConfig, notification::types::Config as NotificationConfig,
+        libp2p::ping::PingConfig, notification::types::Config as NotificationConfig,
     },
     transport::webrtc::WebRtcTransportConfig,
     types::protocol::ProtocolName,
@@ -37,7 +37,7 @@ async fn webrtc_test() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config, mut ping_event_stream) = PingConfig::new(3);
+    let (ping_config, mut ping_event_stream) = PingConfig::default();
     let (notif_config, mut notif_event_stream) = NotificationConfig::new(
         ProtocolName::from(
             "/c0c89622f83f6f3c6b94bc307fec1652a3aa58ac88a564c34706633f44cbb3d1/block-announces/1",
