@@ -33,6 +33,8 @@ pub struct Identity {
 impl Identity {
     /// Create new [`Identity`] codec.
     pub fn new(payload_len: usize) -> Self {
+        assert!(payload_len != 0);
+
         Self { payload_len }
     }
 
@@ -60,8 +62,65 @@ impl Encoder<Bytes> for Identity {
     type Error = Error;
 
     fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
-        // TODO: verify that `item` is `N` bytes long
+        if item.len() > self.payload_len || item.is_empty() {
+            return Err(Error::InvalidData);
+        }
+
         dst.put_slice(item.as_ref());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoding_works() {
+        let mut codec = Identity::new(48);
+        let mut out_buf = BytesMut::with_capacity(32);
+        let bytes = Bytes::from(vec![0u8; 48]);
+
+        assert!(codec.encode(bytes.clone(), &mut out_buf).is_ok());
+        assert_eq!(out_buf.freeze(), bytes);
+    }
+
+    #[test]
+    fn decoding_works() {
+        let mut codec = Identity::new(64);
+        let bytes = vec![3u8; 64];
+        let copy = bytes.clone();
+        let mut bytes = BytesMut::from(&bytes[..]);
+
+        let decoded = codec.decode(&mut bytes).unwrap().unwrap();
+        assert_eq!(decoded, copy);
+    }
+
+    #[test]
+    fn empty_encode() {
+        let mut codec = Identity::new(32);
+        let mut out_buf = BytesMut::with_capacity(32);
+        assert!(codec.encode(Bytes::new(), &mut out_buf).is_err());
+    }
+
+    #[test]
+    fn decode_encode() {
+        let mut codec = Identity::new(32);
+        assert!(codec.decode(&mut BytesMut::new()).unwrap().is_none());
+    }
+
+    #[test]
+    fn direct_encoding_works() {
+        assert_eq!(
+            Identity::encode(vec![1, 3, 3, 7]).unwrap(),
+            vec![1, 3, 3, 7]
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    #[cfg(debug_assertions)]
+    fn empty_identity_codec() {
+        let _codec = Identity::new(0usize);
     }
 }
