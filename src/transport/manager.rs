@@ -372,6 +372,11 @@ impl TransportManager {
         )
     }
 
+    /// Get iterato to installed protocols.
+    pub fn protocols(&self) -> impl Iterator<Item = &ProtocolName> {
+        self.protocols.keys()
+    }
+
     /// Register protocol to the [`TransportManager`].
     ///
     /// This allocates new context for the protocol and returns a handle

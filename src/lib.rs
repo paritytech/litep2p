@@ -25,6 +25,7 @@ use crate::{
     peer_id::PeerId,
     protocol::{
         libp2p::{identify::Identify, kademlia::Kademlia, ping::Ping},
+        mdns::Mdns,
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
     },
@@ -39,7 +40,6 @@ use crate::{
 };
 
 use multiaddr::Multiaddr;
-use protocol::mdns::Mdns;
 
 // TODO: which of these need to be pub?
 pub mod codec;
@@ -137,12 +137,11 @@ impl Litep2p {
             tokio::spawn(async move { RequestResponseProtocol::new(service, config).run().await });
         }
 
+        // start user protocol event loops
         for (protocol_name, protocol) in config.user_protocols.into_iter() {
             tracing::debug!(target: LOG_TARGET, protocol = ?protocol_name, "enable user protocol");
-            // protocols.push(protocol_name.clone());
 
             let service = transport_manager.register_protocol(protocol_name, protocol.codec());
-            // let service = transport_ctx.add_protocol(protocol_name, protocol.codec())?;
             tokio::spawn(async move { protocol.run(service).await });
         }
 
@@ -173,25 +172,24 @@ impl Litep2p {
         }
 
         // start identify protocol event loop if enabled
-        if let Some(mut identify_config) = config.identify.take() {
-            tracing::debug!(
-                target: LOG_TARGET,
-                protocol = ?identify_config.protocol,
-                "enable ipfs identify protocol",
-            );
+        let mut identify_info = match config.identify.take() {
+            None => None,
+            Some(mut identify_config) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    protocol = ?identify_config.protocol,
+                    "enable ipfs identify protocol",
+                );
 
-            let service = transport_manager.register_protocol(
-                identify_config.protocol.clone(),
-                identify_config.codec.clone(),
-            );
-            identify_config.public = Some(PublicKey::Ed25519(config.keypair.public()));
+                let service = transport_manager.register_protocol(
+                    identify_config.protocol.clone(),
+                    identify_config.codec.clone(),
+                );
+                identify_config.public = Some(PublicKey::Ed25519(config.keypair.public()));
 
-            // TODO: fix these
-            // identify_config.listen_addresses = Vec::new();
-            // identify_config.protocols = protocols;
-
-            tokio::spawn(async move { Identify::new(service, identify_config).run().await });
-        }
+                Some((service, identify_config))
+            }
+        };
 
         // enable tcp transport if the config exists
         if let Some(config) = config.tcp.take() {
@@ -262,6 +260,14 @@ impl Litep2p {
                     tracing::error!(target: LOG_TARGET, ?error, "mdns failed");
                 }
             });
+        }
+
+        // if identify was enabled, give it the enabled protocols and listen addresses and start it
+        if let Some((service, mut identify_config)) = identify_info.take() {
+            identify_config.listen_addresses = listen_addresses.clone();
+            identify_config.protocols = transport_manager.protocols().cloned().collect();
+
+            tokio::spawn(async move { Identify::new(service, identify_config).run().await });
         }
 
         // verify that at least one transport is specified

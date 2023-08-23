@@ -281,7 +281,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        let mut this = Pin::into_inner(self);
+        let this = Pin::into_inner(self);
 
         loop {
             match this.read_state {
@@ -484,7 +484,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Encrypted<S> {
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        let mut this = Pin::into_inner(self);
+        let this = Pin::into_inner(self);
 
         loop {
             match this.read_state {
