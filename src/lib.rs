@@ -357,7 +357,7 @@ mod tests {
             })
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
-            .with_ipfs_ping(ping_config)
+            .with_libp2p_ping(ping_config)
             .build();
 
         let _litep2p = Litep2p::new(config).await.unwrap();
@@ -375,7 +375,7 @@ mod tests {
                     listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
                     yamux_config: Default::default(),
                 })
-                .with_ipfs_ping(ping_config)
+                .with_libp2p_ping(ping_config)
                 .build(),
             ping_event_stream,
         )
@@ -450,7 +450,7 @@ mod tests {
                 listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
                 yamux_config: Default::default(),
             })
-            .with_ipfs_ping(ping_config1)
+            .with_libp2p_ping(ping_config1)
             .build();
 
         let keypair2 = Keypair::generate();
@@ -462,7 +462,7 @@ mod tests {
                 listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
                 yamux_config: Default::default(),
             })
-            .with_ipfs_ping(ping_config2)
+            .with_libp2p_ping(ping_config2)
             .build();
 
         let mut litep2p1 = Litep2p::new(config1).await.unwrap();
@@ -504,7 +504,7 @@ mod tests {
                 listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
                 yamux_config: Default::default(),
             })
-            .with_ipfs_ping(ping_config1)
+            .with_libp2p_ping(ping_config1)
             .build();
 
         let mut litep2p1 = Litep2p::new(config1).await.unwrap();

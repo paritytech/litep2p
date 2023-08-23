@@ -50,7 +50,7 @@ async fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Se
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
                 yamux_config: Default::default(),
             })
-            .with_ipfs_ping(ping_config)
+            .with_libp2p_ping(ping_config)
             .build(),
     )
     .await

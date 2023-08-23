@@ -52,7 +52,7 @@ async fn initialize_litep2p() -> (Litep2p, KademliaHandle) {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
                 yamux_config: Default::default(),
             })
-            .with_ipfs_kademlia(kad_config)
+            .with_libp2p_kademlia(kad_config)
             .build(),
     )
     .await

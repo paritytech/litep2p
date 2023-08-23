@@ -156,19 +156,19 @@ impl Litep2pConfigBuilder {
     }
 
     /// Enable IPFS Ping protocol.
-    pub fn with_ipfs_ping(mut self, config: ping::Config) -> Self {
+    pub fn with_libp2p_ping(mut self, config: ping::Config) -> Self {
         self.ping = Some(config);
         self
     }
 
     /// Enable IPFS Identify protocol.
-    pub fn with_ipfs_identify(mut self, config: identify::Config) -> Self {
+    pub fn with_libp2p_identify(mut self, config: identify::Config) -> Self {
         self.identify = Some(config);
         self
     }
 
     /// Enable IPFS Kademlia protocol.
-    pub fn with_ipfs_kademlia(mut self, config: kademlia::Config) -> Self {
+    pub fn with_libp2p_kademlia(mut self, config: kademlia::Config) -> Self {
         self.kademlia = Some(config);
         self
     }

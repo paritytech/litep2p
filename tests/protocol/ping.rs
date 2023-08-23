@@ -38,7 +38,7 @@ async fn ping_supported() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_ping(ping_config1)
+        .with_libp2p_ping(ping_config1)
         .build();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::new(3);
@@ -48,7 +48,7 @@ async fn ping_supported() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_ping(ping_config2)
+        .with_libp2p_ping(ping_config2)
         .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();

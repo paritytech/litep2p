@@ -49,7 +49,7 @@ async fn connection_timeout_tcp() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_ping(ping_config)
+        .with_libp2p_ping(ping_config)
         .build();
 
     let mut litep2p = Litep2p::new(config).await.unwrap();
@@ -90,7 +90,7 @@ async fn connection_timeout_quic() {
         .with_quic(QuicTransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         })
-        .with_ipfs_ping(ping_config)
+        .with_libp2p_ping(ping_config)
         .build();
 
     let mut litep2p = Litep2p::new(config).await.unwrap();
@@ -134,7 +134,7 @@ async fn simultaneous_dial_tcp() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_ping(ping_config1)
+        .with_libp2p_ping(ping_config1)
         .build();
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
@@ -145,7 +145,7 @@ async fn simultaneous_dial_tcp() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_ping(ping_config2)
+        .with_libp2p_ping(ping_config2)
         .build();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
@@ -180,7 +180,7 @@ async fn simultaneous_dial_quic() {
         .with_quic(QuicTransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         })
-        .with_ipfs_ping(ping_config1)
+        .with_libp2p_ping(ping_config1)
         .build();
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
@@ -190,7 +190,7 @@ async fn simultaneous_dial_quic() {
         .with_quic(QuicTransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         })
-        .with_ipfs_ping(ping_config2)
+        .with_libp2p_ping(ping_config2)
         .build();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
@@ -231,7 +231,7 @@ async fn dial_quic_peer_id_missing() {
         .with_quic(QuicTransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         })
-        .with_ipfs_ping(ping_config)
+        .with_libp2p_ping(ping_config)
         .build();
 
     let mut litep2p = Litep2p::new(config).await.unwrap();
@@ -274,7 +274,7 @@ async fn dial_self_tcp() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_ping(ping_config)
+        .with_libp2p_ping(ping_config)
         .build();
 
     let mut litep2p = Litep2p::new(config).await.unwrap();
@@ -309,7 +309,7 @@ async fn dial_self_quic() {
         .with_quic(QuicTransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         })
-        .with_ipfs_ping(ping_config)
+        .with_libp2p_ping(ping_config)
         .build();
 
     let mut litep2p = Litep2p::new(config).await.unwrap();
@@ -344,7 +344,7 @@ async fn attempt_to_dial_using_unsupported_transport() {
         .with_quic(QuicTransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         })
-        .with_ipfs_ping(ping_config)
+        .with_libp2p_ping(ping_config)
         .build();
 
     let mut litep2p = Litep2p::new(config).await.unwrap();
@@ -374,7 +374,7 @@ async fn keep_alive_timeout_tcp() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_ping(ping_config1)
+        .with_libp2p_ping(ping_config1)
         .build();
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
@@ -385,7 +385,7 @@ async fn keep_alive_timeout_tcp() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_ping(ping_config2)
+        .with_libp2p_ping(ping_config2)
         .build();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 

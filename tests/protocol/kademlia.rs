@@ -37,7 +37,7 @@ async fn spawn_litep2p(port: u16) {
             listen_address: format!("/ip6/::1/tcp/{port}").parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_kademlia(kad_config1)
+        .with_libp2p_kademlia(kad_config1)
         .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
@@ -61,7 +61,7 @@ async fn kademlia_supported() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_kademlia(kad_config1)
+        .with_libp2p_kademlia(kad_config1)
         .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
@@ -96,7 +96,7 @@ async fn put_value() {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
-        .with_ipfs_kademlia(kad_config1)
+        .with_libp2p_kademlia(kad_config1)
         .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
@@ -110,17 +110,17 @@ async fn put_value() {
             .await;
     }
 
-    let key = RecordKey::new(&Bytes::from(vec![1, 3, 3, 7]));
-    kad_handle1.put_value(key, vec![1, 2, 3, 4]).await;
+    // let key = RecordKey::new(&Bytes::from(vec![1, 3, 3, 7]));
+    // kad_handle1.put_value(key, vec![1, 2, 3, 4]).await;
 
-    loop {
-        tokio::select! {
-            event = litep2p1.next_event() => {
-                tracing::info!("litep2p event received: {event:?}");
-            }
-            event = kad_handle1.next() => {
-                tracing::info!("kademlia event received: {event:?}");
-            }
-        }
-    }
+    // loop {
+    //     tokio::select! {
+    //         event = litep2p1.next_event() => {
+    //             tracing::info!("litep2p event received: {event:?}");
+    //         }
+    //         event = kad_handle1.next() => {
+    //             tracing::info!("kademlia event received: {event:?}");
+    //         }
+    //     }
+    // }
 }

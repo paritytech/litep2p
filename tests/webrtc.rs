@@ -52,7 +52,7 @@ async fn webrtc_test() {
         .with_webrtc(WebRtcTransportConfig {
             listen_address: "/ip4/192.168.1.173/udp/8888/webrtc-direct".parse().unwrap(),
         })
-        .with_ipfs_ping(ping_config)
+        .with_libp2p_ping(ping_config)
         .with_notification_protocol(notif_config)
         .build();
 
