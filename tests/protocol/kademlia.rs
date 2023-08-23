@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use bytes::Bytes;
+use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
@@ -117,7 +118,7 @@ async fn put_value() {
             event = litep2p1.next_event() => {
                 tracing::info!("litep2p event received: {event:?}");
             }
-            event = kad_handle1.next_event() => {
+            event = kad_handle1.next() => {
                 tracing::info!("kademlia event received: {event:?}");
             }
         }

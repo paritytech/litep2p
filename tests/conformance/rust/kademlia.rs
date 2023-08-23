@@ -166,7 +166,7 @@ async fn libp2p_dials() {
     kad_handle.find_node(target).await;
 
     loop {
-        match kad_handle.next_event().await {
+        match kad_handle.next().await {
             Some(KademliaEvent::FindNodeResult {
                 target: query_target,
                 peers,

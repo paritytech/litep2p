@@ -20,8 +20,14 @@
 
 use crate::{peer_id::PeerId, protocol::libp2p::kademlia::record::Key};
 
+use futures::Stream;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
+
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// Logging target for the file.
 const _LOG_TARGET: &str = "ifsp::kademlia::handle";
@@ -94,17 +100,12 @@ impl KademliaHandle {
     pub async fn find_node(&mut self, peer: PeerId) {
         let _ = self.cmd_tx.send(KademliaCommand::FindNode { peer }).await;
     }
+}
 
-    /// Store value to DHT.
-    pub async fn put_value(&self, key: Key, value: Vec<u8>) {
-        let _ = self
-            .cmd_tx
-            .send(KademliaCommand::PutValue { key, value })
-            .await;
-    }
+impl Stream for KademliaHandle {
+    type Item = KademliaEvent;
 
-    /// Poll next event from [`Kademlia`].
-    pub async fn next_event(&mut self) -> Option<KademliaEvent> {
-        self.event_rx.recv().await
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.event_rx.poll_recv(cx)
     }
 }
