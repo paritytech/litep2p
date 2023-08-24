@@ -198,10 +198,10 @@ impl QuicTransport {
                         Multiaddr::empty()
                             .with(Protocol::from(address.ip()))
                             .with(Protocol::Udp(address.port()))
+                            .with(Protocol::QuicV1)
                             .with(Protocol::P2p(
                                 Multihash::from_bytes(&peer.to_bytes()).unwrap(),
                             ))
-                            .with(Protocol::QuicV1)
                     }
                 };
 
@@ -355,7 +355,8 @@ mod tests {
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
         transport::manager::{
-            ProtocolContext, TransportHandle, TransportManagerCommand, TransportManagerEvent,
+            ProtocolContext, SupportedTransport, TransportHandle, TransportManager,
+            TransportManagerCommand, TransportManagerEvent,
         },
         types::protocol::ProtocolName,
     };
@@ -447,5 +448,147 @@ mod tests {
             res2,
             Some(TransportManagerEvent::ConnectionEstablished { .. })
         ));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn second_connection_gets_rejected() {}
+
+    #[tokio::test]
+    async fn dial_peer_id_missing() {
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let handle = manager.register_transport(SupportedTransport::Quic);
+        let mut transport = QuicTransport::new(
+            handle,
+            TransportConfig {
+                listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Udp(8888));
+
+        match transport
+            .on_dial_peer(address, ConnectionId::from(0usize))
+            .await
+        {
+            Err(Error::AddressError(AddressError::PeerIdMissing)) => {}
+            _ => panic!("invalid result for `on_dial_peer()`"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dial_failure() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let handle = manager.register_transport(SupportedTransport::Quic);
+        let mut transport = QuicTransport::new(
+            handle,
+            TransportConfig {
+                listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let peer = PeerId::random();
+        let address = Multiaddr::empty()
+            .with(Protocol::from(std::net::Ipv4Addr::new(255, 254, 253, 252)))
+            .with(Protocol::Udp(8888))
+            .with(Protocol::QuicV1)
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        assert!(transport.pending_dials.is_empty());
+
+        match transport
+            .on_dial_peer(address, ConnectionId::from(0usize))
+            .await
+        {
+            Ok(()) => {}
+            _ => panic!("invalid result for `on_dial_peer()`"),
+        }
+
+        assert!(!transport.pending_dials.is_empty());
+
+        tokio::spawn(transport.start());
+
+        std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_dial_is_cleaned() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair.clone());
+        let handle = manager.register_transport(SupportedTransport::Quic);
+        let mut transport = QuicTransport::new(
+            handle,
+            TransportConfig {
+                listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let peer = PeerId::random();
+        let address = Multiaddr::empty()
+            .with(Protocol::from(std::net::Ipv4Addr::new(255, 254, 253, 252)))
+            .with(Protocol::Udp(8888))
+            .with(Protocol::QuicV1)
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        assert!(transport.pending_dials.is_empty());
+
+        match transport
+            .on_dial_peer(address.clone(), ConnectionId::from(0usize))
+            .await
+        {
+            Ok(()) => {}
+            _ => panic!("invalid result for `on_dial_peer()`"),
+        }
+
+        assert!(!transport.pending_dials.is_empty());
+
+        let Ok((socket_address, Some(peer))) = QuicTransport::get_socket_address(&address) else {
+            panic!("invalid address");
+        };
+
+        let (certificate, key) = generate(&keypair).unwrap();
+        let provider = TlsProvider::new(key, certificate, Some(peer), None);
+
+        let client = Client::builder()
+            .with_tls(provider)
+            .expect("TLS provider to be enabled successfully")
+            .with_io("0.0.0.0:0")
+            .unwrap()
+            .start()
+            .unwrap();
+        let connect = Connect::new(socket_address).with_server_name("localhost");
+
+        let _ = transport
+            .on_connection_established(
+                peer,
+                ConnectionId::from(0usize),
+                client.connect(connect).await,
+            )
+            .await;
+
+        assert!(transport.pending_dials.is_empty());
     }
 }
