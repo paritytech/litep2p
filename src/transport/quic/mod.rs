@@ -23,7 +23,7 @@ use crate::{
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
-        manager::TransportManagerCommand,
+        manager::{TransportHandle, TransportManagerCommand},
         quic::{config::TransportConfig, connection::QuicConnection},
         Transport,
     },
@@ -32,6 +32,7 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 use s2n_quic::{
     client::Connect,
     connection::{Connection, Error as ConnectionError},
@@ -67,16 +68,11 @@ pub(crate) struct QuicTransport {
     server: Server,
 
     /// Transport context.
-    context: crate::transport::manager::TransportHandle,
+    context: TransportHandle,
 
     /// Assigned listen addresss.
     listen_address: SocketAddr,
 
-    /// Next connection ID.
-    connection_id: ConnectionId,
-
-    // /// Keypair used for signing certificates,
-    // keypair: Keypair,
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
@@ -148,6 +144,131 @@ impl QuicTransport {
 
         Ok((socket_address, maybe_peer))
     }
+
+    /// Accept QUIC conenction.
+    async fn accept_connection(&mut self, connection: Connection) -> crate::Result<()> {
+        let connection_id = self.context.next_connection_id();
+        let address = socket_addr_to_multi_addr(
+            &connection
+                .remote_addr()
+                .expect("remote address to be known"),
+        );
+
+        let Ok(peer) = self.rx.try_recv() else {
+            tracing::error!(target: LOG_TARGET, "failed to receive client `PeerId` from tls verifier");
+            return Ok(());
+        };
+
+        tracing::info!(target: LOG_TARGET, ?address, ?peer, "accepted connection from remote peer");
+
+        // TODO: verify that the peer can actually be accepted
+        let mut protocol_set = self.context.protocol_set();
+        protocol_set
+            .report_connection_established(peer, address)
+            .await?;
+
+        tokio::spawn(async move {
+            let quic_connection =
+                QuicConnection::new(peer, protocol_set, connection, connection_id);
+
+            if let Err(error) = quic_connection.start().await {
+                tracing::debug!(target: LOG_TARGET, ?error, "quic connection exited with an error");
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Handle established connection.
+    async fn on_connection_established(
+        &mut self,
+        peer: PeerId,
+        connection_id: ConnectionId,
+        result: Result<Connection, ConnectionError>,
+    ) -> crate::Result<()> {
+        match result {
+            Ok(connection) => {
+                let address = match self.pending_dials.remove(&connection_id) {
+                    Some(address) => address,
+                    None => {
+                        let address = connection
+                            .remote_addr()
+                            .map_err(|_| Error::AddressError(AddressError::AddressNotAvailable))?;
+
+                        Multiaddr::empty()
+                            .with(Protocol::from(address.ip()))
+                            .with(Protocol::Udp(address.port()))
+                            .with(Protocol::P2p(
+                                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+                            ))
+                            .with(Protocol::QuicV1)
+                    }
+                };
+
+                let mut protocol_set = self.context.protocol_set();
+                protocol_set
+                    .report_connection_established(peer, address)
+                    .await?;
+
+                tokio::spawn(async move {
+                    let quic_connection =
+                        QuicConnection::new(peer, protocol_set, connection, connection_id);
+                    if let Err(error) = quic_connection.start().await {
+                        tracing::debug!(target: LOG_TARGET, ?error, "quic connection exited with an error");
+                    }
+                });
+
+                Ok(())
+            }
+            Err(error) => match self.pending_dials.remove(&connection_id) {
+                Some(address) => {
+                    self.context
+                        .report_dial_failure(address, Error::TransportError(error.to_string()))
+                        .await;
+                    Ok(())
+                }
+                None => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to establish connection"
+                    );
+                    Ok(())
+                }
+            },
+        }
+    }
+
+    /// Dial remote peer.
+    async fn on_dial_peer(
+        &mut self,
+        address: Multiaddr,
+        connection: ConnectionId,
+    ) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?address, "open connection");
+
+        let Ok((socket_address, Some(peer))) = Self::get_socket_address(&address) else {
+            return Err(Error::AddressError(AddressError::PeerIdMissing));
+        };
+
+        let (certificate, key) = generate(&self.context.keypair).unwrap();
+        let provider = TlsProvider::new(key, certificate, Some(peer), None);
+
+        let client = Client::builder()
+            .with_tls(provider)
+            .expect("TLS provider to be enabled successfully")
+            .with_io("0.0.0.0:0")?
+            .start()?;
+
+        let connect = Connect::new(socket_address).with_server_name("localhost");
+
+        self.pending_dials.insert(connection, address);
+        self.pending_connections.push(Box::pin(async move {
+            (connection, peer, client.connect(connect).await)
+        }));
+
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -155,10 +276,7 @@ impl Transport for QuicTransport {
     type Config = TransportConfig;
 
     /// Create new [`QuicTransport`] object.
-    async fn new(
-        context: crate::transport::manager::TransportHandle,
-        config: Self::Config,
-    ) -> crate::Result<Self>
+    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized,
     {
@@ -186,7 +304,6 @@ impl Transport for QuicTransport {
             server,
             context,
             listen_address,
-            connection_id: ConnectionId::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
@@ -202,40 +319,10 @@ impl Transport for QuicTransport {
         loop {
             tokio::select! {
                 connection = self.server.accept() => match connection {
-                    Some(connection) => {
-                        // TODO: verify that this can't clash with `Litep2p`'s connection id
-                        let connection_id = self.connection_id.next();
-                        // let context = self.context.clone();
-                        let address = socket_addr_to_multi_addr(&connection.remote_addr().expect("remote address to be known"));
-
-                        let peer = match self.rx.try_recv() {
-                            Ok(peer) => peer,
-                            Err(_) => {
-                                tracing::error!(target: LOG_TARGET, "failed to receive client `PeerId` from tls verifier");
-                                continue
-                            }
-                        };
-
-                        // the only way `QuiConnection::new()` can fail if the protocols have exited.
-                        // at which point the transport can be closed as well
-                        let mut protocol_set = self.context.protocol_set();
-                        protocol_set.report_connection_established(peer, address.clone()).await?;
-
-                        let quic_connection = QuicConnection::new(
-                            peer,
-                            protocol_set,
-                            connection,
-                            connection_id
-                        );
-
-                        tracing::info!(target: LOG_TARGET, ?address, ?peer, "accepted connection from remote peer");
-
-                        tokio::spawn(async move {
-                            if let Err(error) = quic_connection.start().await {
-                                tracing::debug!(target: LOG_TARGET, ?error, "quic connection exited with an error");
-                            }
-                        });
-                    }
+                    Some(connection) => if let Err(error) = self.accept_connection(connection).await {
+                        tracing::error!(target: LOG_TARGET, ?error, "failed to accept quic connection");
+                        return Err(error);
+                    },
                     None => {
                         tracing::error!(target: LOG_TARGET, "failed to accept connection, closing quic transport");
                         return Ok(())
@@ -244,61 +331,16 @@ impl Transport for QuicTransport {
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
                     let (connection_id, peer, result) = connection;
 
-                    match result {
-                        Ok(connection) => {
-                            // TODO: remove from pending diadls
-                            let mut protocol_set = self.context.protocol_set();
-                            protocol_set.report_connection_established(peer, Multiaddr::empty()).await?; // TODO: fix address
-
-                            tokio::spawn(async move {
-                                let quic_connection = QuicConnection::new(peer, protocol_set, connection, connection_id);
-                                if let Err(error) = quic_connection.start().await {
-                                    tracing::debug!(target: LOG_TARGET, ?error, "quic connection exited with an error");
-                                }
-                            });
-                        }
-                        Err(error) => match self.pending_dials.remove(&connection_id) {
-                            Some(address) => self.context.report_dial_failure(
-                                address,
-                                Error::TransportError(error.to_string())
-                            ).await,
-                            None => tracing::debug!(
-                                target: LOG_TARGET,
-                                ?error,
-                                "failed to establish connection"
-                            ),
-                        },
+                    if let Err(error) = self.on_connection_established(peer, connection_id, result).await {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to handle established connection");
                     }
                 }
                 command = self.context.next() => match command.ok_or(Error::EssentialTaskClosed)? {
                     TransportManagerCommand::Dial { address, connection } => {
-                        tracing::debug!(target: LOG_TARGET, ?address, "open connection");
-
-                        let (socket_address, Some(peer)) = Self::get_socket_address(&address)? else {
-                            let _ = self.context
-                                .report_dial_failure(
-                                    address,
-                                    Error::AddressError(AddressError::PeerIdMissing),
-                                )
-                                .await;
-                            continue
-                        };
-
-                        let (certificate, key) = generate(&self.context.keypair).unwrap();
-                        let provider = TlsProvider::new(key, certificate, Some(peer), None);
-
-                        let client = Client::builder()
-                            .with_tls(provider)
-                            .expect("TLS provider to be enabled successfully")
-                            .with_io("0.0.0.0:0")? // TODO: zzz
-                            .start()?;
-
-                        let connect = Connect::new(socket_address).with_server_name("localhost");
-
-                        self.pending_dials.insert(connection, address);
-                        self.pending_connections.push(Box::pin(async move {
-                            (connection, peer, client.connect(connect).await)
-                        }));
+                        if let Err(error) = self.on_dial_peer(address.clone(), connection).await {
+                            tracing::debug!(target: LOG_TARGET, ?address, ?connection, "failed to dial peer");
+                            let _ = self.context.report_dial_failure(address, error).await;
+                        }
                     }
                 }
             }

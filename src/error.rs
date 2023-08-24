@@ -116,6 +116,8 @@ pub enum AddressError {
     InvalidProtocol,
     #[error("`PeerId` missing from the address")]
     PeerIdMissing,
+    #[error("Address not available")]
+    AddressNotAvailable,
 }
 
 #[derive(Debug, thiserror::Error)]
