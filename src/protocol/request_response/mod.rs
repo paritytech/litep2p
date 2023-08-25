@@ -57,6 +57,9 @@ pub type PendingRequest = (PeerId, RequestId, Result<Vec<u8>, RequestResponseErr
 
 /// Request context.
 struct RequestContext {
+    /// Peer ID.
+    peer: PeerId,
+
     /// Request ID.
     request_id: RequestId,
 
@@ -66,8 +69,9 @@ struct RequestContext {
 
 impl RequestContext {
     /// Create new [`RequestContext`].
-    fn new(request_id: RequestId, request: Vec<u8>) -> Self {
+    fn new(peer: PeerId, request_id: RequestId, request: Vec<u8>) -> Self {
         Self {
+            peer,
             request_id,
             request,
         }
@@ -187,6 +191,7 @@ impl RequestResponseProtocol {
         let Some(RequestContext {
             request_id,
             request,
+            ..
         }) = self.pending_outbound.remove(&substream_id)
         else {
             tracing::error!(
@@ -197,9 +202,7 @@ impl RequestResponseProtocol {
             );
             debug_assert!(false);
 
-            return Err(Error::Other(format!(
-                "pending outbound request does not exist"
-            )));
+            return Err(Error::InvalidState);
         };
 
         tracing::trace!(
@@ -274,13 +277,42 @@ impl RequestResponseProtocol {
     }
 
     /// Failed to open substream to remote peer.
-    fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
+    async fn on_substream_open_failure(
+        &mut self,
+        substream: SubstreamId,
+        error: Error,
+    ) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,
             ?substream,
             ?error,
             "failed to open substream"
         );
+
+        let Some(RequestContext {
+            request_id,
+            peer,
+            ..
+        }) = self.pending_outbound.remove(&substream)
+        else {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?substream,
+                "pending outbound request does not exist"
+            );
+            debug_assert!(false);
+
+            return Err(Error::InvalidState);
+        };
+
+        self.event_tx
+            .send(RequestResponseEvent::RequestFailed {
+                peer,
+                request_id,
+                error: RequestResponseError::Rejected,
+            })
+            .await
+            .map_err(From::from)
     }
 
     /// Send request to remote peer.
@@ -323,7 +355,7 @@ impl RequestResponseProtocol {
         // once the substream is opened, send the request.
         let substream_id = self.service.open_substream(peer).await?;
         self.pending_outbound
-            .insert(substream_id, RequestContext::new(request_id, request));
+            .insert(substream_id, RequestContext::new(peer, request_id, request));
 
         Ok(())
     }
@@ -423,7 +455,9 @@ impl RequestResponseProtocol {
                         }
                     },
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
-                        self.on_substream_open_failure(substream, error);
+                        if let Err(error) = self.on_substream_open_failure(substream, error).await {
+                            tracing::warn!(target: LOG_TARGET, ?error, "failed to handle substream open failure");
+                        }
                     }
                     Some(TransportEvent::DialFailure { .. }) => todo!(),
                     None => return,
