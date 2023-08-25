@@ -27,7 +27,6 @@ use crate::{
     peer_id::PeerId,
     protocol::{Direction, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
-    transport::tcp::socket_addr_to_multi_addr,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
@@ -36,7 +35,7 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
     AsyncRead, AsyncWrite,
 };
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
 use tokio::net::TcpStream;
 use tokio_util::{
     codec::Framed,
@@ -296,7 +295,9 @@ impl TcpConnection {
         let connection = yamux::Connection::new(stream.inner(), yamux_config, role.into());
         let (control, connection) = yamux::Control::new(connection);
 
-        let address = socket_addr_to_multi_addr(&address);
+        let address = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()));
         protocol_set
             .report_connection_established(peer, address.clone())
             .await?;

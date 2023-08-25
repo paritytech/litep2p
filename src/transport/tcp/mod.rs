@@ -34,7 +34,7 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
 };
 use multiaddr::{Multiaddr, Protocol};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 use std::{
     collections::HashMap,
@@ -47,13 +47,6 @@ pub mod config;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "tcp";
-
-/// Convert `SocketAddr` to `Multiaddr`
-pub(crate) fn socket_addr_to_multi_addr(address: &SocketAddr) -> Multiaddr {
-    let mut multiaddr = Multiaddr::from(address.ip());
-    multiaddr.push(Protocol::Tcp(address.port()));
-    multiaddr
-}
 
 #[derive(Debug)]
 pub struct TcpError {
@@ -146,9 +139,82 @@ impl TcpTransport {
         Ok((socket_address, maybe_peer))
     }
 
-    /// Get assigned listen address.
-    fn listen_address(&self) -> &SocketAddr {
-        &self.listen_address
+    /// Handle inbound TCP connection.
+    fn on_inbound_connection(&mut self, connection: TcpStream, address: SocketAddr) {
+        let protocol_set = self.context.protocol_set();
+        let connection_id = self.context.next_connection_id();
+        let yamux_config = self.config.yamux_config.clone();
+
+        self.pending_connections.push(Box::pin(async move {
+            TcpConnection::accept_connection(
+                protocol_set,
+                connection,
+                connection_id,
+                address,
+                yamux_config,
+            )
+            .await
+            .map_err(|error| TcpError::new(error, Some(connection_id)))
+        }));
+    }
+
+    /// Handle established TCP connection.
+    async fn on_connection_established(&mut self, connection: Result<TcpConnection, TcpError>) {
+        tracing::trace!(target: LOG_TARGET, failed = ?connection.is_err(), "handle finished tcp connection");
+
+        match connection {
+            Ok(connection) => {
+                let _peer = *connection.peer();
+                let _address = connection.address().clone();
+
+                tokio::spawn(async move {
+                    if let Err(error) = connection.start().await {
+                        tracing::error!(target: LOG_TARGET, ?error, "connection failure");
+                    }
+                });
+            }
+            Err(error) => match error.connection_id {
+                Some(connection_id) => match self.pending_dials.remove(&connection_id) {
+                    Some(address) => self.context.report_dial_failure(address, error.error).await,
+                    None => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to establish connection"
+                    ),
+                },
+                None => {
+                    tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
+                }
+            },
+        }
+    }
+
+    /// Dial remote peer.
+    async fn on_dial_peer(
+        &mut self,
+        address: Multiaddr,
+        connection: ConnectionId,
+    ) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?address, ?connection, "open connection");
+
+        let protocol_set = self.context.protocol_set();
+        let (socket_address, peer) = Self::get_socket_address(&address)?;
+        let yamux_config = self.config.yamux_config.clone();
+
+        self.pending_dials.insert(connection, address);
+        self.pending_connections.push(Box::pin(async move {
+            TcpConnection::open_connection(
+                protocol_set,
+                connection,
+                socket_address,
+                peer,
+                yamux_config,
+            )
+            .await
+            .map_err(|error| TcpError::new(error, Some(connection)))
+        }));
+
+        Ok(())
     }
 }
 
@@ -183,7 +249,9 @@ impl Transport for TcpTransport {
 
     /// Get assigned listen address.
     fn listen_address(&self) -> Multiaddr {
-        socket_addr_to_multi_addr(self.listen_address())
+        Multiaddr::empty()
+            .with(Protocol::from(self.listen_address.ip()))
+            .with(Protocol::Tcp(self.listen_address.port()))
     }
 
     /// Start TCP transport event loop.
@@ -191,77 +259,28 @@ impl Transport for TcpTransport {
         loop {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
-                    Ok((connection, address)) => {
-                        let protocol_set = self.context.protocol_set();
-                        let connection_id = self.context.next_connection_id();
-                        let yamux_config = self.config.yamux_config.clone();
-
-                        self.pending_connections.push(Box::pin(async move {
-                            TcpConnection::accept_connection(
-                                protocol_set,
-                                connection,
-                                connection_id,
-                                address,
-                                yamux_config,
-                            )
-                            .await
-                            .map_err(|error| TcpError::new(error, Some(connection_id)))
-                        }));
+                    Ok((connection, address)) => self.on_inbound_connection(connection, address),
+                    Err(error) => {
+                        tracing::debug!(target: LOG_TARGET, ?error, "tcp listener shut down");
+                        return Ok(())
                     }
-                    Err(_error) => todo!(),
                 },
                 connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
-                    match connection {
-                        Ok(connection) => {
-                            let _peer = *connection.peer();
-                            let _address = connection.address().clone();
-
-                            tokio::spawn(async move {
-                                if let Err(error) = connection.start().await {
-                                    tracing::error!(target: LOG_TARGET, ?error, "connection failure");
-                                }
-                            });
-                        }
-                        Err(error) => {
-                            match error.connection_id {
-                                Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                                    Some(address) => self.context.report_dial_failure(address, error.error).await,
-                                    None => tracing::debug!(
-                                        target: LOG_TARGET,
-                                        ?error,
-                                        "failed to establish connection"
-                                    ),
-                                },
-                                None => {
-                                    tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
-                                }
-                            }
-                        }
-                    }
+                    self.on_connection_established(connection).await;
                 }
                 command = self.context.next() => match command {
                     None => return Err(Error::EssentialTaskClosed),
                     Some(command) => match command {
                         TransportManagerCommand::Dial { address, connection } => {
-                            tracing::debug!(target: LOG_TARGET, ?address, "open connection");
-
-                            // TODO: this can't be right (TODO: ???)
-                            let protocol_set = self.context.protocol_set();
-                            let (socket_address, peer) = Self::get_socket_address(&address)?;
-                            let yamux_config = self.config.yamux_config.clone();
-
-                            self.pending_dials.insert(connection, address);
-                            self.pending_connections.push(Box::pin(async move {
-                                TcpConnection::open_connection(
-                                    protocol_set,
-                                    connection,
-                                    socket_address,
-                                    peer,
-                                    yamux_config,
-                                )
-                                .await
-                                .map_err(|error| TcpError::new(error, Some(connection)))
-                            }));
+                            if let Err(error) = self.on_dial_peer(address.clone(), connection).await {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?address,
+                                    ?connection,
+                                    ?error,
+                                    "failed to dial peer"
+                                );
+                            }
                         }
                     }
                 }
@@ -276,7 +295,10 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
-        transport::manager::{ProtocolContext, TransportManagerCommand, TransportManagerEvent},
+        transport::manager::{
+            ProtocolContext, SupportedTransport, TransportManager, TransportManagerCommand,
+            TransportManagerEvent,
+        },
         types::protocol::ProtocolName,
     };
     use tokio::sync::mpsc::channel;
@@ -501,20 +523,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn multistream_select_not_supported() {}
+    async fn dial_error_reported_for_outbound_connections() {
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut transport = TcpTransport::new(
+            handle,
+            TransportConfig {
+                listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+                yamux_config: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
 
-    #[tokio::test]
-    async fn yamux_not_supported() {}
+        let peer = PeerId::random();
+        let address = Multiaddr::empty()
+            .with(Protocol::from(std::net::Ipv4Addr::new(255, 254, 253, 252)))
+            .with(Protocol::Tcp(8888));
 
-    #[tokio::test]
-    async fn noise_not_supported() {}
+        assert!(transport.pending_dials.is_empty());
 
-    #[tokio::test]
-    async fn multistream_select_timeout() {}
+        match transport
+            .on_dial_peer(address.clone(), ConnectionId::from(0usize))
+            .await
+        {
+            Ok(()) => {}
+            _ => panic!("invalid result for `on_dial_peer()`"),
+        }
 
-    #[tokio::test]
-    async fn yamux_timeout() {}
+        assert!(!transport.pending_dials.is_empty());
 
-    #[tokio::test]
-    async fn noise_timeout() {}
+        let _ = transport
+            .on_connection_established(Err(TcpError {
+                error: Error::Unknown,
+                connection_id: Some(ConnectionId::from(0usize)),
+            }))
+            .await;
+
+        assert!(transport.pending_dials.is_empty());
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
 }
