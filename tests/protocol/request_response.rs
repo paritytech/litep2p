@@ -72,7 +72,7 @@ async fn send_request_receive_response() {
         .try_init();
 
     let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -83,7 +83,7 @@ async fn send_request_receive_response() {
         .build();
 
     let (req_resp_config2, mut handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -143,7 +143,7 @@ async fn reject_request() {
         .try_init();
 
     let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -154,7 +154,7 @@ async fn reject_request() {
         .build();
 
     let (req_resp_config2, mut handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -213,7 +213,7 @@ async fn multiple_simultaneous_requests() {
         .try_init();
 
     let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -224,7 +224,7 @@ async fn multiple_simultaneous_requests() {
         .build();
 
     let (req_resp_config2, mut handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -303,7 +303,7 @@ async fn request_timeout() {
         .try_init();
 
     let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -314,7 +314,7 @@ async fn request_timeout() {
         .build();
 
     let (req_resp_config2, _handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -363,7 +363,7 @@ async fn protocol_not_supported() {
         .try_init();
 
     let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -374,7 +374,7 @@ async fn protocol_not_supported() {
         .build();
 
     let (req_resp_config2, _handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/2"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/2"), 64, 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -421,7 +421,7 @@ async fn connection_close_while_request_is_pending() {
         .try_init();
 
     let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -432,7 +432,7 @@ async fn connection_close_while_request_is_pending() {
         .build();
 
     let (req_resp_config2, handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -472,14 +472,133 @@ async fn connection_close_while_request_is_pending() {
     );
 }
 
-// TODO: after unsigned-varint configuration is done
 #[tokio::test]
-async fn request_too_big() {}
+async fn request_too_big() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
-// TODO: after unsigned-varint configuration is done
+    let (req_resp_config1, mut handle1) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 256);
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_request_response_protocol(req_resp_config1)
+        .build();
+
+    let (req_resp_config2, _handle2) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 256);
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_request_response_protocol(req_resp_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // try to send too large request to remote peer
+    let request_id = handle1.send_request(peer2, vec![0u8; 257]).await.unwrap();
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestFailed {
+            peer: peer2,
+            request_id,
+            error: RequestResponseError::TooLargePayload,
+        }
+    );
+}
+
 #[tokio::test]
-async fn response_too_big() {}
+async fn response_too_big() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
-// TODO: after yamux configuration is done
+    let (req_resp_config1, mut handle1) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 256);
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_request_response_protocol(req_resp_config1)
+        .build();
+
+    let (req_resp_config2, mut handle2) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 256);
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_request_response_protocol(req_resp_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // send request to remote peer
+    let request_id = handle1.send_request(peer2, vec![0u8; 256]).await.unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer1,
+            request_id,
+            request: vec![0u8; 256],
+        }
+    );
+
+    // try to send too large response to the received request
+    handle2
+        .send_response(request_id, vec![0u8; 257])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestFailed {
+            peer: peer2,
+            request_id,
+            error: RequestResponseError::Timeout,
+        }
+    );
+}
+
 #[tokio::test]
 async fn too_many_pending_requests() {}

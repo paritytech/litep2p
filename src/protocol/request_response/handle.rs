@@ -41,6 +41,9 @@ pub enum RequestResponseError {
 
     /// Litep2p isn't connected to the peer.
     NotConnected,
+
+    /// Too large payload.
+    TooLargePayload,
 }
 
 /// Request-response events.

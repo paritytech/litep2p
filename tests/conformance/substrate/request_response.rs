@@ -56,8 +56,8 @@ fn initialize_libp2p() -> (
     let configs = vec![ProtocolConfig {
         name: ProtocolName::from("/request/1"),
         fallback_names: Vec::new(),
-        max_request_size: 1024,
-        max_response_size: 1024 * 1024,
+        max_request_size: 256,
+        max_response_size: 2 * 256,
         request_timeout: std::time::Duration::from_secs(10),
         inbound_queue: Some(tx),
     }];
@@ -76,6 +76,7 @@ async fn initialize_litep2p() -> (Litep2p, RequestResponseHandle) {
     let (config, handle) = RequestResponseConfig::new(
         litep2p::types::protocol::ProtocolName::from("/request/1"),
         64,
+        2 * 256,
     );
 
     let litep2p = Litep2p::new(
@@ -432,15 +433,3 @@ async fn litep2p_request_timeout() {
         }
     }
 }
-
-// TODO: implemement
-#[tokio::test]
-async fn request_too_big() {}
-
-// TODO: implemement
-#[tokio::test]
-async fn response_too_big() {}
-
-// TODO: implemement
-#[tokio::test]
-async fn too_many_pending_requests() {}

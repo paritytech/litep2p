@@ -50,7 +50,11 @@ pub struct RequestResponseConfig {
 
 impl RequestResponseConfig {
     /// Create new [`Config`].
-    pub fn new(protocol_name: ProtocolName, _max_slots: usize) -> (Self, RequestResponseHandle) {
+    pub fn new(
+        protocol_name: ProtocolName,
+        _max_slots: usize,
+        max_message_size: usize,
+    ) -> (Self, RequestResponseHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let handle = RequestResponseHandle::new(event_rx, command_tx);
@@ -61,8 +65,7 @@ impl RequestResponseConfig {
                 _max_slots,
                 event_tx,
                 command_rx,
-                // TODO: allow user to specify size
-                codec: ProtocolCodec::UnsignedVarint(None),
+                codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
             },
             handle,
         )

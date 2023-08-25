@@ -37,6 +37,7 @@ use tokio::{
 
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
+    io::ErrorKind,
     time::Duration,
 };
 
@@ -237,6 +238,18 @@ impl RequestResponseProtocol {
 
                 Ok(())
             }
+            Err(Error::IoError(ErrorKind::PermissionDenied)) => {
+                tracing::warn!(target: LOG_TARGET, "tried to send too large request");
+
+                self.event_tx
+                    .send(RequestResponseEvent::RequestFailed {
+                        peer,
+                        request_id,
+                        error: RequestResponseError::TooLargePayload,
+                    })
+                    .await
+                    .map_err(From::from)
+            }
             Err(_error) => self
                 .event_tx
                 .send(RequestResponseEvent::RequestFailed {
@@ -388,9 +401,7 @@ impl RequestResponseProtocol {
 
         match self.pending_outbound_responses.remove(&request_id) {
             Some(mut substream) => substream.send(response.into()).await.map_err(From::from),
-            None => {
-                return Err(Error::Other(format!("pending request doesn't exist")));
-            }
+            None => return Err(Error::Other(format!("pending request doesn't exist"))),
         }
     }
 
