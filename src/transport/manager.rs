@@ -138,11 +138,8 @@ pub enum TransportManagerCommand {
 /// Handle for communicating with [`TransportManager`].
 #[derive(Debug, Clone)]
 pub struct TransportManagerHandle {
-    /// Connected peers.
-    connected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
-
-    /// Known but unconnected peers.
-    unconnected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
+    /// Peers.
+    peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
 
     /// TX channel for sending commands to [`TransportManager`].
     cmd_tx: Sender<InnerTransportManagerCommand>,
@@ -151,30 +148,28 @@ pub struct TransportManagerHandle {
 impl TransportManagerHandle {
     /// Create new [`TransportManagerHandle`].
     pub fn new(
-        connected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
-        unconnected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
+        peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
         cmd_tx: Sender<InnerTransportManagerCommand>,
     ) -> Self {
-        Self {
-            cmd_tx,
-            connected,
-            unconnected,
-        }
+        Self { peers, cmd_tx }
     }
 
     /// Add one or more known addresses for peer.
     ///
     /// If peer doesn't exist, it will be added to known peers.
     pub fn add_know_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
-        let mut connected = self.connected.write();
+        let mut peers = self.peers.write();
 
-        match connected.get_mut(&peer) {
-            Some(known_addresses) => known_addresses.extend(addresses),
+        match peers.get_mut(&peer) {
+            Some(context) => context.addresses.extend(addresses),
             None => {
-                drop(connected);
-
-                let mut unconnected = self.unconnected.write();
-                unconnected.entry(*peer).or_default().extend(addresses);
+                peers.insert(
+                    *peer,
+                    PeerContext {
+                        state: PeerState::Disconnected,
+                        addresses: HashSet::from_iter(addresses),
+                    },
+                );
             }
         }
     }
@@ -183,19 +178,17 @@ impl TransportManagerHandle {
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
     pub async fn dial(&self, peer: &PeerId) -> crate::Result<()> {
-        if self.connected.read().contains_key(peer) {
-            return Err(Error::AlreadyConnected);
-        }
-
-        // verify there is at least one known address before calling [`TransportManager`].
         {
-            let unconnected = self.unconnected.read();
-
-            match unconnected.get(&peer) {
-                None => return Err(Error::NoAddressAvailable(*peer)),
-                Some(addresses) if addresses.is_empty() => {
-                    return Err(Error::NoAddressAvailable(*peer))
-                }
+            match self.peers.read().get(&peer) {
+                Some(PeerContext {
+                    state: PeerState::Connected(_),
+                    ..
+                }) => return Err(Error::AlreadyConnected),
+                Some(PeerContext {
+                    state: PeerState::Connected(_),
+                    addresses,
+                }) if addresses.is_empty() => return Err(Error::NoAddressAvailable(*peer)),
+                None => return Err(Error::PeerDoesntExist(*peer)),
                 _ => {}
             }
         }
@@ -313,6 +306,26 @@ impl ProtocolContext {
     }
 }
 
+/// Peer state.
+#[derive(Debug)]
+enum PeerState {
+    /// `Litep2p` is connected to peer.
+    Connected(Multiaddr),
+
+    /// `Litep2p` is not connected to peer.
+    Disconnected,
+}
+
+/// Peer context.
+#[derive(Debug)]
+pub struct PeerContext {
+    /// Peer state.
+    state: PeerState,
+
+    /// Known addresses of peer.
+    addresses: HashSet<Multiaddr>,
+}
+
 /// Litep2p connection manager.
 pub struct TransportManager {
     /// Local peer ID.
@@ -336,11 +349,8 @@ pub struct TransportManager {
     /// Installed transports.
     transports: HashMap<SupportedTransport, TransportContext>,
 
-    /// Connected peers.
-    _connected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
-
-    /// Known but unconnected peers.
-    _unconnected: Arc<RwLock<HashMap<PeerId, HashSet<Multiaddr>>>>,
+    /// Peers
+    peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
 
     /// Handle to [`TransportManager`].
     transport_manager_handle: TransportManagerHandle,
@@ -368,21 +378,18 @@ impl TransportManager {
     // TODO: don't return handle here
     pub fn new(keypair: Keypair) -> (Self, TransportManagerHandle) {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
-        let connected = Arc::new(RwLock::new(HashMap::new()));
-        let unconnected = Arc::new(RwLock::new(HashMap::new()));
+        let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let handle =
-            TransportManagerHandle::new(Arc::clone(&connected), Arc::clone(&unconnected), cmd_tx);
+        let handle = TransportManagerHandle::new(peers.clone(), cmd_tx);
 
         (
             Self {
+                peers,
                 cmd_rx,
                 keypair,
                 event_tx,
                 event_rx,
-                _connected: connected,
-                _unconnected: unconnected,
                 local_peer_id,
                 protocols: HashMap::new(),
                 transports: HashMap::new(),
