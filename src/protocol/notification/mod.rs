@@ -236,6 +236,9 @@ impl NotificationProtocol {
             Some(_) => {
                 self.substreams.remove(&peer);
                 self.receivers.remove(&peer);
+                self.negotiation.remove_outbound(&peer);
+                self.negotiation.remove_inbound(&peer);
+                // TODO: only report if the peer is actually in a state where it concerns the user
                 self.event_handle
                     .report_notification_stream_closed(peer)
                     .await;
