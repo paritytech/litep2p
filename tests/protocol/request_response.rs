@@ -32,10 +32,17 @@ use litep2p::{
 use futures::StreamExt;
 use tokio::time::sleep;
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    let mut address = litep2p2.listen_addresses().next().unwrap().clone();
+    let address = address.with(multiaddr::Protocol::P2p(
+        multihash::Multihash::from_bytes(&litep2p2.local_peer_id().to_bytes()).unwrap(),
+    ));
+    tracing::error!("addrss: {address:?}");
     litep2p1.connect(address).await.unwrap();
 
     let mut litep2p1_connected = false;
@@ -601,4 +608,81 @@ async fn response_too_big() {
 }
 
 #[tokio::test]
-async fn too_many_pending_requests() {}
+async fn too_many_pending_requests() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
+    let mut yamux_config = yamux::Config::default();
+    yamux_config.set_max_num_streams(4);
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config,
+        })
+        .with_request_response_protocol(req_resp_config1)
+        .build();
+
+    let (req_resp_config2, _handle2) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64, 1024);
+    let mut yamux_config = yamux::Config::default();
+    yamux_config.set_max_num_streams(4);
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config,
+        })
+        .with_request_response_protocol(req_resp_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+
+    // send one over the max requests to remote peer
+    let mut request_ids = HashSet::new();
+
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 6]).await.unwrap());
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap());
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 8]).await.unwrap());
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 9]).await.unwrap());
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 9]).await.unwrap());
+
+    let mut litep2p1_closed = false;
+    let mut litep2p2_closed = false;
+
+    while !litep2p1_closed || !litep2p2_closed || !request_ids.is_empty() {
+        tokio::select! {
+            event = litep2p1.next_event() => match event {
+                Some(Litep2pEvent::ConnectionClosed { .. }) => {
+                    litep2p1_closed = true;
+                }
+                _ => {}
+            },
+            event = litep2p2.next_event() => match event {
+                Some(Litep2pEvent::ConnectionClosed { .. }) => {
+                    litep2p2_closed = true;
+                }
+                _ => {}
+            },
+            event = handle1.next() => match event {
+                Some(RequestResponseEvent::RequestFailed {
+                    request_id,
+                    ..
+                }) => {
+                    request_ids.remove(&request_id);
+                }
+                _ => {}
+            }
+        }
+    }
+}
