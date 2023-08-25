@@ -25,8 +25,8 @@ use crate::{
     peer_id::PeerId,
     protocol::{Direction, Transport, TransportEvent},
     substream::Substream,
-    transport::manager::{TransportManagerEvent, TransportManagerHandle},
-    types::{protocol::ProtocolName, SubstreamId},
+    transport::manager::{ProtocolContext, TransportManagerEvent, TransportManagerHandle},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     DEFAULT_CHANNEL_SIZE,
 };
 
@@ -316,7 +316,7 @@ pub enum ProtocolCommand {
 #[derive(Debug)]
 pub struct ProtocolSet {
     /// Installed protocols.
-    pub(crate) protocols: HashMap<ProtocolName, crate::transport::manager::ProtocolContext>,
+    pub(crate) protocols: HashMap<ProtocolName, ProtocolContext>,
     pub(crate) keypair: Keypair,
     mgr_tx: Sender<TransportManagerEvent>,
     tx: ConnectionType,
@@ -329,7 +329,7 @@ impl ProtocolSet {
         keypair: Keypair,
         mgr_tx: Sender<TransportManagerEvent>,
         next_substream_id: Arc<AtomicUsize>,
-        protocols: HashMap<ProtocolName, crate::transport::manager::ProtocolContext>,
+        protocols: HashMap<ProtocolName, ProtocolContext>,
     ) -> Self {
         let (tx, rx) = channel(256);
 
@@ -410,6 +410,7 @@ impl ProtocolSet {
     // TODO: documentation
     pub(crate) async fn report_connection_established(
         &mut self,
+        connection: ConnectionId,
         peer: PeerId,
         address: Multiaddr,
     ) -> crate::Result<()> {
@@ -430,7 +431,11 @@ impl ProtocolSet {
 
         self.tx = ConnectionType::Inactive(tx.downgrade());
         self.mgr_tx
-            .send(TransportManagerEvent::ConnectionEstablished { peer, address })
+            .send(TransportManagerEvent::ConnectionEstablished {
+                connection,
+                peer,
+                address,
+            })
             .await
             .map_err(From::from)
     }

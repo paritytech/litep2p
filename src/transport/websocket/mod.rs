@@ -194,10 +194,11 @@ impl Transport for WebSocketTransport {
                 connection = self.listener.accept() => match connection {
                     Ok((stream, address)) => {
                         let context = self.context.protocol_set();
+                        let connection_id = self.context.next_connection_id();
                         let yamux_config = self.config.yamux_config.clone();
 
                         self.pending_connections.push(Box::pin(async move {
-                            WebSocketConnection::accept_connection(stream, address, yamux_config, context)
+                            WebSocketConnection::accept_connection(stream, address, connection_id, yamux_config, context)
                                 .await
                                 .map_err(|error| WebSocketError::new(error, None))
                         }));
@@ -215,7 +216,7 @@ impl Transport for WebSocketTransport {
 
                         self.pending_dials.insert(connection, address.clone());
                         self.pending_connections.push(Box::pin(async move {
-                            WebSocketConnection::open_connection(address, yamux_config, context)
+                            WebSocketConnection::open_connection(address, connection, yamux_config, context)
                                 .await
                                 .map_err(|error| WebSocketError::new(error, Some(connection)))
                         }));
@@ -235,7 +236,7 @@ impl Transport for WebSocketTransport {
                         }
                         Err(error) => match error.connection_id {
                             Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                                Some(address) => self.context.report_dial_failure(address, error.error).await,
+                                Some(address) => self.context.report_dial_failure(connection_id, address, error.error).await,
                                 None => tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),
                             }
                             None => tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),

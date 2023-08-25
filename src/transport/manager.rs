@@ -82,6 +82,9 @@ pub enum TransportManagerEvent {
         /// Peer ID.
         peer: PeerId,
 
+        /// Connection ID.
+        connection: ConnectionId,
+
         /// Remote address.
         address: Multiaddr,
     },
@@ -94,6 +97,9 @@ pub enum TransportManagerEvent {
 
     /// Failed to dial remote peer.
     DialFailure {
+        /// Connection ID.
+        connection: ConnectionId,
+
         /// Dialed address.
         address: Multiaddr,
 
@@ -239,10 +245,19 @@ impl TransportHandle {
         ConnectionId::from(connection_id)
     }
 
-    pub async fn _report_connection_established(&mut self, peer: PeerId, address: Multiaddr) {
+    pub async fn _report_connection_established(
+        &mut self,
+        connection: ConnectionId,
+        peer: PeerId,
+        address: Multiaddr,
+    ) {
         let _ = self
             .tx
-            .send(TransportManagerEvent::ConnectionEstablished { peer, address })
+            .send(TransportManagerEvent::ConnectionEstablished {
+                connection,
+                peer,
+                address,
+            })
             .await;
     }
 
@@ -255,10 +270,19 @@ impl TransportHandle {
     }
 
     /// Report to `Litep2p` that dialing a remote peer failed.
-    pub async fn report_dial_failure(&mut self, address: Multiaddr, error: Error) {
+    pub async fn report_dial_failure(
+        &mut self,
+        connection: ConnectionId,
+        address: Multiaddr,
+        error: Error,
+    ) {
         let _ = self
             .tx
-            .send(TransportManagerEvent::DialFailure { address, error })
+            .send(TransportManagerEvent::DialFailure {
+                connection,
+                address,
+                error,
+            })
             .await;
     }
 
@@ -334,8 +358,9 @@ pub struct TransportManager {
     pending_connections: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending DNS resolves.
-    pending_dns_resolves:
-        FuturesUnordered<BoxFuture<'static, (Multiaddr, Result<LookupIp, ResolveError>)>>,
+    pending_dns_resolves: FuturesUnordered<
+        BoxFuture<'static, (ConnectionId, Multiaddr, Result<LookupIp, ResolveError>)>,
+    >,
 }
 
 impl TransportManager {
@@ -375,6 +400,13 @@ impl TransportManager {
     /// Get iterato to installed protocols.
     pub fn protocols(&self) -> impl Iterator<Item = &ProtocolName> {
         self.protocols.keys()
+    }
+
+    /// Get next connection ID.
+    fn next_connection_id(&mut self) -> ConnectionId {
+        let connection_id = self.next_connection_id.fetch_add(1usize, Ordering::Relaxed);
+
+        ConnectionId::from(connection_id)
     }
 
     /// Register protocol to the [`TransportManager`].
@@ -452,11 +484,14 @@ impl TransportManager {
             Protocol::Dns(addr) | Protocol::Dns4(addr) | Protocol::Dns6(addr) => {
                 let dns_address = addr.to_string();
                 let original = address.clone();
+                let connection = self.next_connection_id();
 
                 self.pending_dns_resolves.push(Box::pin(async move {
                     match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
-                        Ok(resolver) => (original, resolver.lookup_ip(dns_address).await),
-                        Err(error) => (original, Err(error)),
+                        Ok(resolver) => {
+                            (connection, original, resolver.lookup_ip(dns_address).await)
+                        }
+                        Err(error) => (connection, original, Err(error)),
                     }
                 }));
 
@@ -585,14 +620,14 @@ impl TransportManager {
             tokio::select! {
                 event = self.event_rx.recv() => return event,
                 event = self.pending_dns_resolves.select_next_some(), if !self.pending_dns_resolves.is_empty() => {
-                    match self.on_resolved_dns_address(event.0.clone(), event.1).await {
+                    match self.on_resolved_dns_address(event.1.clone(), event.2).await {
                         Ok(address) => {
                             tracing::debug!(target: LOG_TARGET, ?address, "connect to remote peer");
 
                             // TODO: no unwraps
                             self.dial_address(address.clone()).await.unwrap();
                         }
-                        Err(error) => return Some(TransportManagerEvent::DialFailure { address: event.0, error }),
+                        Err(error) => return Some(TransportManagerEvent::DialFailure { connection: event.0, address: event.1, error }),
                     }
                 }
                 command = self.cmd_rx.recv() => match command? {

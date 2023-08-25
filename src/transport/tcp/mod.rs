@@ -175,7 +175,11 @@ impl TcpTransport {
             }
             Err(error) => match error.connection_id {
                 Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                    Some(address) => self.context.report_dial_failure(address, error.error).await,
+                    Some(address) => {
+                        self.context
+                            .report_dial_failure(connection_id, address, error.error)
+                            .await
+                    }
                     None => tracing::debug!(
                         target: LOG_TARGET,
                         ?error,
@@ -536,7 +540,6 @@ mod tests {
         .await
         .unwrap();
 
-        let peer = PeerId::random();
         let address = Multiaddr::empty()
             .with(Protocol::from(std::net::Ipv4Addr::new(255, 254, 253, 252)))
             .with(Protocol::Tcp(8888));

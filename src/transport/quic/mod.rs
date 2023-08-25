@@ -164,7 +164,7 @@ impl QuicTransport {
         // TODO: verify that the peer can actually be accepted
         let mut protocol_set = self.context.protocol_set();
         protocol_set
-            .report_connection_established(peer, address)
+            .report_connection_established(connection_id, peer, address)
             .await?;
 
         tokio::spawn(async move {
@@ -207,7 +207,7 @@ impl QuicTransport {
 
                 let mut protocol_set = self.context.protocol_set();
                 protocol_set
-                    .report_connection_established(peer, address)
+                    .report_connection_established(connection_id, peer, address)
                     .await?;
 
                 tokio::spawn(async move {
@@ -223,7 +223,11 @@ impl QuicTransport {
             Err(error) => match self.pending_dials.remove(&connection_id) {
                 Some(address) => {
                     self.context
-                        .report_dial_failure(address, Error::TransportError(error.to_string()))
+                        .report_dial_failure(
+                            connection_id,
+                            address,
+                            Error::TransportError(error.to_string()),
+                        )
                         .await;
                     Ok(())
                 }
@@ -339,7 +343,7 @@ impl Transport for QuicTransport {
                     TransportManagerCommand::Dial { address, connection } => {
                         if let Err(error) = self.on_dial_peer(address.clone(), connection).await {
                             tracing::debug!(target: LOG_TARGET, ?address, ?connection, "failed to dial peer");
-                            let _ = self.context.report_dial_failure(address, error).await;
+                            let _ = self.context.report_dial_failure(connection, address, error).await;
                         }
                     }
                 }

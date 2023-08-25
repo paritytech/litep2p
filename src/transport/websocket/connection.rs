@@ -28,7 +28,7 @@ use crate::{
     protocol::{Direction, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
     transport::websocket::stream::BufferedStream,
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
@@ -153,6 +153,7 @@ impl WebSocketConnection {
     /// Open WebSocket connection.
     pub(crate) async fn open_connection(
         address: Multiaddr,
+        connection_id: ConnectionId,
         yamux_config: yamux::Config,
         mut protocol_set: ProtocolSet,
     ) -> crate::Result<Self> {
@@ -189,7 +190,7 @@ impl WebSocketConnection {
         let connection = yamux::Connection::new(stream.inner(), yamux_config, Role::Dialer.into());
         let (control, connection) = yamux::Control::new(connection);
         protocol_set
-            .report_connection_established(peer, address.clone())
+            .report_connection_established(connection_id, peer, address.clone())
             .await?;
 
         Ok(Self {
@@ -206,6 +207,7 @@ impl WebSocketConnection {
     pub(crate) async fn accept_connection(
         stream: TcpStream,
         address: SocketAddr,
+        connection_id: ConnectionId,
         yamux_config: yamux::Config,
         mut protocol_set: ProtocolSet,
     ) -> crate::Result<Self> {
@@ -251,7 +253,7 @@ impl WebSocketConnection {
             .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())))
             .with(Protocol::P2p(Multihash::from(peer)));
         protocol_set
-            .report_connection_established(peer, address.clone())
+            .report_connection_established(connection_id, peer, address.clone())
             .await?;
 
         Ok(Self {

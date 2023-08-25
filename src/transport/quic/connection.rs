@@ -442,7 +442,7 @@ mod tests {
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();
         protocol_set
-            .report_connection_established(peer, Multiaddr::empty())
+            .report_connection_established(ConnectionId::from(0usize), peer, Multiaddr::empty())
             .await
             .unwrap();
 
@@ -501,7 +501,7 @@ mod tests {
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();
         protocol_set
-            .report_connection_established(peer, Multiaddr::empty())
+            .report_connection_established(ConnectionId::from(0usize), peer, Multiaddr::empty())
             .await
             .unwrap();
 
@@ -555,7 +555,7 @@ mod tests {
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();
         protocol_set
-            .report_connection_established(peer, Multiaddr::empty())
+            .report_connection_established(ConnectionId::from(0usize), peer, Multiaddr::empty())
             .await
             .unwrap();
 
@@ -621,7 +621,7 @@ mod tests {
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();
         protocol_set
-            .report_connection_established(peer, Multiaddr::empty())
+            .report_connection_established(ConnectionId::from(0usize), peer, Multiaddr::empty())
             .await
             .unwrap();
 
@@ -683,7 +683,7 @@ mod tests {
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();
         protocol_set
-            .report_connection_established(peer, Multiaddr::empty())
+            .report_connection_established(ConnectionId::from(0usize), peer, Multiaddr::empty())
             .await
             .unwrap();
 

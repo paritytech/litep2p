@@ -314,7 +314,7 @@ impl TcpConnection {
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()));
         protocol_set
-            .report_connection_established(peer, address.clone())
+            .report_connection_established(connection_id, peer, address.clone())
             .await?;
 
         Ok(Self {
@@ -578,7 +578,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -627,7 +631,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -668,7 +676,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -723,7 +735,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -779,7 +795,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -826,7 +846,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -872,7 +896,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -918,7 +946,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -964,7 +996,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -1027,7 +1063,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -1094,7 +1134,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 
@@ -1151,7 +1195,11 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+                Err(error) => {
+                    handle
+                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .await
+                }
             }
         });
 

@@ -378,7 +378,7 @@ impl WebRtcHandshake {
             .with(Protocol::P2p(PeerId::from(public_key).into()));
 
         self.protocol_set
-            .report_connection_established(remote_peer_id, address)
+            .report_connection_established(self.connection_id, remote_peer_id, address)
             .await?;
 
         self.state = State::Open {
