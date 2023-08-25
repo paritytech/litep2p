@@ -82,7 +82,6 @@ pub(crate) struct QuicConnection {
     pending_substreams: FuturesUnordered<BoxFuture<'static, Result<Substream, ConnectionError>>>,
 }
 
-// TODO: this is not needed anymore
 #[derive(Debug)]
 pub struct Substream {
     /// Substream direction.
@@ -210,6 +209,7 @@ impl QuicConnection {
                 substream = self.connection.accept_bidirectional_stream() => match substream {
                     Ok(Some(stream)) => {
                         let substream = self.protocol_set.next_substream_id();
+                        // TODO: these should not be cloned on every substream
                         let protocols = self.protocol_set.protocols.keys().cloned().collect();
 
                         self.pending_substreams.push(Box::pin(async move {
@@ -317,10 +317,9 @@ impl QuicConnection {
                             "open substream"
                         );
 
-                        // TODO: make timeout configurable
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
+                                std::time::Duration::from_secs(5), // TODO: make this configurable
                                 Self::open_substream(handle, Direction::Outbound(substream_id), protocol.clone()),
                             )
                             .await
@@ -345,5 +344,375 @@ impl QuicConnection {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        crypto::{
+            ed25519::Keypair,
+            tls::{certificate::generate, TlsProvider},
+            PublicKey,
+        },
+        protocol::{Transport, TransportEvent},
+        transport::manager::{SupportedTransport, TransportManager, TransportManagerEvent},
+    };
+    use multiaddr::Multiaddr;
+    use s2n_quic::{client::Connect, Client, Server};
+    use tokio::sync::mpsc::{channel, Receiver};
+
+    // context for testing
+    struct QuicContext {
+        manager: TransportManager,
+        peer: PeerId,
+        server: Server,
+        client: Client,
+        rx: Receiver<PeerId>,
+        connect: Connect,
+    }
+
+    // prepare quic context for testing
+    fn prepare_quic_context() -> QuicContext {
+        let keypair = Keypair::generate();
+        let (certificate, key) = generate(&keypair).unwrap();
+        let (tx, rx) = channel(1);
+        let peer = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+
+        let provider = TlsProvider::new(key, certificate, None, Some(tx.clone()));
+        let server = Server::builder()
+            .with_tls(provider)
+            .expect("TLS provider to be enabled successfully")
+            .with_io("127.0.0.1:0")
+            .unwrap()
+            .start()
+            .unwrap();
+        let listen_address = server.local_addr().unwrap();
+
+        let keypair = Keypair::generate();
+        let (certificate, key) = generate(&keypair).unwrap();
+        let provider = TlsProvider::new(key, certificate, Some(peer), None);
+
+        let client = Client::builder()
+            .with_tls(provider)
+            .expect("TLS provider to be enabled successfully")
+            .with_io("0.0.0.0:0")
+            .unwrap()
+            .start()
+            .unwrap();
+
+        let connect = Connect::new(listen_address).with_server_name("localhost");
+        let (manager, _handle) = TransportManager::new(keypair.clone());
+
+        QuicContext {
+            manager,
+            peer,
+            server,
+            client,
+            connect,
+            rx,
+        }
+    }
+
+    #[tokio::test]
+    async fn connection_closed() {
+        let QuicContext {
+            mut manager,
+            mut server,
+            peer,
+            client,
+            connect,
+            rx: _rx,
+        } = prepare_quic_context();
+
+        let res = tokio::join!(server.accept(), client.connect(connect));
+        let (Some(connection1), Ok(connection2)) = res else {
+            panic!("failed to establish connection");
+        };
+
+        let mut service1 = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut service2 = manager.register_protocol(
+            ProtocolName::from("/notif/2"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let transport_handle = manager.register_transport(SupportedTransport::Quic);
+        let mut protocol_set = transport_handle.protocol_set();
+        protocol_set
+            .report_connection_established(peer, Multiaddr::empty())
+            .await
+            .unwrap();
+
+        // ignore connection established events
+        let _ = service1.next_event().await.unwrap();
+        let _ = service2.next_event().await.unwrap();
+        let _ = manager.next().await.unwrap();
+
+        tokio::spawn(async move {
+            let _ =
+                QuicConnection::new(peer, protocol_set, connection1, ConnectionId::from(0usize))
+                    .start()
+                    .await;
+        });
+
+        // drop connection and verify that both protocols are notified of it
+        drop(connection2);
+
+        let (
+            Some(TransportEvent::ConnectionClosed { .. }),
+            Some(TransportEvent::ConnectionClosed { .. }),
+        ) = tokio::join!(service1.next_event(), service2.next_event()) else {
+            panic!("invalid event received");
+        };
+
+        // verify that the `TransportManager` is also notified about the closed connection
+        let Some(TransportManagerEvent::ConnectionClosed { .. }) = manager.next().await else {
+            panic!("invalid event received");
+        };
+    }
+
+    #[tokio::test]
+    async fn outbound_substream_timeouts() {
+        let QuicContext {
+            mut manager,
+            mut server,
+            peer,
+            client,
+            connect,
+            rx: _rx,
+        } = prepare_quic_context();
+
+        let res = tokio::join!(server.accept(), client.connect(connect));
+        let (Some(connection1), Ok(_connection2)) = res else {
+            panic!("failed to establish connection");
+        };
+
+        let mut service1 = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut service2 = manager.register_protocol(
+            ProtocolName::from("/notif/2"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let transport_handle = manager.register_transport(SupportedTransport::Quic);
+        let mut protocol_set = transport_handle.protocol_set();
+        protocol_set
+            .report_connection_established(peer, Multiaddr::empty())
+            .await
+            .unwrap();
+
+        // ignore connection established events
+        let _ = service1.next_event().await.unwrap();
+        let _ = service2.next_event().await.unwrap();
+        let _ = manager.next().await.unwrap();
+
+        tokio::spawn(async move {
+            let _ =
+                QuicConnection::new(peer, protocol_set, connection1, ConnectionId::from(0usize))
+                    .start()
+                    .await;
+        });
+
+        let _ = service1.open_substream(peer).await.unwrap();
+
+        let Some(TransportEvent::SubstreamOpenFailure { .. }) = service1.next_event().await else {
+            panic!("invalid event received");
+        };
+    }
+
+    #[tokio::test]
+    async fn outbound_substream_protocol_not_supported() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let QuicContext {
+            mut manager,
+            mut server,
+            peer,
+            client,
+            connect,
+            rx: _rx,
+        } = prepare_quic_context();
+
+        let res = tokio::join!(server.accept(), client.connect(connect));
+        let (Some(connection1), Ok(mut connection2)) = res else {
+            panic!("failed to establish connection");
+        };
+
+        let mut service1 = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut service2 = manager.register_protocol(
+            ProtocolName::from("/notif/2"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let transport_handle = manager.register_transport(SupportedTransport::Quic);
+        let mut protocol_set = transport_handle.protocol_set();
+        protocol_set
+            .report_connection_established(peer, Multiaddr::empty())
+            .await
+            .unwrap();
+
+        // ignore connection established events
+        let _ = service1.next_event().await.unwrap();
+        let _ = service2.next_event().await.unwrap();
+        let _ = manager.next().await.unwrap();
+
+        tokio::spawn(async move {
+            let _ =
+                QuicConnection::new(peer, protocol_set, connection1, ConnectionId::from(0usize))
+                    .start()
+                    .await;
+        });
+
+        let _ = service1.open_substream(peer).await.unwrap();
+
+        let stream = connection2
+            .accept_bidirectional_stream()
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            listener_select_proto(stream, vec!["/unsupported/1", "/unsupported/2"])
+                .await
+                .is_err()
+        );
+
+        let Some(TransportEvent::SubstreamOpenFailure { .. }) = service1.next_event().await else {
+            panic!("invalid event received");
+        };
+    }
+
+    #[tokio::test]
+    async fn connection_closed_while_negotiating_protocol() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let QuicContext {
+            mut manager,
+            mut server,
+            peer,
+            client,
+            connect,
+            rx: _rx,
+        } = prepare_quic_context();
+
+        let res = tokio::join!(server.accept(), client.connect(connect));
+        let (Some(connection1), Ok(mut connection2)) = res else {
+            panic!("failed to establish connection");
+        };
+
+        let mut service1 = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut service2 = manager.register_protocol(
+            ProtocolName::from("/notif/2"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let transport_handle = manager.register_transport(SupportedTransport::Quic);
+        let mut protocol_set = transport_handle.protocol_set();
+        protocol_set
+            .report_connection_established(peer, Multiaddr::empty())
+            .await
+            .unwrap();
+
+        // ignore connection established events
+        let _ = service1.next_event().await.unwrap();
+        let _ = service2.next_event().await.unwrap();
+        let _ = manager.next().await.unwrap();
+
+        tokio::spawn(async move {
+            let _ =
+                QuicConnection::new(peer, protocol_set, connection1, ConnectionId::from(0usize))
+                    .start()
+                    .await;
+        });
+
+        let _ = service1.open_substream(peer).await.unwrap();
+        let stream = connection2
+            .accept_bidirectional_stream()
+            .await
+            .unwrap()
+            .unwrap();
+
+        drop(stream);
+        drop(connection2);
+
+        let Some(TransportEvent::SubstreamOpenFailure { .. }) = service1.next_event().await else {
+            panic!("invalid event received");
+        };
+    }
+
+    #[tokio::test]
+    async fn outbound_substream_opened_and_negotiated() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let QuicContext {
+            mut manager,
+            mut server,
+            peer,
+            client,
+            connect,
+            rx: _rx,
+        } = prepare_quic_context();
+
+        let res = tokio::join!(server.accept(), client.connect(connect));
+        let (Some(connection1), Ok(mut connection2)) = res else {
+            panic!("failed to establish connection");
+        };
+
+        let mut service1 = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut service2 = manager.register_protocol(
+            ProtocolName::from("/notif/2"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let transport_handle = manager.register_transport(SupportedTransport::Quic);
+        let mut protocol_set = transport_handle.protocol_set();
+        protocol_set
+            .report_connection_established(peer, Multiaddr::empty())
+            .await
+            .unwrap();
+
+        // ignore connection established events
+        let _ = service1.next_event().await.unwrap();
+        let _ = service2.next_event().await.unwrap();
+        let _ = manager.next().await.unwrap();
+
+        tokio::spawn(async move {
+            let _ =
+                QuicConnection::new(peer, protocol_set, connection1, ConnectionId::from(0usize))
+                    .start()
+                    .await;
+        });
+
+        let _ = service1.open_substream(peer).await.unwrap();
+
+        let stream = connection2
+            .accept_bidirectional_stream()
+            .await
+            .unwrap()
+            .unwrap();
+
+        let (_io, _proto) = listener_select_proto(stream, vec!["/notif/1", "/notif/2"])
+            .await
+            .unwrap();
+
+        let Some(TransportEvent::SubstreamOpened { .. }) = service1.next_event().await else {
+            panic!("invalid event received");
+        };
     }
 }
