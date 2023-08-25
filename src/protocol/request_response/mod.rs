@@ -168,16 +168,28 @@ impl RequestResponseProtocol {
     }
 
     /// Connection closed to remote peer.
-    fn on_connection_closed(&mut self, peer: PeerId) {
+    async fn on_connection_closed(&mut self, peer: PeerId) {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection closed");
 
-        if let None = self.peers.remove(&peer) {
+        let Some(context) = self.peers.remove(&peer) else {
             tracing::error!(
                 target: LOG_TARGET,
                 ?peer,
                 "state mismatch: peer doesn't exist"
             );
             debug_assert!(false);
+            return
+        };
+
+        for request_id in context.active {
+            let _ = self
+                .event_tx
+                .send(RequestResponseEvent::RequestFailed {
+                    peer,
+                    request_id,
+                    error: RequestResponseError::Rejected,
+                })
+                .await;
         }
     }
 
@@ -422,7 +434,7 @@ impl RequestResponseProtocol {
                         }
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
-                        self.on_connection_closed(peer);
+                        self.on_connection_closed(peer).await;
                     }
                     Some(TransportEvent::SubstreamOpened {
                         peer,

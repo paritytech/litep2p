@@ -414,6 +414,64 @@ async fn protocol_not_supported() {
     );
 }
 
+#[tokio::test]
+async fn connection_close_while_request_is_pending() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_request_response_protocol(req_resp_config1)
+        .build();
+
+    let (req_resp_config2, handle2) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 64);
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_request_response_protocol(req_resp_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let _peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            let _ = litep2p1.next_event().await;
+        }
+    });
+
+    // send request to remote peer and wait until the requet timeout occurs
+    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+
+    drop(handle2);
+    drop(litep2p2);
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestFailed {
+            peer: peer2,
+            request_id,
+            error: RequestResponseError::Rejected,
+        }
+    );
+}
+
 // TODO: after unsigned-varint configuration is done
 #[tokio::test]
 async fn request_too_big() {}
