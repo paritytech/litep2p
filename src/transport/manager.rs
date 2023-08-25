@@ -373,7 +373,7 @@ pub struct TransportManager {
     event_tx: Sender<TransportManagerEvent>,
 
     /// Pending connections.
-    pending_connections: HashMap<ConnectionId, Multiaddr>,
+    pending_connections: HashMap<ConnectionId, PeerId>,
 
     /// Pending DNS resolves.
     pending_dns_resolves: FuturesUnordered<
@@ -574,11 +574,36 @@ impl TransportManager {
             }
         };
 
-        let remote_peer_id = protocol_stack
+        let remote_peer_id = match protocol_stack
             .next()
-            .ok_or_else(|| Error::AddressError(AddressError::PeerIdMissing))?;
+            .ok_or_else(|| Error::AddressError(AddressError::PeerIdMissing))?
+        {
+            Protocol::P2p(hash) => PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
+            _ => return Err(Error::AddressError(AddressError::PeerIdMissing)),
+        };
 
-        // TODO: check if peer is already connected/being dialed
+        match self.peers.write().get_mut(&remote_peer_id) {
+            None => {
+                self.peers.write().insert(
+                    remote_peer_id,
+                    PeerContext {
+                        state: PeerState::Dialing(address.clone()),
+                        addresses: HashSet::from_iter(vec![address.clone()].into_iter()),
+                    },
+                );
+            }
+            Some(PeerContext {
+                state: PeerState::Dialing(_) | PeerState::Connected(_),
+                ..
+            }) => return Ok(()),
+            Some(PeerContext {
+                ref mut state,
+                addresses,
+            }) => {
+                addresses.insert(address.clone());
+                *state = PeerState::Dialing(address.clone());
+            }
+        }
 
         let connection = self.next_connection_id();
         let _ = self
@@ -591,7 +616,7 @@ impl TransportManager {
                 connection,
             })
             .await?;
-        self.pending_connections.insert(connection, address);
+        self.pending_connections.insert(connection, remote_peer_id);
 
         Ok(())
     }
