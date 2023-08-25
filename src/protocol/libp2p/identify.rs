@@ -48,7 +48,7 @@ pub const PUSH_PROTOCOL_NAME: &str = "/ipfs/id/push/1.0.0";
 
 /// Size for `/ipfs/ping/1.0.0` payloads.
 // TODO: what is the max size?
-const _IDENTIFY_PAYLOAD_SIZE: usize = 4096;
+const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
 
 mod identify_schema {
     include!(concat!(env!("OUT_DIR"), "/identify.rs"));
@@ -87,7 +87,7 @@ impl Config {
             Self {
                 tx_event,
                 public: None,
-                codec: ProtocolCodec::UnsignedVarint,
+                codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
                 listen_addresses: Vec::new(),
                 protocols: Vec::new(),
                 protocol: ProtocolName::from(PROTOCOL_NAME),

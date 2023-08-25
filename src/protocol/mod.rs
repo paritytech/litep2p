@@ -54,6 +54,7 @@ pub enum Direction {
 }
 
 /// Events emitted by one of the installed transports to protocol(s).
+#[derive(Debug)]
 pub enum TransportEvent {
     /// Connection established to `peer`.
     ConnectionEstablished {

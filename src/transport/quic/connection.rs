@@ -288,8 +288,8 @@ impl QuicConnection {
                                 ProtocolCodec::Identity(payload_size) => {
                                     Box::new(Framed::new(substream.io, Identity::new(payload_size)))
                                 }
-                                ProtocolCodec::UnsignedVarint => {
-                                    Box::new(Framed::new(substream.io, UnsignedVarint::new()))
+                                ProtocolCodec::UnsignedVarint(max_size) => {
+                                    Box::new(Framed::new(substream.io, UnsignedVarint::new(max_size)))
                                 }
                             };
 
@@ -433,11 +433,11 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();
@@ -492,11 +492,11 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();
@@ -546,11 +546,11 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();
@@ -612,11 +612,11 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();
@@ -674,11 +674,11 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
         let mut protocol_set = transport_handle.protocol_set();

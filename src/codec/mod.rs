@@ -36,6 +36,6 @@ pub enum ProtocolCodec {
     /// Identity codec where the argument denotes the payload size.
     Identity(usize),
 
-    /// Unsigned varint.
-    UnsignedVarint,
+    /// Unsigned varint where the argument denotes the maximum message size, if specified.
+    UnsignedVarint(Option<usize>),
 }

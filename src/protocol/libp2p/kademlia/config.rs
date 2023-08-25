@@ -70,7 +70,8 @@ impl ConfigBuilder {
     pub fn new() -> Self {
         Self {
             protocol: ProtocolName::from(PROTOCOL_NAME),
-            codec: ProtocolCodec::UnsignedVarint,
+            // TODO: set correct size
+            codec: ProtocolCodec::UnsignedVarint(None),
             replication_factor: REPLICATION_FACTOR,
         }
     }

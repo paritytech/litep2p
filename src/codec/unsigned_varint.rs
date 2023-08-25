@@ -39,10 +39,14 @@ impl fmt::Debug for UnsignedVarint {
 
 impl UnsignedVarint {
     /// Create new [`UnsignedVarint`] codec.
-    pub fn new() -> Self {
-        Self {
-            codec: UviBytes::<Bytes>::default(),
+    pub fn new(max_size: Option<usize>) -> Self {
+        let mut codec = UviBytes::<Bytes>::default();
+
+        if let Some(max_size) = max_size {
+            codec.set_max_len(max_size);
         }
+
+        Self { codec }
     }
 
     /// Set maximum size for encoded/decodes values.
@@ -61,7 +65,7 @@ impl UnsignedVarint {
         assert!(payload.len() <= u32::MAX as usize);
 
         let mut bytes = BytesMut::with_capacity(payload.len() + 4);
-        let mut codec = Self::new();
+        let mut codec = Self::new(None);
         codec.encode(payload.into(), &mut bytes)?;
 
         Ok(bytes.into())

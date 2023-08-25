@@ -417,8 +417,8 @@ impl WebSocketConnection {
                                 ProtocolCodec::Identity(payload_size) => {
                                     Box::new(Framed::new(substream, Identity::new(payload_size)))
                                 }
-                                ProtocolCodec::UnsignedVarint => {
-                                    Box::new(Framed::new(substream, UnsignedVarint::new()))
+                                ProtocolCodec::UnsignedVarint(max_size) => {
+                                    Box::new(Framed::new(substream, UnsignedVarint::new(max_size)))
                                 }
                             };
 

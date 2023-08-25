@@ -64,7 +64,8 @@ impl WebRtcMessage {
             .expect("Vec<u8> to provide needed capacity");
 
         let mut out_buf = bytes::BytesMut::with_capacity(payload.len() + 4);
-        let mut codec = UnsignedVarint::new();
+        // TODO: set correct size
+        let mut codec = UnsignedVarint::new(None);
         let _result = codec.encode(payload.into(), &mut out_buf);
 
         out_buf.into()
@@ -72,7 +73,8 @@ impl WebRtcMessage {
 
     /// Decode payload into [`WebRtcMessage`].
     pub fn decode(payload: &[u8]) -> crate::Result<Self> {
-        let mut codec = UnsignedVarint::new();
+        // TODO: set correct size
+        let mut codec = UnsignedVarint::new(None);
         let mut data = bytes::BytesMut::from(payload);
         let result = codec.decode(&mut data)?.ok_or(Error::InvalidData)?;
 

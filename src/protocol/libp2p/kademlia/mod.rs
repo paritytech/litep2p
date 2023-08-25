@@ -523,7 +523,7 @@ mod tests {
 
         let config = Config {
             protocol: ProtocolName::from("/kad/1"),
-            codec: ProtocolCodec::UnsignedVarint,
+            codec: ProtocolCodec::UnsignedVarint(None),
             replication_factor: 20usize,
             event_tx,
             cmd_rx,

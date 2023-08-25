@@ -42,7 +42,7 @@ impl CustomProtocol {
         Self {
             peers: HashSet::new(),
             protocol: ProtocolName::from("/custom-protocol/1"),
-            codec: ProtocolCodec::UnsignedVarint,
+            codec: ProtocolCodec::UnsignedVarint(None),
         }
     }
 }

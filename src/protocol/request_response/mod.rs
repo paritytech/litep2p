@@ -257,6 +257,7 @@ impl RequestResponseProtocol {
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
+        // TODO: potential attack vector
         let request = substream
             .next()
             .await

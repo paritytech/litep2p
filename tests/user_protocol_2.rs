@@ -51,7 +51,7 @@ impl CustomProtocol {
                 rx,
                 peers: HashSet::new(),
                 protocol: ProtocolName::from("/custom-protocol/1"),
-                codec: ProtocolCodec::UnsignedVarint,
+                codec: ProtocolCodec::UnsignedVarint(None),
             },
             tx,
         )

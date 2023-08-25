@@ -430,8 +430,8 @@ impl TcpConnection {
                                 ProtocolCodec::Identity(payload_size) => {
                                     Box::new(Framed::new(substream, Identity::new(payload_size)))
                                 }
-                                ProtocolCodec::UnsignedVarint => {
-                                    Box::new(Framed::new(substream, UnsignedVarint::new()))
+                                ProtocolCodec::UnsignedVarint(max_size) => {
+                                    Box::new(Framed::new(substream, UnsignedVarint::new(max_size)))
                                 }
                             };
 
@@ -562,7 +562,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -604,7 +604,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -652,7 +652,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -700,7 +700,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -756,7 +756,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -810,7 +810,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -856,7 +856,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -895,7 +895,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -941,7 +941,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -1011,7 +1011,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -1071,7 +1071,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
@@ -1135,7 +1135,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
-            ProtocolCodec::UnsignedVarint,
+            ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();

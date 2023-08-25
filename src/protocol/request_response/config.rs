@@ -61,7 +61,8 @@ impl RequestResponseConfig {
                 _max_slots,
                 event_tx,
                 command_rx,
-                codec: ProtocolCodec::UnsignedVarint,
+                // TODO: allow user to specify size
+                codec: ProtocolCodec::UnsignedVarint(None),
             },
             handle,
         )

@@ -223,7 +223,7 @@ impl Config {
     /// Create new [`Config`].
     pub fn new(
         protocol_name: ProtocolName,
-        _max_notification_size: usize,
+        max_notification_size: usize,
         handshake: Vec<u8>,
         _protocol_aliases: Vec<ProtocolName>,
     ) -> (Self, NotificationHandle) {
@@ -234,8 +234,8 @@ impl Config {
         (
             Self {
                 protocol_name,
-                codec: ProtocolCodec::UnsignedVarint,
-                _max_notification_size,
+                codec: ProtocolCodec::UnsignedVarint(Some(max_notification_size)),
+                _max_notification_size: max_notification_size,
                 handshake,
                 _protocol_aliases,
                 event_tx,
