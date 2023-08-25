@@ -128,16 +128,24 @@ impl TcpConnection {
         );
 
         let noise_config = NoiseConfiguration::new(&context.keypair, Role::Dialer);
-        let stream = TcpStream::connect(address).await?;
-        Self::negotiate_connection(
-            stream,
-            connection_id,
-            context,
-            noise_config,
-            address,
-            yamux_config,
-        )
+
+        match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+            let stream = TcpStream::connect(address).await?;
+            Self::negotiate_connection(
+                stream,
+                connection_id,
+                context,
+                noise_config,
+                address,
+                yamux_config,
+            )
+            .await
+        })
         .await
+        {
+            Err(_) => return Err(Error::Timeout),
+            Ok(result) => result,
+        }
     }
 
     /// Open substream for `protocol`.
@@ -185,15 +193,22 @@ impl TcpConnection {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
         let noise_config = NoiseConfiguration::new(&context.keypair, Role::Listener);
-        Self::negotiate_connection(
-            stream,
-            connection_id,
-            context,
-            noise_config,
-            address,
-            yamux_config,
-        )
+        match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+            Self::negotiate_connection(
+                stream,
+                connection_id,
+                context,
+                noise_config,
+                address,
+                yamux_config,
+            )
+            .await
+        })
         .await
+        {
+            Err(_) => return Err(Error::Timeout),
+            Ok(result) => result,
+        }
     }
 
     /// Accept substream.
