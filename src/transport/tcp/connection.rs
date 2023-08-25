@@ -143,7 +143,7 @@ impl TcpConnection {
         })
         .await
         {
-            Err(_) => return Err(Error::Timeout),
+            Err(_) => Err(Error::Timeout),
             Ok(result) => result,
         }
     }
@@ -537,5 +537,644 @@ impl AsyncWrite for Substream {
     ) -> std::task::Poll<io::Result<()>> {
         let inner = Pin::into_inner(self);
         Pin::new(&mut inner.io).poll_close(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        crypto::ed25519::Keypair,
+        transport::manager::{SupportedTransport, TransportManager, TransportManagerEvent},
+    };
+    use tokio::{io::AsyncWriteExt, net::TcpListener};
+
+    #[tokio::test]
+    async fn multistream_select_not_supported_dialer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        tokio::spawn(async move {
+            match TcpConnection::open_connection(
+                protocol_set,
+                ConnectionId::from(0usize),
+                address,
+                None,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let _ = stream.write_all(&vec![0x12u8; 256]).await;
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn multistream_select_not_supported_listener() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        let (Ok(mut dialer), Ok((listener, dialer_address))) = tokio::join!(
+            TcpStream::connect(address.clone()),
+            listener.accept(),
+        ) else {
+            panic!("failed to establish connection");
+        };
+
+        tokio::spawn(async move {
+            match TcpConnection::accept_connection(
+                protocol_set,
+                listener,
+                ConnectionId::from(0usize),
+                dialer_address,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let _ = dialer.write_all(&vec![0x12u8; 256]).await;
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn noise_not_supported_dialer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        tokio::spawn(async move {
+            match TcpConnection::open_connection(
+                protocol_set,
+                ConnectionId::from(0usize),
+                address,
+                None,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let (stream, _) = listener.accept().await.unwrap();
+        let stream = TokioAsyncReadCompatExt::compat(stream).into_inner();
+        let stream = TokioAsyncWriteCompatExt::compat_write(stream);
+
+        // attempt to negotiate yamux, skipping noise entirely
+        assert!(listener_select_proto(stream, vec!["/yamux/1.0.0"])
+            .await
+            .is_err());
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn noise_not_supported_listener() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
+            TcpStream::connect(address.clone()),
+            listener.accept(),
+        ) else {
+            panic!("failed to establish connection");
+        };
+
+        tokio::spawn(async move {
+            match TcpConnection::accept_connection(
+                protocol_set,
+                listener,
+                ConnectionId::from(0usize),
+                dialer_address,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let dialer = TokioAsyncReadCompatExt::compat(dialer).into_inner();
+        let dialer = TokioAsyncWriteCompatExt::compat_write(dialer);
+
+        // attempt to negotiate yamux, skipping noise entirely
+        assert!(
+            dialer_select_proto(dialer, vec!["/yamux/1.0.0"], Version::V1)
+                .await
+                .is_err()
+        );
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn noise_timeout_dialer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
+            TcpStream::connect(address.clone()),
+            listener.accept(),
+        ) else {
+            panic!("failed to establish connection");
+        };
+
+        tokio::spawn(async move {
+            match TcpConnection::accept_connection(
+                protocol_set,
+                listener,
+                ConnectionId::from(0usize),
+                dialer_address,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let dialer = TokioAsyncReadCompatExt::compat(dialer).into_inner();
+        let dialer = TokioAsyncWriteCompatExt::compat_write(dialer);
+
+        // attempt to negotiate yamux, skipping noise entirely
+        assert!(dialer_select_proto(dialer, vec!["/noise"], Version::V1)
+            .await
+            .is_ok());
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn noise_timeout_listener() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        tokio::spawn(async move {
+            match TcpConnection::open_connection(
+                protocol_set,
+                ConnectionId::from(0usize),
+                address,
+                None,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let (stream, _) = listener.accept().await.unwrap();
+        let stream = TokioAsyncReadCompatExt::compat(stream).into_inner();
+        let stream = TokioAsyncWriteCompatExt::compat_write(stream);
+
+        // negotiate noise but never actually send any handshake data
+        assert!(listener_select_proto(stream, vec!["/noise"]).await.is_ok());
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn multistream_select_timeout_dialer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        tokio::spawn(async move {
+            match TcpConnection::open_connection(
+                protocol_set,
+                ConnectionId::from(0usize),
+                address,
+                None,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn multistream_select_timeout_listener() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        let (Ok(_dialer), Ok((listener, dialer_address))) = tokio::join!(
+            TcpStream::connect(address.clone()),
+            listener.accept(),
+        ) else {
+            panic!("failed to establish connection");
+        };
+
+        tokio::spawn(async move {
+            match TcpConnection::accept_connection(
+                protocol_set,
+                listener,
+                ConnectionId::from(0usize),
+                dialer_address,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn yamux_not_supported_dialer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
+            TcpStream::connect(address.clone()),
+            listener.accept(),
+        ) else {
+            panic!("failed to establish connection");
+        };
+
+        tokio::spawn(async move {
+            match TcpConnection::accept_connection(
+                protocol_set,
+                listener,
+                ConnectionId::from(0usize),
+                dialer_address,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let dialer = TokioAsyncReadCompatExt::compat(dialer).into_inner();
+        let dialer = TokioAsyncWriteCompatExt::compat_write(dialer);
+
+        // negotiate noise
+        let (_protocol, stream) = dialer_select_proto(dialer, vec!["/noise"], Version::V1)
+            .await
+            .unwrap();
+
+        let keypair = Keypair::generate();
+        let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer);
+
+        // do a noise handshake
+        let (stream, _peer) = noise::handshake(stream.inner(), noise_config)
+            .await
+            .unwrap();
+        let stream: Encrypted<Compat<TcpStream>> = stream;
+
+        // after the handshake, try to negotiate some random protocol instead of yamux
+        assert!(
+            dialer_select_proto(stream, vec!["/unsupported/1"], Version::V1)
+                .await
+                .is_err()
+        );
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn yamux_not_supported_listener() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        tokio::spawn(async move {
+            match TcpConnection::open_connection(
+                protocol_set,
+                ConnectionId::from(0usize),
+                address,
+                None,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let (stream, _) = listener.accept().await.unwrap();
+        let stream = TokioAsyncReadCompatExt::compat(stream).into_inner();
+        let stream = TokioAsyncWriteCompatExt::compat_write(stream);
+
+        // negotiate noise
+        let (_protocol, stream) = listener_select_proto(stream, vec!["/noise"]).await.unwrap();
+
+        let keypair = Keypair::generate();
+        let noise_config = NoiseConfiguration::new(&keypair, Role::Listener);
+
+        // do a noise handshake
+        let (stream, _peer) = noise::handshake(stream.inner(), noise_config)
+            .await
+            .unwrap();
+        let stream: Encrypted<Compat<TcpStream>> = stream;
+
+        // after the handshake, try to negotiate some random protocol instead of yamux
+        assert!(listener_select_proto(stream, vec!["/unsupported/1"])
+            .await
+            .is_err());
+
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn yamux_timeout_dialer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
+            TcpStream::connect(address.clone()),
+            listener.accept(),
+        ) else {
+            panic!("failed to establish connection");
+        };
+
+        tokio::spawn(async move {
+            match TcpConnection::accept_connection(
+                protocol_set,
+                listener,
+                ConnectionId::from(0usize),
+                dialer_address,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let dialer = TokioAsyncReadCompatExt::compat(dialer).into_inner();
+        let dialer = TokioAsyncWriteCompatExt::compat_write(dialer);
+
+        // negotiate noise
+        let (_protocol, stream) = dialer_select_proto(dialer, vec!["/noise"], Version::V1)
+            .await
+            .unwrap();
+
+        let keypair = Keypair::generate();
+        let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer);
+
+        // do a noise handshake
+        let (stream, _peer) = noise::handshake(stream.inner(), noise_config)
+            .await
+            .unwrap();
+        let _stream: Encrypted<Compat<TcpStream>> = stream;
+
+        // after noise handshake, don't negotiate anything and wait for the substream to time out
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn yamux_timeout_listener() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keypair = Keypair::generate();
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        let _service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint,
+        );
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let protocol_set = handle.protocol_set();
+
+        tokio::spawn(async move {
+            match TcpConnection::open_connection(
+                protocol_set,
+                ConnectionId::from(0usize),
+                address,
+                None,
+                Default::default(),
+            )
+            .await
+            {
+                Ok(_) => panic!("connection was supposed to fail"),
+                Err(error) => handle.report_dial_failure(Multiaddr::empty(), error).await,
+            }
+        });
+
+        let (stream, _) = listener.accept().await.unwrap();
+        let stream = TokioAsyncReadCompatExt::compat(stream).into_inner();
+        let stream = TokioAsyncWriteCompatExt::compat_write(stream);
+
+        // negotiate noise
+        let (_protocol, stream) = listener_select_proto(stream, vec!["/noise"]).await.unwrap();
+
+        let keypair = Keypair::generate();
+        let noise_config = NoiseConfiguration::new(&keypair, Role::Listener);
+
+        // do a noise handshake
+        let (stream, _peer) = noise::handshake(stream.inner(), noise_config)
+            .await
+            .unwrap();
+        let _stream: Encrypted<Compat<TcpStream>> = stream;
+
+        // after noise handshake, don't negotiate anything and wait for the substream to time out
+        assert!(std::matches!(
+            manager.next().await,
+            Some(TransportManagerEvent::DialFailure { .. })
+        ));
     }
 }
