@@ -21,7 +21,7 @@
 use crate::{
     codec::ProtocolCodec,
     crypto::{ed25519::Keypair, PublicKey},
-    error::Error,
+    error::{AddressError, Error},
     peer_id::PeerId,
     protocol::{InnerTransportEvent, ProtocolSet, TransportService},
     types::{protocol::ProtocolName, ConnectionId},
@@ -177,6 +177,7 @@ impl TransportManagerHandle {
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
+    // TODO: this must report some tokent to the caller so `DialFailure` can be reported to them
     pub async fn dial(&self, peer: &PeerId) -> crate::Result<()> {
         {
             match self.peers.read().get(&peer) {
@@ -185,9 +186,13 @@ impl TransportManagerHandle {
                     ..
                 }) => return Err(Error::AlreadyConnected),
                 Some(PeerContext {
-                    state: PeerState::Connected(_),
+                    state: PeerState::Disconnected,
                     addresses,
                 }) if addresses.is_empty() => return Err(Error::NoAddressAvailable(*peer)),
+                Some(PeerContext {
+                    state: PeerState::Dialing(_),
+                    ..
+                }) => return Ok(()),
                 None => return Err(Error::PeerDoesntExist(*peer)),
                 _ => {}
             }
@@ -311,6 +316,9 @@ impl ProtocolContext {
 enum PeerState {
     /// `Litep2p` is connected to peer.
     Connected(Multiaddr),
+
+    /// Peer is being dialed.
+    Dialing(Multiaddr),
 
     /// `Litep2p` is not connected to peer.
     Disconnected,
@@ -469,8 +477,32 @@ impl TransportManager {
             return Err(Error::TriedToDialSelf);
         }
 
-        // TODO: implement
-        Ok(())
+        let address = match self.peers.write().get_mut(&peer) {
+            None => return Err(Error::PeerDoesntExist(*peer)),
+            Some(PeerContext {
+                state: PeerState::Connected(_),
+                ..
+            }) => return Err(Error::AlreadyConnected),
+            Some(PeerContext {
+                state: PeerState::Dialing(_),
+                ..
+            }) => return Ok(()),
+            Some(PeerContext {
+                state: PeerState::Disconnected,
+                addresses,
+            }) => {
+                let next_address = addresses
+                    .iter()
+                    .next()
+                    .ok_or(Error::NoAddressAvailable(*peer))?
+                    .clone();
+                addresses.remove(&next_address);
+
+                next_address
+            }
+        };
+
+        self.dial_address(address).await
     }
 
     /// Dial peer using `Multiaddr`.
@@ -492,6 +524,8 @@ impl TransportManager {
                 let dns_address = addr.to_string();
                 let original = address.clone();
                 let connection = self.next_connection_id();
+
+                // TODO: parse peer id from the address
 
                 self.pending_dns_resolves.push(Box::pin(async move {
                     match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
@@ -540,8 +574,13 @@ impl TransportManager {
             }
         };
 
-        let connection =
-            ConnectionId::from(self.next_connection_id.fetch_add(1usize, Ordering::Relaxed));
+        let remote_peer_id = protocol_stack
+            .next()
+            .ok_or_else(|| Error::AddressError(AddressError::PeerIdMissing))?;
+
+        // TODO: check if peer is already connected/being dialed
+
+        let connection = self.next_connection_id();
         let _ = self
             .transports
             .get_mut(&supported_transport)
