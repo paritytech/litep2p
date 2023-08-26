@@ -29,19 +29,21 @@ use crate::{
             types::{NotificationEvent, ValidationResult},
             InboundState, OutboundState, PeerContext, PeerState,
         },
-        ProtocolCommand,
+        InnerTransportEvent, ProtocolCommand,
     },
     types::{protocol::ProtocolName, SubstreamId},
 };
 
 use bytes::BytesMut;
 use futures::StreamExt;
+use multiaddr::Multiaddr;
+use tokio::sync::mpsc::channel;
 
 use std::task::Poll;
 
 #[tokio::test]
 async fn non_existent_peer() {
-    let (mut notif, _handle, _sender) = make_notification_protocol();
+    let (mut notif, _handle, _sender, _) = make_notification_protocol();
 
     if let Err(err) = notif
         .on_validation_result(PeerId::random(), ValidationResult::Accept)
@@ -52,14 +54,13 @@ async fn non_existent_peer() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn substream_accepted() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut notif, mut handle, _sender) = make_notification_protocol();
-    let (peer, _service, mut receiver) = add_peer();
+    let (mut notif, mut handle, _sender, tx) = make_notification_protocol();
+    let (peer, _service, _receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
     let mut substream = MockSubstream::new();
     substream
@@ -79,8 +80,17 @@ async fn substream_accepted() {
         .times(1)
         .return_once(|_| Poll::Ready(Ok(())));
 
+    let (proto_tx, mut proto_rx) = channel(256);
+    tx.send(InnerTransportEvent::ConnectionEstablished {
+        peer,
+        address: Multiaddr::empty(),
+        sender: proto_tx,
+    })
+    .await
+    .unwrap();
+
     // connect peer and verify it's in closed state
-    notif.on_connection_established(peer).await.unwrap();
+    notif.next_event().await;
 
     match notif.peers.get(&peer).unwrap().state {
         PeerState::Closed { .. } => {}
@@ -126,7 +136,7 @@ async fn substream_accepted() {
 
     // protocol asks for outbound substream to be opened and its state is changed accordingly
     assert_eq!(
-        receiver.recv().await.unwrap(),
+        proto_rx.recv().await.unwrap(),
         ProtocolCommand::OpenSubstream {
             protocol: ProtocolName::from("/notif/1"),
             substream_id: SubstreamId::from(0usize)
@@ -153,7 +163,7 @@ async fn substream_rejected() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut notif, mut handle, _sender) = make_notification_protocol();
+    let (mut notif, mut handle, _sender, _tx) = make_notification_protocol();
     let (peer, _service, mut receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
     let mut substream = MockSubstream::new();
@@ -217,13 +227,12 @@ async fn substream_rejected() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn accept_fails_due_to_closed_substream() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut notif, mut handle, _sender) = make_notification_protocol();
+    let (mut notif, mut handle, _sender, tx) = make_notification_protocol();
     let (peer, _service, _receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
     let mut substream = MockSubstream::new();
@@ -236,8 +245,17 @@ async fn accept_fails_due_to_closed_substream() {
         .times(1)
         .return_once(|_| Poll::Ready(Err(Error::SubstreamError(SubstreamError::ConnectionClosed))));
 
+    let (proto_tx, _proto_rx) = channel(256);
+    tx.send(InnerTransportEvent::ConnectionEstablished {
+        peer,
+        address: Multiaddr::empty(),
+        sender: proto_tx,
+    })
+    .await
+    .unwrap();
+
     // connect peer and verify it's in closed state
-    notif.on_connection_established(peer).await.unwrap();
+    notif.next_event().await;
 
     match notif.peers.get(&peer).unwrap().state {
         PeerState::Closed { .. } => {}
@@ -297,8 +315,8 @@ async fn accept_fails_due_to_closed_connection() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut notif, mut handle, _sender) = make_notification_protocol();
-    let (peer, _service, receiver) = add_peer();
+    let (mut notif, mut handle, _sender, tx) = make_notification_protocol();
+    let (peer, _service, _receiver) = add_peer();
     let handshake = BytesMut::from(&b"hello"[..]);
     let mut substream = MockSubstream::new();
     substream
@@ -310,8 +328,17 @@ async fn accept_fails_due_to_closed_connection() {
         .times(1)
         .return_once(|_| Poll::Ready(Ok(())));
 
+    let (proto_tx, proto_rx) = channel(256);
+    tx.send(InnerTransportEvent::ConnectionEstablished {
+        peer,
+        address: Multiaddr::empty(),
+        sender: proto_tx,
+    })
+    .await
+    .unwrap();
+
     // connect peer and verify it's in closed state
-    notif.on_connection_established(peer).await.unwrap();
+    notif.next_event().await;
 
     match notif.peers.get(&peer).unwrap().state {
         PeerState::Closed { .. } => {}
@@ -349,7 +376,7 @@ async fn accept_fails_due_to_closed_connection() {
 
     // drop the connection and verify that the protocol doesn't make any outbound substream requests
     // and instead marks the connection as closed
-    drop(receiver);
+    drop(proto_rx);
 
     assert!(notif
         .on_validation_result(peer, ValidationResult::Accept)
@@ -366,7 +393,7 @@ async fn accept_fails_due_to_closed_connection() {
 #[should_panic]
 #[cfg(debug_assertions)]
 async fn open_substream_accepted() {
-    let (mut notif, _handle, _sender) = make_notification_protocol();
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
     let (peer, _service, _receiver) = add_peer();
     let outbound = Box::new(MockSubstream::new());
 
@@ -390,7 +417,7 @@ async fn open_substream_accepted() {
 #[should_panic]
 #[cfg(debug_assertions)]
 async fn open_substream_rejected() {
-    let (mut notif, _handle, _sender) = make_notification_protocol();
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
     let (peer, _service, _receiver) = add_peer();
     let outbound = Box::new(MockSubstream::new());
 

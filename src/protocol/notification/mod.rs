@@ -773,133 +773,138 @@ impl NotificationProtocol {
         }
     }
 
+    /// Handle next notification event.
+    async fn next_event(&mut self) {
+        tokio::select! {
+            event = self.service.next_event() => match event {
+                Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
+                    if let Err(error) = self.on_connection_established(peer).await {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?error,
+                            "failed to register peer",
+                        );
+                    }
+                }
+                Some(TransportEvent::ConnectionClosed { peer }) => {
+                    if let Err(error) = self.on_connection_closed(peer).await {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?error,
+                            "failed to disconnect peer",
+                        );
+                    }
+                }
+                Some(TransportEvent::SubstreamOpened {
+                    peer,
+                    substream,
+                    direction,
+                    protocol,
+                }) => match direction {
+                    Direction::Inbound => {
+                        if let Err(error) = self.on_inbound_substream(protocol, peer, substream).await {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?error,
+                                "failed to handle inbound substream",
+                            );
+                        }
+                    }
+                    Direction::Outbound(substream_id) => {
+                        if let Err(error) = self
+                            .on_outbound_substream(protocol, peer, substream_id, substream)
+                            .await
+                        {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?error,
+                                "failed to handle outbound substream",
+                            );
+                        }
+                    }
+                },
+                Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
+                    self.on_substream_open_failure(substream, error);
+                }
+                Some(TransportEvent::DialFailure { .. }) => todo!(),
+                None => return,
+            },
+            command = self.command_rx.recv() => match command {
+                None => {
+                    tracing::debug!(target: LOG_TARGET, "user protocol has exited, exiting");
+                    return
+                }
+                Some(command) => match command {
+                    NotificationCommand::OpenSubstream { peer } => {
+                        if let Err(error) = self.on_open_substream(peer).await {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?error,
+                                "failed to open substream"
+                            );
+                        }
+                    }
+                    NotificationCommand::CloseSubstream { peer } => {
+                        self.on_close_substream(peer).await;
+                    }
+                    NotificationCommand::SubstreamValidated { peer, result } => {
+                        if let Err(error) = self.on_validation_result(peer, result).await {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?error,
+                                "failed to open substream"
+                            );
+                        }
+                    }
+                    NotificationCommand::SetHandshake { handshake } => {
+                        self.negotiation.set_handshake(handshake.clone());
+                        self.handshake = handshake;
+                    }
+                }
+            },
+            event = self.substreams.next(), if !self.substreams.is_empty() => {
+                let (peer, event) = event.expect("`SubstreamSet` to return `Some(..)`");
+                self.on_substream_event(peer, event).await;
+            }
+            event = self.negotiation.next(), if !self.negotiation.is_empty() => {
+                let (peer, event) = event.expect("`HandshakeService` to return `Some(..)`");
+
+                self.on_negotiation_event(peer, event).await;
+            }
+            event = self.receivers.next(), if !self.receivers.is_empty() => match event {
+                Some((peer, notification)) => {
+                    tracing::info!(target: LOG_TARGET, ?peer, "send notification to peer");
+
+                    match self.peers.get_mut(&peer) {
+                        Some(context) => match &mut context.state {
+                            PeerState::Open { outbound } => {
+                                // TODO: handle error
+                                let _result = outbound.send(notification.into()).await;
+                            }
+                            state => tracing::error!(target: LOG_TARGET, ?state, "invalid state for peer"),
+                        }
+                        None => {} // TODO: handle error
+                    }
+                }
+                None => {
+                    tracing::info!(target: LOG_TARGET, "here");
+                }
+            }
+        }
+    }
+
     /// Start [`NotificationProtocol`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting notification event loop");
 
         loop {
-            tokio::select! {
-                event = self.service.next_event() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer).await {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?error,
-                                "failed to register peer",
-                            );
-                        }
-                    }
-                    Some(TransportEvent::ConnectionClosed { peer }) => {
-                        if let Err(error) = self.on_connection_closed(peer).await {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?error,
-                                "failed to disconnect peer",
-                            );
-                        }
-                    }
-                    Some(TransportEvent::SubstreamOpened {
-                        peer,
-                        substream,
-                        direction,
-                        protocol,
-                    }) => match direction {
-                        Direction::Inbound => {
-                            if let Err(error) = self.on_inbound_substream(protocol, peer, substream).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?error,
-                                    "failed to handle inbound substream",
-                                );
-                            }
-                        }
-                        Direction::Outbound(substream_id) => {
-                            if let Err(error) = self
-                                .on_outbound_substream(protocol, peer, substream_id, substream)
-                                .await
-                            {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?error,
-                                    "failed to handle outbound substream",
-                                );
-                            }
-                        }
-                    },
-                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
-                        self.on_substream_open_failure(substream, error);
-                    }
-                    Some(TransportEvent::DialFailure { .. }) => todo!(),
-                    None => return,
-                },
-                command = self.command_rx.recv() => match command {
-                    None => {
-                        tracing::debug!(target: LOG_TARGET, "user protocol has exited, exiting");
-                        return
-                    }
-                    Some(command) => match command {
-                        NotificationCommand::OpenSubstream { peer } => {
-                            if let Err(error) = self.on_open_substream(peer).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?error,
-                                    "failed to open substream"
-                                );
-                            }
-                        }
-                        NotificationCommand::CloseSubstream { peer } => {
-                            self.on_close_substream(peer).await;
-                        }
-                        NotificationCommand::SubstreamValidated { peer, result } => {
-                            if let Err(error) = self.on_validation_result(peer, result).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?error,
-                                    "failed to open substream"
-                                );
-                            }
-                        }
-                        NotificationCommand::SetHandshake { handshake } => {
-                            self.negotiation.set_handshake(handshake.clone());
-                            self.handshake = handshake;
-                        }
-                    }
-                },
-                event = self.substreams.next(), if !self.substreams.is_empty() => {
-                    let (peer, event) = event.expect("`SubstreamSet` to return `Some(..)`");
-                    self.on_substream_event(peer, event).await;
-                }
-                event = self.negotiation.next(), if !self.negotiation.is_empty() => {
-                    let (peer, event) = event.expect("`HandshakeService` to return `Some(..)`");
-
-                    self.on_negotiation_event(peer, event).await;
-                }
-                event = self.receivers.next(), if !self.receivers.is_empty() => match event {
-                    Some((peer, notification)) => {
-                        tracing::info!(target: LOG_TARGET, ?peer, "send notification to peer");
-
-                        match self.peers.get_mut(&peer) {
-                            Some(context) => match &mut context.state {
-                                PeerState::Open { outbound } => {
-                                    // TODO: handle error
-                                    let _result = outbound.send(notification.into()).await;
-                                }
-                                state => tracing::error!(target: LOG_TARGET, ?state, "invalid state for peer"),
-                            }
-                            None => {} // TODO: handle error
-                        }
-                    }
-                    None => {
-                        tracing::info!(target: LOG_TARGET, "here");
-                    }
-                }
-            }
+            self.next_event().await;
         }
     }
 }

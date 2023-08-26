@@ -455,10 +455,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
-    async fn second_connection_gets_rejected() {}
-
-    #[tokio::test]
     async fn dial_peer_id_missing() {
         let (mut manager, _handle) = TransportManager::new(Keypair::generate());
         let handle = manager.register_transport(SupportedTransport::Quic);

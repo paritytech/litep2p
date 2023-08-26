@@ -306,7 +306,18 @@ impl Litep2p {
     /// If the transport specified by `address` is not supported, an error is returned.
     /// The connection is established in the background and its result is reported through
     /// [`Litep2p::next_event()`].
+    // TODO: remove
     pub async fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
+        self.transport_manager.dial_address(address).await
+    }
+
+    /// Dial peer.
+    pub async fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
+        self.transport_manager.dial(peer).await
+    }
+
+    /// Dial address.
+    pub async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
         self.transport_manager.dial_address(address).await
     }
 
@@ -333,8 +344,11 @@ mod tests {
         protocol::{libp2p::ping::PingConfig, notification::types::Config as NotificationConfig},
         transport::tcp::config::TransportConfig as TcpTransportConfig,
         types::protocol::ProtocolName,
-        Litep2p,
+        Litep2p, Litep2pEvent, PeerId,
     };
+    use multiaddr::{Multiaddr, Protocol};
+    use multihash::Multihash;
+    use std::net::Ipv4Addr;
 
     #[tokio::test]
     async fn initialize_litep2p() {
@@ -402,14 +416,59 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn dial_same_address_twice() {
-        todo!();
-    }
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
-    #[tokio::test]
-    #[ignore]
-    async fn dial_same_peer_twice() {
-        todo!();
+        let (config1, _service1) = NotificationConfig::new(
+            ProtocolName::from("/notificaton/1"),
+            1337usize,
+            vec![1, 2, 3, 4],
+            Vec::new(),
+        );
+        let (config2, _service2) = NotificationConfig::new(
+            ProtocolName::from("/notificaton/2"),
+            1337usize,
+            vec![1, 2, 3, 4],
+            Vec::new(),
+        );
+        let (ping_config, _ping_event_stream) = PingConfig::default();
+
+        let config = Litep2pConfigBuilder::new()
+            .with_tcp(TcpTransportConfig {
+                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+                yamux_config: Default::default(),
+            })
+            .with_quic(crate::transport::quic::config::TransportConfig {
+                listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            })
+            .with_notification_protocol(config1)
+            .with_notification_protocol(config2)
+            .with_libp2p_ping(ping_config)
+            .build();
+
+        let peer = PeerId::random();
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(255, 254, 253, 252)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        let mut litep2p = Litep2p::new(config).await.unwrap();
+        litep2p.dial_address(address.clone()).await.unwrap();
+        litep2p.dial_address(address.clone()).await.unwrap();
+
+        match litep2p.next_event().await {
+            Some(Litep2pEvent::DialFailure { .. }) => {}
+            _ => panic!("invalid event received"),
+        }
+
+        // verify that the second same dial was ignored and the dial failure is reported only once
+        match tokio::time::timeout(std::time::Duration::from_secs(20), litep2p.next_event()).await {
+            Err(_) => {}
+            _ => panic!("invalid event received"),
+        }
     }
 }

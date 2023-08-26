@@ -23,13 +23,13 @@ use crate::{
     peer_id::PeerId,
     protocol::{
         notification::{handle::NotificationHandle, types::Config, NotificationProtocol},
-        ProtocolCommand, TransportService,
+        InnerTransportEvent, ProtocolCommand, TransportService,
     },
     transport::manager::TransportManager,
     types::protocol::ProtocolName,
 };
 
-use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 #[cfg(test)]
 mod notification;
@@ -37,13 +37,18 @@ mod notification;
 mod substream_validation;
 
 /// create new `NotificationProtocol`
-fn make_notification_protocol() -> (NotificationProtocol, NotificationHandle, TransportManager) {
+fn make_notification_protocol() -> (
+    NotificationProtocol,
+    NotificationHandle,
+    TransportManager,
+    Sender<InnerTransportEvent>,
+) {
     let (manager, handle) = TransportManager::new(Keypair::generate());
 
     let peer = PeerId::random();
-    let (transport_service, _tx) = TransportService::new(
+    let (transport_service, tx) = TransportService::new(
         peer,
-        ProtocolName::from("/kad/1"),
+        ProtocolName::from("/notif/1"),
         std::sync::Arc::new(Default::default()),
         handle,
     );
@@ -58,6 +63,7 @@ fn make_notification_protocol() -> (NotificationProtocol, NotificationHandle, Tr
         NotificationProtocol::new(transport_service, config),
         handle,
         manager,
+        tx,
     )
 }
 

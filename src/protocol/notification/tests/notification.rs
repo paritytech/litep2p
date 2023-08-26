@@ -37,7 +37,7 @@ async fn sync_notifications_clogged() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut notif, mut handle, _sender) = make_notification_protocol();
+    let (mut notif, mut handle, _sender, _tx) = make_notification_protocol();
     let (peer, _service, _receiver) = add_peer();
 
     notif.peers.insert(
@@ -92,7 +92,7 @@ async fn async_notifications_clogged() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut notif, mut handle, _sender) = make_notification_protocol();
+    let (mut notif, mut handle, _sender, _tx) = make_notification_protocol();
     let (peer, _service, _receiver) = add_peer();
 
     notif.peers.insert(
