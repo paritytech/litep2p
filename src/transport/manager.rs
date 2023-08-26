@@ -819,3 +819,195 @@ impl TransportManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::ed25519::Keypair;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    #[should_panic]
+    #[cfg(debug_assertions)]
+    fn duplicate_protocol() {
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+
+        manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint(None),
+        );
+        manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            ProtocolCodec::UnsignedVarint(None),
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    #[cfg(debug_assertions)]
+    fn duplicate_transport() {
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+
+        manager.register_transport(SupportedTransport::Tcp);
+        manager.register_transport(SupportedTransport::Tcp);
+    }
+
+    #[tokio::test]
+    async fn tried_to_self_using_peer_id() {
+        let keypair = Keypair::generate();
+        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let (mut manager, _handle) = TransportManager::new(keypair);
+
+        assert!(manager.dial(&local_peer_id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn try_to_dial_over_disabled_transport() {
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let _handle = manager.register_transport(SupportedTransport::Tcp);
+
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Udp(8888))
+            .with(Protocol::QuicV1)
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
+            ));
+
+        assert!(std::matches!(
+            manager.dial_address(address).await,
+            Err(Error::TransportNotSupported(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn successful_dial_reported_to_transport_manager() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+
+        let peer = PeerId::random();
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        assert!(manager.dial_address(dial_address.clone()).await.is_ok());
+        assert!(!manager.pending_connections.is_empty());
+
+        match handle.next().await {
+            Some(TransportManagerCommand::Dial {
+                address,
+                connection,
+            }) => {
+                assert_eq!(address, dial_address);
+                assert_eq!(connection, ConnectionId::from(0usize));
+            }
+            _ => panic!("invalid command received"),
+        }
+
+        handle
+            ._report_connection_established(ConnectionId::from(0usize), peer, dial_address)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn try_to_dial_same_peer_twice() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let _handle = manager.register_transport(SupportedTransport::Tcp);
+
+        let peer = PeerId::random();
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        assert!(manager.dial_address(dial_address.clone()).await.is_ok());
+        assert_eq!(manager.pending_connections.len(), 1);
+
+        assert!(manager.dial_address(dial_address.clone()).await.is_ok());
+        assert_eq!(manager.pending_connections.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn try_to_dial_same_peer_twice_diffrent_address() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let _handle = manager.register_transport(SupportedTransport::Tcp);
+
+        let peer = PeerId::random();
+
+        assert!(manager
+            .dial_address(
+                Multiaddr::empty()
+                    .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+                    .with(Protocol::Tcp(8888))
+                    .with(Protocol::P2p(
+                        Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+                    ))
+            )
+            .await
+            .is_ok());
+        assert_eq!(manager.pending_connections.len(), 1);
+
+        assert!(manager
+            .dial_address(
+                Multiaddr::empty()
+                    .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+                    .with(Protocol::Tcp(8888))
+                    .with(Protocol::P2p(
+                        Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+                    ))
+            )
+            .await
+            .is_ok());
+        assert_eq!(manager.pending_connections.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dial_non_existent_peer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let _handle = manager.register_transport(SupportedTransport::Tcp);
+
+        assert!(manager.dial(&PeerId::random()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn dial_non_peer_with_no_known_addresses() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let _handle = manager.register_transport(SupportedTransport::Tcp);
+
+        let peer = PeerId::random();
+        manager.peers.write().insert(
+            peer,
+            PeerContext {
+                state: PeerState::Disconnected,
+                addresses: HashSet::new(),
+            },
+        );
+
+        assert!(manager.dial(&peer).await.is_err());
+    }
+}
