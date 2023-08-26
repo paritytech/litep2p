@@ -48,6 +48,8 @@ use std::{
     },
 };
 
+// TODO: store `Multiaddr` in `Arc`
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "transport-manager";
 
@@ -433,6 +435,8 @@ impl TransportManager {
         protocol: ProtocolName,
         codec: ProtocolCodec,
     ) -> TransportService {
+        assert!(!self.protocols.contains_key(&protocol));
+
         let (service, sender) = TransportService::new(
             self.local_peer_id,
             protocol.clone(),
@@ -448,6 +452,8 @@ impl TransportManager {
 
     /// Register transport protocol to [`TransportManager`].
     pub fn register_transport(&mut self, transport: SupportedTransport) -> TransportHandle {
+        assert!(!self.transports.contains_key(&transport));
+
         let (tx, rx) = channel(256);
         self.transports.insert(transport, TransportContext { tx });
 
@@ -509,6 +515,8 @@ impl TransportManager {
     ///
     /// Returns an error if address it not valid.
     pub async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?address, "dial remote peer");
+
         if self.listen_addresses.contains(&address) {
             return Err(Error::TriedToDialSelf);
         }
@@ -548,19 +556,35 @@ impl TransportManager {
             }
         }
 
-        let supported_transport = match protocol_stack
+        let (supported_transport, remote_peer_id) = match protocol_stack
             .next()
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Tcp(_) => match protocol_stack.next() {
-                Some(Protocol::Ws(_)) => SupportedTransport::WebSocket,
-                _ => SupportedTransport::Tcp,
+                Some(Protocol::Ws(_)) => match protocol_stack.next() {
+                    Some(Protocol::P2p(hash)) => (
+                        SupportedTransport::WebSocket,
+                        PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
+                    ),
+                    _ => return Err(Error::TransportNotSupported(address.clone())),
+                },
+                Some(Protocol::P2p(hash)) => (
+                    SupportedTransport::Tcp,
+                    PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
+                ),
+                _ => return Err(Error::TransportNotSupported(address.clone())),
             },
             Protocol::Udp(_) => match protocol_stack
                 .next()
                 .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
             {
-                Protocol::QuicV1 => SupportedTransport::Quic,
+                Protocol::QuicV1 => match protocol_stack.next() {
+                    Some(Protocol::P2p(hash)) => (
+                        SupportedTransport::Quic,
+                        PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
+                    ),
+                    _ => return Err(Error::AddressError(AddressError::PeerIdMissing)),
+                },
                 _ => return Err(Error::TransportNotSupported(address.clone())),
             },
             protocol => {
@@ -574,34 +598,31 @@ impl TransportManager {
             }
         };
 
-        let remote_peer_id = match protocol_stack
-            .next()
-            .ok_or_else(|| Error::AddressError(AddressError::PeerIdMissing))?
         {
-            Protocol::P2p(hash) => PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
-            _ => return Err(Error::AddressError(AddressError::PeerIdMissing)),
-        };
+            let mut peers = self.peers.write();
 
-        match self.peers.write().get_mut(&remote_peer_id) {
-            None => {
-                self.peers.write().insert(
-                    remote_peer_id,
-                    PeerContext {
-                        state: PeerState::Dialing(address.clone()),
-                        addresses: HashSet::from_iter(vec![address.clone()].into_iter()),
-                    },
-                );
-            }
-            Some(PeerContext {
-                state: PeerState::Dialing(_) | PeerState::Connected(_),
-                ..
-            }) => return Ok(()),
-            Some(PeerContext {
-                ref mut state,
-                addresses,
-            }) => {
-                addresses.insert(address.clone());
-                *state = PeerState::Dialing(address.clone());
+            match peers.get_mut(&remote_peer_id) {
+                None => {
+                    drop(peers);
+                    self.peers.write().insert(
+                        remote_peer_id,
+                        PeerContext {
+                            state: PeerState::Dialing(address.clone()),
+                            addresses: HashSet::from_iter(vec![address.clone()].into_iter()),
+                        },
+                    );
+                }
+                Some(PeerContext {
+                    state: PeerState::Dialing(_) | PeerState::Connected(_),
+                    ..
+                }) => return Ok(()),
+                Some(PeerContext {
+                    ref mut state,
+                    addresses,
+                }) => {
+                    addresses.insert(address.clone());
+                    *state = PeerState::Dialing(address.clone());
+                }
             }
         }
 
@@ -685,11 +706,92 @@ impl TransportManager {
         Ok(new_address)
     }
 
+    /// Handle transport manager event.
+    fn on_transport_manager_event(
+        &mut self,
+        event: TransportManagerEvent,
+    ) -> TransportManagerEvent {
+        match &event {
+            TransportManagerEvent::DialFailure {
+                address,
+                connection,
+                error,
+            } => match self.pending_connections.remove(&connection) {
+                None => {
+                    tracing::error!(target: LOG_TARGET, "dial failed for a connection that doesn't exist");
+                    debug_assert!(false);
+                    event
+                }
+                Some(peer) => {
+                    tracing::debug!(target: LOG_TARGET, ?peer, ?address, ?error, "dial failure");
+
+                    if let Some(context) = self.peers.write().get_mut(&peer) {
+                        // TODO: if a protocol dialed the peer, inform them about dial failure
+                        context.state = PeerState::Disconnected;
+                    }
+
+                    event
+                }
+            },
+            TransportManagerEvent::ConnectionEstablished {
+                peer,
+                connection,
+                address,
+            } => {
+                // TODO: remove duplicate code
+                match self.pending_connections.remove(&connection) {
+                    Some(dialed_peer) => {
+                        if &dialed_peer != peer {
+                            tracing::warn!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer IDs do not match");
+                            // TODO: which peer ID should be reported to the protocol?
+                            todo!();
+                        }
+
+                        match self.peers.write().get_mut(&dialed_peer) {
+                            Some(context) => {
+                                context.state = PeerState::Connected(address.clone());
+                                context.addresses.insert(address.clone());
+                            }
+                            None => {
+                                self.peers.write().insert(
+                                    *peer,
+                                    PeerContext {
+                                        state: PeerState::Connected(address.clone()),
+                                        addresses: HashSet::from_iter(
+                                            vec![address.clone()].into_iter(),
+                                        ),
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    None => {
+                        self.peers.write().insert(
+                            *peer,
+                            PeerContext {
+                                state: PeerState::Connected(address.clone()),
+                                addresses: HashSet::from_iter(vec![address.clone()].into_iter()),
+                            },
+                        );
+                    }
+                }
+
+                event
+            }
+            TransportManagerEvent::ConnectionClosed { peer } => {
+                if let Some(context) = self.peers.write().get_mut(peer) {
+                    context.state = PeerState::Disconnected;
+                }
+                event
+            }
+        }
+    }
+
     /// Poll next event from [`TransportManager`].
     pub async fn next(&mut self) -> Option<TransportManagerEvent> {
         loop {
             tokio::select! {
-                event = self.event_rx.recv() => return event,
+                event = self.event_rx.recv() => return Some(self.on_transport_manager_event(event?)),
                 event = self.pending_dns_resolves.select_next_some(), if !self.pending_dns_resolves.is_empty() => {
                     match self.on_resolved_dns_address(event.1.clone(), event.2).await {
                         Ok(address) => {

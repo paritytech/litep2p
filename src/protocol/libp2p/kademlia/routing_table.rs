@@ -29,7 +29,8 @@ use crate::{
     },
 };
 
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 
 /// Number of k-buckets.
 const NUM_BUCKETS: usize = 256;
@@ -136,6 +137,19 @@ impl RoutingTable {
             ?connection,
             "add known peer"
         );
+
+        // TODO: this has to be moved elsewhere at some point
+        let addresses: Vec<Multiaddr> = addresses
+            .into_iter()
+            .filter_map(|address| {
+                let last = address.iter().last();
+                if std::matches!(last, Some(Protocol::P2p(_))) {
+                    Some(address)
+                } else {
+                    Some(address.with(Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).ok()?)))
+                }
+            })
+            .collect();
 
         match (self.entry(Key::from(peer)), addresses.is_empty()) {
             (KBucketEntry::Occupied(entry), false) => {

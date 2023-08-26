@@ -509,6 +509,7 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer.to_bytes()).unwrap(),
             ));
+        manager.dial_address(address.clone()).await.unwrap();
 
         assert!(transport.pending_dials.is_empty());
 

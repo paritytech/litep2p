@@ -38,11 +38,7 @@ use std::{
 };
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
-    let mut address = litep2p2.listen_addresses().next().unwrap().clone();
-    let address = address.with(multiaddr::Protocol::P2p(
-        multihash::Multihash::from_bytes(&litep2p2.local_peer_id().to_bytes()).unwrap(),
-    ));
-    tracing::error!("addrss: {address:?}");
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
     litep2p1.connect(address).await.unwrap();
 
     let mut litep2p1_connected = false;

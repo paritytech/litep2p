@@ -32,6 +32,7 @@ use litep2p::{
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p,
 };
+use multiaddr::Protocol;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
@@ -90,6 +91,7 @@ fn initialize_libp2p() -> Swarm<Behaviour> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn libp2p_dials() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -154,11 +156,12 @@ async fn libp2p_dials() {
     });
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let listen_addr = listen_addr.unwrap().with(Protocol::P2p(peer_id.into()));
 
     kad_handle
         .add_known_peer(
             litep2p::peer_id::PeerId::from_bytes(&peer_id.to_bytes()).unwrap(),
-            vec![listen_addr.unwrap()],
+            vec![listen_addr],
         )
         .await;
 

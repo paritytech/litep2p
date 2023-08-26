@@ -106,15 +106,19 @@ async fn dial_failure() {
         .with_libp2p_ping(ping_config2)
         .build();
 
-    // let (config1, _ping_event_stream1) = generate_config();
-    // let (config2, _ping_event_stream2) = generate_config();
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
-    litep2p1
-        .connect("/ip6/::1/tcp/1".parse().unwrap())
-        .await
-        .unwrap();
+    let address = Multiaddr::empty()
+        .with(Protocol::Ip6(std::net::Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0, 0, 1,
+        )))
+        .with(Protocol::Tcp(1))
+        .with(Protocol::P2p(
+            Multihash::from_bytes(&litep2p2.local_peer_id().to_bytes()).unwrap(),
+        ));
+
+    litep2p1.connect(address).await.unwrap();
 
     tokio::spawn(async move {
         loop {
@@ -160,6 +164,7 @@ async fn connect_over_dns() {
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let peer2 = *litep2p2.local_peer_id();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
     let tcp = address.iter().skip(1).next().unwrap();
@@ -167,6 +172,9 @@ async fn connect_over_dns() {
     let mut new_address = Multiaddr::empty();
     new_address.push(Protocol::Dns("localhost".into()));
     new_address.push(tcp);
+    new_address.push(Protocol::P2p(
+        Multihash::from_bytes(&peer2.to_bytes()).unwrap(),
+    ));
 
     litep2p1.connect(new_address).await.unwrap();
     let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
@@ -389,21 +397,10 @@ async fn dial_quic_peer_id_missing() {
         .with(Protocol::Udp(address.port()))
         .with(Protocol::QuicV1);
 
-    litep2p.connect(address.clone()).await.unwrap();
-
-    let Some(Litep2pEvent::DialFailure {
-        address: dial_address,
-        error,
-    }) = litep2p.next_event().await
-    else {
-        panic!("invalid event received");
-    };
-
-    assert_eq!(dial_address, address);
-    assert!(std::matches!(
-        error,
-        Error::AddressError(AddressError::PeerIdMissing)
-    ));
+    match litep2p.connect(address.clone()).await {
+        Err(Error::AddressError(AddressError::PeerIdMissing)) => {}
+        _ => panic!("dial not supposed to succeed"),
+    }
 }
 
 #[tokio::test]
@@ -424,18 +421,9 @@ async fn dial_self_tcp() {
 
     let mut litep2p = Litep2p::new(config).await.unwrap();
 
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
 
     // dial without peer id attached
-    assert!(std::matches!(
-        litep2p.connect(address.clone()).await,
-        Err(Error::TriedToDialSelf)
-    ));
-
-    // dial with peer id attached
-    address.push(Protocol::P2p(
-        Multihash::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap(),
-    ));
     assert!(std::matches!(
         litep2p.connect(address.clone()).await,
         Err(Error::TriedToDialSelf)
@@ -459,18 +447,9 @@ async fn dial_self_quic() {
 
     let mut litep2p = Litep2p::new(config).await.unwrap();
 
-    let mut address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().next().unwrap().clone();
 
     // dial without peer id attached
-    assert!(std::matches!(
-        litep2p.connect(address.clone()).await,
-        Err(Error::TriedToDialSelf)
-    ));
-
-    // dial with peer id attached
-    address.push(Protocol::P2p(
-        Multihash::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap(),
-    ));
     assert!(std::matches!(
         litep2p.connect(address.clone()).await,
         Err(Error::TriedToDialSelf)

@@ -544,9 +544,10 @@ impl AsyncWrite for Substream {
 mod tests {
     use super::*;
     use crate::{
-        crypto::ed25519::Keypair,
+        crypto::{ed25519::Keypair, PublicKey},
         transport::manager::{SupportedTransport, TransportManager, TransportManagerEvent},
     };
+    use multihash::Multihash;
     use tokio::{io::AsyncWriteExt, net::TcpListener};
 
     #[tokio::test]
@@ -558,6 +559,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -566,6 +574,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -604,6 +614,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -612,6 +629,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         let (Ok(mut dialer), Ok((listener, dialer_address))) = tokio::join!(
             TcpStream::connect(address.clone()),
@@ -656,6 +675,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -664,6 +690,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -708,6 +736,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -716,6 +751,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
             TcpStream::connect(address.clone()),
@@ -768,6 +805,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -776,6 +820,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
             TcpStream::connect(address.clone()),
@@ -826,6 +872,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -834,6 +887,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -876,6 +931,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -884,6 +946,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -919,6 +983,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -927,6 +998,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         let (Ok(_dialer), Ok((listener, dialer_address))) = tokio::join!(
             TcpStream::connect(address.clone()),
@@ -969,6 +1042,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -977,6 +1057,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
             TcpStream::connect(address.clone()),
@@ -1043,6 +1125,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -1051,6 +1140,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -1107,6 +1198,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -1115,6 +1213,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
             TcpStream::connect(address.clone()),
@@ -1175,6 +1275,13 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
         let (mut manager, _handle) = TransportManager::new(keypair);
 
         let _service = manager.register_protocol(
@@ -1183,6 +1290,8 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
+        let _ = manager.dial_address(multiaddr).await;
+        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(

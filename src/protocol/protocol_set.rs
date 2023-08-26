@@ -30,11 +30,12 @@ use crate::{
     DEFAULT_CHANNEL_SIZE,
 };
 
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender, WeakSender};
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -212,7 +213,19 @@ impl Transport for TransportService {
     }
 
     fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
-        self.transport_handle.add_know_address(peer, addresses);
+        // TODO: this would have to be in transportmanager
+        let addresses: HashSet<Multiaddr> = addresses
+            .filter_map(|address| match address.iter().last() {
+                Some(Protocol::P2p(_)) => {
+                    Some(address.with(Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).ok()?)))
+                }
+                // TODO: check if peer id can be inserted here
+                _ => Some(address),
+            })
+            .collect();
+
+        self.transport_handle
+            .add_know_address(peer, addresses.into_iter());
     }
 
     fn disconnect(&mut self, peer: &PeerId) {

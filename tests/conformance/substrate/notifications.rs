@@ -300,17 +300,13 @@ async fn litep2p_open_substream() {
     }
 }
 
-// TODO: implemement
 #[tokio::test]
-#[ignore]
 async fn substrate_reject_substream() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
     // set inbound peer to count 0 so `ProtocolController` will reject the peer
-    // TODO: once keep alive timeout detection is fixed, open two substreams
-    // and reject only on the second substream so the connection is kept open
     let (mut libp2p, _peer_store_handle) = initialize_libp2p(0u32, 1u32);
     let (mut litep2p, mut handle) = initialize_litep2p().await;
 
@@ -338,6 +334,7 @@ async fn substrate_reject_substream() {
                     assert_eq!(error, NotificationError::Rejected);
                     break;
                 }
+                NotificationEvent::NotificationStreamClosed { .. } => break,
                 event => tracing::error!("unhanled notification event: {event:?}"),
             }
         }
@@ -345,7 +342,6 @@ async fn substrate_reject_substream() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn litep2p_reject_substream() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -372,6 +368,7 @@ async fn litep2p_reject_substream() {
                 event => tracing::info!("unhanled libp2p event: {event:?}"),
             },
             event = litep2p.next_event() => match event {
+                Some(Litep2pEvent::ConnectionClosed { .. }) => break,
                 event => tracing::info!("unhanled litep2p event: {event:?}"),
             },
             event = handle.next() => match event.unwrap() {
@@ -388,6 +385,7 @@ async fn litep2p_reject_substream() {
     }
 }
 
+// FIXME:
 #[tokio::test]
 async fn substrate_close_substream() {
     let _ = tracing_subscriber::fmt()
@@ -494,6 +492,10 @@ async fn litep2p_close_substream() {
     let address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.dial(address).unwrap();
 
+    let mut notif_sink = None;
+    let mut notif_count = 0;
+    let mut peerse = None;
+
     loop {
         tokio::select! {
             event = libp2p.select_next_some() => match event {
@@ -509,12 +511,22 @@ async fn litep2p_close_substream() {
                     assert!(negotiated_fallback.is_none());
                     assert!(!inbound);
 
-                    notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]).unwrap();
-                    notifications_sink.send_sync_notification(vec![4, 4, 4, 4]);
+                    // notifications_sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]).unwrap();
+                    // notifications_sink.send_sync_notification(vec![4, 4, 4, 4]);
+                    notif_sink = Some(notifications_sink);
                 }
                 SwarmEvent::Behaviour(NotificationsOut::Notification { peer_id, set_id, .. }) => {
                     assert_eq!(peer_id.to_bytes(), litep2p_peer.to_bytes());
                     assert_eq!(set_id, SetId::from(0usize));
+
+                    notif_count += 1;
+                    if notif_count == 2 {
+                        handle.close_substream(peerse.unwrap()).await;
+                    }
+                }
+                SwarmEvent::Behaviour(NotificationsOut::CustomProtocolClosed { .. }) => {
+                    tracing::error!("CUSTOM PROTOCOL CLOSE");
+                    break;
                 }
                 event => tracing::info!("unhanled libp2p event: {event:?}"),
             },
@@ -536,11 +548,28 @@ async fn litep2p_close_substream() {
 
                     handle.send_sync_notification(peer, vec![1, 1, 1, 1]).unwrap();
                     handle.send_async_notification(peer, vec![2, 2, 2, 2]).await.unwrap();
+                    peerse = Some(peer);
                 }
                 NotificationEvent::NotificationReceived { peer, .. } => {
                     assert_eq!(peer.to_bytes(), libp2p_peer.to_bytes());
+                    notif_count += 1;
+
+                    // if notif_count == 2 {
+                    //     handle.close_substream(peer).await;
+                    // }
                 }
                 event => tracing::error!("unhanled notification event: {event:?}"),
+            },
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                // if notif_count == 0 {
+                //     handle.close_substream(peer).await;
+                // }
+                // notif_count += 1;
+                // tracing::error!("SNED NOTIFICATION MAYBE ");
+                // if let Some(sink) = &notif_sink {
+                //     tracing::error!("YES");
+                //     sink.reserve_notification().await.unwrap().send(vec![3, 3, 3, 3]).unwrap();
+                // }
             }
         }
     }

@@ -305,6 +305,7 @@ mod tests {
         },
         types::protocol::ProtocolName,
     };
+    use multihash::Multihash;
     use tokio::sync::mpsc::channel;
 
     #[test]
@@ -540,14 +541,20 @@ mod tests {
         .await
         .unwrap();
 
-        let address = Multiaddr::empty()
-            .with(Protocol::from(std::net::Ipv4Addr::new(255, 254, 253, 252)))
-            .with(Protocol::Tcp(8888));
+        let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let multiaddr = Multiaddr::empty()
+            .with(Protocol::Ip4(std::net::Ipv4Addr::new(255, 254, 253, 252)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+            ));
+        manager.dial_address(multiaddr.clone()).await.unwrap();
 
         assert!(transport.pending_dials.is_empty());
 
         match transport
-            .on_dial_peer(address.clone(), ConnectionId::from(0usize))
+            .on_dial_peer(multiaddr.clone(), ConnectionId::from(0usize))
             .await
         {
             Ok(()) => {}

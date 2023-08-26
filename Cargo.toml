@@ -63,7 +63,7 @@ features = ["dangerous_configuration"] # Must enable this to allow for custom ve
 
 [dev-dependencies]
 async-channel = "1.8.0"
-libp2p = { version = "0.51.3", features = [
+libp2p = { path = "/home/altonen/code/rust/rust-libp2p/libp2p", features = [
     "tokio",
     "dns",
     "identify",
