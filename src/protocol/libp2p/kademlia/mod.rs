@@ -163,8 +163,12 @@ impl Kademlia {
     /// The peer is kept in the routing table but its connection state is set
     /// as `NotConnected`, meaning it can be evicted from a k-bucket if another
     /// peer that shares the bucket connects.
-    async fn disconnect_peer(&mut self, peer: PeerId) {
+    async fn disconnect_peer(&mut self, peer: PeerId, query: Option<QueryId>) {
         tracing::debug!(target: LOG_TARGET, ?peer, "disconnect peer");
+
+        if let Some(query) = query {
+            self.engine.register_response_failure(query, peer);
+        }
 
         if let Some(mut substream) = self.substreams.remove(&peer) {
             let _ = substream.close().await;
@@ -205,10 +209,7 @@ impl Kademlia {
                     None => match self.peers.get_mut(&peer.peer) {
                         Some(context) => match self.service.open_substream(peer.peer).await {
                             Ok(_substream_id) => context.add_pending_query(query_id),
-                            Err(_error) => {
-                                self.engine.register_response_failure(query_id, peer.peer);
-                                self.disconnect_peer(peer.peer).await;
-                            }
+                            Err(_error) => self.disconnect_peer(peer.peer, Some(query_id)).await,
                         },
                         None => {
                             tracing::error!(target: LOG_TARGET, addresses = ?peer.addresses, "open connection to peer");
@@ -286,8 +287,7 @@ impl Kademlia {
                 "failed to send `FIND_NODE` message to peer"
             );
 
-            self.engine.register_response_failure(query, peer);
-            self.disconnect_peer(peer).await;
+            self.disconnect_peer(peer, Some(query)).await;
             return self.poll_query_engine(query).await;
         }
 
@@ -336,7 +336,7 @@ impl Kademlia {
 
                 if let Err(_error) = substream.send(message.into()).await {
                     // TODO: check if peer has an active query in progress
-                    self.disconnect_peer(peer).await;
+                    self.disconnect_peer(peer, None).await;
                 }
             }
             KademliaMessage::FindNodeResponse { peers } => {
@@ -423,7 +423,7 @@ impl Kademlia {
                         }
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
-                        self.disconnect_peer(peer).await;
+                        self.disconnect_peer(peer, None).await;
                     }
                     Some(TransportEvent::SubstreamOpened { peer, direction, substream, .. }) => {
                         match direction {

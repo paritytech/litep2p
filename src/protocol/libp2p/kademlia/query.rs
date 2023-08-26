@@ -293,6 +293,7 @@ impl QueryEngine {
     }
 
     /// Poll next action from [`QueryEngine`].
+    // TODO: this has iterate over all quries
     pub fn next_action(&mut self, query_id: QueryId) -> Option<QueryAction> {
         let mut query = self.queries.get_mut(&query_id)?;
 
