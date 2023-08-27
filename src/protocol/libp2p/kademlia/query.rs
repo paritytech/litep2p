@@ -58,11 +58,23 @@ struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
 
     /// Responses.
     responses: BTreeMap<Distance, KademliaPeer>,
+
+    /// Replication factor.
+    replication_factor: usize,
+
+    /// Parallelism factor.
+    parallelism_factor: usize,
 }
 
 impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     /// Create new [`FindNodeContext`].
-    fn new(query: QueryId, target: Key<T>, candidates: VecDeque<KademliaPeer>) -> Self {
+    fn new(
+        query: QueryId,
+        target: Key<T>,
+        candidates: VecDeque<KademliaPeer>,
+        replication_factor: usize,
+        parallelism_factor: usize,
+    ) -> Self {
         Self {
             query,
             target,
@@ -70,6 +82,8 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             pending: HashMap::new(),
             queried: HashMap::new(),
             responses: BTreeMap::new(),
+            replication_factor,
+            parallelism_factor,
         }
     }
 
@@ -100,7 +114,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         // TODO: could this be written in another way?
         // TODO: replication factor must not be hardcoded
         // TODO: only insert nodes from whom a response was received
-        match self.responses.len() < 20 {
+        match self.responses.len() < self.replication_factor {
             true => {
                 self.responses.insert(distance, peer);
             }
@@ -148,7 +162,6 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
     /// Get next action for a `FIND_NODE` query.
     // TODO: refactor this function
-    // TODO: don't hardcode parallelism or replication factors
     fn next_action(&mut self) -> Option<QueryAction> {
         // we didn't receive any responses and there are no candidates or pending queries left.
         if self.responses.is_empty() && self.pending.is_empty() && self.candidates.is_empty() {
@@ -156,8 +169,10 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
 
         // there are still possible peers to query or peers who are being queried
-        if self.responses.len() < 20 && (!self.pending.is_empty() || !self.candidates.is_empty()) {
-            if self.pending.len() == 3 || self.candidates.is_empty() {
+        if self.responses.len() < self.replication_factor
+            && (!self.pending.is_empty() || !self.candidates.is_empty())
+        {
+            if self.pending.len() == self.parallelism_factor || self.candidates.is_empty() {
                 return None;
             }
 
@@ -257,8 +272,11 @@ pub struct QueryEngine {
     /// Next query ID.
     next_query_id: usize,
 
+    /// Replication factor.
+    replication_factor: usize,
+
     /// Parallelism factor.
-    _parallelism: usize,
+    parallelism_factor: usize,
 
     /// Active queries.
     queries: HashMap<QueryId, QueryType>,
@@ -266,9 +284,10 @@ pub struct QueryEngine {
 
 impl QueryEngine {
     /// Create new [`QueryEngine`].
-    pub fn new(_parallelism: usize) -> Self {
+    pub fn new(replication_factor: usize, parallelism_factor: usize) -> Self {
         Self {
-            _parallelism,
+            replication_factor,
+            parallelism_factor,
             next_query_id: 0usize,
             queries: HashMap::new(),
         }
@@ -301,7 +320,13 @@ impl QueryEngine {
         self.queries.insert(
             query_id,
             QueryType::FindNode {
-                context: FindNodeContext::new(query_id, Key::from(target), candidates),
+                context: FindNodeContext::new(
+                    query_id,
+                    Key::from(target),
+                    candidates,
+                    self.replication_factor,
+                    self.parallelism_factor,
+                ),
             },
         );
 
@@ -330,7 +355,13 @@ impl QueryEngine {
             query_id,
             QueryType::PutRecord {
                 record,
-                context: FindNodeContext::new(query_id, target, candidates),
+                context: FindNodeContext::new(
+                    query_id,
+                    target,
+                    candidates,
+                    self.replication_factor,
+                    self.parallelism_factor,
+                ),
             },
         );
 
@@ -358,7 +389,13 @@ impl QueryEngine {
         self.queries.insert(
             query_id,
             QueryType::GetRecord {
-                context: FindNodeContext::new(query_id, target, candidates),
+                context: FindNodeContext::new(
+                    query_id,
+                    target,
+                    candidates,
+                    self.replication_factor,
+                    self.parallelism_factor,
+                ),
             },
         );
 
@@ -517,7 +554,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let mut engine = QueryEngine::new(3usize);
+        let mut engine = QueryEngine::new(20usize, 3usize);
         let target_peer = PeerId::random();
         let _target_key = Key::from(target_peer);
 
@@ -549,7 +586,7 @@ mod tests {
 
     #[test]
     fn lookup_paused() {
-        let mut engine = QueryEngine::new(3usize);
+        let mut engine = QueryEngine::new(20usize, 3usize);
         let target_peer = PeerId::random();
         let _target_key = Key::from(target_peer);
 
@@ -572,12 +609,12 @@ mod tests {
     }
 
     #[test]
-    fn query_succeeds() {
+    fn find_node_query_succeeds() {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let mut engine = QueryEngine::new(3usize);
+        let mut engine = QueryEngine::new(20usize, 3usize);
         let target_peer = make_peer_id(0, 0);
         let target_key = Key::from(target_peer);
 

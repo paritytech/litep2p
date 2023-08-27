@@ -128,7 +128,7 @@ impl Kademlia {
             pending_dials: HashMap::new(),
             substreams: SubstreamSet::new(),
             routing_table: RoutingTable::new(local_key),
-            engine: QueryEngine::new(PARALLELISM_FACTOR),
+            engine: QueryEngine::new(config.replication_factor, PARALLELISM_FACTOR),
         }
     }
 
