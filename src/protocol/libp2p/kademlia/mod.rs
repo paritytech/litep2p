@@ -106,6 +106,9 @@ pub struct Kademlia {
     /// Record store.
     store: MemoryStore,
 
+    /// Pending outbound substreams.
+    pending_substreams: HashMap<SubstreamId, PeerId>,
+
     /// Pending dials.
     pending_dials: HashMap<PeerId, QueryId>,
 
@@ -127,6 +130,7 @@ impl Kademlia {
             _local_key: local_key.clone(),
             pending_dials: HashMap::new(),
             substreams: SubstreamSet::new(),
+            pending_substreams: HashMap::new(),
             routing_table: RoutingTable::new(local_key),
             engine: QueryEngine::new(config.replication_factor, PARALLELISM_FACTOR),
         }
@@ -163,7 +167,7 @@ impl Kademlia {
     /// as `NotConnected`, meaning it can be evicted from a k-bucket if another
     /// peer that shares the bucket connects.
     async fn disconnect_peer(&mut self, peer: PeerId, query: Option<QueryId>) {
-        tracing::debug!(target: LOG_TARGET, ?peer, "disconnect peer");
+        tracing::debug!(target: LOG_TARGET, ?peer, ?query, "disconnect peer");
 
         if let Some(query) = query {
             self.engine.register_response_failure(query, peer);
@@ -194,6 +198,7 @@ impl Kademlia {
             ?substream_id,
             "outbound substream opened"
         );
+        let _ = self.pending_substreams.remove(&substream_id);
 
         // if the substream was opened but there is no query pending for the peer,
         // just store the opened substream in the `SubstreamSet` and return early
@@ -295,14 +300,22 @@ impl Kademlia {
     }
 
     /// Failed to open substream to remote peer.
-    fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
-        // TODO: report to query engine
+    async fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
         tracing::debug!(
             target: LOG_TARGET,
             ?substream,
             ?error,
             "failed to open substream"
         );
+
+        let Some(peer) = self.pending_substreams.remove(&substream) else {
+            tracing::debug!(target: LOG_TARGET, ?substream, "outbound substream failed for non-existent peer");
+            return;
+        };
+
+        if let Some(context) = self.peers.get(&peer) {
+            self.disconnect_peer(peer, context.query).await;
+        }
     }
 
     /// Handle next query action.
@@ -329,10 +342,12 @@ impl Kademlia {
                         self.pending_dials.insert(peer, query);
                         Ok(())
                     }
-                    Ok(_) => {
-                        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "open outbound substream for peer");
+                    Ok(substream_id) => {
+                        tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?substream_id, "open outbound substream for peer");
 
                         self.peers.insert(peer, PeerContext { query: Some(query) });
+                        self.pending_substreams.insert(substream_id, peer);
+
                         Ok(())
                     }
                 },
@@ -407,7 +422,7 @@ impl Kademlia {
                         }
                     },
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
-                        self.on_substream_open_failure(substream, error);
+                        self.on_substream_open_failure(substream, error).await;
                     }
                     Some(TransportEvent::DialFailure { .. }) => todo!(),
                     None => return Err(Error::EssentialTaskClosed),
