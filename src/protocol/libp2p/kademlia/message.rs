@@ -30,7 +30,7 @@ use prost::Message;
 const LOG_TARGET: &str = "ifps::kademlia::message";
 
 /// Kademlia message.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum KademliaMessage {
     /// Inbound `FIND_NODE` query.
     #[allow(unused)]

@@ -18,8 +18,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
 use crate::{
     peer_id::PeerId,
     protocol::libp2p::kademlia::{
@@ -169,7 +167,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
         // query succeeded with one or more results
         if self.pending.is_empty() && self.candidates.is_empty() {
-            return Some(QueryAction::QueryFailed { query: self.query });
+            return Some(QueryAction::QuerySucceeded { query: self.query });
         }
 
         // check if any candidate has lower distance thant the current worst
@@ -234,6 +232,9 @@ pub enum QueryAction {
     FindNodeQuerySucceeded {
         /// ID of the query that succeeded.
         query: QueryId,
+
+        /// Target peer.
+        target: PeerId,
 
         /// Peers that were found.
         peers: Vec<KademliaPeer>,
@@ -426,12 +427,10 @@ impl QueryEngine {
     }
 
     /// Get next action for `peer` from the [`QueryEngine`].
-    pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
-        let query = self.pending_queries.remove(peer)?;
+    pub fn next_peer_action(&mut self, query: &QueryId, peer: &PeerId) -> Option<QueryAction> {
+        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "get next peer action");
 
-        tracing::trace!(target: LOG_TARGET, ?peer, ?query, "get next peer action");
-
-        match self.queries.get_mut(&query) {
+        match self.queries.get_mut(query) {
             None => {
                 tracing::warn!(target: LOG_TARGET, ?query, ?peer, "pending query doesn't exist for peer");
                 debug_assert!(false);
@@ -450,6 +449,7 @@ impl QueryEngine {
         match self.queries.remove(&query).expect("query to exist") {
             QueryType::FindNode { context } => QueryAction::FindNodeQuerySucceeded {
                 query,
+                target: context.target.into_preimage(),
                 peers: context
                     .responses
                     .into_iter()
