@@ -43,13 +43,13 @@ impl MemoryStore {
     }
 
     /// Try to get record from local store for `key`.
-    fn get(&self, key: &Key) -> Option<&Record> {
+    pub fn get(&self, key: &Key) -> Option<&Record> {
         self.records.get(key)
     }
 
-    /// Store `value` to local store under `key`.
-    fn put(&mut self, key: Key, value: Record) {
-        self.records.insert(key, value);
+    /// Store record.
+    pub fn put(&mut self, record: Record) {
+        self.records.insert(record.key.clone(), record);
     }
 
     /// Poll next event from the store.

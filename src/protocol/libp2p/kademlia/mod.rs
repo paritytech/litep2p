@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(unused)]
+
 use crate::{
     error::Error,
     peer_id::PeerId,
@@ -26,8 +28,9 @@ use crate::{
             bucket::KBucketEntry,
             handle::KademliaCommand,
             message::KademliaMessage,
-            query::{QueryAction, QueryEngine, QueryId},
+            query::{QueryEngine, QueryId},
             routing_table::RoutingTable,
+            store::MemoryStore,
             types::{ConnectionType, Key},
         },
         Direction, Transport, TransportEvent, TransportService,
@@ -42,11 +45,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
-// TODO: move this to `src/lib.rs` maybe?
-pub use crate::protocol::libp2p::kademlia::{
+pub use {
     config::{Config, ConfigBuilder},
     handle::{KademliaEvent, KademliaHandle},
-    record::Key as RecordKey,
+    record::{Key as RecordKey, Record},
 };
 
 /// Logging target for the file.
@@ -110,6 +112,9 @@ pub struct Kademlia {
     /// Routing table.
     routing_table: RoutingTable,
 
+    /// Record store.
+    store: MemoryStore,
+
     /// Pending dials.
     pending_dials: HashMap<PeerId, QueryId>,
 
@@ -126,6 +131,7 @@ impl Kademlia {
             service,
             peers: HashMap::new(),
             cmd_rx: config.cmd_rx,
+            store: MemoryStore::new(),
             _event_tx: config.event_tx,
             _local_key: local_key.clone(),
             pending_dials: HashMap::new(),
@@ -142,6 +148,7 @@ impl Kademlia {
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
                 // TODO: add peer to routing table
+                // TODO: verify that peer limit is respected
                 let query = self.pending_dials.remove(&peer);
                 entry.insert(PeerContext { query });
 
@@ -166,8 +173,8 @@ impl Kademlia {
     async fn disconnect_peer(&mut self, peer: PeerId, query: Option<QueryId>) {
         tracing::debug!(target: LOG_TARGET, ?peer, "disconnect peer");
 
-        if let Some(query) = query {
-            self.engine.register_response_failure(query, peer);
+        if let Some(_query) = query {
+            // self.engine.register_response_failure(query, peer);
         }
 
         if let Some(mut substream) = self.substreams.remove(&peer) {
@@ -186,57 +193,57 @@ impl Kademlia {
     async fn poll_query_engine(&mut self, query_id: QueryId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?query_id, "poll query engine");
 
-        // TODO: this is such an ugly function, refactor it
-        while let Some(action) = self.engine.next_action(query_id) {
-            match action {
-                QueryAction::SendFindNode { peer } => match self.substreams.get_mut(&peer.peer) {
-                    Some(substream) => {
-                        let message = KademliaMessage::find_node(peer.peer);
+        // // TODO: this is such an ugly function, refactor it
+        // while let Some(action) = self.engine.next_action(query_id) {
+        //     match action {
+        //         QueryAction::SendFindNode { peer } => match self.substreams.get_mut(&peer.peer) {
+        //             Some(substream) => {
+        //                 let message = KademliaMessage::find_node(peer.peer);
 
-                        tracing::warn!("SEND FIND NODE TO {}", peer.peer);
+        //                 tracing::warn!("SEND FIND NODE TO {}", peer.peer);
 
-                        match substream.send(message.into()).await {
-                            Err(_error) => {
-                                self.engine.register_response_failure(query_id, peer.peer)
-                            }
-                            Ok(_) => self
-                                .peers
-                                .get_mut(&peer.peer)
-                                .ok_or(Error::PeerDoesntExist(peer.peer))?
-                                .add_pending_query(query_id),
-                        }
-                    }
-                    None => match self.peers.get_mut(&peer.peer) {
-                        Some(context) => match self.service.open_substream(peer.peer).await {
-                            Ok(_substream_id) => context.add_pending_query(query_id),
-                            Err(_error) => self.disconnect_peer(peer.peer, Some(query_id)).await,
-                        },
-                        None => {
-                            tracing::error!(target: LOG_TARGET, addresses = ?peer.addresses, "open connection to peer");
+        //                 match substream.send(message.into()).await {
+        //                     Err(_error) => {
+        //                         self.engine.register_response_failure(query_id, peer.peer)
+        //                     }
+        //                     Ok(_) => self
+        //                         .peers
+        //                         .get_mut(&peer.peer)
+        //                         .ok_or(Error::PeerDoesntExist(peer.peer))?
+        //                         .add_pending_query(query_id),
+        //                 }
+        //             }
+        //             None => match self.peers.get_mut(&peer.peer) {
+        //                 Some(context) => match self.service.open_substream(peer.peer).await {
+        //                     Ok(_substream_id) => context.add_pending_query(query_id),
+        //                     Err(_error) => self.disconnect_peer(peer.peer, Some(query_id)).await,
+        //                 },
+        //                 None => {
+        //                     tracing::error!(target: LOG_TARGET, addresses = ?peer.addresses, "open connection to peer");
 
-                            self.service
-                                .dial_address(peer.addresses[0].clone())
-                                .await
-                                .unwrap();
-                            self.pending_dials.insert(peer.peer, query_id);
-                        }
-                    },
-                },
-                QueryAction::QuerySucceeded { target, peers } => {
-                    let peers = peers
-                        .into_iter()
-                        .map(|info| (info.peer, info.addresses))
-                        .collect();
-                    self._event_tx
-                        .send(KademliaEvent::FindNodeResult { target, peers })
-                        .await?;
-                }
-                QueryAction::QueryFailed { query } => {
-                    tracing::error!(target: LOG_TARGET, ?query, "QUERY FAILED");
-                    // todo!("cancel pending queries");
-                }
-            }
-        }
+        //                     self.service
+        //                         .dial_address(peer.addresses[0].clone())
+        //                         .await
+        //                         .unwrap();
+        //                     self.pending_dials.insert(peer.peer, query_id);
+        //                 }
+        //             },
+        //         },
+        //         QueryAction::QuerySucceeded { target, peers } => {
+        //             let peers = peers
+        //                 .into_iter()
+        //                 .map(|info| (info.peer, info.addresses))
+        //                 .collect();
+        //             self._event_tx
+        //                 .send(KademliaEvent::FindNodeResult { target, peers })
+        //                 .await?;
+        //         }
+        //         QueryAction::QueryFailed { query } => {
+        //             tracing::error!(target: LOG_TARGET, ?query, "QUERY FAILED");
+        //             // todo!("cancel pending queries");
+        //         }
+        //     }
+        // }
 
         Ok(())
     }
@@ -255,50 +262,73 @@ impl Kademlia {
             "outbound substream opened"
         );
 
-        // if the substream was opened but there is no query pending for the peer,
-        // just store the opened substream in the `SubstreamSet` and return early
-        let query = match self
-            .peers
-            .get_mut(&peer)
-            .ok_or(Error::PeerDoesntExist(peer))?
-            .query
-            .take()
-        {
-            Some(query) => query,
-            None => {
-                self.substreams.insert(peer, substream);
-                return Ok(());
-            }
-        };
+        // if let Some((query, message)) = self.engine.next_peer_action(&peer) {
+        //     if let Err(error) = substream.send(message.into()).await {
+        //         tracing::debug!(
+        //             target: LOG_TARGET,
+        //             ?peer,
+        //             ?error,
+        //             "failed to send `FIND_NODE` message to peer"
+        //         );
 
-        // attempt to send the pending query to peer and remove the peer if the send fails
-        // TODO: ugly
-        let target_peer = self.engine.target_peer(query).ok_or(Error::InvalidState)?;
-        let message = KademliaMessage::find_node(target_peer);
+        //         self.disconnect_peer(peer, Some(query)).await;
+        //         return Ok(());
+        //     }
+        // }
 
-        // if the send operation fails, the peer is disconnected and `QueryEngine` is notified
-        // of the failure which makes it updates its internal bookkeeping about the query state.
-        // after its notified, the engine is polled again to make progress on the state of the query
-        if let Err(error) = substream.send(message.into()).await {
-            tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                ?error,
-                "failed to send `FIND_NODE` message to peer"
-            );
-
-            self.disconnect_peer(peer, Some(query)).await;
-            return self.poll_query_engine(query).await;
-        }
-
-        // TODO: ugly
         self.substreams.insert(peer, substream);
-        self.peers
-            .get_mut(&peer)
-            .ok_or(Error::PeerDoesntExist(peer))?
-            .add_pending_query(query);
-
         Ok(())
+
+        // match self.engine.next_peer_action(&peer) {
+        //     None => {
+
+        //     }
+        // }
+
+        // // if the substream was opened but there is no query pending for the peer,
+        // // just store the opened substream in the `SubstreamSet` and return early
+        // let query = match self
+        //     .peers
+        //     .get_mut(&peer)
+        //     .ok_or(Error::PeerDoesntExist(peer))?
+        //     .query
+        //     .take()
+        // {
+        //     Some(query) => query,
+        //     None => {
+        //         self.substreams.insert(peer, substream);
+        //         return Ok(());
+        //     }
+        // };
+
+        // // attempt to send the pending query to peer and remove the peer if the send fails
+        // // TODO: ugly
+        // let target_peer = self.engine.target_peer(query).ok_or(Error::InvalidState)?;
+        // let message = KademliaMessage::find_node(target_peer);
+
+        // // if the send operation fails, the peer is disconnected and `QueryEngine` is notified
+        // // of the failure which makes it updates its internal bookkeeping about the query state.
+        // // after its notified, the engine is polled again to make progress on the state of the query
+        // if let Err(error) = substream.send(message.into()).await {
+        //     tracing::debug!(
+        //         target: LOG_TARGET,
+        //         ?peer,
+        //         ?error,
+        //         "failed to send `FIND_NODE` message to peer"
+        //     );
+
+        //     self.disconnect_peer(peer, Some(query)).await;
+        //     return self.poll_query_engine(query).await;
+        // }
+
+        // TODO: ugly
+        // self.substreams.insert(peer, substream);
+        // self.peers
+        //     .get_mut(&peer)
+        //     .ok_or(Error::PeerDoesntExist(peer))?
+        //     .add_pending_query(query);
+
+        // Ok(())
     }
 
     /// Remote opened a substream to local node.
@@ -354,7 +384,7 @@ impl Kademlia {
                     .query
                     .take()
                 {
-                    self.engine.register_find_node_response(query, peer, peers);
+                    // self.engine.register_find_node_response(query, peer, peers);
                     return self.poll_query_engine(query).await;
                 } else {
                     tracing::error!(target: LOG_TARGET, "error");
@@ -375,31 +405,44 @@ impl Kademlia {
         let query_id = self.engine.start_find_node(peer, candidates);
 
         // poll query engine and send `FIND_NODE` messages to known remote peers
-        self.poll_query_engine(query_id).await
+        // self.poll_query_engine(query_id).await
+        todo!();
     }
 
     /// Store value to DHT by executing `PUT_VALUE`.
-    async fn on_put_value(&mut self, key: RecordKey, _value: Vec<u8>) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?key, "execute `PUT_VALUE`");
+    async fn on_put_value(&mut self, record: Record) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, key = ?record.key, "store record to DHT");
 
-        // TODO: store record to our store
+        self.store.put(record.clone());
 
-        let key = Key::new(key);
-        let candidates: VecDeque<_> = self.routing_table.closest(key.clone(), 20).into();
+        let key = Key::new(record.key);
+        let _candidates: VecDeque<_> = self.routing_table.closest(key, 20).into();
 
-        for peer in candidates {
-            tracing::warn!(
-                target: LOG_TARGET,
-                "distance: {:?}",
-                key.distance(&peer.key)
-            );
-        }
+        // TODO: what needs to happen here:
+        // TODO:  - register start of `PUT_VALUE` query to `QueryEngine`
+        // TODO:  - engine records the state of the query in its own state
+        // TODO:  - next time query engine is polled, it will
+        // TODO:  -
+        // TODO:  -
+        // TODO:  -
+        // TODO:  -
+        // TODO:  -
+
+        // self.engine.start_put_record(record.key, candidates);
+        // for peer in candidates {
+        //     tracing::warn!(
+        //         target: LOG_TARGET,
+        //         "distance: {:?}",
+        //         key.distance(&peer.key)
+        //     );
+        // }
 
         Ok(())
     }
 
     /// Failed to open substream to remote peer.
     fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
+        // TODO: report to query engine
         tracing::debug!(
             target: LOG_TARGET,
             ?substream,
@@ -470,7 +513,7 @@ impl Kademlia {
 
                             Ok(())
                         }
-                        Some(KademliaCommand::PutValue { key, value }) => self.on_put_value(key, value).await,
+                        Some(KademliaCommand::PutRecord { record }) => self.on_put_value(record).await,
                         None => Err(Error::EssentialTaskClosed),
                     };
 
@@ -503,12 +546,13 @@ mod tests {
     };
     use tokio::sync::mpsc::channel;
 
+    #[allow(unused)]
     struct Context {
         _cmd_tx: Sender<KademliaCommand>,
         _event_rx: Receiver<KademliaEvent>,
     }
 
-    fn make_kademlia() -> (Kademlia, Context, TransportManager) {
+    fn _make_kademlia() -> (Kademlia, Context, TransportManager) {
         let (manager, handle) = TransportManager::new(Keypair::generate());
 
         let peer = PeerId::random();
@@ -534,16 +578,5 @@ mod tests {
             Context { _cmd_tx, _event_rx },
             manager,
         )
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn find_node_no_peers() {
-        let (mut kad, _context, _) = make_kademlia();
-
-        assert!(std::matches!(
-            kad.on_find_node(PeerId::random()).await,
-            Err(Error::InsufficientPeers)
-        ));
     }
 }

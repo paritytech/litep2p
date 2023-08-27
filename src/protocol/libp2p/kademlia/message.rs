@@ -31,7 +31,7 @@ const LOG_TARGET: &str = "ifps::kademlia::message";
 
 /// Kademlia message.
 #[derive(Debug)]
-pub(super) enum KademliaMessage {
+pub enum KademliaMessage {
     /// Inbound `FIND_NODE` query.
     #[allow(unused)]
     FindNodeRequest {
@@ -47,10 +47,16 @@ pub(super) enum KademliaMessage {
 }
 
 impl KademliaMessage {
+    pub fn is_response(&self) -> bool {
+        std::matches!(self, KademliaMessage::FindNodeResponse { .. })
+    }
+}
+
+impl KademliaMessage {
     /// Create `FIND_NODE` message for `peer` and encode it using `UnsignedVarint`.
-    pub(super) fn find_node(peer: PeerId) -> Vec<u8> {
+    pub fn find_node<T: Into<Vec<u8>>>(key: T) -> Vec<u8> {
         let message = schema::kademlia::Message {
-            key: peer.to_bytes(),
+            key: key.into(),
             r#type: schema::kademlia::MessageType::FindNode.into(),
             cluster_level_raw: 10,
             ..Default::default()
@@ -65,7 +71,7 @@ impl KademliaMessage {
     }
 
     /// Create `FIND_NODE` response.
-    pub(super) fn find_node_response(peers: Vec<KademliaPeer>) -> Vec<u8> {
+    pub fn find_node_response(peers: Vec<KademliaPeer>) -> Vec<u8> {
         let message = schema::kademlia::Message {
             cluster_level_raw: 10,
             closer_peers: peers.iter().map(|peer| peer.into()).collect(),
@@ -81,12 +87,12 @@ impl KademliaMessage {
     }
 
     /// Create `GET_VALUE` message.
-    pub(super) fn _get_value() -> Vec<u8> {
+    pub fn _get_value() -> Vec<u8> {
         todo!();
     }
 
     /// Create `PUT_VALUE` message.
-    pub(super) fn _put_value() -> Vec<u8> {
+    pub fn _put_value() -> Vec<u8> {
         todo!();
     }
 

@@ -43,6 +43,12 @@ impl Key {
     }
 }
 
+impl Into<Vec<u8>> for Key {
+    fn into(self) -> Vec<u8> {
+        Vec::from(&self.0[..])
+    }
+}
+
 impl Borrow<[u8]> for Key {
     fn borrow(&self) -> &[u8] {
         &self.0[..]

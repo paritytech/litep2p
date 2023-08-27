@@ -91,7 +91,7 @@ fn initialize_libp2p() -> Swarm<Behaviour> {
 }
 
 #[tokio::test]
-#[ignore]
+// #[ignore]
 async fn libp2p_dials() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

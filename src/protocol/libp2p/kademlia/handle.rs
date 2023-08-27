@@ -18,7 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{peer_id::PeerId, protocol::libp2p::kademlia::record::Key};
+use crate::{
+    peer_id::PeerId,
+    protocol::libp2p::kademlia::{Record, RecordKey},
+};
 
 use futures::Stream;
 use multiaddr::Multiaddr;
@@ -50,13 +53,10 @@ pub(crate) enum KademliaCommand {
         peer: PeerId,
     },
 
-    /// Store value to DHT.
-    PutValue {
-        /// Key.
-        key: Key,
-
-        /// Value.
-        value: Vec<u8>,
+    /// Store record to DHT.
+    PutRecord {
+        /// Record.
+        record: Record,
     },
 }
 
@@ -99,6 +99,14 @@ impl KademliaHandle {
     /// Send `FIND_NODE` query to known peers.
     pub async fn find_node(&mut self, peer: PeerId) {
         let _ = self.cmd_tx.send(KademliaCommand::FindNode { peer }).await;
+    }
+
+    /// Store record to DHT.
+    pub async fn put_record(&mut self, record: Record) {
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::PutRecord { record })
+            .await;
     }
 }
 

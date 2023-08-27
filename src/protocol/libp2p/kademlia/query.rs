@@ -18,12 +18,18 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(unused)]
+
 use crate::{
     peer_id::PeerId,
-    protocol::libp2p::kademlia::types::{Distance, KademliaPeer, Key},
+    protocol::libp2p::kademlia::{
+        message::KademliaMessage,
+        record::{Key as RecordKey, Record},
+        types::{Distance, KademliaPeer, Key},
+    },
 };
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "ipfs::kademlia::query";
@@ -31,73 +37,219 @@ const LOG_TARGET: &str = "ipfs::kademlia::query";
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct QueryId(usize);
 
-enum Query {
+/// Context for `FIND_NODE` queries.
+#[derive(Debug)]
+struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
+    /// Query ID.
+    query: QueryId,
+
+    /// Target key.
+    target: Key<T>,
+
+    /// Peers from whom the `QueryEngine` is waiting to hear a response.
+    pending: HashMap<PeerId, KademliaPeer>,
+
+    /// Queried candidates.
+    ///
+    /// These are the peers for whom the query has already been sent
+    /// and who have either returned their closest peers or failed to answer.
+    queried: HashMap<PeerId, KademliaPeer>,
+
+    /// Candidates.
+    candidates: VecDeque<KademliaPeer>,
+
+    /// Responses.
+    responses: BTreeMap<Distance, KademliaPeer>,
+}
+
+enum LookupStatus {}
+
+impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
+    /// Create new [`FindNodeContext`].
+    fn new(query: QueryId, target: Key<T>, candidates: VecDeque<KademliaPeer>) -> Self {
+        Self {
+            query,
+            target,
+            candidates,
+            pending: HashMap::new(),
+            queried: HashMap::new(),
+            responses: BTreeMap::new(),
+        }
+    }
+
+    /// Register response failure for `peer`.
+    fn register_response_failure(&mut self, peer: PeerId) {
+        let Some(peer) =  self.pending.remove(&peer) else {
+            tracing::warn!(target: LOG_TARGET, ?peer, "pending peer doesn't exist");
+            debug_assert!(false);
+            return;
+        };
+
+        self.queried.insert(peer.peer, peer);
+    }
+
+    /// Register `FIND_NODE` response from `peer`.
+    fn register_response(&mut self, peer: PeerId, peers: Vec<KademliaPeer>) {
+        let Some(peer) = self.pending.remove(&peer) else {
+            tracing::warn!(target: LOG_TARGET, ?peer, "received response from peer but didn't expect it");
+            debug_assert!(false);
+            return;
+        };
+
+        // calculate distance for `peer` from target and insert it if
+        //  a) the map doesn't have 20 responses
+        //  b) it can replace some other peer that has a higher distance
+        let distance = self.target.distance(&peer.key);
+
+        // TODO: could this be written in another way?
+        // TODO: replication factor must not be hardcoded
+        match self.responses.len() < 20 {
+            true => {
+                self.responses.insert(distance, peer);
+            }
+            false => {
+                let mut entry = self.responses.last_entry().expect("entry to exist");
+                if entry.key() > &distance {
+                    entry.insert(peer);
+                }
+            }
+        }
+
+        self.candidates.extend(peers.clone());
+        self.candidates.make_contiguous().sort_by(|a, b| {
+            self.target
+                .distance(&a.key)
+                .cmp(&self.target.distance(&b.key))
+        });
+    }
+
+    /// Get next action for `peer`.
+    fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
+        self.pending
+            .contains_key(peer)
+            .then_some(QueryAction::SendMessage {
+                query: self.query,
+                peer: *peer,
+                message: KademliaMessage::find_node(self.target.clone().into_preimage()),
+            })
+    }
+
+    /// Schedule next peer for outbound `FIND_NODE` query.
+    fn schedule_next_peer(&mut self) -> QueryAction {
+        tracing::trace!(target: LOG_TARGET, query = ?self.query, "get next peer");
+
+        let candidate = self.candidates.pop_front().expect("entry to exist");
+        tracing::trace!(target: LOG_TARGET, ?candidate, "current candidate");
+        self.pending.insert(candidate.peer, candidate.clone());
+
+        QueryAction::SendMessage {
+            query: self.query,
+            peer: candidate.peer,
+            message: KademliaMessage::find_node(self.target.clone().into_preimage()),
+        }
+    }
+
+    /// Get next action for a `FIND_NODE` query.
+    // TODO: refactor this function
+    // TODO: don't hardcode parallelism or replication factors
+    fn next_action(&mut self) -> Option<QueryAction> {
+        // we didn't receive any responses and there are no candidates or pending queries left.
+        if self.responses.is_empty() && self.pending.is_empty() && self.candidates.is_empty() {
+            return Some(QueryAction::QueryFailed { query: self.query });
+        }
+
+        // there are still possible peers to query or peers who are being queried
+        if self.responses.len() < 20 && (!self.pending.is_empty() || !self.candidates.is_empty()) {
+            if self.pending.len() == 3 || self.candidates.is_empty() {
+                return None;
+            }
+
+            return Some(self.schedule_next_peer());
+        }
+
+        // query succeeded with one or more results
+        if self.pending.is_empty() && self.candidates.is_empty() {
+            return Some(QueryAction::QueryFailed { query: self.query });
+        }
+
+        // check if any candidate has lower distance thant the current worst
+        if !self.candidates.is_empty() {
+            let first_candidate_distance = self.target.distance(&self.candidates[0].key);
+            let worst_response_candidate = self.responses.last_entry().unwrap().key().clone();
+
+            if first_candidate_distance < worst_response_candidate {
+                return Some(self.schedule_next_peer());
+            }
+
+            // TODO: this is probably not correct
+            return Some(QueryAction::QueryFailed { query: self.query });
+        }
+
+        // TODO: probably not correct
+        unreachable!();
+    }
+}
+
+/// Query type.
+#[derive(Debug)]
+enum QueryType {
+    /// `FIND_NODE` query.
     FindNode {
-        /// Target key.
-        target: Key<PeerId>,
+        /// Context for the `FIND_NODE` query
+        context: FindNodeContext<PeerId>,
+    },
 
-        /// Target peer ID.
-        peer: PeerId,
+    /// `PUT_VALUE` query.
+    PutRecord {
+        /// Record that needs to be stored.
+        record: Record,
 
-        /// Active candidates.
-        ///
-        /// These are peers who the [`QueryEngine`] has selected for the next oubound queries
-        /// and are in the state of pending, waiting an answer to be heard.
-        active: HashMap<PeerId, KademliaPeer>,
+        /// Context for the `FIND_NODE` query
+        context: FindNodeContext<RecordKey>,
+    },
 
-        /// Queried candidates.
-        ///
-        /// These are the peers for whom the query has already been sent
-        /// and who have either returned their closest peers or failed to answer.
-        queried: HashMap<PeerId, KademliaPeer>,
-
-        /// Candidates.
-        candidates: VecDeque<KademliaPeer>,
-
-        /// Responses.
-        responses: BTreeMap<Distance, KademliaPeer>,
+    /// `GET_VALUE` query.
+    GetRecord {
+        /// Context for the `FIND_NODE` query
+        context: FindNodeContext<RecordKey>,
     },
 }
 
-/// Actions emitted by the [`QueryEngine`].
+/// Query action.
 #[derive(Debug)]
 pub enum QueryAction {
-    /// Send query to nodes.
-    SendFindNode {
-        /// Query target.
-        peer: KademliaPeer,
+    /// Send message to peer.
+    SendMessage {
+        /// Query ID.
+        query: QueryId,
+
+        /// Peer.
+        peer: PeerId,
+
+        /// Message.
+        message: Vec<u8>,
+    },
+
+    /// `FIND_NODE` query succeeded.
+    FindNodeQuerySucceeded {
+        /// ID of the query that succeeded.
+        query: QueryId,
+
+        /// Peers that were found.
+        peers: Vec<KademliaPeer>,
     },
 
     /// Query succeeded.
     QuerySucceeded {
-        /// Target peer.
-        target: PeerId,
-
-        /// Found peers.
-        peers: Vec<KademliaPeer>,
-    },
-
-    /// Query failed
-    QueryFailed {
-        /// Query ID.
+        /// ID of the query that succeeded.
         query: QueryId,
     },
-}
 
-/// Lookup status.
-#[derive(Debug, PartialEq, Eq)]
-enum LookupStatus {
-    /// Lookup failed.
-    Failed,
-
-    /// Lookup is paused because 3 parallel requests are in progress.
-    Paused,
-
-    /// Get next peer from candidates.
-    NextPeer,
-
-    /// Lookup has succeeded with one or more peers.
-    Success,
+    /// Query failed.
+    QueryFailed {
+        /// ID of the query that failed.
+        query: QueryId,
+    },
 }
 
 /// Kademlia query engine.
@@ -106,19 +258,24 @@ pub struct QueryEngine {
     next_query_id: usize,
 
     /// Parallelism factor.
-    _parallelism: usize,
+    parallelism: usize,
 
     /// Active queries.
-    queries: HashMap<QueryId, Query>,
+    queries: HashMap<QueryId, QueryType>,
+
+    /// Pending queries for each peer.
+    // TODO: vecdeque?
+    pending_queries: HashMap<PeerId, QueryId>,
 }
 
 impl QueryEngine {
     /// Create new [`QueryEngine`].
-    pub fn new(_parallelism: usize) -> Self {
+    pub fn new(parallelism: usize) -> Self {
         Self {
-            _parallelism,
+            parallelism,
             next_query_id: 0usize,
             queries: HashMap::new(),
+            pending_queries: HashMap::new(),
         }
     }
 
@@ -130,208 +287,215 @@ impl QueryEngine {
         QueryId(query_id)
     }
 
-    /// Report that a peer failed to respond to query.
-    // TODO: documentation
-    pub fn register_response_failure(&mut self, query_id: QueryId, peer: PeerId) {
-        tracing::trace!(target: LOG_TARGET, query = ?query_id, ?peer, "register response failure");
-
-        let Some(query) = self.queries.get_mut(&query_id) else {
-            tracing::warn!(target: LOG_TARGET, ?query_id, ?peer, "query doesn't exist");
-            debug_assert!(false);
-            return;
-        };
-
-        match query {
-            Query::FindNode {
-                active, queried, ..
-            } => {
-                let Some(peer) = active.remove(&peer) else {
-                    tracing::warn!(target: LOG_TARGET, ?query_id, ?peer, "query doesn't exist");
-                    debug_assert!(false);
-                    return;
-                };
-
-                queried.insert(peer.peer, peer);
-            }
-        }
-    }
-
-    // TODO: documentation
-    pub(super) fn register_find_node_response(
+    /// Start `FIND_NODE` query.
+    pub fn start_find_node(
         &mut self,
-        query_id: QueryId,
-        peer: PeerId,
-        peers: Vec<KademliaPeer>,
-    ) {
-        tracing::trace!(target: LOG_TARGET, query = ?query_id, "register `FIND_NODE` response");
-
-        match self.queries.get_mut(&query_id) {
-            None => {
-                tracing::warn!(target: LOG_TARGET, ?query_id, "query doesn't exist");
-                debug_assert!(false);
-                return;
-            }
-            Some(Query::FindNode {
-                target,
-                active,
-                candidates,
-                responses,
-                ..
-            }) => {
-                let Some(peer) = active.remove(&peer) else {
-                    tracing::warn!(target: LOG_TARGET, ?query_id, ?peer, "received response from peer but didn't expect it");
-                    debug_assert!(false);
-                    return;
-                };
-
-                // calculate distance for `peer` from target and insert it if
-                //  a) the map doesn't have 20 responses
-                //  b) it can replace some other peer that has a higher distance
-                let distance = target.distance(&peer.key);
-
-                // TODO: could this be written in another way?
-                match responses.len() < 20 {
-                    true => {
-                        responses.insert(distance, peer);
-                    }
-                    false => {
-                        let mut entry = responses.last_entry().expect("entry to exist");
-                        if entry.key() > &distance {
-                            entry.insert(peer);
-                        }
-                    }
-                }
-
-                // TODO: this is bad
-                candidates.extend(peers.clone());
-                candidates
-                    .make_contiguous()
-                    .sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
-            }
-        }
-    }
-
-    /// Start `FIND_NODE` query on the network and return the first
-    // TODO: documentation
-    pub fn start_find_node(&mut self, peer: PeerId, candidates: VecDeque<KademliaPeer>) -> QueryId {
+        target: PeerId,
+        candidates: VecDeque<KademliaPeer>,
+    ) -> crate::Result<QueryId> {
         let query_id = self.next_query_id();
 
         tracing::debug!(
             target: LOG_TARGET,
-            ?peer,
             ?query_id,
+            ?target,
+            num_peers = ?candidates.len(),
             "start `FIND_NODE` query"
         );
 
         self.queries.insert(
             query_id,
-            Query::FindNode {
-                peer,
-                candidates,
-                active: HashMap::new(),
-                queried: HashMap::new(),
-                target: Key::from(peer),
-                responses: BTreeMap::new(),
+            QueryType::FindNode {
+                context: FindNodeContext::new(query_id, Key::from(target), candidates),
             },
         );
 
-        query_id
+        Ok(query_id)
     }
 
-    // TODO: this is a hack
-    pub fn target_peer(&self, query: QueryId) -> Option<PeerId> {
-        if let Some(Query::FindNode { peer, .. }) = self.queries.get(&query) {
-            return Some(*peer);
+    /// Start `PUT_VALUE` query.
+    pub fn start_put_record(
+        &mut self,
+        record: Record,
+        candidates: VecDeque<KademliaPeer>,
+    ) -> crate::Result<QueryId> {
+        let query_id = self.next_query_id();
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            target = ?record.key,
+            num_peers = ?candidates.len(),
+            "start `PUT_VALUE` query"
+        );
+
+        let target = Key::new(record.key.clone());
+
+        self.queries.insert(
+            query_id,
+            QueryType::PutRecord {
+                record,
+                context: FindNodeContext::new(query_id, target, candidates),
+            },
+        );
+
+        Ok(query_id)
+    }
+
+    /// Start `GET_VALUE` query.
+    pub fn start_get_record(
+        &mut self,
+        target: RecordKey,
+        candidates: VecDeque<KademliaPeer>,
+    ) -> crate::Result<QueryId> {
+        let query_id = self.next_query_id();
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            ?target,
+            num_peers = ?candidates.len(),
+            "start `GET_VALUE` query"
+        );
+
+        let target = Key::new(target);
+
+        self.queries.insert(
+            query_id,
+            QueryType::GetRecord {
+                context: FindNodeContext::new(query_id, target, candidates),
+            },
+        );
+
+        Ok(query_id)
+    }
+
+    /// Register response failure from a queried peer.
+    pub fn register_response_failure(&mut self, query: QueryId, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response failure");
+
+        match self.queries.get_mut(&query) {
+            None => {
+                tracing::warn!(target: LOG_TARGET, ?query, ?peer, "query doesn't exist");
+                debug_assert!(false);
+                return;
+            }
+            Some(QueryType::FindNode { context }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::PutRecord { context, .. }) | Some(QueryType::GetRecord { context }) => {
+                context.register_response_failure(peer);
+            }
+        }
+    }
+
+    /// Register that `response` received from `peer`.
+    pub fn register_response(&mut self, query: QueryId, peer: PeerId, message: KademliaMessage) {
+        if !message.is_response() {
+            tracing::warn!(target: LOG_TARGET, ?query, ?peer, "tried to register non-response");
+            return;
+        }
+
+        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response");
+
+        match self.queries.get_mut(&query) {
+            None => {
+                tracing::warn!(target: LOG_TARGET, ?query, ?peer, "query doesn't exist");
+                debug_assert!(false);
+                return;
+            }
+            Some(QueryType::FindNode { context }) => match message {
+                KademliaMessage::FindNodeResponse { peers } => {
+                    context.register_response(peer, peers);
+                }
+                _ => unreachable!(),
+            },
+            Some(QueryType::PutRecord { context, .. }) => match message {
+                KademliaMessage::FindNodeResponse { peers } => {
+                    context.register_response(peer, peers);
+                }
+                _ => unreachable!(),
+            },
+            Some(QueryType::GetRecord { context }) => match message {
+                KademliaMessage::FindNodeResponse { peers } => {
+                    context.register_response(peer, peers);
+                }
+                _ => unreachable!(),
+            },
+        }
+    }
+
+    /// Get next action for `peer` from the [`QueryEngine`].
+    pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
+        let query = self.pending_queries.remove(peer)?;
+
+        tracing::trace!(target: LOG_TARGET, ?peer, ?query, "get next peer action");
+
+        match self.queries.get_mut(&query) {
+            None => {
+                tracing::warn!(target: LOG_TARGET, ?query, ?peer, "pending query doesn't exist for peer");
+                debug_assert!(false);
+                return None;
+            }
+            Some(QueryType::FindNode { context }) => return context.next_peer_action(peer),
+            Some(QueryType::PutRecord { context, .. }) | Some(QueryType::GetRecord { context }) => {
+                return context.next_peer_action(peer)
+            }
+        }
+    }
+
+    /// Handle query success by returning the queried value(s)
+    /// and removing the query from [`QueryEngine`].
+    fn on_query_succeeded(&mut self, query: QueryId) -> QueryAction {
+        match self.queries.remove(&query).expect("query to exist") {
+            QueryType::FindNode { context } => QueryAction::FindNodeQuerySucceeded {
+                query,
+                peers: context
+                    .responses
+                    .into_iter()
+                    .map(|(_, peer)| peer)
+                    .collect::<Vec<_>>(),
+            },
+            _ => todo!(),
+        }
+    }
+
+    /// Handle query failure by removing the query from [`QueryEngine`] and
+    /// returning the appropriate [`QueryAction`] to user.
+    fn on_query_failed(&mut self, query: QueryId) -> QueryAction {
+        let _ = self.queries.remove(&query).expect("query to exist");
+
+        QueryAction::QueryFailed { query }
+    }
+
+    /// Get next action from the [`QueryEngine`].
+    pub fn next_action(&mut self) -> Option<QueryAction> {
+        for (query, state) in self.queries.iter_mut() {
+            let action = match state {
+                QueryType::FindNode { context } => context.next_action(),
+                QueryType::PutRecord { context, .. } => context.next_action(),
+                QueryType::GetRecord { context } => context.next_action(),
+            };
+
+            // TODO: explain
+            match action {
+                Some(QueryAction::SendMessage { peer, .. }) => {
+                    // TODO: this is such a hack
+                    self.pending_queries.insert(peer, *query);
+                    return action;
+                }
+                Some(QueryAction::QuerySucceeded { query }) => {
+                    return Some(self.on_query_succeeded(query));
+                }
+                Some(QueryAction::QueryFailed { query }) => {
+                    return Some(self.on_query_failed(query));
+                }
+                Some(_) => return action,
+                _ => continue,
+            }
         }
 
         None
-    }
-
-    /// Check if Kademlia `FIND_NODE` lookup is finished.
-    // TODO: documentation
-    fn lookup_status(
-        target: &Key<PeerId>,
-        active: &HashMap<PeerId, KademliaPeer>,
-        candidates: &VecDeque<KademliaPeer>,
-        responses: &mut BTreeMap<Distance, KademliaPeer>,
-    ) -> LookupStatus {
-        // the query failed
-        if responses.is_empty() && active.is_empty() && candidates.is_empty() {
-            return LookupStatus::Failed;
-        }
-
-        // there are still possible peers to query or peers who are being queried
-        if responses.len() < 20 && (!active.is_empty() || !candidates.is_empty()) {
-            if active.len() == 3 || candidates.is_empty() {
-                return LookupStatus::Paused;
-            }
-
-            return LookupStatus::NextPeer;
-        }
-
-        // query succeeded with one or more results
-        if active.is_empty() && candidates.is_empty() {
-            return LookupStatus::Success;
-        }
-
-        // check if any candidate has lower distance thant the current worst
-        if !candidates.is_empty() {
-            let first_candidate_distance = target.distance(&candidates[0].key);
-            let worst_response_candidate = responses.last_entry().unwrap().key().clone();
-
-            if first_candidate_distance < worst_response_candidate {
-                return LookupStatus::NextPeer;
-            }
-
-            // TODO: this is probably not correct
-            return LookupStatus::Success;
-        }
-
-        tracing::error!(target: LOG_TARGET, "why here");
-
-        todo!();
-    }
-
-    /// Poll next action from [`QueryEngine`].
-    // TODO: this has iterate over all quries
-    pub fn next_action(&mut self, query_id: QueryId) -> Option<QueryAction> {
-        let mut query = self.queries.get_mut(&query_id)?;
-
-        match &mut query {
-            Query::FindNode {
-                target,
-                active,
-                candidates,
-                responses,
-                ..
-            } => match QueryEngine::lookup_status(&target, &active, &candidates, responses) {
-                LookupStatus::Failed => {
-                    tracing::trace!(target: LOG_TARGET, ?query_id, "lookup failed");
-
-                    self.queries.remove(&query_id);
-                    return Some(QueryAction::QueryFailed { query: query_id });
-                }
-                LookupStatus::Paused => None,
-                LookupStatus::NextPeer => {
-                    tracing::trace!(target: LOG_TARGET, ?query_id, "get next peer");
-
-                    let candidate = candidates.pop_front().expect("entry to exist");
-                    tracing::trace!(target: LOG_TARGET, ?candidate, "current candidate");
-                    active.insert(candidate.peer, candidate.clone());
-
-                    Some(QueryAction::SendFindNode { peer: candidate })
-                }
-                LookupStatus::Success => {
-                    tracing::trace!(target: LOG_TARGET, ?query_id, "lookup succeeded");
-
-                    let peers = responses.values().cloned().collect();
-                    let target = target.clone().into_preimage();
-                    self.queries.remove(&query_id);
-
-                    Some(QueryAction::QuerySucceeded { target, peers })
-                }
-            },
-        }
     }
 }
 
@@ -342,32 +506,43 @@ mod tests {
 
     #[test]
     fn query_fails() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
         let mut engine = QueryEngine::new(3usize);
         let target_peer = PeerId::random();
         let _target_key = Key::from(target_peer);
 
-        let query = engine.start_find_node(
-            target_peer,
-            vec![
-                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-            ]
-            .into(),
-        );
+        let query = engine
+            .start_find_node(
+                target_peer,
+                vec![
+                    KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                    KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                    KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                    KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                ]
+                .into(),
+            )
+            .unwrap();
 
         for _ in 0..4 {
-            if let Some(QueryAction::SendFindNode { peer }) = engine.next_action(query) {
-                engine.register_response_failure(query, peer.peer);
+            if let Some(QueryAction::SendMessage {
+                query,
+                peer,
+                message,
+            }) = engine.next_action()
+            {
+                engine.register_response_failure(query, peer);
             }
         }
 
-        if let Some(QueryAction::QueryFailed { query: failed }) = engine.next_action(query) {
+        if let Some(QueryAction::QueryFailed { query: failed }) = engine.next_action() {
             assert_eq!(failed, query);
         }
 
-        assert!(engine.next_action(query).is_none());
+        assert!(engine.next_action().is_none());
     }
 
     #[test]
@@ -388,10 +563,10 @@ mod tests {
         );
 
         for _ in 0..3 {
-            let _ = engine.next_action(query);
+            let _ = engine.next_action();
         }
 
-        assert!(engine.next_action(query).is_none());
+        assert!(engine.next_action().is_none());
     }
 
     #[test]
@@ -410,44 +585,43 @@ mod tests {
             ]
             .into(),
         );
-    }
 
-    #[test]
-    fn lookup_status_paused() {
-        let target = Key::from(PeerId::random());
-        let active = HashMap::from_iter((0..3).map(|_| {
-            let peer = PeerId::random();
-            (
+        for _ in 0..3 {
+            if let Some(QueryAction::SendMessage {
+                query,
                 peer,
-                KademliaPeer::new(peer, vec![], ConnectionType::NotConnected),
-            )
-        }));
-        let candidates = vec![KademliaPeer::new(
-            PeerId::random(),
-            vec![],
-            ConnectionType::NotConnected,
-        )]
-        .into();
-        let mut responses = BTreeMap::new();
-        let _engine = QueryEngine::new(3usize);
-
-        assert_eq!(
-            QueryEngine::lookup_status(&target, &active, &candidates, &mut responses),
-            LookupStatus::Paused,
-        );
-    }
-
-    #[test]
-    fn lookup_status_failed() {
-        let target = Key::from(PeerId::random());
-        let active = HashMap::new();
-        let candidates = VecDeque::new();
-        let mut responses = BTreeMap::new();
-        let _engine = QueryEngine::new(3usize);
-
-        assert_eq!(
-            QueryEngine::lookup_status(&target, &active, &candidates, &mut responses),
-            LookupStatus::Failed
-        );
+                message,
+            }) = engine.next_action()
+            {
+                engine.register_response(
+                    query,
+                    peer,
+                    KademliaMessage::FindNodeResponse {
+                        peers: vec![
+                            KademliaPeer::new(
+                                PeerId::random(),
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                            KademliaPeer::new(
+                                PeerId::random(),
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                            KademliaPeer::new(
+                                PeerId::random(),
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                            KademliaPeer::new(
+                                PeerId::random(),
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                        ],
+                    },
+                );
+            }
+        }
     }
 }
