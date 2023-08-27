@@ -213,14 +213,13 @@ impl Transport for TransportService {
     }
 
     fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
-        // TODO: this would have to be in transportmanager
         let addresses: HashSet<Multiaddr> = addresses
-            .filter_map(|address| match address.iter().last() {
-                Some(Protocol::P2p(_)) => {
+            .filter_map(|address| {
+                if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
                     Some(address.with(Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).ok()?)))
+                } else {
+                    Some(address)
                 }
-                // TODO: check if peer id can be inserted here
-                _ => Some(address),
             })
             .collect();
 
