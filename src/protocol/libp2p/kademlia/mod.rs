@@ -41,7 +41,7 @@ use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use std::collections::{hash_map::Entry, HashMap};
 
 pub use {
     config::{Config, ConfigBuilder},
@@ -294,26 +294,6 @@ impl Kademlia {
         Ok(())
     }
 
-    /// Execute `FIND_NODE`.
-    async fn on_find_node(&mut self, peer: PeerId) {
-        tracing::debug!(target: LOG_TARGET, ?peer, "starting `FIND_NODE` query");
-
-        let candidates: VecDeque<_> = self.routing_table.closest(Key::from(peer), 20).into();
-
-        // start new `FIND_NODE` query
-        let _ = self.engine.start_find_node(peer, candidates);
-    }
-
-    /// Store value to DHT by executing `PUT_VALUE`.
-    async fn on_put_value(&mut self, record: Record) {
-        tracing::debug!(target: LOG_TARGET, key = ?record.key, "store record to DHT");
-
-        self.store.put(record.clone());
-
-        let key = Key::new(record.key);
-        let _candidates: VecDeque<_> = self.routing_table.closest(key, 20).into();
-    }
-
     /// Failed to open substream to remote peer.
     fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
         // TODO: report to query engine
@@ -434,7 +414,24 @@ impl Kademlia {
                 },
                 command = self.cmd_rx.recv() => {
                     match command {
-                        Some(KademliaCommand::FindNode { peer }) => self.on_find_node(peer).await,
+                        Some(KademliaCommand::FindNode { peer }) => {
+                            tracing::debug!(target: LOG_TARGET, ?peer, "starting `FIND_NODE` query");
+                            let _ = self.engine.start_find_node(
+                                peer,
+                                self.routing_table.closest(Key::from(peer), 20).into()
+                            );
+                        }
+                        Some(KademliaCommand::PutRecord { record }) => {
+                            tracing::debug!(target: LOG_TARGET, key = ?record.key, "store record to DHT");
+
+                            self.store.put(record.clone());
+                            let key = Key::new(record.key.clone());
+
+                            let _ = self.engine.start_put_record(
+                                record,
+                                self.routing_table.closest(key, 20).into(),
+                            );
+                        }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
                             self.routing_table.add_known_peer(
                                 peer,
@@ -444,7 +441,6 @@ impl Kademlia {
                                     .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
                             );
                         }
-                        Some(KademliaCommand::PutRecord { record }) => self.on_put_value(record).await,
                         None => return Err(Error::EssentialTaskClosed),
                     }
                 },

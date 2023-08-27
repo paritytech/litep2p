@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "ipfs::kademlia::query";
@@ -59,8 +59,6 @@ struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     /// Responses.
     responses: BTreeMap<Distance, KademliaPeer>,
 }
-
-enum LookupStatus {}
 
 impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     /// Create new [`FindNodeContext`].
@@ -101,6 +99,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
         // TODO: could this be written in another way?
         // TODO: replication factor must not be hardcoded
+        // TODO: only insert nodes from whom a response was received
         match self.responses.len() < 20 {
             true => {
                 self.responses.insert(distance, peer);
@@ -259,24 +258,19 @@ pub struct QueryEngine {
     next_query_id: usize,
 
     /// Parallelism factor.
-    parallelism: usize,
+    _parallelism: usize,
 
     /// Active queries.
     queries: HashMap<QueryId, QueryType>,
-
-    /// Pending queries for each peer.
-    // TODO: vecdeque?
-    pending_queries: HashMap<PeerId, QueryId>,
 }
 
 impl QueryEngine {
     /// Create new [`QueryEngine`].
-    pub fn new(parallelism: usize) -> Self {
+    pub fn new(_parallelism: usize) -> Self {
         Self {
-            parallelism,
+            _parallelism,
             next_query_id: 0usize,
             queries: HashMap::new(),
-            pending_queries: HashMap::new(),
         }
     }
 
@@ -344,7 +338,7 @@ impl QueryEngine {
     }
 
     /// Start `GET_VALUE` query.
-    pub fn start_get_record(
+    pub fn _start_get_record(
         &mut self,
         target: RecordKey,
         candidates: VecDeque<KademliaPeer>,
@@ -456,6 +450,9 @@ impl QueryEngine {
                     .map(|(_, peer)| peer)
                     .collect::<Vec<_>>(),
             },
+            QueryType::PutRecord { .. } => {
+                todo!();
+            }
             _ => todo!(),
         }
     }
@@ -470,25 +467,19 @@ impl QueryEngine {
 
     /// Get next action from the [`QueryEngine`].
     pub fn next_action(&mut self) -> Option<QueryAction> {
-        for (query, state) in self.queries.iter_mut() {
+        for (_, state) in self.queries.iter_mut() {
             let action = match state {
                 QueryType::FindNode { context } => context.next_action(),
                 QueryType::PutRecord { context, .. } => context.next_action(),
                 QueryType::GetRecord { context } => context.next_action(),
             };
 
-            // TODO: explain
             match action {
-                Some(QueryAction::SendMessage { peer, .. }) => {
-                    // TODO: this is such a hack
-                    self.pending_queries.insert(peer, *query);
-                    return action;
-                }
                 Some(QueryAction::QuerySucceeded { query }) => {
                     return Some(self.on_query_succeeded(query));
                 }
                 Some(QueryAction::QueryFailed { query }) => {
-                    return Some(self.on_query_failed(query));
+                    return Some(self.on_query_failed(query))
                 }
                 Some(_) => return action,
                 _ => continue,
@@ -501,8 +492,24 @@ impl QueryEngine {
 
 #[cfg(test)]
 mod tests {
+    use multihash::{Code, Multihash};
+
     use super::*;
     use crate::protocol::libp2p::kademlia::types::ConnectionType;
+
+    // make fixed peer id
+    fn make_peer_id(first: u8, second: u8) -> PeerId {
+        let mut peer_id = vec![0u8; 32];
+        peer_id[0] = first;
+        peer_id[1] = second;
+
+        PeerId::from_bytes(
+            &Multihash::wrap(Code::Identity.into(), &peer_id)
+                .expect("The digest size is never too large")
+                .to_bytes(),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn query_fails() {
@@ -528,12 +535,7 @@ mod tests {
             .unwrap();
 
         for _ in 0..4 {
-            if let Some(QueryAction::SendMessage {
-                query,
-                peer,
-                message,
-            }) = engine.next_action()
-            {
+            if let Some(QueryAction::SendMessage { query, peer, .. }) = engine.next_action() {
                 engine.register_response_failure(query, peer);
             }
         }
@@ -551,7 +553,7 @@ mod tests {
         let target_peer = PeerId::random();
         let _target_key = Key::from(target_peer);
 
-        let query = engine.start_find_node(
+        let _ = engine.start_find_node(
             target_peer,
             vec![
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
@@ -571,50 +573,62 @@ mod tests {
 
     #[test]
     fn query_succeeds() {
-        let mut engine = QueryEngine::new(3usize);
-        let target_peer = PeerId::random();
-        let _target_key = Key::from(target_peer);
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
 
+        let mut engine = QueryEngine::new(3usize);
+        let target_peer = make_peer_id(0, 0);
+        let target_key = Key::from(target_peer);
+
+        let distances = {
+            let mut distances = std::collections::BTreeMap::new();
+
+            for i in 1..64 {
+                let peer = make_peer_id(i, 0);
+                let key = Key::from(peer);
+
+                distances.insert(target_key.distance(&key), peer);
+            }
+
+            distances
+        };
+        let mut iter = distances.iter();
+
+        // start find node with one known peer
         let _query = engine.start_find_node(
             target_peer,
-            vec![
-                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-            ]
+            vec![KademliaPeer::new(
+                *iter.next().unwrap().1,
+                vec![],
+                ConnectionType::NotConnected,
+            )]
             .into(),
         );
 
-        for _ in 0..3 {
-            if let Some(QueryAction::SendMessage {
-                query,
-                peer,
-                message,
-            }) = engine.next_action()
-            {
+        let action = engine.next_action();
+        assert!(engine.next_action().is_none());
+
+        // the one known peer responds with 3 other peers it knows
+        match action {
+            Some(QueryAction::SendMessage { query, peer, .. }) => {
                 engine.register_response(
                     query,
                     peer,
                     KademliaMessage::FindNodeResponse {
                         peers: vec![
                             KademliaPeer::new(
-                                PeerId::random(),
+                                *iter.next().unwrap().1,
                                 vec![],
                                 ConnectionType::NotConnected,
                             ),
                             KademliaPeer::new(
-                                PeerId::random(),
+                                *iter.next().unwrap().1,
                                 vec![],
                                 ConnectionType::NotConnected,
                             ),
                             KademliaPeer::new(
-                                PeerId::random(),
-                                vec![],
-                                ConnectionType::NotConnected,
-                            ),
-                            KademliaPeer::new(
-                                PeerId::random(),
+                                *iter.next().unwrap().1,
                                 vec![],
                                 ConnectionType::NotConnected,
                             ),
@@ -622,6 +636,31 @@ mod tests {
                     },
                 );
             }
+            _ => panic!("invalid event received"),
         }
+
+        // send empty response for the last three nodes
+        for _ in 0..3 {
+            match engine.next_action() {
+                Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    println!("next send message to {peer:?}");
+                    engine.register_response(
+                        query,
+                        peer,
+                        KademliaMessage::FindNodeResponse { peers: vec![] },
+                    );
+                }
+                _ => panic!("invalid event received"),
+            }
+        }
+
+        match engine.next_action() {
+            Some(QueryAction::FindNodeQuerySucceeded { peers, .. }) => {
+                assert_eq!(peers.len(), 4);
+            }
+            _ => panic!("invalid event received"),
+        }
+
+        assert!(engine.next_action().is_none());
     }
 }
