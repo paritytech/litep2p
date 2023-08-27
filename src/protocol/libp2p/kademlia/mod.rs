@@ -435,11 +435,13 @@ impl Kademlia {
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
                             self.routing_table.add_known_peer(
                                 peer,
-                                addresses,
+                                addresses.clone(),
                                 self.peers
                                     .get(&peer)
                                     .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
                             );
+                            self.service.add_known_address(&peer, addresses.into_iter());
+
                         }
                         None => return Err(Error::EssentialTaskClosed),
                     }
