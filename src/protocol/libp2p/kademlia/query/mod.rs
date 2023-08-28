@@ -382,7 +382,7 @@ impl QueryEngine {
     }
 
     /// Start `GET_VALUE` query.
-    pub fn _start_get_record(
+    pub fn start_get_record(
         &mut self,
         target: RecordKey,
         candidates: VecDeque<KademliaPeer>,
