@@ -547,6 +547,15 @@ impl Kademlia {
                                 self.routing_table.closest(key, 20).into(),
                             );
                         }
+                        Some(KademliaCommand::GetRecord { key }) => {
+                            tracing::debug!(target: LOG_TARGET, ?key, "get record from DHT");
+
+                            // TODO: implement quorum
+                            let _ = self.engine.start_get_record(
+                                key.clone(),
+                                self.routing_table.closest(Key::new(key.clone()), 20).into(),
+                            );
+                        }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
                             self.routing_table.add_known_peer(
                                 peer,

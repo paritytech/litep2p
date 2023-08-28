@@ -58,6 +58,12 @@ pub(crate) enum KademliaCommand {
         /// Record.
         record: Record,
     },
+
+    /// Get record from DHT.
+    GetRecord {
+        /// Record key.
+        key: RecordKey,
+    },
 }
 
 /// Kademlia events.
@@ -107,6 +113,11 @@ impl KademliaHandle {
             .cmd_tx
             .send(KademliaCommand::PutRecord { record })
             .await;
+    }
+
+    /// Get record from DHT.
+    pub async fn get_record(&mut self, key: RecordKey) {
+        let _ = self.cmd_tx.send(KademliaCommand::GetRecord { key }).await;
     }
 }
 

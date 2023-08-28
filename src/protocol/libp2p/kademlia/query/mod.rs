@@ -22,7 +22,7 @@ use crate::{
     peer_id::PeerId,
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
-        query::find_node::FindNodeContext,
+        query::{find_node::FindNodeContext, get_record::GetRecordContext},
         record::{Key as RecordKey, Record},
         types::{KademliaPeer, Key},
     },
@@ -31,6 +31,7 @@ use crate::{
 use std::collections::{HashMap, VecDeque};
 
 mod find_node;
+mod get_record;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "ipfs::kademlia::query";
@@ -61,8 +62,8 @@ enum QueryType {
 
     /// `GET_VALUE` query.
     GetRecord {
-        /// Context for the `FIND_NODE` query
-        context: FindNodeContext<RecordKey>,
+        /// Context for the `GET_VALUE` query.
+        context: GetRecordContext,
     },
 }
 
@@ -239,7 +240,7 @@ impl QueryEngine {
         self.queries.insert(
             query_id,
             QueryType::GetRecord {
-                context: FindNodeContext::new(
+                context: GetRecordContext::new(
                     query_id,
                     target,
                     candidates,
@@ -265,7 +266,10 @@ impl QueryEngine {
             Some(QueryType::FindNode { context }) => {
                 context.register_response_failure(peer);
             }
-            Some(QueryType::PutRecord { context, .. }) | Some(QueryType::GetRecord { context }) => {
+            Some(QueryType::PutRecord { context, .. }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::GetRecord { context }) => {
                 context.register_response_failure(peer);
             }
         }
@@ -298,11 +302,8 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
-            Some(QueryType::GetRecord { context }) => match message {
-                KademliaMessage::FindNodeResponse { peers } => {
-                    context.register_response(peer, peers);
-                }
-                _ => unreachable!(),
+            Some(QueryType::GetRecord { .. }) => match message {
+                _ => todo!(),
             },
         }
     }
@@ -318,9 +319,8 @@ impl QueryEngine {
                 return None;
             }
             Some(QueryType::FindNode { context }) => return context.next_peer_action(peer),
-            Some(QueryType::PutRecord { context, .. }) | Some(QueryType::GetRecord { context }) => {
-                return context.next_peer_action(peer)
-            }
+            Some(QueryType::PutRecord { context, .. }) => return context.next_peer_action(peer),
+            Some(QueryType::GetRecord { context }) => return context.next_peer_action(peer),
         }
     }
 
