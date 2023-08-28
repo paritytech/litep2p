@@ -59,8 +59,8 @@ impl KademliaMessage {
 }
 
 impl KademliaMessage {
-    /// Create `FIND_NODE` message for `peer` and encode it using `UnsignedVarint`.
-    pub fn find_node<T: Into<Vec<u8>>>(key: T) -> Vec<u8> {
+    /// Create `FIND_NODE` message for `peer`.
+    pub fn find_node<T: Into<Vec<u8>>>(key: T) -> Bytes {
         let message = schema::kademlia::Message {
             key: key.into(),
             r#type: schema::kademlia::MessageType::FindNode.into(),
@@ -68,15 +68,15 @@ impl KademliaMessage {
             ..Default::default()
         };
 
-        let mut buf = Vec::with_capacity(message.encoded_len());
+        let mut buf = BytesMut::with_capacity(message.encoded_len());
         message
             .encode(&mut buf)
             .expect("Vec<u8> to provide needed capacity");
 
-        buf
+        buf.freeze()
     }
 
-    /// Create `PUT_VALUE` message for `record` and encode it using `UnsignedVarint`.
+    /// Create `PUT_VALUE` message for `record`.
     // TODO: set ttl
     pub fn put_value(record: Record) -> Bytes {
         let message = schema::kademlia::Message {

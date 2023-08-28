@@ -244,7 +244,7 @@ impl Kademlia {
                     message,
                 }) = self.engine.next_peer_action(&query, &peer)
                 {
-                    match substream.send(message.into()).await {
+                    match substream.send(message).await {
                         Err(_) => self.disconnect_peer(peer, Some(query)).await,
                         Ok(_) => {
                             *pending_action = Some(PeerAction::SendFindNode(query));
@@ -380,7 +380,7 @@ impl Kademlia {
                 message,
             } => match self.substreams.get_mut(&peer) {
                 Some(substream) => substream
-                    .send(message.into())
+                    .send(message)
                     .await
                     .map(|_| {
                         self.peers.insert(

@@ -28,6 +28,8 @@ use crate::{
     },
 };
 
+use bytes::Bytes;
+
 use std::collections::{HashMap, VecDeque};
 
 mod find_node;
@@ -79,7 +81,7 @@ pub enum QueryAction {
         peer: PeerId,
 
         /// Message.
-        message: Vec<u8>,
+        message: Bytes,
     },
 
     /// `FIND_NODE` query succeeded.
