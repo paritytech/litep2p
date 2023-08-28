@@ -20,10 +20,10 @@
 
 use crate::{
     peer_id::PeerId,
-    protocol::libp2p::kademlia::{schema, types::KademliaPeer},
+    protocol::libp2p::kademlia::{record::Record, schema, types::KademliaPeer},
 };
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use prost::Message;
 
 /// Logging target for the file.
@@ -43,6 +43,12 @@ pub enum KademliaMessage {
     FindNodeResponse {
         /// Found peers.
         peers: Vec<KademliaPeer>,
+    },
+
+    /// Kademlia `PUT_VALUE` message.
+    PutValue {
+        /// Record.
+        record: Record,
     },
 }
 
@@ -68,6 +74,29 @@ impl KademliaMessage {
             .expect("Vec<u8> to provide needed capacity");
 
         buf
+    }
+
+    /// Create `PUT_VALUE` message for `record` and encode it using `UnsignedVarint`.
+    // TODO: set ttl
+    pub fn put_value(record: Record) -> Bytes {
+        let message = schema::kademlia::Message {
+            key: record.key.clone().into(),
+            r#type: schema::kademlia::MessageType::PutValue.into(),
+            record: Some(schema::kademlia::Record {
+                key: record.key.into(),
+                value: record.value,
+                ..Default::default()
+            }),
+            cluster_level_raw: 10,
+            ..Default::default()
+        };
+
+        let mut buf = BytesMut::with_capacity(message.encoded_len());
+        message
+            .encode(&mut buf)
+            .expect("BytesMut to provide needed capacity");
+
+        buf.freeze()
     }
 
     /// Create `FIND_NODE` response.
@@ -109,8 +138,16 @@ impl KademliaMessage {
 
                     Some(Self::FindNodeResponse { peers })
                 }
-                _ => {
-                    todo!("unsupported message type");
+                0 => {
+                    let record = message.record?;
+
+                    Some(Self::PutValue {
+                        record: Record::new(record.key, record.value),
+                    })
+                }
+                message => {
+                    tracing::warn!(target: LOG_TARGET, ?message, "unhandled message");
+                    None
                 }
             },
             Err(error) => {

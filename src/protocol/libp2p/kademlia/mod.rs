@@ -294,6 +294,16 @@ impl Kademlia {
                     }
                 }
             }
+            KademliaMessage::PutValue { record } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    record_key = ?record.key,
+                    "handle `PUT_VALUE` response"
+                );
+
+                self.store.put(record);
+            }
         }
 
         Ok(())
