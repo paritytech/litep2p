@@ -429,10 +429,7 @@ async fn substrate_close_substream() {
                         libp2p_notification_count += 1;
                     } else {
                         libp2p_notification_count += 1;
-
                         libp2p.behaviour_mut().disconnect_peer(&peer_id, set_id);
-                        peer_store_handle.report_peer(peer_id, ReputationChange::new(i32::MIN, "disable connection"));
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     }
                 }
                 SwarmEvent::Behaviour(NotificationsOut::CustomProtocolClosed { .. }) => {
