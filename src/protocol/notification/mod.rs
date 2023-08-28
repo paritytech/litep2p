@@ -620,12 +620,15 @@ impl NotificationProtocol {
                     .await
             }
             Err(_) => {
+                self.negotiation.remove_outbound(&peer);
+                self.negotiation.remove_inbound(&peer);
                 self.substreams.remove(&peer);
                 self.receivers.remove(&peer);
                 self.peers
                     .get_mut(&peer)
                     .expect("peer to exist since an event was received")
                     .state = PeerState::Closed { pending_open: None };
+                // TODO: if the node is still handshaking, don't return this event
                 self.event_handle
                     .report_notification_stream_closed(peer)
                     .await;
