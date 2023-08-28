@@ -21,14 +21,15 @@
 
 use futures::StreamExt;
 use libp2p::{
-    identify, identity, kad,
+    identify, identity,
+    kad::{self, store::RecordStore},
     swarm::{keep_alive, NetworkBehaviour, SwarmBuilder, SwarmEvent},
     PeerId, Swarm,
 };
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::libp2p::kademlia::{ConfigBuilder, KademliaEvent, KademliaHandle},
+    protocol::libp2p::kademlia::{ConfigBuilder, KademliaEvent, KademliaHandle, Record, RecordKey},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p,
 };
@@ -75,7 +76,6 @@ fn initialize_libp2p() -> Swarm<Behaviour> {
 
         Behaviour {
             kad: kad::Kademlia::with_config(local_peer_id, store, config),
-            // ping: Default::default(),
             keep_alive: Default::default(),
             identify: identify::Behaviour::new(identify::Config::new(
                 "/ipfs/1.0.0".into(),
@@ -91,8 +91,7 @@ fn initialize_libp2p() -> Swarm<Behaviour> {
 }
 
 #[tokio::test]
-// #[ignore]
-async fn libp2p_dials() {
+async fn find_node() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -179,6 +178,121 @@ async fn libp2p_dials() {
                 break;
             }
             _ => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn put_record() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let mut addresses = vec![];
+    let mut peer_ids = vec![];
+    let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0usize));
+
+    for _ in 0..3 {
+        let mut libp2p = initialize_libp2p();
+
+        loop {
+            if let SwarmEvent::NewListenAddr { address, .. } = libp2p.select_next_some().await {
+                addresses.push(address);
+                peer_ids.push(*libp2p.local_peer_id());
+                break;
+            }
+        }
+
+        let counter_copy = std::sync::Arc::clone(&counter);
+        tokio::spawn(async move {
+            let mut record_found = false;
+
+            loop {
+                tokio::select! {
+                    _ = libp2p.select_next_some() => {}
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                        let store = libp2p.behaviour_mut().kad.store_mut();
+                        if store.get(&libp2p::kad::record::Key::new(&vec![1, 2, 3, 4])).is_some() && !record_found {
+                            counter_copy.fetch_add(1usize, std::sync::atomic::Ordering::SeqCst);
+                            record_found = true;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    let mut libp2p = initialize_libp2p();
+    let (mut litep2p, mut kad_handle) = initialize_litep2p().await;
+    let address = litep2p.listen_addresses().next().unwrap().clone();
+
+    for i in 0..addresses.len() {
+        libp2p.dial(addresses[i].clone()).unwrap();
+        let _ = libp2p
+            .behaviour_mut()
+            .kad
+            .add_address(&peer_ids[i], addresses[i].clone());
+    }
+    libp2p.dial(address).unwrap();
+
+    tokio::spawn(async move {
+        loop {
+            let _ = litep2p.next_event().await;
+        }
+    });
+
+    #[allow(unused)]
+    let mut listen_addr = None;
+    let peer_id = *libp2p.local_peer_id();
+
+    tracing::error!("local peer id: {peer_id}");
+
+    loop {
+        if let SwarmEvent::NewListenAddr { address, .. } = libp2p.select_next_some().await {
+            listen_addr = Some(address);
+            break;
+        }
+    }
+
+    let counter_copy = std::sync::Arc::clone(&counter);
+    tokio::spawn(async move {
+        let mut record_found = false;
+
+        loop {
+            tokio::select! {
+                _ = libp2p.select_next_some() => {}
+                _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                    let store = libp2p.behaviour_mut().kad.store_mut();
+                    if store.get(&libp2p::kad::record::Key::new(&vec![1, 2, 3, 4])).is_some() && !record_found {
+                        counter_copy.fetch_add(1usize, std::sync::atomic::Ordering::SeqCst);
+                        record_found = true;
+                    }
+                }
+            }
+        }
+    });
+
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    let listen_addr = listen_addr.unwrap().with(Protocol::P2p(peer_id.into()));
+
+    kad_handle
+        .add_known_peer(
+            litep2p::peer_id::PeerId::from_bytes(&peer_id.to_bytes()).unwrap(),
+            vec![listen_addr],
+        )
+        .await;
+
+    let record_key = RecordKey::new(&vec![1, 2, 3, 4]);
+    let record = Record::new(record_key, vec![1, 3, 3, 7, 1, 3, 3, 8]);
+
+    kad_handle.put_record(record).await;
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        if counter.load(std::sync::atomic::Ordering::SeqCst) == 4 {
+            break;
         }
     }
 }

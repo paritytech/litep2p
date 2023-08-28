@@ -74,10 +74,35 @@ mod schema {
     }
 }
 
+/// Peer action.
+#[derive(Debug)]
+enum PeerAction {
+    /// Send `FIND_NODE` message to peer.
+    SendFindNode(QueryId),
+
+    /// Send `PUT_VALUE` message to peer.
+    SendPutValue(Record),
+}
+
 /// Peer context.
 struct PeerContext {
-    /// Pending query ID, if any.
-    query: Option<QueryId>,
+    /// Pending action, if any.
+    pending_action: Option<PeerAction>,
+}
+
+impl PeerContext {
+    pub fn new() -> Self {
+        Self {
+            pending_action: None,
+        }
+    }
+
+    /// Create new [`PeerContext`] with pending [`PeerAction`].
+    pub fn with_pending_action(action: PeerAction) -> Self {
+        Self {
+            pending_action: Some(action),
+        }
+    }
 }
 
 /// Main Kademlia object.
@@ -110,7 +135,7 @@ pub struct Kademlia {
     pending_substreams: HashMap<SubstreamId, PeerId>,
 
     /// Pending dials.
-    pending_dials: HashMap<PeerId, QueryId>,
+    pending_dials: HashMap<PeerId, PeerAction>,
 
     /// Query engine.
     engine: QueryEngine,
@@ -144,14 +169,15 @@ impl Kademlia {
             Entry::Vacant(entry) => {
                 // TODO: add peer to routing table
                 // TODO: verify that peer limit is respected
-                // TODO: this is so ugly
-                let query = self.pending_dials.remove(&peer);
-                entry.insert(PeerContext { query });
+                let context = match self.pending_dials.remove(&peer) {
+                    Some(action) => {
+                        let _ = self.service.open_substream(peer).await; // TODO: don't ignore error
+                        PeerContext::with_pending_action(action)
+                    }
+                    None => PeerContext::new(),
+                };
 
-                if query.is_some() {
-                    self.service.open_substream(peer).await?;
-                }
-
+                entry.insert(context);
                 Ok(())
             }
             Entry::Occupied(_) => return Err(Error::PeerAlreadyExists(peer)),
@@ -200,29 +226,38 @@ impl Kademlia {
         );
         let _ = self.pending_substreams.remove(&substream_id);
 
-        // if the substream was opened but there is no query pending for the peer,
-        // just store the opened substream in the `SubstreamSet` and return early
-        let query = match self
+        let pending_action = &mut self
             .peers
             .get_mut(&peer)
             .ok_or(Error::PeerDoesntExist(peer))?
-            .query
-        {
-            Some(query) => query,
+            .pending_action;
+
+        match std::mem::replace(pending_action, None) {
             None => {
                 self.substreams.insert(peer, substream);
                 return Ok(());
             }
-        };
+            Some(PeerAction::SendFindNode(query)) => {
+                if let Some(QueryAction::SendMessage {
+                    query,
+                    peer,
+                    message,
+                }) = self.engine.next_peer_action(&query, &peer)
+                {
+                    match substream.send(message.into()).await {
+                        Err(_) => self.disconnect_peer(peer, Some(query)).await,
+                        Ok(_) => {
+                            *pending_action = Some(PeerAction::SendFindNode(query));
+                        }
+                    }
+                }
+            }
+            Some(PeerAction::SendPutValue(record)) => {
+                let message = KademliaMessage::put_value(record);
 
-        if let Some(QueryAction::SendMessage {
-            query,
-            peer,
-            message,
-        }) = self.engine.next_peer_action(&query, &peer)
-        {
-            if let Err(_) = substream.send(message.into()).await {
-                self.disconnect_peer(peer, Some(query)).await;
+                if let Err(_) = substream.send(message).await {
+                    self.disconnect_peer(peer, None).await;
+                }
             }
         }
 
@@ -285,12 +320,15 @@ impl Kademlia {
                     .peers
                     .get_mut(&peer)
                     .ok_or(Error::PeerDoesntExist(peer))?
-                    .query
+                    .pending_action
                     .take()
                 {
-                    Some(query) => self.engine.register_response(query, peer, message.clone()),
-                    None => {
-                        tracing::debug!(target: LOG_TARGET, ?peer, "unexpected response received from peer")
+                    Some(PeerAction::SendFindNode(query)) => {
+                        self.engine.register_response(query, peer, message.clone());
+                    }
+                    action => {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?action, "received an unexpected `FIND_NODE` response");
+                        self.disconnect_peer(peer, None).await;
                     }
                 }
             }
@@ -324,7 +362,12 @@ impl Kademlia {
         };
 
         if let Some(context) = self.peers.get(&peer) {
-            self.disconnect_peer(peer, context.query).await;
+            let query = match context.pending_action {
+                Some(PeerAction::SendFindNode(query)) => Some(query),
+                _ => None,
+            };
+
+            self.disconnect_peer(peer, query).await;
         }
     }
 
@@ -340,7 +383,10 @@ impl Kademlia {
                     .send(message.into())
                     .await
                     .map(|_| {
-                        self.peers.insert(peer, PeerContext { query: Some(query) });
+                        self.peers.insert(
+                            peer,
+                            PeerContext::with_pending_action(PeerAction::SendFindNode(query)),
+                        );
                         ()
                     })
                     .map_err(|_| (query, peer)),
@@ -349,13 +395,17 @@ impl Kademlia {
                         tracing::debug!(target: LOG_TARGET, ?query, ?peer, "dial peer");
 
                         let _ = self.service.dial(&peer).await;
-                        self.pending_dials.insert(peer, query);
+                        self.pending_dials
+                            .insert(peer, PeerAction::SendFindNode(query));
                         Ok(())
                     }
                     Ok(substream_id) => {
                         tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?substream_id, "open outbound substream for peer");
 
-                        self.peers.insert(peer, PeerContext { query: Some(query) });
+                        self.peers.insert(
+                            peer,
+                            PeerContext::with_pending_action(PeerAction::SendFindNode(query)),
+                        );
                         self.pending_substreams.insert(substream_id, peer);
 
                         Ok(())
@@ -373,6 +423,46 @@ impl Kademlia {
                             .collect(),
                     })
                     .await;
+                Ok(())
+            }
+            QueryAction::PutRecordToFoundNodes { record, peers } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    record_key = ?record.key,
+                    num_peers = ?peers.len(),
+                    "store record to found peers"
+                );
+
+                for peer in peers {
+                    match self.substreams.get_mut(&peer.peer) {
+                        Some(substream) => {
+                            if let Err(error) = substream
+                                .send(KademliaMessage::put_value(record.clone()))
+                                .await
+                            {
+                                tracing::debug!(target: LOG_TARGET, ?error, "failed to send message to peer");
+                                self.disconnect_peer(peer.peer, None).await;
+                            }
+                        }
+                        None => match self.service.open_substream(peer.peer).await {
+                            Ok(substream_id) => {
+                                self.peers.insert(
+                                    peer.peer,
+                                    PeerContext::with_pending_action(PeerAction::SendPutValue(
+                                        record.clone(),
+                                    )),
+                                );
+                                self.pending_substreams.insert(substream_id, peer.peer);
+                            }
+                            Err(_) => {
+                                let _ = self.service.dial(&peer.peer).await;
+                                self.pending_dials
+                                    .insert(peer.peer, PeerAction::SendPutValue(record.clone()));
+                            }
+                        },
+                    }
+                }
+
                 Ok(())
             }
             QueryAction::QuerySucceeded { .. } => unreachable!(),
@@ -476,6 +566,8 @@ impl Kademlia {
                         Ok(message) => {
                             if let Err(error) = self.on_message_received(peer, message).await {
                                 tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to handle message");
+                            } else {
+                                tracing::debug!(target: LOG_TARGET, ?peer, "message handled sucecssfully");
                             }
                         }
                         Err(error) => return Err(error),

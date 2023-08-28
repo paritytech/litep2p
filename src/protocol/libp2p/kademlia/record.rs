@@ -91,7 +91,7 @@ pub struct Record {
 
 impl Record {
     /// Creates a new record for insertion into the DHT.
-    pub fn _new<K>(key: K, value: Vec<u8>) -> Self
+    pub fn new<K>(key: K, value: Vec<u8>) -> Self
     where
         K: Into<Key>,
     {
