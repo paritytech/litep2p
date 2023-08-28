@@ -29,7 +29,9 @@ use libp2p::{
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::libp2p::kademlia::{ConfigBuilder, KademliaEvent, KademliaHandle, Record, RecordKey},
+    protocol::libp2p::kademlia::{
+        ConfigBuilder, KademliaEvent, KademliaHandle, Quorum, Record, RecordKey,
+    },
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p,
 };
@@ -348,6 +350,39 @@ async fn get_record() {
             .kad
             .add_address(&peer_ids[i], addresses[i].clone());
     }
+
+    // publish record on the network
+    let record = libp2p::kad::Record {
+        key: libp2p::kad::RecordKey::new(&vec![1, 2, 3, 4]),
+        value: vec![13, 37, 13, 38],
+        publisher: None,
+        expires: None,
+    };
+    libp2p
+        .behaviour_mut()
+        .kad
+        .put_record(record, libp2p::kad::Quorum::All)
+        .unwrap();
+
+    #[allow(unused)]
+    let mut listen_addr = None;
+
+    loop {
+        tokio::select! {
+            event = libp2p.select_next_some() => match event {
+                SwarmEvent::NewListenAddr { address, .. } => {
+                    listen_addr = Some(address);
+                }
+                _ => {}
+            },
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                if counter.load(std::sync::atomic::Ordering::SeqCst) == 3 {
+                    break;
+                }
+            }
+        }
+    }
+
     libp2p.dial(address).unwrap();
 
     tokio::spawn(async move {
@@ -356,34 +391,11 @@ async fn get_record() {
         }
     });
 
-    #[allow(unused)]
-    let mut listen_addr = None;
     let peer_id = *libp2p.local_peer_id();
 
-    tracing::error!("local peer id: {peer_id}");
-
-    loop {
-        if let SwarmEvent::NewListenAddr { address, .. } = libp2p.select_next_some().await {
-            listen_addr = Some(address);
-            break;
-        }
-    }
-
-    let counter_copy = std::sync::Arc::clone(&counter);
     tokio::spawn(async move {
-        let mut record_found = false;
-
         loop {
-            tokio::select! {
-                _ = libp2p.select_next_some() => {}
-                _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
-                    let store = libp2p.behaviour_mut().kad.store_mut();
-                    if store.get(&libp2p::kad::record::Key::new(&vec![1, 2, 3, 4])).is_some() && !record_found {
-                        counter_copy.fetch_add(1usize, std::sync::atomic::Ordering::SeqCst);
-                        record_found = true;
-                    }
-                }
-            }
+            let _ = libp2p.select_next_some().await;
         }
     });
 
@@ -398,16 +410,12 @@ async fn get_record() {
         )
         .await;
 
-    let record_key = RecordKey::new(&vec![1, 2, 3, 4]);
-    let record = Record::new(record_key, vec![1, 3, 3, 7, 1, 3, 3, 8]);
+    kad_handle
+        .get_record(RecordKey::new(&vec![1, 2, 3, 4]), Quorum::All)
+        .await;
 
-    kad_handle.put_record(record).await;
-
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-        if counter.load(std::sync::atomic::Ordering::SeqCst) == 4 {
-            break;
-        }
+    match kad_handle.next().await.unwrap() {
+        KademliaEvent::GetRecordResult { .. } => {}
+        _ => panic!("invalid event received"),
     }
 }

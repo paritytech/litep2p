@@ -45,7 +45,7 @@ use std::collections::{hash_map::Entry, HashMap};
 
 pub use {
     config::{Config, ConfigBuilder},
-    handle::{KademliaEvent, KademliaHandle},
+    handle::{KademliaEvent, KademliaHandle, Quorum},
     record::{Key as RecordKey, Record},
 };
 
@@ -342,6 +342,36 @@ impl Kademlia {
 
                 self.store.put(record);
             }
+            ref message @ KademliaMessage::GetRecordResponse { ref peers, .. } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?peers,
+                    "handle `FIND_NODE` response"
+                );
+
+                for info in peers {
+                    self.service
+                        .add_known_address(&info.peer, info.addresses.iter().cloned())
+                }
+
+                match self
+                    .peers
+                    .get_mut(&peer)
+                    .ok_or(Error::PeerDoesntExist(peer))?
+                    .pending_action
+                    .take()
+                {
+                    // TODO: this is so incorrect
+                    Some(PeerAction::SendFindNode(query)) => {
+                        self.engine.register_response(query, peer, message.clone());
+                    }
+                    action => {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?action, "received an unexpected `FIND_NODE` response");
+                        self.disconnect_peer(peer, None).await;
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -465,6 +495,15 @@ impl Kademlia {
 
                 Ok(())
             }
+            QueryAction::GetRecordQueryDone { record } => {
+                self.store.put(record.clone());
+
+                let _ = self
+                    .event_tx
+                    .send(KademliaEvent::GetRecordResult { record })
+                    .await;
+                Ok(())
+            }
             QueryAction::QuerySucceeded { .. } => unreachable!(),
             QueryAction::QueryFailed { query } => {
                 tracing::error!(target: LOG_TARGET, ?query, "QUERY FAILED");
@@ -547,14 +586,26 @@ impl Kademlia {
                                 self.routing_table.closest(key, 20).into(),
                             );
                         }
-                        Some(KademliaCommand::GetRecord { key }) => {
+                        Some(KademliaCommand::GetRecord { key, quorum }) => {
                             tracing::debug!(target: LOG_TARGET, ?key, "get record from DHT");
 
-                            // TODO: implement quorum
-                            let _ = self.engine.start_get_record(
-                                key.clone(),
-                                self.routing_table.closest(Key::new(key.clone()), 20).into(),
-                            );
+                            match (self.store.get(&key), quorum) {
+                                (Some(record), Quorum::One) => {
+                                    let _ = self
+                                        .event_tx
+                                        .send(KademliaEvent::GetRecordResult { record: record.clone() })
+                                        .await;
+                                }
+                                (record, _) => {
+                                    let _ = self.engine.start_get_record(
+                                        key.clone(),
+                                        self.routing_table.closest(Key::new(key.clone()), 20).into(),
+                                        quorum,
+                                        if record.is_some() { 1 } else { 0 },
+                                    );
+                                }
+                            }
+
                         }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
                             self.routing_table.add_known_peer(

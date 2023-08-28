@@ -28,12 +28,26 @@ use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
+    num::NonZeroUsize,
     pin::Pin,
     task::{Context, Poll},
 };
 
-/// Logging target for the file.
-const _LOG_TARGET: &str = "ifsp::kademlia::handle";
+/// Quorum.
+///
+/// Quorum defines how many peers must be successfully contacted
+/// in order for the query to be considered successful.
+#[derive(Debug, Copy, Clone)]
+pub enum Quorum {
+    /// All peers must be successfully contacted.
+    All,
+
+    /// One peer must be successfully contacted.
+    One,
+
+    /// `N` peer must be successfully contacted.
+    N(NonZeroUsize),
+}
 
 /// Kademlia commands.
 #[derive(Debug)]
@@ -63,6 +77,9 @@ pub(crate) enum KademliaCommand {
     GetRecord {
         /// Record key.
         key: RecordKey,
+
+        /// [`Quorum`] for the query.
+        quorum: Quorum,
     },
 }
 
@@ -76,6 +93,12 @@ pub enum KademliaEvent {
 
         /// Found nodes and their addresses.
         peers: Vec<(PeerId, Vec<Multiaddr>)>,
+    },
+
+    /// Get the result of a `GET_VALUE` query.
+    GetRecordResult {
+        /// Found record.
+        record: Record,
     },
 }
 
@@ -116,8 +139,11 @@ impl KademliaHandle {
     }
 
     /// Get record from DHT.
-    pub async fn get_record(&mut self, key: RecordKey) {
-        let _ = self.cmd_tx.send(KademliaCommand::GetRecord { key }).await;
+    pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) {
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::GetRecord { key, quorum })
+            .await;
     }
 }
 

@@ -25,6 +25,7 @@ use crate::{
         query::{find_node::FindNodeContext, get_record::GetRecordContext},
         record::{Key as RecordKey, Record},
         types::{KademliaPeer, Key},
+        Quorum,
     },
 };
 
@@ -104,6 +105,12 @@ pub enum QueryAction {
 
         /// Peers for whom the `PUT_VALUE` must be sent to.
         peers: Vec<KademliaPeer>,
+    },
+
+    /// `GET_VALUE` query succeeded.
+    GetRecordQueryDone {
+        /// Found record.
+        record: Record,
     },
 
     // TODO: remove
@@ -226,6 +233,8 @@ impl QueryEngine {
         &mut self,
         target: RecordKey,
         candidates: VecDeque<KademliaPeer>,
+        quorum: Quorum,
+        count: usize,
     ) -> crate::Result<QueryId> {
         let query_id = self.next_query_id();
 
@@ -248,6 +257,8 @@ impl QueryEngine {
                     candidates,
                     self.replication_factor,
                     self.parallelism_factor,
+                    quorum,
+                    count,
                 ),
             },
         );
@@ -304,8 +315,11 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
-            Some(QueryType::GetRecord { .. }) => match message {
-                _ => todo!(),
+            Some(QueryType::GetRecord { context }) => match message {
+                KademliaMessage::GetRecordResponse { record, peers } => {
+                    context.register_response(peer, record, peers);
+                }
+                _ => unreachable!(),
             },
         }
     }
@@ -347,7 +361,9 @@ impl QueryEngine {
                     .map(|(_, peer)| peer)
                     .collect::<Vec<_>>(),
             },
-            _ => todo!(),
+            QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
+                record: context.found_record(),
+            },
         }
     }
 

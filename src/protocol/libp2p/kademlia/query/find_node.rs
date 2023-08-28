@@ -109,7 +109,6 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         let distance = self.target.distance(&peer.key);
 
         // TODO: could this be written in another way?
-        // TODO: replication factor must not be hardcoded
         // TODO: only insert nodes from whom a response was received
         match self.responses.len() < self.replication_factor {
             true => {
