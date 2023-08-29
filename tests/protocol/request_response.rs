@@ -598,7 +598,7 @@ async fn response_too_big() {
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Timeout,
+            error: RequestResponseError::Rejected,
         }
     );
 }

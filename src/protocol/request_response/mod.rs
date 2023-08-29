@@ -400,7 +400,14 @@ impl RequestResponseProtocol {
         );
 
         match self.pending_outbound_responses.remove(&request_id) {
-            Some(mut substream) => substream.send(response.into()).await.map_err(From::from),
+            Some(mut substream) => match substream.send(response.into()).await {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    tracing::trace!(target: LOG_TARGET, ?request_id, ?error, "failed to send response");
+                    let _ = substream.close().await;
+                    Ok(())
+                }
+            },
             None => return Err(Error::Other(format!("pending request doesn't exist"))),
         }
     }
