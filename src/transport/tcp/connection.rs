@@ -502,44 +502,6 @@ pub struct Substream {
     io: yamux::Stream,
 }
 
-impl AsyncRead for Substream {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        let inner = Pin::into_inner(self);
-        Pin::new(&mut inner.io).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for Substream {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        let inner = Pin::into_inner(self);
-        Pin::new(&mut inner.io).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        let inner = Pin::into_inner(self);
-        Pin::new(&mut inner.io).poll_flush(cx)
-    }
-
-    fn poll_close(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        let inner = Pin::into_inner(self);
-        Pin::new(&mut inner.io).poll_close(cx)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
