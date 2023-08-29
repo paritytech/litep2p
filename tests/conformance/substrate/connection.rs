@@ -143,7 +143,7 @@ async fn substrate_keep_alive_timeout() {
                 _ => {}
             },
             event = handle.next() => match event.unwrap() {
-                event => tracing::error!("unhanled notification event: {event:?}"),
+                event => tracing::debug!("unhanled notification event: {event:?}"),
             }
         }
     }

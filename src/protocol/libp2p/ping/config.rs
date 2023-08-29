@@ -48,9 +48,6 @@ pub struct PingConfig {
     /// Maximum failures before the peer is considered unreachable.
     pub(crate) max_failures: usize,
 
-    /// Should the connection be kept alive using PING.
-    pub(crate) keep_alive: bool,
-
     /// TX channel for sending events to the user protocol.
     pub(crate) tx_event: Sender<PingEvent>,
 }
@@ -65,7 +62,6 @@ impl PingConfig {
         (
             Self {
                 tx_event,
-                keep_alive: false,
                 max_failures: MAX_FAILURES,
                 protocol: ProtocolName::from(PROTOCOL_NAME),
                 codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
@@ -85,16 +81,12 @@ pub struct PingConfigBuilder {
 
     /// Maximum failures before the peer is considered unreachable.
     max_failures: usize,
-
-    /// Should the connection be kept alive using PING.
-    keep_alive: bool,
 }
 
 impl PingConfigBuilder {
     /// Create new default [`PingConfig`] which can be modified by the user.
     pub fn new() -> Self {
         Self {
-            keep_alive: false,
             max_failures: MAX_FAILURES,
             protocol: ProtocolName::from(PROTOCOL_NAME),
             codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
@@ -107,12 +99,6 @@ impl PingConfigBuilder {
         self
     }
 
-    /// Set keep alive mode for the protocol.
-    pub fn with_keep_alive(mut self, keep_alive: bool) -> Self {
-        self.keep_alive = keep_alive;
-        self
-    }
-
     /// Build [`PingConfig`].
     pub fn build(self) -> (PingConfig, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
@@ -120,7 +106,6 @@ impl PingConfigBuilder {
         (
             PingConfig {
                 tx_event,
-                keep_alive: self.keep_alive,
                 max_failures: self.max_failures,
                 protocol: self.protocol,
                 codec: self.codec,

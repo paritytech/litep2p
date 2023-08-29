@@ -33,6 +33,7 @@ use crate::{
     DEFAULT_CHANNEL_SIZE,
 };
 
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -44,6 +45,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 /// Logging target for the file.
@@ -168,6 +170,9 @@ pub struct TransportService {
 
     /// Next substream ID.
     next_substream_id: Arc<AtomicUsize>,
+
+    /// Pending keep-alive timeouts.
+    keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, PeerId>>,
 }
 
 impl TransportService {
@@ -188,6 +193,7 @@ impl TransportService {
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
+                keep_alive_timeouts: FuturesUnordered::new(),
             },
             tx,
         )
@@ -196,11 +202,11 @@ impl TransportService {
 
 #[async_trait::async_trait]
 impl Transport for TransportService {
-    async fn dial(&self, peer: &PeerId) -> crate::Result<()> {
+    async fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
         self.transport_handle.dial(peer).await
     }
 
-    async fn dial_address(&self, address: Multiaddr) -> crate::Result<()> {
+    async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
         self.transport_handle.dial_address(address).await
     }
 
@@ -217,12 +223,6 @@ impl Transport for TransportService {
 
         self.transport_handle
             .add_know_address(peer, addresses.into_iter());
-    }
-
-    fn disconnect(&mut self, peer: &PeerId) {
-        if let Some(handle) = self.connections.get_mut(&peer) {
-            handle.close();
-        }
     }
 
     async fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
@@ -249,20 +249,42 @@ impl Transport for TransportService {
     }
 
     async fn next_event(&mut self) -> Option<TransportEvent> {
-        match self.rx.recv().await? {
-            InnerTransportEvent::ConnectionEstablished {
-                peer,
-                address,
-                sender,
-            } => {
-                self.connections.insert(peer, sender);
-                Some(TransportEvent::ConnectionEstablished { peer, address })
+        loop {
+            tokio::select! {
+                event = self.rx.recv() => match event? {
+                    InnerTransportEvent::ConnectionEstablished {
+                        peer,
+                        address,
+                        sender,
+                    } => {
+                        self.connections.insert(peer, sender);
+                        self.keep_alive_timeouts.push(Box::pin(async move {
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            peer
+                        }));
+
+                        return Some(TransportEvent::ConnectionEstablished { peer, address })
+                    }
+                    InnerTransportEvent::ConnectionClosed { peer } => {
+                        self.connections.remove(&peer);
+                        return Some(TransportEvent::ConnectionClosed { peer })
+                    }
+                    event => return Some(event.into()),
+                },
+                peer = self.keep_alive_timeouts.next(), if !self.keep_alive_timeouts.is_empty() => {
+                    match peer {
+                        None => {
+                            tracing::warn!(target: LOG_TARGET, "read `None` from `keep_alive_timeouts`");
+                        }
+                        Some(peer) => {
+                            if let Some(connection) = self.connections.get_mut(&peer) {
+                                tracing::debug!(target: LOG_TARGET, ?peer, "keep-alive timeout over, downgrade connection");
+                                connection.close();
+                            }
+                        }
+                    }
+                }
             }
-            InnerTransportEvent::ConnectionClosed { peer } => {
-                self.connections.remove(&peer);
-                Some(TransportEvent::ConnectionClosed { peer })
-            }
-            event => Some(event.into()),
         }
     }
 }

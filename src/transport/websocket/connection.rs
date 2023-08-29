@@ -493,7 +493,7 @@ impl WebSocketConnection {
                     }
                     None => {
                         tracing::error!(target: LOG_TARGET, "protocols have exited, shutting down connection");
-                        return Ok(())
+                        return self.protocol_set.report_connection_closed(self.peer).await
                     }
                 }
             }

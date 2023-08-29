@@ -129,7 +129,7 @@ pub trait Transport {
     /// Dial `peer` using `PeerId`.
     ///
     /// Call fails if `Litep2p` doesn't know have a known address for the peer.
-    async fn dial(&self, peer: &PeerId) -> crate::Result<()>;
+    async fn dial(&mut self, peer: &PeerId) -> crate::Result<()>;
 
     /// Dial peer using a `Multiaddr`.
     ///
@@ -138,19 +138,12 @@ pub trait Transport {
     /// Calling this function is only necessary for those addresses that are discovered out-of-band
     /// since `Litep2p` internally keeps track of all peer addresses it has learned through user
     /// calling this function, Kademlia peer discoveries and `Identify` responses.
-    async fn dial_address(&self, address: Multiaddr) -> crate::Result<()>;
+    async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()>;
 
     /// Add known one or more addresses for peer.
     ///
     /// The list is filtered for duplicates and unsupported transports.
     fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>);
-
-    /// Disconnect peer from the protocol.
-    ///
-    /// This doesn't automatically close the connection as other protocols may have
-    /// substream open on the connection but once the protocols have all closed their
-    /// substreams on the connecction, it will be closed.
-    fn disconnect(&mut self, peer: &PeerId);
 
     /// Open substream to `peer`.
     ///

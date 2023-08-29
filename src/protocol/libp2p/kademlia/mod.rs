@@ -203,7 +203,6 @@ impl Kademlia {
             let _ = substream.close().await;
         }
 
-        self.service.disconnect(&peer);
         self.peers.remove(&peer);
 
         if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {

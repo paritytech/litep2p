@@ -62,9 +62,6 @@ pub struct Ping {
     /// Maximum failures before the peer is considered unreachable.
     _max_failures: usize,
 
-    /// Keep alive mode.
-    keep_alive: bool,
-
     // Connection service.
     service: TransportService,
 
@@ -85,7 +82,6 @@ impl Ping {
             service,
             tx: config.tx_event,
             peers: HashSet::new(),
-            keep_alive: config.keep_alive,
             pending_outbound: HashMap::new(),
             _max_failures: config.max_failures,
         }
@@ -139,10 +135,6 @@ impl Ping {
             })
             .await
             .map_err(From::from);
-
-        if !self.keep_alive {
-            self.service.disconnect(&peer);
-        }
 
         res
     }

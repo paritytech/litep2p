@@ -504,8 +504,8 @@ impl TcpConnection {
                         }));
                     }
                     None => {
-                        tracing::trace!(target: LOG_TARGET, "protocols have disconnected, closing connection");
-                        return Ok(())
+                        tracing::debug!(target: LOG_TARGET, "protocols have disconnected, closing connection");
+                        return self.protocol_set.report_connection_closed(self.peer).await
                     }
                 }
             }
