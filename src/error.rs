@@ -108,6 +108,8 @@ pub enum Error {
     AlreadyConnected,
     #[error("No addres available for `{0}`")]
     NoAddressAvailable(PeerId),
+    #[error("Connection closed")]
+    ConnectionClosed,
 }
 
 #[derive(Debug, thiserror::Error)]

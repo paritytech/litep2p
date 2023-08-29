@@ -25,8 +25,9 @@ use crate::{
     error::{Error, NegotiationError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
-    protocol::{Direction, ProtocolCommand, ProtocolSet},
+    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
+    transport::substream::Substream,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
@@ -44,11 +45,26 @@ use tokio_util::{
     },
 };
 
-use std::{fmt, io, net::SocketAddr, pin::Pin, time::Duration};
+use std::{fmt, net::SocketAddr, time::Duration};
 
 // TODO: introduce `NegotiatingConnection` to clean up this code a bit?
 /// Logging target for the file.
 const LOG_TARGET: &str = "tcp::connection";
+
+#[derive(Debug)]
+pub struct NegotiatedSubstream {
+    /// Substream direction.
+    direction: Direction,
+
+    /// Protocol name.
+    protocol: ProtocolName,
+
+    /// Yamux substream.
+    io: yamux::Stream,
+
+    /// Permit.
+    permit: Permit,
+}
 
 /// TCP connection error.
 #[derive(Debug)]
@@ -99,7 +115,8 @@ pub struct TcpConnection {
     address: Multiaddr,
 
     /// Pending substreams.
-    pending_substreams: FuturesUnordered<BoxFuture<'static, Result<Substream, ConnectionError>>>,
+    pending_substreams:
+        FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
 }
 
 impl fmt::Debug for TcpConnection {
@@ -151,9 +168,10 @@ impl TcpConnection {
     /// Open substream for `protocol`.
     pub async fn open_substream(
         mut control: yamux::Control,
+        permit: Permit,
         direction: Direction,
         protocol: ProtocolName,
-    ) -> crate::Result<Substream> {
+    ) -> crate::Result<NegotiatedSubstream> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
 
         let stream = match control.open_stream().await {
@@ -175,10 +193,11 @@ impl TcpConnection {
         let (io, protocol) =
             Self::negotiate_protocol(stream, &Role::Dialer, vec![&protocol]).await?;
 
-        Ok(Substream {
+        Ok(NegotiatedSubstream {
             io: io.inner(),
             direction,
             protocol,
+            permit,
         })
     }
 
@@ -214,9 +233,10 @@ impl TcpConnection {
     /// Accept substream.
     pub async fn accept_substream(
         stream: yamux::Stream,
+        permit: Permit,
         substream_id: SubstreamId,
         protocols: Vec<ProtocolName>,
-    ) -> crate::Result<Substream> {
+    ) -> crate::Result<NegotiatedSubstream> {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
@@ -235,10 +255,11 @@ impl TcpConnection {
             "substream accepted and negotiated"
         );
 
-        Ok(Substream {
+        Ok(NegotiatedSubstream {
             io: io.inner(),
             direction: Direction::Inbound,
             protocol,
+            permit,
         })
     }
 
@@ -347,11 +368,12 @@ impl TcpConnection {
                     Some(Ok(stream)) => {
                         let substream = self.next_substream_id.next();
                         let protocols = self.protocol_set.protocols.keys().cloned().collect();
+                        let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(5), // TODO: make this configurable
-                                Self::accept_substream(stream, substream, protocols),
+                                Self::accept_substream(stream, permit, substream, protocols),
                             )
                             .await
                             {
@@ -425,7 +447,9 @@ impl TcpConnection {
                         Ok(substream) => {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
-                            let substream = FuturesAsyncReadCompatExt::compat(substream);
+                            let socket = FuturesAsyncReadCompatExt::compat(substream.io);
+                            let substream = Substream::new(socket, substream.permit);
+
                             let substream: Box<dyn SubstreamT> = match self.protocol_set.protocol_codec(&protocol) {
                                 ProtocolCodec::Identity(payload_size) => {
                                     Box::new(Framed::new(substream, Identity::new(payload_size)))
@@ -449,7 +473,7 @@ impl TcpConnection {
                     }
                 }
                 protocol = self.protocol_set.next_event() => match protocol {
-                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id, permit }) => {
                         let control = self.control.clone();
 
                         tracing::trace!(
@@ -462,7 +486,7 @@ impl TcpConnection {
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(5),
-                                Self::open_substream(control, Direction::Outbound(substream_id), protocol.clone()),
+                                Self::open_substream(control, permit, Direction::Outbound(substream_id), protocol.clone()),
                             )
                             .await
                             {
@@ -487,19 +511,6 @@ impl TcpConnection {
             }
         }
     }
-}
-
-// TODO: this is not needed anymore
-#[derive(Debug)]
-pub struct Substream {
-    /// Substream direction.
-    direction: Direction,
-
-    /// Protocol name.
-    protocol: ProtocolName,
-
-    /// Yamux substream.
-    io: yamux::Stream,
 }
 
 #[cfg(test)]

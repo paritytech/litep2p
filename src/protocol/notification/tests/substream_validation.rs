@@ -23,6 +23,7 @@ use crate::{
     mock::substream::MockSubstream,
     peer_id::PeerId,
     protocol::{
+        connection::ConnectionHandle,
         notification::{
             negotiation::HandshakeEvent,
             tests::{add_peer, make_notification_protocol},
@@ -84,7 +85,7 @@ async fn substream_accepted() {
     tx.send(InnerTransportEvent::ConnectionEstablished {
         peer,
         address: Multiaddr::empty(),
-        sender: proto_tx,
+        sender: ConnectionHandle::new(proto_tx.clone()),
     })
     .await
     .unwrap();
@@ -135,13 +136,13 @@ async fn substream_accepted() {
     notif.on_negotiation_event(peer, event).await;
 
     // protocol asks for outbound substream to be opened and its state is changed accordingly
-    assert_eq!(
-        proto_rx.recv().await.unwrap(),
-        ProtocolCommand::OpenSubstream {
-            protocol: ProtocolName::from("/notif/1"),
-            substream_id: SubstreamId::from(0usize)
-        },
-    );
+    let ProtocolCommand::OpenSubstream {
+        protocol,
+        substream_id,
+        ..
+    } = proto_rx.recv().await.unwrap();
+    assert_eq!(protocol, ProtocolName::from("/notif/1"));
+    assert_eq!(substream_id, SubstreamId::from(0usize));
 
     let expected = SubstreamId::from(0usize);
 
@@ -249,7 +250,7 @@ async fn accept_fails_due_to_closed_substream() {
     tx.send(InnerTransportEvent::ConnectionEstablished {
         peer,
         address: Multiaddr::empty(),
-        sender: proto_tx,
+        sender: ConnectionHandle::new(proto_tx),
     })
     .await
     .unwrap();
@@ -332,7 +333,7 @@ async fn accept_fails_due_to_closed_connection() {
     tx.send(InnerTransportEvent::ConnectionEstablished {
         peer,
         address: Multiaddr::empty(),
-        sender: proto_tx,
+        sender: ConnectionHandle::new(proto_tx),
     })
     .await
     .unwrap();

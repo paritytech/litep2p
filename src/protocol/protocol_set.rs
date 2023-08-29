@@ -23,7 +23,10 @@ use crate::{
     crypto::ed25519::Keypair,
     error::Error,
     peer_id::PeerId,
-    protocol::{Direction, Transport, TransportEvent},
+    protocol::{
+        connection::{ConnectionHandle, Permit},
+        Direction, Transport, TransportEvent,
+    },
     substream::Substream,
     transport::manager::{ProtocolContext, TransportManagerEvent, TransportManagerHandle},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -32,7 +35,7 @@ use crate::{
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
-use tokio::sync::mpsc::{channel, Receiver, Sender, WeakSender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -56,7 +59,7 @@ pub enum InnerTransportEvent {
         address: Multiaddr,
 
         /// Handle for communicating with the connection.
-        sender: Sender<ProtocolCommand>,
+        sender: ConnectionHandle,
     },
 
     /// Connection closed.
@@ -146,17 +149,6 @@ impl From<InnerTransportEvent> for TransportEvent {
     }
 }
 
-/// Connection type, from the point of view of the protocol.
-#[derive(Debug)]
-enum ConnectionType {
-    /// Protocol wishes to keep the connection open.
-    Active(Sender<ProtocolCommand>),
-
-    /// Protocol is not interested in the connection and the connection will be closed
-    /// due to keep-alive timeout if all protocols consider the connection inactive.
-    Inactive(WeakSender<ProtocolCommand>),
-}
-
 #[derive(Debug)]
 pub struct TransportService {
     /// Local peer ID.
@@ -166,7 +158,7 @@ pub struct TransportService {
     protocol: ProtocolName,
 
     /// Open connections.
-    connections: HashMap<PeerId, ConnectionType>,
+    connections: HashMap<PeerId, ConnectionHandle>,
 
     /// Transport handle.
     transport_handle: TransportManagerHandle,
@@ -228,14 +220,8 @@ impl Transport for TransportService {
     }
 
     fn disconnect(&mut self, peer: &PeerId) {
-        match self.connections.get(&peer) {
-            Some(ConnectionType::Active(sender)) => {
-                tracing::trace!(target: LOG_TARGET, ?peer, protocol = ?self.protocol, "disconnect peer from protocol");
-
-                self.connections
-                    .insert(*peer, ConnectionType::Inactive(sender.downgrade()));
-            }
-            _ => {}
+        if let Some(handle) = self.connections.get_mut(&peer) {
+            handle.close();
         }
     }
 
@@ -244,6 +230,7 @@ impl Transport for TransportService {
             .connections
             .get_mut(&peer)
             .ok_or(Error::PeerDoesntExist(peer))?;
+        let permit = connection.try_get_permit().ok_or(Error::ConnectionClosed)?;
         let substream_id =
             SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
 
@@ -255,30 +242,10 @@ impl Transport for TransportService {
             "open substream",
         );
 
-        match connection {
-            ConnectionType::Inactive(sender) => {
-                let sender = sender.upgrade().ok_or(Error::Disconnected)?;
-                let result = sender
-                    .send(ProtocolCommand::OpenSubstream {
-                        protocol: self.protocol.clone(),
-                        substream_id,
-                    })
-                    .await
-                    .map(|_| substream_id)
-                    .map_err(From::from);
-
-                *connection = ConnectionType::Active(sender);
-                result
-            }
-            ConnectionType::Active(tx) => tx
-                .send(ProtocolCommand::OpenSubstream {
-                    protocol: self.protocol.clone(),
-                    substream_id,
-                })
-                .await
-                .map(|_| substream_id)
-                .map_err(From::from),
-        }
+        connection
+            .open_substream(self.protocol.clone(), substream_id, permit)
+            .await
+            .map(|_| substream_id)
     }
 
     async fn next_event(&mut self) -> Option<TransportEvent> {
@@ -288,8 +255,7 @@ impl Transport for TransportService {
                 address,
                 sender,
             } => {
-                self.connections
-                    .insert(peer, ConnectionType::Active(sender));
+                self.connections.insert(peer, sender);
                 Some(TransportEvent::ConnectionEstablished { peer, address })
             }
             InnerTransportEvent::ConnectionClosed { peer } => {
@@ -302,7 +268,7 @@ impl Transport for TransportService {
 }
 
 /// Events emitted by the installed protocols to transport.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ProtocolCommand {
     /// Open substream.
     OpenSubstream {
@@ -318,6 +284,13 @@ pub enum ProtocolCommand {
         /// This allows the protocol to distinguish inbound substreams from outbound substreams
         /// and associate incoming substreams with whatever logic it has.
         substream_id: SubstreamId,
+
+        /// Connection permit.
+        ///
+        /// `Permit` allows the connection to be kept open while the permit is held and it is given
+        /// to the substream to hold once it has been opened. When the substream is dropped, the permit
+        /// is dropped and the connection may be closed if no other permit is being held.
+        permit: Permit,
     },
 }
 
@@ -331,7 +304,7 @@ pub struct ProtocolSet {
     pub(crate) protocols: HashMap<ProtocolName, ProtocolContext>,
     pub(crate) keypair: Keypair,
     mgr_tx: Sender<TransportManagerEvent>,
-    tx: ConnectionType,
+    connection: ConnectionHandle,
     rx: Receiver<ProtocolCommand>,
     next_substream_id: Arc<AtomicUsize>,
 }
@@ -351,8 +324,13 @@ impl ProtocolSet {
             keypair,
             protocols,
             next_substream_id,
-            tx: ConnectionType::Active(tx),
+            connection: ConnectionHandle::new(tx),
         }
+    }
+
+    /// Try to acquire permit to keep the connection open.
+    pub fn try_get_permit(&mut self) -> Option<Permit> {
+        self.connection.try_get_permit()
     }
 
     /// Get next substream ID.
@@ -426,9 +404,7 @@ impl ProtocolSet {
         peer: PeerId,
         address: Multiaddr,
     ) -> crate::Result<()> {
-        let ConnectionType::Active(tx) = &self.tx else {
-            panic!("`ProtocolSet` is in invalid state");
-        };
+        let connection_handle = self.connection.downgrade();
 
         for (_, sender) in &self.protocols {
             let _ = sender
@@ -436,12 +412,11 @@ impl ProtocolSet {
                 .send(InnerTransportEvent::ConnectionEstablished {
                     peer,
                     address: address.clone(),
-                    sender: tx.clone(),
+                    sender: connection_handle.clone(),
                 })
                 .await?;
         }
 
-        self.tx = ConnectionType::Inactive(tx.downgrade());
         self.mgr_tx
             .send(TransportManagerEvent::ConnectionEstablished {
                 connection,

@@ -24,8 +24,9 @@ use crate::{
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     peer_id::PeerId,
-    protocol::{Direction, ProtocolCommand, ProtocolSet},
+    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
+    transport::substream::Substream,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
@@ -79,11 +80,12 @@ pub(crate) struct QuicConnection {
     protocol_set: ProtocolSet,
 
     /// Pending substreams.
-    pending_substreams: FuturesUnordered<BoxFuture<'static, Result<Substream, ConnectionError>>>,
+    pending_substreams:
+        FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
 }
 
 #[derive(Debug)]
-pub struct Substream {
+pub struct NegotiatedSubstream {
     /// Substream direction.
     direction: Direction,
 
@@ -92,6 +94,9 @@ pub struct Substream {
 
     /// `s2n-quic` stream.
     io: BidirectionalStream,
+
+    /// Permit.
+    permit: Permit,
 }
 
 impl QuicConnection {
@@ -132,9 +137,10 @@ impl QuicConnection {
     /// Open substream for `protocol`.
     pub async fn open_substream(
         mut handle: Handle,
+        permit: Permit,
         direction: Direction,
         protocol: ProtocolName,
-    ) -> crate::Result<Substream> {
+    ) -> crate::Result<NegotiatedSubstream> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
 
         let stream = match handle.open_bidirectional_stream().await {
@@ -161,19 +167,21 @@ impl QuicConnection {
         let (io, protocol) =
             Self::negotiate_protocol(stream, &Role::Dialer, vec![&protocol]).await?;
 
-        Ok(Substream {
+        Ok(NegotiatedSubstream {
             io: io.inner(),
             direction,
             protocol,
+            permit,
         })
     }
 
     /// Accept substream.
     pub async fn accept_substream(
         stream: BidirectionalStream,
+        permit: Permit,
         substream_id: SubstreamId,
         protocols: Vec<ProtocolName>,
-    ) -> crate::Result<Substream> {
+    ) -> crate::Result<NegotiatedSubstream> {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
@@ -193,10 +201,11 @@ impl QuicConnection {
             "substream accepted and negotiated"
         );
 
-        Ok(Substream {
+        Ok(NegotiatedSubstream {
             io: io.inner(),
             direction: Direction::Inbound,
             protocol,
+            permit,
         })
     }
 
@@ -211,11 +220,12 @@ impl QuicConnection {
                         let substream = self.protocol_set.next_substream_id();
                         // TODO: these should not be cloned on every substream
                         let protocols = self.protocol_set.protocols.keys().cloned().collect();
+                        let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(5), // TODO: make this configurable
-                                Self::accept_substream(stream, substream, protocols),
+                                Self::accept_substream(stream, permit, substream, protocols),
                             )
                             .await
                             {
@@ -284,12 +294,13 @@ impl QuicConnection {
                         Ok(substream) => {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
+                            let substream = Substream::new(substream.io, substream.permit);
                             let substream: Box<dyn SubstreamT> = match self.protocol_set.protocol_codec(&protocol) {
                                 ProtocolCodec::Identity(payload_size) => {
-                                    Box::new(Framed::new(substream.io, Identity::new(payload_size)))
+                                    Box::new(Framed::new(substream, Identity::new(payload_size)))
                                 }
                                 ProtocolCodec::UnsignedVarint(max_size) => {
-                                    Box::new(Framed::new(substream.io, UnsignedVarint::new(max_size)))
+                                    Box::new(Framed::new(substream, UnsignedVarint::new(max_size)))
                                 }
                             };
 
@@ -307,7 +318,7 @@ impl QuicConnection {
                     }
                 }
                 protocol = self.protocol_set.next_event() => match protocol {
-                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id, permit }) => {
                         let handle = self.connection.handle();
 
                         tracing::trace!(
@@ -320,7 +331,7 @@ impl QuicConnection {
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(5), // TODO: make this configurable
-                                Self::open_substream(handle, Direction::Outbound(substream_id), protocol.clone()),
+                                Self::open_substream(handle, permit, Direction::Outbound(substream_id), protocol.clone()),
                             )
                             .await
                             {

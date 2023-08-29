@@ -447,7 +447,7 @@ impl WebRtcConnection {
                         .map_err(|error| Error::WebRtc(error))?;
                 }
                 command = self.protocol_set.next_event() => match command {
-                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id, permit }) => {
                         let _ = self.open_substream(protocol, substream_id);
                     }
                     None => {

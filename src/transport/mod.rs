@@ -31,6 +31,8 @@ pub mod websocket;
 
 pub(crate) mod manager;
 
+mod substream;
+
 #[async_trait::async_trait]
 pub(crate) trait Transport {
     type Config: Debug;

@@ -28,6 +28,7 @@ use crate::{
     types::{protocol::ProtocolName, SubstreamId},
 };
 
+pub(crate) use connection::Permit;
 pub(crate) use protocol_set::{InnerTransportEvent, ProtocolCommand, ProtocolSet};
 
 pub use protocol_set::TransportService;
@@ -41,6 +42,7 @@ pub mod mdns;
 pub mod notification;
 pub mod request_response;
 
+mod connection;
 mod protocol_set;
 
 /// Substream direction.
