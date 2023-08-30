@@ -22,6 +22,7 @@ use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder, crypto::ed25519::Keypair,
     protocol::libp2p::ping::PingConfigBuilder,
+    transport::quic::config::TransportConfig as QuicTransportConfig,
     transport::tcp::config::TransportConfig as TcpTransportConfig, Litep2p,
 };
 
@@ -62,12 +63,63 @@ async fn ping_supported() {
 
     loop {
         tokio::select! {
-            _event = litep2p1.next_event() => {
-                println!("event: {_event:?}");
+            _event = litep2p1.next_event() => {}
+            _event = litep2p2.next_event() => {}
+            _event = ping_event_stream1.next() => {
+                litep2p1_done = true;
+
+                if litep2p1_done && litep2p2_done {
+                    break
+                }
             }
-            _event = litep2p2.next_event() => {
-                println!("event: {_event:?}");
+            _event = ping_event_stream2.next() => {
+                litep2p2_done = true;
+
+                if litep2p1_done && litep2p2_done {
+                    break
+                }
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn ping_supported_quic() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (ping_config1, mut ping_event_stream1) = PingConfigBuilder::new().build();
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        })
+        .with_libp2p_ping(ping_config1)
+        .build();
+
+    let (ping_config2, mut ping_event_stream2) = PingConfigBuilder::new().build();
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        })
+        .with_libp2p_ping(ping_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
+
+    litep2p1.connect(address).await.unwrap();
+
+    let mut litep2p1_done = false;
+    let mut litep2p2_done = false;
+
+    loop {
+        tokio::select! {
+            _event = litep2p1.next_event() => {}
+            _event = litep2p2.next_event() => {}
             _event = ping_event_stream1.next() => {
                 litep2p1_done = true;
 
