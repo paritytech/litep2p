@@ -129,6 +129,9 @@ pub(crate) struct WebSocketConnection {
     /// Remote peer ID.
     peer: PeerId,
 
+    /// Connection ID.
+    connection_id: ConnectionId,
+
     /// Remote address.
     address: Multiaddr,
 
@@ -213,6 +216,7 @@ impl WebSocketConnection {
             peer,
             control,
             connection,
+            connection_id,
             protocol_set,
             pending_substreams: FuturesUnordered::new(),
             address,
@@ -276,6 +280,7 @@ impl WebSocketConnection {
             peer,
             control,
             connection,
+            connection_id,
             protocol_set,
             pending_substreams: FuturesUnordered::new(),
             address,
@@ -388,13 +393,13 @@ impl WebSocketConnection {
                             ?error,
                             "connection closed with error"
                         );
-                        self.protocol_set.report_connection_closed(self.peer).await?;
+                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
 
                         return Ok(())
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
-                        self.protocol_set.report_connection_closed(self.peer).await?;
+                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
 
                         return Ok(())
                     }
@@ -493,7 +498,7 @@ impl WebSocketConnection {
                     }
                     None => {
                         tracing::error!(target: LOG_TARGET, "protocols have exited, shutting down connection");
-                        return self.protocol_set.report_connection_closed(self.peer).await
+                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
                     }
                 }
             }

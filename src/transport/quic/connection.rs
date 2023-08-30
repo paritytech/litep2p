@@ -74,7 +74,7 @@ pub(crate) struct QuicConnection {
     peer: PeerId,
 
     /// Connection ID.
-    _connection_id: ConnectionId,
+    connection_id: ConnectionId,
 
     /// Transport context.
     protocol_set: ProtocolSet,
@@ -105,12 +105,12 @@ impl QuicConnection {
         peer: PeerId,
         protocol_set: ProtocolSet,
         connection: Connection,
-        _connection_id: ConnectionId,
+        connection_id: ConnectionId,
     ) -> Self {
         Self {
             peer,
             connection,
-            _connection_id,
+            connection_id,
             pending_substreams: FuturesUnordered::new(),
             protocol_set,
         }
@@ -244,7 +244,7 @@ impl QuicConnection {
                     }
                     Ok(None) => {
                         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
-                        self.protocol_set.report_connection_closed(self.peer).await?;
+                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
 
                         return Ok(())
                     }
@@ -255,7 +255,7 @@ impl QuicConnection {
                             ?error,
                             "connection closed with error"
                         );
-                        self.protocol_set.report_connection_closed(self.peer).await?;
+                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
 
                         return Ok(())
                     }

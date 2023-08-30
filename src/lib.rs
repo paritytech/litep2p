@@ -327,7 +327,7 @@ impl Litep2p {
             TransportManagerEvent::ConnectionEstablished { peer, address, .. } => {
                 Some(Litep2pEvent::ConnectionEstablished { peer, address })
             }
-            TransportManagerEvent::ConnectionClosed { peer } => {
+            TransportManagerEvent::ConnectionClosed { peer, .. } => {
                 Some(Litep2pEvent::ConnectionClosed { peer })
             }
             TransportManagerEvent::DialFailure { address, error, .. } => {

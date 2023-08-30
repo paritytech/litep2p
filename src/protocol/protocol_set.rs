@@ -57,6 +57,9 @@ pub enum InnerTransportEvent {
         /// Peer ID.
         peer: PeerId,
 
+        /// Connection ID.
+        connection: ConnectionId,
+
         /// Address of remote peer.
         address: Multiaddr,
 
@@ -68,6 +71,9 @@ pub enum InnerTransportEvent {
     ConnectionClosed {
         /// Peer ID.
         peer: PeerId,
+
+        /// Connection ID.
+        connection: ConnectionId,
     },
 
     /// Failed to dial peer.
@@ -127,7 +133,7 @@ impl From<InnerTransportEvent> for TransportEvent {
             InnerTransportEvent::ConnectionEstablished { peer, address, .. } => {
                 TransportEvent::ConnectionEstablished { peer, address }
             }
-            InnerTransportEvent::ConnectionClosed { peer } => {
+            InnerTransportEvent::ConnectionClosed { peer, .. } => {
                 TransportEvent::ConnectionClosed { peer }
             }
             InnerTransportEvent::DialFailure { peer, address } => {
@@ -256,6 +262,7 @@ impl Transport for TransportService {
                         peer,
                         address,
                         sender,
+                        ..
                     } => {
                         self.connections.insert(peer, sender);
                         self.keep_alive_timeouts.push(Box::pin(async move {
@@ -265,7 +272,7 @@ impl Transport for TransportService {
 
                         return Some(TransportEvent::ConnectionEstablished { peer, address })
                     }
-                    InnerTransportEvent::ConnectionClosed { peer } => {
+                    InnerTransportEvent::ConnectionClosed { peer, .. } => {
                         self.connections.remove(&peer);
                         return Some(TransportEvent::ConnectionClosed { peer })
                     }
@@ -433,6 +440,7 @@ impl ProtocolSet {
                 .tx
                 .send(InnerTransportEvent::ConnectionEstablished {
                     peer,
+                    connection,
                     address: address.clone(),
                     sender: connection_handle.clone(),
                 })
@@ -450,16 +458,20 @@ impl ProtocolSet {
     }
 
     /// Report to `Litep2p` that a peer disconnected.
-    pub(crate) async fn report_connection_closed(&mut self, peer: PeerId) -> crate::Result<()> {
+    pub(crate) async fn report_connection_closed(
+        &mut self,
+        peer: PeerId,
+        connection: ConnectionId,
+    ) -> crate::Result<()> {
         for (_, sender) in &self.protocols {
             let _ = sender
                 .tx
-                .send(InnerTransportEvent::ConnectionClosed { peer })
+                .send(InnerTransportEvent::ConnectionClosed { peer, connection })
                 .await?;
         }
 
         self.mgr_tx
-            .send(TransportManagerEvent::ConnectionClosed { peer })
+            .send(TransportManagerEvent::ConnectionClosed { peer, connection })
             .await
             .map_err(From::from)
     }

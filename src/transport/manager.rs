@@ -95,6 +95,9 @@ pub enum TransportManagerEvent {
     ConnectionClosed {
         /// Peer ID.
         peer: PeerId,
+
+        /// Connection ID.
+        connection: ConnectionId,
     },
 
     /// Failed to dial remote peer.
@@ -262,10 +265,10 @@ impl TransportHandle {
     }
 
     /// Report to `Litep2p` that a peer disconnected.
-    pub async fn _report_connection_closed(&mut self, peer: PeerId) {
+    pub async fn _report_connection_closed(&mut self, peer: PeerId, connection: ConnectionId) {
         let _ = self
             .tx
-            .send(TransportManagerEvent::ConnectionClosed { peer })
+            .send(TransportManagerEvent::ConnectionClosed { peer, connection })
             .await;
     }
 
@@ -804,7 +807,7 @@ impl TransportManager {
 
                 event
             }
-            TransportManagerEvent::ConnectionClosed { peer } => {
+            TransportManagerEvent::ConnectionClosed { peer, .. } => {
                 if let Some(context) = self.peers.write().get_mut(peer) {
                     context.state = PeerState::Disconnected;
                 }

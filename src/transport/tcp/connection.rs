@@ -94,7 +94,7 @@ enum ConnectionError {
 /// TCP connection.
 pub struct TcpConnection {
     /// Connection ID.
-    _connection_id: ConnectionId,
+    connection_id: ConnectionId,
 
     /// Protocol context.
     protocol_set: ProtocolSet,
@@ -344,7 +344,7 @@ impl TcpConnection {
             control,
             connection,
             protocol_set,
-            _connection_id: connection_id,
+            connection_id,
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
         })
@@ -397,13 +397,13 @@ impl TcpConnection {
                             ?error,
                             "connection closed with error"
                         );
-                        self.protocol_set.report_connection_closed(self.peer).await?;
+                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
 
                         return Ok(())
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
-                        self.protocol_set.report_connection_closed(self.peer).await?;
+                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
 
                         return Ok(())
                     }
@@ -505,7 +505,7 @@ impl TcpConnection {
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, "protocols have disconnected, closing connection");
-                        return self.protocol_set.report_connection_closed(self.peer).await
+                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
                     }
                 }
             }

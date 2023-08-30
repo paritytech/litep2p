@@ -32,7 +32,7 @@ use crate::{
         },
         InnerTransportEvent, ProtocolCommand,
     },
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
 use bytes::BytesMut;
@@ -86,6 +86,7 @@ async fn substream_accepted() {
         peer,
         address: Multiaddr::empty(),
         sender: ConnectionHandle::new(proto_tx.clone()),
+        connection: ConnectionId::from(0usize),
     })
     .await
     .unwrap();
@@ -251,6 +252,7 @@ async fn accept_fails_due_to_closed_substream() {
         peer,
         address: Multiaddr::empty(),
         sender: ConnectionHandle::new(proto_tx),
+        connection: ConnectionId::from(0usize),
     })
     .await
     .unwrap();
@@ -334,6 +336,7 @@ async fn accept_fails_due_to_closed_connection() {
         peer,
         address: Multiaddr::empty(),
         sender: ConnectionHandle::new(proto_tx),
+        connection: ConnectionId::from(0usize),
     })
     .await
     .unwrap();
