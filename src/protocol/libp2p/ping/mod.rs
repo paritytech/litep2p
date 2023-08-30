@@ -22,11 +22,12 @@ use crate::{
     error::{Error, SubstreamError},
     peer_id::PeerId,
     protocol::{Direction, Transport, TransportEvent, TransportService},
-    substream::Substream,
+    substream::{Substream, SubstreamSet},
     types::SubstreamId,
 };
 
-use futures::{SinkExt, StreamExt};
+use bytes::BytesMut;
+use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
 use tokio::sync::mpsc::Sender;
 
 use std::{
@@ -39,7 +40,6 @@ pub use config::{PingConfig, PingConfigBuilder};
 mod config;
 
 // TODO: handle max failures
-// TODO: don't block the event loop on a single substream
 
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::ping";
@@ -72,7 +72,13 @@ pub struct Ping {
     peers: HashSet<PeerId>,
 
     /// Pending outbound substreams.
-    pending_outbound: HashMap<SubstreamId, PeerId>, // TODO: does this really need to be a hashmap?
+    pending_opens: HashMap<SubstreamId, PeerId>,
+
+    /// Pending inbound substreams.
+    pending_inbound: SubstreamSet<PeerId>,
+
+    /// Pending outbound substreams.
+    pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Duration)>>>,
 }
 
 impl Ping {
@@ -82,7 +88,9 @@ impl Ping {
             service,
             tx: config.tx_event,
             peers: HashSet::new(),
-            pending_outbound: HashMap::new(),
+            pending_opens: HashMap::new(),
+            pending_inbound: SubstreamSet::new(),
+            pending_outbound: FuturesUnordered::new(),
             _max_failures: config.max_failures,
         }
     }
@@ -92,7 +100,7 @@ impl Ping {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
         let substream_id = self.service.open_substream(peer).await?;
-        self.pending_outbound.insert(substream_id, peer);
+        self.pending_opens.insert(substream_id, peer);
         self.peers.insert(peer);
 
         Ok(())
@@ -106,54 +114,37 @@ impl Ping {
     }
 
     /// Handle outbound substream.
-    async fn on_outbound_substream(
+    fn on_outbound_substream(
         &mut self,
         peer: PeerId,
         substream_id: SubstreamId,
         mut substream: Box<dyn Substream>,
-    ) -> crate::Result<()> {
+    ) {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle outbound substream");
 
-        let _ = substream.send(vec![0u8; 32].into()).await?;
-        let now = Instant::now();
+        self.pending_outbound.push(Box::pin(async move {
+            // TODO: generate random payload and verify it
+            let _ = substream.send(vec![0u8; 32].into()).await?;
+            let now = Instant::now();
 
-        // TODO: not good, use `SubstreamSet`
-        // TODO: verify payload
-        let _ =
-            substream
-                .next()
-                .await
-                .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(Some(
-                    substream_id,
-                ))))??;
+            let _ = substream.next().await.ok_or(Error::SubstreamError(
+                SubstreamError::ReadFailure(Some(substream_id)),
+            ))??;
 
-        let res = self
-            .tx
-            .send(PingEvent::Ping {
-                peer,
-                ping: now.elapsed(),
-            })
-            .await
-            .map_err(From::from);
-
-        res
+            Ok((peer, now.elapsed()))
+        }));
     }
 
     /// Substream opened to remote peer.
-    async fn on_inbound_substream(
-        &mut self,
-        peer: PeerId,
-        mut substream: Box<dyn Substream>,
-    ) -> crate::Result<()> {
+    fn on_inbound_substream(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
-        // TODO: don't block here
-        let payload = substream
-            .next()
-            .await
-            .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(None)))??;
+        if self.pending_inbound.contains(&peer) {
+            tracing::warn!(target: LOG_TARGET, "remote opened secondary inbound substream, ignoring");
+            return;
+        }
 
-        substream.send(payload.into()).await
+        self.pending_inbound.insert(peer, substream);
     }
 
     /// Failed to open substream to remote peer.
@@ -166,67 +157,89 @@ impl Ping {
         );
     }
 
+    /// Handle substream event.
+    async fn on_substream_event(&mut self, peer: PeerId, message: crate::Result<BytesMut>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle inbound substream event");
+
+        match (self.pending_inbound.remove(&peer), message) {
+            (Some(mut substream), Ok(message)) => {
+                let _ = substream.send(message.into()).await;
+            }
+            (substream, message) => tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                ?substream,
+                ?message,
+                "invalid state, cannot send ping reply",
+            ),
+        }
+    }
+
     /// Start [`Ping`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting ping event loop");
 
-        while let Some(event) = self.service.next_event().await {
-            match event {
-                TransportEvent::ConnectionEstablished { peer, .. } => {
-                    if let Err(error) = self.on_connection_established(peer).await {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?error,
-                            "failed to register peer",
-                        );
-                    }
-                }
-                TransportEvent::ConnectionClosed { peer } => {
-                    self.on_connection_closed(peer);
-                }
-                TransportEvent::SubstreamOpened {
-                    peer,
-                    substream,
-                    direction,
-                    ..
-                } => match direction {
-                    Direction::Inbound => {
-                        if let Err(error) = self.on_inbound_substream(peer, substream).await {
+        loop {
+            tokio::select! {
+                event = self.service.next_event() => match event {
+                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
+                        if let Err(error) = self.on_connection_established(peer).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
                                 ?error,
-                                "failed to handle inbound substream",
+                                "failed to register peer",
                             );
                         }
                     }
-                    Direction::Outbound(substream_id) => {
-                        match self.pending_outbound.remove(&substream_id) {
-                            Some(stored_peer) => {
-                                debug_assert!(peer == stored_peer);
-                                if let Err(error) = self
-                                    .on_outbound_substream(peer, substream_id, substream)
-                                    .await
-                                {
-                                    tracing::debug!(
-                                        target: LOG_TARGET,
-                                        ?peer,
-                                        ?error,
-                                        "failed to handle outbound substream",
-                                    );
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
+                        self.on_connection_closed(peer);
+                    }
+                    Some(TransportEvent::SubstreamOpened {
+                        peer,
+                        substream,
+                        direction,
+                        ..
+                    }) => match direction {
+                        Direction::Inbound => {
+                            self.on_inbound_substream(peer, substream);
+                        }
+                        Direction::Outbound(substream_id) => {
+                            match self.pending_opens.remove(&substream_id) {
+                                Some(stored_peer) => {
+                                    debug_assert!(peer == stored_peer);
+                                    self.on_outbound_substream(peer, substream_id, substream);
+                                }
+                                None => {
+                                    todo!("substream {substream_id:?} does not exist");
                                 }
                             }
-                            None => {
-                                todo!("substream {substream_id:?} does not exist");
-                            }
                         }
+                    },
+                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
+                        self.on_substream_open_failure(substream, error);
                     }
+                    Some(TransportEvent::DialFailure { .. }) => {}
+                    None => return,
                 },
-                TransportEvent::SubstreamOpenFailure { substream, error } => {
-                    self.on_substream_open_failure(substream, error);
+                event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {
+                    let (peer, event) = event.expect("`SubstreamSet` to return `Some(..)`");
+                    self.on_substream_event(peer, event).await;
                 }
-                TransportEvent::DialFailure { .. } => {}
+                event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => {
+                    match event {
+                        Some(Ok((peer, elapsed))) => {
+                            let _ = self
+                                .tx
+                                .send(PingEvent::Ping {
+                                    peer,
+                                    ping: elapsed,
+                                })
+                                .await;
+                        }
+                        _ => tracing::debug!(target: LOG_TARGET, "failed to handle ping for an outbound peer"),
+                    }
+                }
             }
         }
     }
