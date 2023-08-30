@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(unused)]
+
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
@@ -26,12 +28,18 @@ use litep2p::{
     protocol::notification::types::{
         Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
     },
+    transport::quic::config::TransportConfig as QuicTransportConfig,
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent,
 };
 
 use futures::StreamExt;
+
+enum Transport {
+    Tcp(TcpTransportConfig),
+    Quic(QuicTransportConfig),
+}
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let address = litep2p2.listen_addresses().next().unwrap().clone();
@@ -65,7 +73,33 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
 }
 
 #[tokio::test]
-async fn open_substreams() {
+async fn open_substreams_tcp() {
+    open_substreams(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+async fn open_substreams_quic() {
+    open_substreams(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn open_substreams(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -78,12 +112,13 @@ async fn open_substreams() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -93,12 +128,13 @@ async fn open_substreams() {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config2)
-        .build();
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -184,7 +220,34 @@ async fn open_substreams() {
 }
 
 #[tokio::test]
-async fn reject_substream() {
+async fn reject_substream_tcp() {
+    reject_substream(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn reject_substream_quic() {
+    reject_substream(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn reject_substream(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -197,12 +260,13 @@ async fn reject_substream() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -212,12 +276,13 @@ async fn reject_substream() {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config2)
-        .build();
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -260,7 +325,34 @@ async fn reject_substream() {
 }
 
 #[tokio::test]
-async fn notification_stream_closed() {
+async fn notification_stream_closed_tcp() {
+    notification_stream_closed(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn notification_stream_closed_quic() {
+    notification_stream_closed(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn notification_stream_closed(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -273,12 +365,13 @@ async fn notification_stream_closed() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -288,12 +381,13 @@ async fn notification_stream_closed() {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config2)
-        .build();
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -386,7 +480,34 @@ async fn notification_stream_closed() {
 }
 
 #[tokio::test]
-async fn reconnect_after_disconnect() {
+async fn reconnect_after_disconnect_tcp() {
+    reconnect_after_disconnect(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn reconnect_after_disconnect_quic() {
+    reconnect_after_disconnect(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -399,12 +520,13 @@ async fn reconnect_after_disconnect() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -414,12 +536,13 @@ async fn reconnect_after_disconnect() {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config2)
-        .build();
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -567,7 +690,34 @@ async fn reconnect_after_disconnect() {
 }
 
 #[tokio::test]
-async fn set_new_handshake() {
+async fn set_new_handshake_tcp() {
+    set_new_handshake(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn set_new_handshake_quic() {
+    set_new_handshake(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn set_new_handshake(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -580,12 +730,13 @@ async fn set_new_handshake() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -595,12 +746,13 @@ async fn set_new_handshake() {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config2)
-        .build();
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -729,8 +881,34 @@ async fn set_new_handshake() {
 }
 
 #[tokio::test]
-#[cfg(debug_assertions)]
-async fn both_nodes_open_substreams() {
+async fn both_nodes_open_substreams_tcp() {
+    both_nodes_open_substreams(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn both_nodes_open_substreams_quic() {
+    both_nodes_open_substreams(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -743,12 +921,13 @@ async fn both_nodes_open_substreams() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -758,12 +937,13 @@ async fn both_nodes_open_substreams() {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config2)
-        .build();
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -853,7 +1033,34 @@ async fn both_nodes_open_substreams() {
 }
 
 #[tokio::test]
-async fn send_sync_notification_to_non_existent_peer() {
+async fn send_sync_notification_to_non_existent_peer_tcp() {
+    send_sync_notification_to_non_existent_peer(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn send_sync_notification_to_non_existent_peer_quic() {
+    send_sync_notification_to_non_existent_peer(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn send_sync_notification_to_non_existent_peer(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -866,12 +1073,13 @@ async fn send_sync_notification_to_non_existent_peer() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
@@ -889,7 +1097,37 @@ async fn send_sync_notification_to_non_existent_peer() {
 }
 
 #[tokio::test]
-async fn send_async_notification_to_non_existent_peer() {
+async fn send_async_notification_to_non_existent_peer_tcp() {
+    send_async_notification_to_non_existent_peer(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn send_async_notification_to_non_existent_peer_quic() {
+    send_async_notification_to_non_existent_peer(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn send_async_notification_to_non_existent_peer(
+    transport1: Transport,
+    transport2: Transport,
+) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -902,12 +1140,13 @@ async fn send_async_notification_to_non_existent_peer() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
@@ -926,7 +1165,34 @@ async fn send_async_notification_to_non_existent_peer() {
 }
 
 #[tokio::test]
-async fn try_to_connect_to_non_existent_peer() {
+async fn try_to_connect_to_non_existent_peer_tcp() {
+    try_to_connect_to_non_existent_peer(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn try_to_connect_to_non_existent_peer_quic() {
+    try_to_connect_to_non_existent_peer(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn try_to_connect_to_non_existent_peer(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -939,12 +1205,13 @@ async fn try_to_connect_to_non_existent_peer() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
@@ -968,7 +1235,34 @@ async fn try_to_connect_to_non_existent_peer() {
 }
 
 #[tokio::test]
-async fn try_to_disconnect_non_existent_peer() {
+async fn try_to_disconnect_non_existent_peer_tcp() {
+    try_to_disconnect_non_existent_peer(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn try_to_disconnect_non_existent_peer_quic() {
+    try_to_disconnect_non_existent_peer(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn try_to_disconnect_non_existent_peer(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -981,12 +1275,13 @@ async fn try_to_disconnect_non_existent_peer() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
@@ -1002,7 +1297,34 @@ async fn try_to_disconnect_non_existent_peer() {
 }
 
 #[tokio::test]
-async fn try_to_reopen_substream() {
+async fn try_to_reopen_substream_tcp() {
+    try_to_reopen_substream(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn try_to_reopen_substream_quic() {
+    try_to_reopen_substream(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -1015,12 +1337,13 @@ async fn try_to_reopen_substream() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -1030,12 +1353,13 @@ async fn try_to_reopen_substream() {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config2)
-        .build();
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -1106,7 +1430,34 @@ async fn try_to_reopen_substream() {
 }
 
 #[tokio::test]
-async fn substream_validation_timeout() {
+async fn substream_validation_timeout_tcp() {
+    substream_validation_timeout(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn substream_validation_timeout_quic() {
+    substream_validation_timeout(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn substream_validation_timeout(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -1119,12 +1470,13 @@ async fn substream_validation_timeout() {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config1)
-        .build();
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -1134,12 +1486,13 @@ async fn substream_validation_timeout() {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_notification_protocol(notif_config2)
-        .build();
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();

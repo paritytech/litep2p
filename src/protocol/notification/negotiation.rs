@@ -358,7 +358,6 @@ impl Stream for HandshakeService {
                             }
                         },
                         Poll::Ready(Some(Err(_))) | Poll::Ready(None) => {
-                            tracing::error!("neogitation error");
                             return Poll::Ready(Some((
                                 *peer,
                                 HandshakeEvent::OutboundNegotiationError { peer: *peer },
