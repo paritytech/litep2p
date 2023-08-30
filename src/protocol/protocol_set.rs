@@ -39,7 +39,7 @@ use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -50,6 +50,9 @@ use std::{
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "protocol-set";
+
+/// Maximum connections per peer.
+const MAX_CONNECTIONS_PER_PEER: usize = 2;
 
 pub enum InnerTransportEvent {
     /// Connection established to `peer`.
@@ -166,7 +169,8 @@ pub struct TransportService {
     protocol: ProtocolName,
 
     /// Open connections.
-    connections: HashMap<PeerId, ConnectionHandle>,
+    // TODO: this can be refactored
+    connections: HashMap<PeerId, Vec<(ConnectionHandle, ConnectionId)>>,
 
     /// Transport handle.
     transport_handle: TransportManagerHandle,
@@ -178,7 +182,7 @@ pub struct TransportService {
     next_substream_id: Arc<AtomicUsize>,
 
     /// Pending keep-alive timeouts.
-    keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, PeerId>>,
+    keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
 }
 
 impl TransportService {
@@ -203,6 +207,58 @@ impl TransportService {
             },
             tx,
         )
+    }
+
+    /// Handle connection established event.
+    fn on_connection_established(
+        &mut self,
+        peer: PeerId,
+        address: Multiaddr,
+        connection: ConnectionId,
+        handle: ConnectionHandle,
+    ) -> Option<TransportEvent> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?address,
+            ?connection,
+            "connection established"
+        );
+
+        let event = match self.connections.entry(peer) {
+            Entry::Occupied(entry) => {
+                let entry = entry.into_mut();
+                if entry.len() == MAX_CONNECTIONS_PER_PEER {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?address,
+                        ?connection,
+                        "connection established but already at maximum"
+                    );
+                    return None;
+                }
+
+                tracing::trace!(target: LOG_TARGET, ?peer, ?connection, "secondary connection");
+
+                // user is not notified of the second connection
+                entry.push((handle, connection));
+                None
+            }
+            Entry::Vacant(entry) => {
+                tracing::trace!(target: LOG_TARGET, ?peer, ?connection, "inform protocol");
+
+                entry.insert(vec![(handle, connection)]);
+                Some(TransportEvent::ConnectionEstablished { peer, address })
+            }
+        };
+
+        self.keep_alive_timeouts.push(Box::pin(async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            (peer, connection)
+        }));
+
+        event
     }
 }
 
@@ -232,10 +288,15 @@ impl Transport for TransportService {
     }
 
     async fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
-        let connection = self
+        // always prefer the first connection
+        let connection = &mut self
             .connections
             .get_mut(&peer)
-            .ok_or(Error::PeerDoesntExist(peer))?;
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .get_mut(0)
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .0;
+
         let permit = connection.try_get_permit().ok_or(Error::ConnectionClosed)?;
         let substream_id =
             SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
@@ -262,19 +323,20 @@ impl Transport for TransportService {
                         peer,
                         address,
                         sender,
-                        ..
+                        connection,
                     } => {
-                        self.connections.insert(peer, sender);
-                        self.keep_alive_timeouts.push(Box::pin(async move {
-                            tokio::time::sleep(Duration::from_secs(5)).await;
-                            peer
-                        }));
-
-                        return Some(TransportEvent::ConnectionEstablished { peer, address })
+                        if let Some(event) = self.on_connection_established(peer, address, connection, sender) {
+                            return Some(event)
+                        }
                     }
-                    InnerTransportEvent::ConnectionClosed { peer, .. } => {
-                        self.connections.remove(&peer);
-                        return Some(TransportEvent::ConnectionClosed { peer })
+                    InnerTransportEvent::ConnectionClosed { peer, connection } => match self.connections.get_mut(&peer) {
+                        Some(connections) => {
+                            connections.retain(|(_, id)| &connection != id);
+                            return Some(TransportEvent::ConnectionClosed { peer })
+                        }
+                        None => {
+                            tracing::warn!(target: LOG_TARGET, ?peer, ?connection, "closed connection doesn't exist");
+                        }
                     }
                     event => return Some(event.into()),
                 },
@@ -283,10 +345,14 @@ impl Transport for TransportService {
                         None => {
                             tracing::warn!(target: LOG_TARGET, "read `None` from `keep_alive_timeouts`");
                         }
-                        Some(peer) => {
-                            if let Some(connection) = self.connections.get_mut(&peer) {
+                        Some((peer, connection)) => {
+                            if let Some(connections) = self.connections.get_mut(&peer) {
                                 tracing::debug!(target: LOG_TARGET, ?peer, "keep-alive timeout over, downgrade connection");
-                                connection.close();
+
+                                match connections.iter_mut().find(|(_, id)| id == &connection) {
+                                    Some((connection, _)) => connection.close(),
+                                    None => tracing::warn!(target: LOG_TARGET, ?peer, ?connection, "connection not found"),
+                                }
                             }
                         }
                     }
@@ -377,7 +443,8 @@ impl ProtocolSet {
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
 
-        self.protocols
+        let res = self
+            .protocols
             .get_mut(&protocol)
             .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
             .tx
@@ -388,7 +455,11 @@ impl ProtocolSet {
                 substream,
             })
             .await
-            .map_err(From::from)
+            .map_err(From::from);
+
+        tracing::warn!("res: {res:?}");
+
+        res
     }
 
     /// Get codec used by the protocol.

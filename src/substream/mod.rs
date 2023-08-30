@@ -109,6 +109,11 @@ impl<K: SubstreamSetKey> SubstreamSet<K> {
     pub fn get_mut(&mut self, key: &K) -> Option<&mut Box<dyn Substream>> {
         self.substreams.get_mut(key)
     }
+
+    /// Check if [`SubstreamSet`] contains a substream for `peer`.
+    pub fn contains(&self, peer: &K) -> bool {
+        self.substreams.contains_key(peer)
+    }
 }
 
 impl<K: SubstreamSetKey> Stream for SubstreamSet<K> {
