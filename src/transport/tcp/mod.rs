@@ -506,9 +506,18 @@ mod tests {
 
         tracing::info!(target: LOG_TARGET, "peer1 {peer1}, peer2 {peer2}");
 
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip6(std::net::Ipv6Addr::new(
+                0, 0, 0, 0, 0, 0, 0, 1,
+            )))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer1.to_bytes()).unwrap(),
+            ));
+
         cmd_tx2
             .send(TransportManagerCommand::Dial {
-                address: "/ip6/::1/tcp/1".parse().unwrap(),
+                address,
                 connection: ConnectionId::new(),
             })
             .await

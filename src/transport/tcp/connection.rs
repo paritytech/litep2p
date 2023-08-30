@@ -547,7 +547,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
@@ -563,7 +563,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -602,7 +602,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         let (Ok(mut dialer), Ok((listener, dialer_address))) = tokio::join!(
@@ -625,7 +625,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -663,7 +663,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
@@ -679,7 +679,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -724,7 +724,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
@@ -747,7 +747,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -793,7 +793,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
@@ -816,7 +816,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -860,7 +860,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
@@ -876,7 +876,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -919,7 +919,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
@@ -935,7 +935,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -971,7 +971,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         let (Ok(_dialer), Ok((listener, dialer_address))) = tokio::join!(
@@ -994,7 +994,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -1030,7 +1030,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
@@ -1053,7 +1053,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -1113,7 +1113,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
@@ -1129,7 +1129,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -1186,7 +1186,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
@@ -1209,7 +1209,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }
@@ -1263,7 +1263,7 @@ mod tests {
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
         let protocol_set = handle.protocol_set();
-        let _ = manager.dial_address(multiaddr).await;
+        let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
@@ -1279,7 +1279,7 @@ mod tests {
                 Ok(_) => panic!("connection was supposed to fail"),
                 Err(error) => {
                     handle
-                        .report_dial_failure(ConnectionId::from(0usize), Multiaddr::empty(), error)
+                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
                         .await
                 }
             }

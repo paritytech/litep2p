@@ -276,6 +276,32 @@ impl TransportHandle {
         address: Multiaddr,
         error: Error,
     ) {
+        tracing::debug!(target: LOG_TARGET, ?connection, ?address, ?error, "dial failure");
+
+        match address.iter().last() {
+            Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
+                Ok(peer) => {
+                    for (_, context) in &self.protocols {
+                        let _ = context
+                            .tx
+                            .send(InnerTransportEvent::DialFailure {
+                                peer,
+                                address: address.clone(),
+                            })
+                            .await;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
+                    debug_assert!(false);
+                }
+            },
+            _ => {
+                tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
+                debug_assert!(false);
+            }
+        }
+
         let _ = self
             .tx
             .send(TransportManagerEvent::DialFailure {

@@ -39,6 +39,7 @@ use crate::{
 
 use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
+use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap};
@@ -400,6 +401,15 @@ impl Kademlia {
         }
     }
 
+    /// Handle dial failure.
+    fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
+        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
+
+        if let Some(PeerAction::SendFindNode(query)) = self.pending_dials.remove(&peer) {
+            self.engine.register_response_failure(query, peer);
+        }
+    }
+
     /// Handle next query action.
     async fn on_query_action(&mut self, action: QueryAction) -> Result<(), (QueryId, PeerId)> {
         match action {
@@ -562,7 +572,7 @@ impl Kademlia {
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error).await;
                     }
-                    Some(TransportEvent::DialFailure { .. }) => todo!(),
+                    Some(TransportEvent::DialFailure { peer, address }) => self.on_dial_failure(peer, address),
                     None => return Err(Error::EssentialTaskClosed),
                 },
                 command = self.cmd_rx.recv() => {
