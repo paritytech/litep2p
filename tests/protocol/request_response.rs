@@ -24,6 +24,7 @@ use litep2p::{
     protocol::request_response::{
         RequestResponseConfig, RequestResponseError, RequestResponseEvent,
     },
+    transport::quic::config::TransportConfig as QuicTransportConfig,
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent,
@@ -36,6 +37,11 @@ use std::{
     collections::{HashMap, HashSet},
     time::Duration,
 };
+
+enum Transport {
+    Tcp(TcpTransportConfig),
+    Quic(QuicTransportConfig),
+}
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let address = litep2p2.listen_addresses().next().unwrap().clone();
@@ -69,7 +75,34 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
 }
 
 #[tokio::test]
-async fn send_request_receive_response() {
+async fn send_request_receive_response_tcp() {
+    send_request_receive_response(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn send_request_receive_response_quic() {
+    send_request_receive_response(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn send_request_receive_response(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -78,23 +111,25 @@ async fn send_request_receive_response() {
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config1)
-        .build();
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (req_resp_config2, mut handle2) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config2)
-        .build();
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -140,32 +175,62 @@ async fn send_request_receive_response() {
 }
 
 #[tokio::test]
-async fn reject_request() {
+async fn reject_request_tcp() {
+    reject_request(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn reject_request_quic() {
+    reject_request(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn reject_request(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
     let (req_resp_config1, mut handle1) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
+
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config1)
-        .build();
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (req_resp_config2, mut handle2) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config2)
-        .build();
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -210,32 +275,62 @@ async fn reject_request() {
 }
 
 #[tokio::test]
-async fn multiple_simultaneous_requests() {
+async fn multiple_simultaneous_requests_tcp() {
+    multiple_simultaneous_requests(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn multiple_simultaneous_requests_quic() {
+    multiple_simultaneous_requests(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn multiple_simultaneous_requests(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
     let (req_resp_config1, mut handle1) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
+
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config1)
-        .build();
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (req_resp_config2, mut handle2) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config2)
-        .build();
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -300,7 +395,35 @@ async fn multiple_simultaneous_requests() {
 }
 
 #[tokio::test]
-async fn request_timeout() {
+async fn request_timeout_tcp() {
+    request_timeout(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn request_timeout_quic() {
+    request_timeout(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+// TODO: configure longer keep-alive timeout for the protocol
+async fn request_timeout(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -309,23 +432,25 @@ async fn request_timeout() {
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config1)
-        .build();
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (req_resp_config2, _handle2) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config2)
-        .build();
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -360,32 +485,62 @@ async fn request_timeout() {
 }
 
 #[tokio::test]
-async fn protocol_not_supported() {
+async fn protocol_not_supported_tcp() {
+    protocol_not_supported(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn protocol_not_supported_quic() {
+    protocol_not_supported(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
     let (req_resp_config1, mut handle1) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
+
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config1)
-        .build();
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (req_resp_config2, _handle2) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/2"), 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config2)
-        .build();
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -418,7 +573,34 @@ async fn protocol_not_supported() {
 }
 
 #[tokio::test]
-async fn connection_close_while_request_is_pending() {
+async fn connection_close_while_request_is_pending_tcp() {
+    connection_close_while_request_is_pending(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn connection_close_while_request_is_pending_quic() {
+    connection_close_while_request_is_pending(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn connection_close_while_request_is_pending(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -427,23 +609,25 @@ async fn connection_close_while_request_is_pending() {
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config1)
-        .build();
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (req_resp_config2, handle2) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config2)
-        .build();
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -476,7 +660,34 @@ async fn connection_close_while_request_is_pending() {
 }
 
 #[tokio::test]
-async fn request_too_big() {
+async fn request_too_big_tcp() {
+    request_too_big(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn request_too_big_quic() {
+    request_too_big(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn request_too_big(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -485,23 +696,25 @@ async fn request_too_big() {
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 256);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config1)
-        .build();
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (req_resp_config2, _handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 256);
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 1024);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config2)
-        .build();
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
@@ -532,7 +745,34 @@ async fn request_too_big() {
 }
 
 #[tokio::test]
-async fn response_too_big() {
+async fn response_too_big_tcp() {
+    response_too_big(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn response_too_big_quic() {
+    response_too_big(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+async fn response_too_big(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -541,23 +781,25 @@ async fn response_too_big() {
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 256);
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config1)
-        .build();
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+    }
+    .build();
 
     let (req_resp_config2, mut handle2) =
         RequestResponseConfig::new(ProtocolName::from("/protocol/1"), 256);
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        })
-        .with_request_response_protocol(req_resp_config2)
-        .build();
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+    }
+    .build();
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
