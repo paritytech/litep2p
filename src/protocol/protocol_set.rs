@@ -443,8 +443,7 @@ impl ProtocolSet {
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
 
-        let res = self
-            .protocols
+        self.protocols
             .get_mut(&protocol)
             .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
             .tx
@@ -455,11 +454,7 @@ impl ProtocolSet {
                 substream,
             })
             .await
-            .map_err(From::from);
-
-        tracing::warn!("res: {res:?}");
-
-        res
+            .map_err(From::from)
     }
 
     /// Get codec used by the protocol.

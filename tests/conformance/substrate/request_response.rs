@@ -75,7 +75,6 @@ fn initialize_libp2p() -> (
 async fn initialize_litep2p() -> (Litep2p, RequestResponseHandle) {
     let (config, handle) = RequestResponseConfig::new(
         litep2p::types::protocol::ProtocolName::from("/request/1"),
-        64,
         2 * 256,
     );
 

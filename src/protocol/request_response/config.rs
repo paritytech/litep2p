@@ -38,9 +38,6 @@ pub struct RequestResponseConfig {
     /// Codec used by the protocol.
     pub(crate) codec: ProtocolCodec,
 
-    /// Maximum slots allocated for inbound requests.
-    pub(crate) _max_slots: usize,
-
     /// TX channel for sending events to the user protocol.
     pub(crate) event_tx: Sender<RequestResponseEvent>,
 
@@ -52,7 +49,6 @@ impl RequestResponseConfig {
     /// Create new [`Config`].
     pub fn new(
         protocol_name: ProtocolName,
-        _max_slots: usize,
         max_message_size: usize,
     ) -> (Self, RequestResponseHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -62,7 +58,6 @@ impl RequestResponseConfig {
         (
             Self {
                 protocol_name,
-                _max_slots,
                 event_tx,
                 command_rx,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
