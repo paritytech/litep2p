@@ -22,7 +22,7 @@ use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
     protocol::{
-        notification::{handle::NotificationHandle, types::Config as NotificationConfig},
+        notification::{NotificationConfig, NotificationHandle},
         request_response::{RequestResponseConfig, RequestResponseHandle},
     },
     transport::quic::config::TransportConfig as QuicTransportConfig,

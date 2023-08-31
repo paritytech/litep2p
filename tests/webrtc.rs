@@ -22,7 +22,7 @@ use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::{libp2p::ping::PingConfig, notification::types::Config as NotificationConfig},
+    protocol::{libp2p::ping::PingConfig, notification::NotificationConfig},
     transport::webrtc::WebRtcTransportConfig,
     types::protocol::ProtocolName,
     Litep2p,

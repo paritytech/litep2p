@@ -25,10 +25,7 @@ use crate::{
         notification::{
             handle::{NotificationEventHandle, NotificationSink},
             negotiation::{HandshakeEvent, HandshakeService},
-            types::{
-                NotificationCommand, NotificationError, ValidationResult, ASYNC_CHANNEL_SIZE,
-                SYNC_CHANNEL_SIZE,
-            },
+            types::{NotificationCommand, ASYNC_CHANNEL_SIZE, SYNC_CHANNEL_SIZE},
         },
         Direction, Transport, TransportEvent, TransportService,
     },
@@ -46,9 +43,14 @@ use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
 use std::collections::{hash_map::Entry, HashMap};
 
-pub mod handle;
+pub use config::Config as NotificationConfig;
+pub use handle::NotificationHandle;
+pub use types::{NotificationError, NotificationEvent, ValidationResult};
+
+mod config;
+mod handle;
 mod negotiation;
-pub mod types;
+mod types;
 
 #[cfg(test)]
 mod tests;
@@ -194,7 +196,7 @@ pub struct NotificationProtocol {
 }
 
 impl NotificationProtocol {
-    pub fn new(service: TransportService, config: types::Config) -> Self {
+    pub fn new(service: TransportService, config: NotificationConfig) -> Self {
         Self {
             service,
             peers: HashMap::new(),

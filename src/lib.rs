@@ -341,7 +341,7 @@ impl Litep2p {
 mod tests {
     use crate::{
         config::Litep2pConfigBuilder,
-        protocol::{libp2p::ping::PingConfig, notification::types::Config as NotificationConfig},
+        protocol::{libp2p::ping::PingConfig, notification::NotificationConfig},
         transport::tcp::config::TransportConfig as TcpTransportConfig,
         types::protocol::ProtocolName,
         Litep2p, Litep2pEvent, PeerId,

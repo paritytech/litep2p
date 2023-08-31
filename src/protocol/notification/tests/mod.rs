@@ -22,7 +22,7 @@ use crate::{
     crypto::ed25519::Keypair,
     peer_id::PeerId,
     protocol::{
-        notification::{handle::NotificationHandle, types::Config, NotificationProtocol},
+        notification::{handle::NotificationHandle, NotificationConfig, NotificationProtocol},
         InnerTransportEvent, ProtocolCommand, TransportService,
     },
     transport::manager::TransportManager,
@@ -52,7 +52,7 @@ fn make_notification_protocol() -> (
         std::sync::Arc::new(Default::default()),
         handle,
     );
-    let (config, handle) = Config::new(
+    let (config, handle) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
         1024usize,
         vec![1, 2, 3, 4],

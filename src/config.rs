@@ -81,7 +81,7 @@ pub struct Litep2pConfigBuilder {
     kademlia: Option<kademlia::Config>,
 
     /// Notification protocols.
-    notification_protocols: HashMap<ProtocolName, notification::types::Config>,
+    notification_protocols: HashMap<ProtocolName, notification::NotificationConfig>,
 
     /// Request-response protocols.
     request_response_protocols: HashMap<ProtocolName, request_response::RequestResponseConfig>,
@@ -149,7 +149,7 @@ impl Litep2pConfigBuilder {
     }
 
     /// Install notification protocol.
-    pub fn with_notification_protocol(mut self, config: notification::types::Config) -> Self {
+    pub fn with_notification_protocol(mut self, config: notification::NotificationConfig) -> Self {
         self.notification_protocols
             .insert(config.protocol_name().clone(), config);
         self
@@ -248,7 +248,7 @@ pub struct Litep2pConfig {
     pub(crate) kademlia: Option<kademlia::Config>,
 
     /// Notification protocols.
-    pub(crate) notification_protocols: HashMap<ProtocolName, notification::types::Config>,
+    pub(crate) notification_protocols: HashMap<ProtocolName, notification::NotificationConfig>,
 
     /// Request-response protocols.
     pub(crate) request_response_protocols:

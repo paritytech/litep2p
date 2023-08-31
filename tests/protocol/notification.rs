@@ -25,8 +25,8 @@ use litep2p::{
     crypto::ed25519::Keypair,
     error::Error,
     peer_id::PeerId,
-    protocol::notification::types::{
-        Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
+    protocol::notification::{
+        NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,

@@ -19,14 +19,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::ProtocolCodec,
-    peer_id::PeerId,
-    protocol::notification::handle::{NotificationHandle, NotificationSink},
+    peer_id::PeerId, protocol::notification::handle::NotificationSink,
     types::protocol::ProtocolName,
-    DEFAULT_CHANNEL_SIZE,
 };
-
-use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 /// Default channel size for synchronous notifications.
 pub(super) const SYNC_CHANNEL_SIZE: usize = 16;
@@ -192,61 +187,4 @@ pub(crate) enum NotificationCommand {
         /// Validation result.
         result: ValidationResult,
     },
-}
-
-/// Notification configuration.
-#[derive(Debug)]
-pub struct Config {
-    /// Protocol name.
-    pub(crate) protocol_name: ProtocolName,
-
-    /// Protocol codec.
-    pub(crate) codec: ProtocolCodec,
-
-    /// Maximum notification size.
-    _max_notification_size: usize,
-
-    /// Handshake bytes.
-    pub(crate) handshake: Vec<u8>,
-
-    /// Protocol aliases.
-    pub(crate) _protocol_aliases: Vec<ProtocolName>,
-
-    /// TX channel passed to the protocol used for sending events.
-    pub(crate) event_tx: Sender<InnerNotificationEvent>,
-
-    /// RX channel passed to the protocol used for receiving commands.
-    pub(crate) command_rx: Receiver<NotificationCommand>,
-}
-
-impl Config {
-    /// Create new [`Config`].
-    pub fn new(
-        protocol_name: ProtocolName,
-        max_notification_size: usize,
-        handshake: Vec<u8>,
-        _protocol_aliases: Vec<ProtocolName>,
-    ) -> (Self, NotificationHandle) {
-        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let handle = NotificationHandle::new(event_rx, command_tx);
-
-        (
-            Self {
-                protocol_name,
-                codec: ProtocolCodec::UnsignedVarint(Some(max_notification_size)),
-                _max_notification_size: max_notification_size,
-                handshake,
-                _protocol_aliases,
-                event_tx,
-                command_rx,
-            },
-            handle,
-        )
-    }
-
-    /// Get protocol name.
-    pub(crate) fn protocol_name(&self) -> &ProtocolName {
-        &self.protocol_name
-    }
 }
