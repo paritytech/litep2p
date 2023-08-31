@@ -397,7 +397,7 @@ mod tests {
             )]),
         };
         let transport_config1 = config::TransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/8888/quic-v1".parse().unwrap(),
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         };
 
         let transport1 = QuicTransport::new(handle1, transport_config1)

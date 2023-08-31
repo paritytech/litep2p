@@ -74,11 +74,11 @@ pub struct Ping {
     /// Pending outbound substreams.
     pending_opens: HashMap<SubstreamId, PeerId>,
 
-    /// Pending inbound substreams.
-    pending_inbound: SubstreamSet<PeerId>,
-
     /// Pending outbound substreams.
     pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Duration)>>>,
+
+    /// Pending inbound substreams.
+    pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
 }
 
 impl Ping {
@@ -89,8 +89,8 @@ impl Ping {
             tx: config.tx_event,
             peers: HashSet::new(),
             pending_opens: HashMap::new(),
-            pending_inbound: SubstreamSet::new(),
             pending_outbound: FuturesUnordered::new(),
+            pending_inbound: FuturesUnordered::new(),
             _max_failures: config.max_failures,
         }
     }
@@ -130,21 +130,21 @@ impl Ping {
             let _ = substream.next().await.ok_or(Error::SubstreamError(
                 SubstreamError::ReadFailure(Some(substream_id)),
             ))??;
+            let _ = substream.close().await;
 
             Ok((peer, now.elapsed()))
         }));
     }
 
     /// Substream opened to remote peer.
-    fn on_inbound_substream(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
-        tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
+    fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
+        tracing::warn!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
-        if self.pending_inbound.contains(&peer) {
-            tracing::warn!(target: LOG_TARGET, "remote opened secondary inbound substream, ignoring");
-            return;
-        }
-
-        self.pending_inbound.insert(peer, substream);
+        self.pending_inbound.push(Box::pin(async move {
+            let payload = substream.next().await.unwrap().unwrap();
+            substream.send(payload.freeze()).await.unwrap();
+            let _ = substream.next();
+        }));
     }
 
     /// Failed to open substream to remote peer.
@@ -155,24 +155,6 @@ impl Ping {
             ?error,
             "failed to open substream"
         );
-    }
-
-    /// Handle substream event.
-    async fn on_substream_event(&mut self, peer: PeerId, message: crate::Result<BytesMut>) {
-        tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle inbound substream event");
-
-        match (self.pending_inbound.remove(&peer), message) {
-            (Some(mut substream), Ok(message)) => {
-                let _ = substream.send(message.into()).await;
-            }
-            (substream, message) => tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                ?substream,
-                ?message,
-                "invalid state, cannot send ping reply",
-            ),
-        }
     }
 
     /// Start [`Ping`] event loop.
@@ -222,13 +204,11 @@ impl Ping {
                     Some(TransportEvent::DialFailure { .. }) => {}
                     None => return,
                 },
-                event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {
-                    let (peer, event) = event.expect("`SubstreamSet` to return `Some(..)`");
-                    self.on_substream_event(peer, event).await;
-                }
+                _event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => {
                     match event {
                         Some(Ok((peer, elapsed))) => {
+                            tracing::info!(target: LOG_TARGET, ?peer, "report ping time for peer");
                             let _ = self
                                 .tx
                                 .send(PingEvent::Ping {
@@ -237,7 +217,7 @@ impl Ping {
                                 })
                                 .await;
                         }
-                        _ => tracing::debug!(target: LOG_TARGET, "failed to handle ping for an outbound peer"),
+                        event => tracing::debug!(target: LOG_TARGET, "failed to handle ping for an outbound peer: {event:?}"),
                     }
                 }
             }
