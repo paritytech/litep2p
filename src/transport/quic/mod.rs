@@ -222,12 +222,17 @@ impl QuicTransport {
             }
             Err(error) => match self.pending_dials.remove(&connection_id) {
                 Some(address) => {
+                    let error = if std::matches!(
+                        error,
+                        ConnectionError::MaxHandshakeDurationExceeded { .. }
+                    ) {
+                        Error::Timeout
+                    } else {
+                        Error::TransportError(error.to_string())
+                    };
+
                     self.context
-                        .report_dial_failure(
-                            connection_id,
-                            address,
-                            Error::TransportError(error.to_string()),
-                        )
+                        .report_dial_failure(connection_id, address, error)
                         .await;
                     Ok(())
                 }
