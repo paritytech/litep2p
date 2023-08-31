@@ -352,7 +352,7 @@ impl QuicConnection {
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, "protocols have exited, shutting down connection");
-                        return Ok(())
+                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
                     }
                 }
             }
