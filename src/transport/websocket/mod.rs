@@ -76,7 +76,7 @@ pub(crate) struct WebSocketTransport {
     listener: TcpListener,
 
     /// Assigned listen addresss.
-    _listen_address: SocketAddr,
+    listen_address: Multiaddr,
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
@@ -169,13 +169,17 @@ impl Transport for WebSocketTransport {
 
         let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
         let listener = TcpListener::bind(listen_address).await?;
-        let _listen_address = listener.local_addr()?;
+        let listen_address = listener.local_addr()?;
+        let listen_address = Multiaddr::empty()
+            .with(Protocol::from(listen_address.ip()))
+            .with(Protocol::Tcp(listen_address.port()))
+            .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())));
 
         Ok(Self {
             config,
             context,
             listener,
-            _listen_address,
+            listen_address,
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
@@ -183,8 +187,7 @@ impl Transport for WebSocketTransport {
 
     /// Get assigned listen address.
     fn listen_address(&self) -> Multiaddr {
-        // TODO: zzz
-        "/ip4/127.0.0.1/tcp/8888/ws".parse().unwrap()
+        self.listen_address.clone()
     }
 
     /// Poll next connection.
