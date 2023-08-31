@@ -86,3 +86,50 @@ impl Config {
         &self.protocol_name
     }
 }
+
+/// Notification configuration builder.
+pub struct ConfigBuilder {
+    /// Protocol name.
+    protocol_name: ProtocolName,
+
+    /// Maximum notification size.
+    max_notification_size: Option<usize>,
+
+    /// Handshake bytes.
+    handshake: Option<Vec<u8>>,
+}
+
+impl ConfigBuilder {
+    /// Create new [`ConfigBuilder`].
+    pub fn new(protocol_name: ProtocolName) -> Self {
+        Self {
+            protocol_name,
+            max_notification_size: None,
+            handshake: None,
+        }
+    }
+
+    /// Add maximum notification size.
+    pub fn with_max_size(mut self, max_notification_size: usize) -> Self {
+        self.max_notification_size = Some(max_notification_size);
+        self
+    }
+
+    /// Add custom handshake.
+    pub fn with_handshake(mut self, handshake: Vec<u8>) -> Self {
+        self.handshake = Some(handshake);
+        self
+    }
+
+    /// Build notification configuration.
+    pub fn build(mut self) -> (Config, NotificationHandle) {
+        Config::new(
+            self.protocol_name,
+            self.max_notification_size
+                .take()
+                .expect("notification size to be specified"),
+            self.handshake.take().expect("handshake to be specified"),
+            Vec::new(),
+        )
+    }
+}

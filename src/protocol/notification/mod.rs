@@ -43,7 +43,7 @@ use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
 use std::collections::{hash_map::Entry, HashMap};
 
-pub use config::Config as NotificationConfig;
+pub use config::{Config as NotificationConfig, ConfigBuilder as NotificationConfigBuilder};
 pub use handle::NotificationHandle;
 pub use types::{NotificationError, NotificationEvent, ValidationResult};
 
