@@ -71,3 +71,36 @@ impl RequestResponseConfig {
         &self.protocol_name
     }
 }
+
+pub struct RequestResponseConfigBuilder {
+    /// Protocol name.
+    pub(crate) protocol_name: ProtocolName,
+
+    /// Maximum message size.
+    max_message_size: Option<usize>,
+}
+
+impl RequestResponseConfigBuilder {
+    pub fn new(protocol_name: ProtocolName) -> Self {
+        Self {
+            protocol_name,
+            max_message_size: None,
+        }
+    }
+
+    /// Add maximum message size.
+    pub fn with_max_message_size(mut self, max_message_size: usize) -> Self {
+        self.max_message_size = Some(max_message_size);
+        self
+    }
+
+    /// Build [`RequestResponseConfig`].
+    pub fn build(mut self) -> (RequestResponseConfig, RequestResponseHandle) {
+        RequestResponseConfig::new(
+            self.protocol_name,
+            self.max_message_size
+                .take()
+                .expect("maximum message size to be set"),
+        )
+    }
+}

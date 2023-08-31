@@ -41,7 +41,7 @@ use std::{
     time::Duration,
 };
 
-pub use config::RequestResponseConfig;
+pub use config::{RequestResponseConfig, RequestResponseConfigBuilder};
 pub use handle::{RequestResponseError, RequestResponseEvent, RequestResponseHandle};
 
 mod config;
