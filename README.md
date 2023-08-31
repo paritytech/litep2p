@@ -28,14 +28,8 @@
 use futures::Stream;
 use litep2p::{
     config::Litep2pBuilder,
-    transport::{
-        tcp::TcpTransportConfig,
-        quic::QuicTransportConfig,
-    },
-    protocol::{
-        libp2p::ping::PingConfig,
-        request_response::RequestResponseConfig,
-    }
+    protocol::{libp2p::ping::PingConfig, request_response::RequestResponseConfig},
+    transport::{quic::QuicTransportConfig, tcp::TcpTransportConfig},
 };
 
 // simple example which enables `/ipfs/ping/1.0.0` and `/request/1` protocols
@@ -43,20 +37,18 @@ use litep2p::{
 #[tokio::main]
 async fn main() {
     // enable IPFS PING protocol
-    let (ping_config, mut ping_event_stream) = PingConfig::new()
-        .build()
-        .unwrap();
+    let (ping_config, mut ping_event_stream) = PingConfig::new().build().unwrap();
 
-    let (req_resp_config, mut req_resp_handle) = RequestResponseConfig::new(
-        "/request/1", // protocol name
-        1024,         // max message size
-    ).unwrap();
+    let (req_resp_config, mut req_resp_handle) =
+        RequestResponseConfigBuilder::new(ProtocolName::from("/request/1"))
+            .with_max_size(1024)
+            .build();
 
     // build `Litep2pConfig` object
     let mut config = Litep2pBuilder::new()
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: yamux::Config::default()
+            yamux_config: yamux::Config::default(),
         })
         .with_quic(QuicTransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
@@ -65,7 +57,7 @@ async fn main() {
         .with_request_response(req_resp_config)
         .build()
         .unwrap();
-    
+
     // build `Litep2p` object
     let mut litep2p = Litep2p::new(config).await.unwrap();
 
