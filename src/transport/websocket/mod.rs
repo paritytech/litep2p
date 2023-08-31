@@ -36,6 +36,7 @@ use tokio::net::TcpListener;
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    time::Duration,
 };
 
 mod connection;
@@ -201,9 +202,15 @@ impl Transport for WebSocketTransport {
                         let yamux_config = self.config.yamux_config.clone();
 
                         self.pending_connections.push(Box::pin(async move {
-                            WebSocketConnection::accept_connection(stream, address, connection_id, yamux_config, context)
-                                .await
-                                .map_err(|error| WebSocketError::new(error, None))
+                            match tokio::time::timeout(Duration::from_secs(10), async move {
+                                WebSocketConnection::accept_connection(stream, address, connection_id, yamux_config, context)
+                                    .await
+                                    .map_err(|error| WebSocketError::new(error, None))
+                            }).await {
+                                Err(_) => Err(WebSocketError::new(Error::Timeout, None)),
+                                Ok(Err(error)) => Err(error),
+                                Ok(Ok(result)) => Ok(result),
+                            }
                         }));
                     }
                     Err(error) => {
@@ -219,9 +226,15 @@ impl Transport for WebSocketTransport {
 
                         self.pending_dials.insert(connection, address.clone());
                         self.pending_connections.push(Box::pin(async move {
-                            WebSocketConnection::open_connection(address, connection, yamux_config, context)
-                                .await
-                                .map_err(|error| WebSocketError::new(error, Some(connection)))
+                            match tokio::time::timeout(Duration::from_secs(10), async move {
+                                WebSocketConnection::open_connection(address, connection, yamux_config, context)
+                                    .await
+                                    .map_err(|error| WebSocketError::new(error, Some(connection)))
+                            }).await {
+                                Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection))),
+                                Ok(Err(error)) => Err(error),
+                                Ok(Ok(result)) => Ok(result),
+                            }
                         }));
                     }
                 },
