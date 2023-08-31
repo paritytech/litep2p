@@ -63,7 +63,7 @@ features = ["dangerous_configuration"] # Must enable this to allow for custom ve
 
 [dev-dependencies]
 async-channel = "1.8.0"
-libp2p = { path = "/home/altonen/code/rust/rust-libp2p/libp2p", features = [
+libp2p = { version = "0.51.3", features = [
     "tokio",
     "dns",
     "identify",
@@ -78,8 +78,11 @@ libp2p = { path = "/home/altonen/code/rust/rust-libp2p/libp2p", features = [
     "quic",
 ]}
 quickcheck = "1.0.3"
-sc-network = { path = "/home/altonen/work/substrate/client/network", version = "0.10.0-dev" }
-sc-utils = { version = "4.0.0-dev", path = "/home/altonen/work/substrate/client/utils" }
+sc-network = "0.28.0"
+sc-utils = "8.0.0"
+
+[features]
+custom_sc_network = []
 
 [profile.release]
 debug = true
