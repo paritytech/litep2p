@@ -28,8 +28,11 @@ use litep2p::{
     protocol::notification::types::{
         Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
     },
-    transport::quic::config::TransportConfig as QuicTransportConfig,
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::{
+        quic::config::TransportConfig as QuicTransportConfig,
+        tcp::config::TransportConfig as TcpTransportConfig,
+        websocket::config::TransportConfig as WebSocketTransportConfig,
+    },
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent,
 };
@@ -39,6 +42,7 @@ use futures::StreamExt;
 enum Transport {
     Tcp(TcpTransportConfig),
     Quic(QuicTransportConfig),
+    WebSocket(WebSocketTransportConfig),
 }
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
@@ -87,6 +91,7 @@ async fn open_substreams_tcp() {
     .await
 }
 
+#[tokio::test]
 async fn open_substreams_quic() {
     open_substreams(
         Transport::Quic(QuicTransportConfig {
@@ -94,6 +99,21 @@ async fn open_substreams_quic() {
         }),
         Transport::Quic(QuicTransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_substreams_websocket() {
+    open_substreams(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
         }),
     )
     .await;
@@ -117,6 +137,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -133,6 +154,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
     let config2 = match transport2 {
         Transport::Tcp(config) => config2.with_tcp(config),
         Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
 
@@ -247,6 +269,21 @@ async fn reject_substream_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn reject_substream_websocket() {
+    reject_substream(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn reject_substream(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -265,6 +302,7 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -281,6 +319,7 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
     let config2 = match transport2 {
         Transport::Tcp(config) => config2.with_tcp(config),
         Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
 
@@ -352,6 +391,21 @@ async fn notification_stream_closed_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn notification_stream_closed_websocket() {
+    notification_stream_closed(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn notification_stream_closed(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -370,6 +424,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -386,6 +441,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
     let config2 = match transport2 {
         Transport::Tcp(config) => config2.with_tcp(config),
         Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
 
@@ -507,6 +563,21 @@ async fn reconnect_after_disconnect_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn reconnect_after_disconnect_websocket() {
+    reconnect_after_disconnect(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -525,6 +596,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -541,6 +613,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
     let config2 = match transport2 {
         Transport::Tcp(config) => config2.with_tcp(config),
         Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
 
@@ -717,6 +790,21 @@ async fn set_new_handshake_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn set_new_handshake_websocket() {
+    set_new_handshake(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn set_new_handshake(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -735,6 +823,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -751,6 +840,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
     let config2 = match transport2 {
         Transport::Tcp(config) => config2.with_tcp(config),
         Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
 
@@ -908,6 +998,21 @@ async fn both_nodes_open_substreams_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn both_nodes_open_substreams_websocket() {
+    both_nodes_open_substreams(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -926,6 +1031,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -942,6 +1048,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
     let config2 = match transport2 {
         Transport::Tcp(config) => config2.with_tcp(config),
         Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
 
@@ -1060,6 +1167,21 @@ async fn send_sync_notification_to_non_existent_peer_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn send_sync_notification_to_non_existent_peer_websocket() {
+    send_sync_notification_to_non_existent_peer(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn send_sync_notification_to_non_existent_peer(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -1078,6 +1200,7 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport, tran
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -1124,6 +1247,21 @@ async fn send_async_notification_to_non_existent_peer_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn send_async_notification_to_non_existent_peer_websocket() {
+    send_async_notification_to_non_existent_peer(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn send_async_notification_to_non_existent_peer(
     transport1: Transport,
     transport2: Transport,
@@ -1145,6 +1283,7 @@ async fn send_async_notification_to_non_existent_peer(
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -1192,6 +1331,21 @@ async fn try_to_connect_to_non_existent_peer_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn try_to_connect_to_non_existent_peer_websocket() {
+    try_to_connect_to_non_existent_peer(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn try_to_connect_to_non_existent_peer(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -1210,6 +1364,7 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport, transport2: 
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -1262,6 +1417,21 @@ async fn try_to_disconnect_non_existent_peer_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn try_to_disconnect_non_existent_peer_websocket() {
+    try_to_disconnect_non_existent_peer(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn try_to_disconnect_non_existent_peer(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -1280,6 +1450,7 @@ async fn try_to_disconnect_non_existent_peer(transport1: Transport, transport2: 
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -1324,6 +1495,21 @@ async fn try_to_reopen_substream_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn try_to_reopen_substream_websocket() {
+    try_to_reopen_substream(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -1342,6 +1528,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -1358,6 +1545,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
     let config2 = match transport2 {
         Transport::Tcp(config) => config2.with_tcp(config),
         Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
 
@@ -1457,6 +1645,21 @@ async fn substream_validation_timeout_quic() {
     .await;
 }
 
+#[tokio::test]
+async fn substream_validation_timeout_websocket() {
+    substream_validation_timeout(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
 async fn substream_validation_timeout(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -1475,6 +1678,7 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
         Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
 
@@ -1491,6 +1695,7 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
     let config2 = match transport2 {
         Transport::Tcp(config) => config2.with_tcp(config),
         Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
 
