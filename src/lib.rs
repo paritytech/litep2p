@@ -245,7 +245,7 @@ impl Litep2p {
 
         // enable websocket transport if the config exists
         if let Some(config) = config.websocket.take() {
-            let service = transport_manager.register_transport(SupportedTransport::WebRtc);
+            let service = transport_manager.register_transport(SupportedTransport::WebSocket);
             let transport = <WebSocketTransport as Transport>::new(service, config).await?;
 
             transport_manager.register_listen_address(transport.listen_address());
@@ -255,7 +255,7 @@ impl Litep2p {
 
             tokio::spawn(async move {
                 if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "quic failed");
+                    tracing::error!(target: LOG_TARGET, ?error, "websocket failed");
                 }
             });
         }
