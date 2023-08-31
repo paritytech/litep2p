@@ -18,6 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! This example demonstrates how application using `litep2p` might structure itself
+//! to implement, e.g, a syncing protocol using notification and request-response protocols
+
 use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,

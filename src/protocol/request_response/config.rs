@@ -89,7 +89,7 @@ impl RequestResponseConfigBuilder {
     }
 
     /// Add maximum message size.
-    pub fn with_max_message_size(mut self, max_message_size: usize) -> Self {
+    pub fn with_max_size(mut self, max_message_size: usize) -> Self {
         self.max_message_size = Some(max_message_size);
         self
     }
