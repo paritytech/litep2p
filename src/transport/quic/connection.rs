@@ -149,6 +149,7 @@ impl QuicConnection {
                     target: LOG_TARGET,
                     ?protocol,
                     ?direction,
+                    id = ?stream.id(),
                     "substream opened"
                 );
                 stream
@@ -185,6 +186,7 @@ impl QuicConnection {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
+            quic_id = ?stream.id(),
             "accept inbound substream"
         );
 
@@ -349,7 +351,7 @@ impl QuicConnection {
                         }));
                     }
                     None => {
-                        tracing::error!(target: LOG_TARGET, "protocols have exited, shutting down connection");
+                        tracing::debug!(target: LOG_TARGET, "protocols have exited, shutting down connection");
                         return Ok(())
                     }
                 }

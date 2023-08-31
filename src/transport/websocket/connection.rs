@@ -180,7 +180,7 @@ impl WebSocketConnection {
             tokio_tungstenite::connect_async(multiaddr_into_url(address.clone())?).await?;
         let stream = BufferedStream::new(stream);
 
-        tracing::error!(
+        tracing::trace!(
             target: LOG_TARGET,
             ?address,
             "connection established, negotiate protocols"
@@ -235,7 +235,7 @@ impl WebSocketConnection {
         let stream = tokio_tungstenite::accept_async(stream).await?;
         let stream = BufferedStream::new(stream);
 
-        tracing::error!(
+        tracing::trace!(
             target: LOG_TARGET,
             ?address,
             "connection received, negotiate protocols"
@@ -429,7 +429,7 @@ impl WebSocketConnection {
                                     .report_substream_open_failure(protocol, substream_id, error)
                                     .await
                                 {
-                                    tracing::error!(
+                                    tracing::warn!(
                                         target: LOG_TARGET,
                                         ?error,
                                         "failed to register opened substream to protocol"
@@ -456,7 +456,7 @@ impl WebSocketConnection {
                                 .report_substream_open(self.peer, protocol, direction, substream)
                                 .await
                             {
-                                tracing::error!(
+                                tracing::warn!(
                                     target: LOG_TARGET,
                                     ?error,
                                     "failed to register opened substream to protocol"
@@ -497,7 +497,7 @@ impl WebSocketConnection {
                         }));
                     }
                     None => {
-                        tracing::error!(target: LOG_TARGET, "protocols have exited, shutting down connection");
+                        tracing::debug!(target: LOG_TARGET, "protocols have exited, shutting down connection");
                         return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
                     }
                 }
