@@ -5906,8 +5906,9 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "str0m"
-version = "0.1.0"
-source = "git+https://github.com/altonen/str0m.git?branch=webrtc-direct-support#cd6d2367e300f225ac04690dcd33eb77072df8c9"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee48572247f422dcbe68630c973f8296fbd5157119cd36a3223e48bf83d47727"
 dependencies = [
  "combine",
  "crc",

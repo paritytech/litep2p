@@ -37,7 +37,7 @@ tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 trust-dns-resolver = { version = "0.22.0", features = ["tokio"] }
 unsigned-varint = { path = "misc/unsigned-varint", features = ["codec", "tokio-util"] }
-str0m = { git = "https://github.com/altonen/str0m.git", branch = "webrtc-direct-support" }
+str0m = "0.2.0"
 webpki = "0.22.0"
 x509-parser = "0.15.0"
 yamux = "0.11.0"

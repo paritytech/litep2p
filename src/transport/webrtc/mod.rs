@@ -166,8 +166,8 @@ impl WebRtcTransport {
     ) -> (Rtc, ChannelId) {
         let mut rtc = Rtc::builder()
             .set_ice_lite(true)
-            .set_dtls_certification(self.dtls_cert.clone())
-            .set_certificate_fingerprint_verification(false)
+            .set_dtls_cert(self.dtls_cert.clone())
+            .set_fingerprint_verification(false)
             .build();
         rtc.add_local_candidate(Candidate::host(destination).unwrap());
         rtc.add_remote_candidate(Candidate::host(source).unwrap());
