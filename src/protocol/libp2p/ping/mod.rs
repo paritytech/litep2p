@@ -22,11 +22,10 @@ use crate::{
     error::{Error, SubstreamError},
     peer_id::PeerId,
     protocol::{Direction, Transport, TransportEvent, TransportService},
-    substream::{Substream, SubstreamSet},
+    substream::Substream,
     types::SubstreamId,
 };
 
-use bytes::BytesMut;
 use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
 use tokio::sync::mpsc::Sender;
 

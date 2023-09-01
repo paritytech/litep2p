@@ -5021,9 +5021,9 @@ dependencies = [
 
 [[package]]
 name = "sctp-proto"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae7ae1e01cd2977a9992382a5048ef8fdf01445a999719f866dca1a1ab17ceed"
+checksum = "514eb06a3f6b1f119b6a00a9a87afac072894817d3283b0d36adc8f8a135886a"
 dependencies = [
  "bytes",
  "crc",
@@ -5907,6 +5907,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "str0m"
 version = "0.1.0"
+source = "git+https://github.com/altonen/str0m.git?branch=webrtc-direct-support#cd6d2367e300f225ac04690dcd33eb77072df8c9"
 dependencies = [
  "combine",
  "crc",
