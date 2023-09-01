@@ -34,8 +34,36 @@ use litep2p::{
 
 use std::time::Duration;
 
-// simple event loop which discovers peers over mDNS,
-// establishes a connection to them and calculates the PING time
+/// helper function for creating `Litep2p` object
+async fn make_litep2p() -> (
+    Litep2p,
+    Box<dyn Stream<Item = PingEvent> + Send + Unpin>,
+    Box<dyn Stream<Item = MdnsEvent> + Send + Unpin>,
+) {
+    // initialize IPFS ping and mDNS
+    let (ping_config, ping_event_stream) = PingConfig::default();
+    let (mdns_config, mdns_event_stream) = MdnsConfig::new(Duration::from_secs(30));
+
+    // build `Litep2p`, passing in configurations for IPFS and mDNS
+    let litep2p_config = Litep2pConfigBuilder::new()
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: yamux::Config::default(),
+        })
+        .with_libp2p_ping(ping_config)
+        .with_mdns(mdns_config)
+        .build();
+
+    // build litep2p and return it + event streams
+    (
+        Litep2p::new(litep2p_config).await.unwrap(),
+        ping_event_stream,
+        mdns_event_stream,
+    )
+}
+
+/// simple event loop which discovers peers over mDNS,
+/// establishes a connection to them and calculates the PING time
 async fn peer_event_loop(
     mut litep2p: Litep2p,
     mut ping_event_stream: Box<dyn Stream<Item = PingEvent> + Send + Unpin>,
@@ -60,35 +88,9 @@ async fn peer_event_loop(
 
 #[tokio::main]
 async fn main() {
-    // initialize IPFS ping and mDNS for the first peer
-    let (ping_config1, ping_event_stream1) = PingConfig::default();
-    let (mdns_config1, mdns_event_stream1) = MdnsConfig::new(Duration::from_secs(30));
-
-    // initialize IPFS ping and mDNS for the second peer
-    let (ping_config2, ping_event_stream2) = PingConfig::default();
-    let (mdns_config2, mdns_event_stream2) = MdnsConfig::new(Duration::from_secs(30));
-
-    // build `Litep2p` for the first peer
-    let litep2p_config1 = Litep2pConfigBuilder::new()
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: yamux::Config::default(),
-        })
-        .with_libp2p_ping(ping_config1)
-        .with_mdns(mdns_config1)
-        .build();
-    let litep2p1 = Litep2p::new(litep2p_config1).await.unwrap();
-
-    // build `Litep2p` for the second peer
-    let litep2p_config2 = Litep2pConfigBuilder::new()
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: yamux::Config::default(),
-        })
-        .with_libp2p_ping(ping_config2)
-        .with_mdns(mdns_config2)
-        .build();
-    let litep2p2 = Litep2p::new(litep2p_config2).await.unwrap();
+    // initialize `Litep2p` objects for the peers
+    let (litep2p1, ping_event_stream1, mdns_event_stream1) = make_litep2p().await;
+    let (litep2p2, ping_event_stream2, mdns_event_stream2) = make_litep2p().await;
 
     // starts separate tasks for the first and second peer
     tokio::spawn(peer_event_loop(

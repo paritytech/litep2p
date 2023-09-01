@@ -34,7 +34,7 @@ use litep2p::{
 use multiaddr::Multiaddr;
 use std::time::Duration;
 
-// async loop for the client
+// event loop for the client
 async fn client_event_loop(
     mut litep2p: Litep2p,
     mut handle: NotificationHandle,
@@ -106,47 +106,40 @@ async fn server_event_loop(mut litep2p: Litep2p, mut handle: NotificationHandle)
     }
 }
 
+/// helper function for creating `Litep2p` object
+async fn make_litep2p() -> (Litep2p, NotificationHandle) {
+    // build notification config and handle for the first peer
+    let (echo_config, echo_handle) = NotificationConfigBuilder::new(ProtocolName::from("/echo/1"))
+        .with_max_size(256)
+        .with_handshake(vec![1, 3, 3, 7])
+        .build();
+
+    // build `Litep2p` object and return it + notification handle
+    (
+        Litep2p::new(
+            Litep2pConfigBuilder::new()
+                .with_quic(QuicTransportConfig {
+                    listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+                })
+                .with_notification_protocol(echo_config)
+                .build(),
+        )
+        .await
+        .unwrap(),
+        echo_handle,
+    )
+}
+
 #[tokio::main]
 async fn main() {
-    // build notification config and handle for the first peer
-    let (echo_config1, echo_handle1) =
-        NotificationConfigBuilder::new(ProtocolName::from("/echo/1"))
-            .with_max_size(256)
-            .with_handshake(vec![1, 3, 3, 7])
-            .build();
+    // build `Litep2p` objects for both peers
+    let (litep2p1, echo_handle1) = make_litep2p().await;
+    let (litep2p2, echo_handle2) = make_litep2p().await;
 
-    // build notification config and handle for the second peer
-    let (echo_config2, echo_handle2) =
-        NotificationConfigBuilder::new(ProtocolName::from("/echo/1"))
-            .with_max_size(256)
-            .with_handshake(vec![1, 3, 3, 7])
-            .build();
-
-    // build `Litep2p` for the first peer
-    let litep2p1 = Litep2p::new(
-        Litep2pConfigBuilder::new()
-            .with_quic(QuicTransportConfig {
-                listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-            })
-            .with_notification_protocol(echo_config1)
-            .build(),
-    )
-    .await
-    .unwrap();
-
-    // build `Litep2p` for the second peer
-    let litep2p2 = Litep2p::new(
-        Litep2pConfigBuilder::new()
-            .with_quic(QuicTransportConfig {
-                listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-            })
-            .with_notification_protocol(echo_config2)
-            .build(),
-    )
-    .await
-    .unwrap();
+    // get the first (and only) listen address for the second peer
     let listen_address = litep2p2.listen_addresses().next().unwrap().clone();
 
+    // start event loops for client and server
     tokio::spawn(client_event_loop(litep2p1, echo_handle1, listen_address));
     tokio::spawn(server_event_loop(litep2p2, echo_handle2));
 
