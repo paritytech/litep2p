@@ -28,14 +28,14 @@ use crate::{
     types::{protocol::ProtocolName, SubstreamId},
 };
 
+use multiaddr::Multiaddr;
+
+use std::fmt::Debug;
+
 pub(crate) use connection::Permit;
 pub(crate) use protocol_set::{InnerTransportEvent, ProtocolCommand, ProtocolSet};
 
 pub use protocol_set::TransportService;
-
-use multiaddr::Multiaddr;
-
-use std::fmt::Debug;
 
 pub mod libp2p;
 pub mod mdns;

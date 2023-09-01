@@ -18,7 +18,16 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-pub mod bitswap;
-pub mod identify;
-pub mod kademlia;
-pub mod ping;
+/// Events emitted by the bitswap protocol.
+#[derive(Debug)]
+pub enum BitswapEvent {}
+
+/// Handle for communicating with the bitswap protocol.
+pub struct BitswapHandle {}
+
+impl BitswapHandle {
+    /// Create new [`BitswapHandle`].
+    pub(super) fn new() -> Self {
+        Self {}
+    }
+}

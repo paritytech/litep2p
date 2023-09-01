@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(unused)]
+
 use crate::{
     error::{Error, SubstreamError},
     peer_id::PeerId,
@@ -34,38 +36,22 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use config::{PingConfig, PingConfigBuilder};
+pub use config::BitswapConfig;
+pub use handle::{BitswapEvent, BitswapHandle};
 
 mod config;
-
-// TODO: handle max failures
+mod handle;
 
 /// Log target for the file.
-const LOG_TARGET: &str = "ipfs::ping";
+const LOG_TARGET: &str = "ipfs::bitswap";
 
-/// Events emitted by the ping protocol.
-#[derive(Debug)]
-pub enum PingEvent {
-    /// Ping time with remote peer.
-    Ping {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Ping.
-        ping: Duration,
-    },
-}
-
-/// Ping protocol.
-pub struct Ping {
-    /// Maximum failures before the peer is considered unreachable.
-    _max_failures: usize,
-
+/// Bitswap protocol.
+pub struct Bitswap {
     // Connection service.
     service: TransportService,
 
     /// TX channel for sending events to the user protocol.
-    tx: Sender<PingEvent>,
+    tx: Sender<BitswapEvent>,
 
     /// Connected peers.
     peers: HashSet<PeerId>,
@@ -74,23 +60,22 @@ pub struct Ping {
     pending_opens: HashMap<SubstreamId, PeerId>,
 
     /// Pending outbound substreams.
-    pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Duration)>>>,
+    pending_outbound: FuturesUnordered<BoxFuture<'static, ()>>,
 
     /// Pending inbound substreams.
     pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
 }
 
-impl Ping {
+impl Bitswap {
     /// Create new [`Ping`] protocol.
-    pub fn new(service: TransportService, config: PingConfig) -> Self {
+    pub fn new(service: TransportService, config: BitswapConfig) -> Self {
         Self {
             service,
-            tx: config.tx_event,
+            tx: config.event_tx,
             peers: HashSet::new(),
             pending_opens: HashMap::new(),
             pending_outbound: FuturesUnordered::new(),
             pending_inbound: FuturesUnordered::new(),
-            _max_failures: config.max_failures,
         }
     }
 
@@ -98,18 +83,12 @@ impl Ping {
     async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-        let substream_id = self.service.open_substream(peer).await?;
-        self.pending_opens.insert(substream_id, peer);
-        self.peers.insert(peer);
-
         Ok(())
     }
 
     /// Connection closed to remote peer.
     fn on_connection_closed(&mut self, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
-
-        self.peers.remove(&peer);
     }
 
     /// Handle outbound substream.
@@ -119,31 +98,11 @@ impl Ping {
         substream_id: SubstreamId,
         mut substream: Box<dyn Substream>,
     ) {
-        tracing::trace!(target: LOG_TARGET, ?peer, "handle outbound substream");
-
-        self.pending_outbound.push(Box::pin(async move {
-            // TODO: generate random payload and verify it
-            let _ = substream.send(vec![0u8; 32].into()).await?;
-            let now = Instant::now();
-
-            let _ = substream.next().await.ok_or(Error::SubstreamError(
-                SubstreamError::ReadFailure(Some(substream_id)),
-            ))??;
-            let _ = substream.close().await;
-
-            Ok((peer, now.elapsed()))
-        }));
     }
 
     /// Substream opened to remote peer.
     fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
         tracing::warn!(target: LOG_TARGET, ?peer, "handle inbound substream");
-
-        self.pending_inbound.push(Box::pin(async move {
-            let payload = substream.next().await.unwrap().unwrap();
-            substream.send(payload.freeze()).await.unwrap();
-            let _ = substream.next();
-        }));
     }
 
     /// Failed to open substream to remote peer.
@@ -158,7 +117,7 @@ impl Ping {
 
     /// Start [`Ping`] event loop.
     pub async fn run(mut self) {
-        tracing::debug!(target: LOG_TARGET, "starting ping event loop");
+        tracing::debug!(target: LOG_TARGET, "starting bitswap event loop");
 
         loop {
             tokio::select! {
@@ -206,16 +165,12 @@ impl Ping {
                 _event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => {
                     match event {
-                        Some(Ok((peer, elapsed))) => {
-                            let _ = self
-                                .tx
-                                .send(PingEvent::Ping {
-                                    peer,
-                                    ping: elapsed,
-                                })
-                                .await;
-                        }
-                        event => tracing::debug!(target: LOG_TARGET, "failed to handle ping for an outbound peer: {event:?}"),
+                        Some(_) => {}
+                        event => tracing::trace!(
+                            target: LOG_TARGET,
+                            ?event,
+                            "failed to handle bitswap for an outbound peer"
+                        ),
                     }
                 }
             }
