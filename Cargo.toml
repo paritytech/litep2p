@@ -36,7 +36,7 @@ tokio-util = { version = "0.7.7", features = ["compat", "io", "codec"] }
 tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 trust-dns-resolver = { version = "0.22.0", features = ["tokio"] }
-unsigned-varint = { path = "misc/unsigned-varint", features = ["codec", "tokio-util"] }
+unsigned-varint = { git = "https://github.com/paritytech/unsigned-varint.git", rev = "9925adb", features = ["codec"] }
 str0m = "0.2.0"
 webpki = "0.22.0"
 x509-parser = "0.15.0"

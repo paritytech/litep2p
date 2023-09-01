@@ -2966,7 +2966,7 @@ dependencies = [
  "tracing-subscriber 0.3.17",
  "trust-dns-resolver",
  "uint",
- "unsigned-varint 0.7.1",
+ "unsigned-varint 0.7.1 (git+https://github.com/paritytech/unsigned-varint.git?rev=9925adb)",
  "url",
  "webpki 0.22.0",
  "x509-parser 0.15.0",
@@ -6558,14 +6558,6 @@ dependencies = [
 [[package]]
 name = "unsigned-varint"
 version = "0.7.1"
-dependencies = [
- "bytes",
- "tokio-util",
-]
-
-[[package]]
-name = "unsigned-varint"
-version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d86a8dc7f45e4c1b0d30e43038c38f274e77af056aa5f74b93c2cf9eb3c1c836"
 dependencies = [
@@ -6573,6 +6565,15 @@ dependencies = [
  "bytes",
  "futures-io",
  "futures-util",
+]
+
+[[package]]
+name = "unsigned-varint"
+version = "0.7.1"
+source = "git+https://github.com/paritytech/unsigned-varint.git?rev=9925adb#9925adb711595a8166eb7b6a7cc330e31b623143"
+dependencies = [
+ "bytes",
+ "tokio-util",
 ]
 
 [[package]]
