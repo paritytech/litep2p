@@ -29,7 +29,7 @@ use litep2p::{
         tcp::config::TransportConfig as TcpTransportConfig,
         websocket::config::TransportConfig as WebSocketTransportConfig,
     },
-    types::protocol::ProtocolName,
+    types::{protocol::ProtocolName, RequestId},
     Litep2p, Litep2pEvent,
 };
 
@@ -410,7 +410,7 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
     let request_id2 = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
     let request_id3 = handle1.send_request(peer2, vec![1, 3, 3, 8]).await.unwrap();
     let request_id4 = handle1.send_request(peer2, vec![1, 3, 3, 9]).await.unwrap();
-    let expected: HashMap<usize, Vec<u8>> = HashMap::from_iter([
+    let expected: HashMap<RequestId, Vec<u8>> = HashMap::from_iter([
         (request_id1, vec![2, 3, 3, 6]),
         (request_id2, vec![2, 3, 3, 7]),
         (request_id3, vec![2, 3, 3, 8]),

@@ -38,6 +38,10 @@ use tokio::{
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     io::ErrorKind,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -120,7 +124,7 @@ pub(crate) struct RequestResponseProtocol {
     /// Next request ID.
     ///
     /// Inbound requests are assigned an ephemeral ID TODO: finish
-    next_request_id: RequestId,
+    next_request_id: Arc<AtomicUsize>,
 }
 
 impl RequestResponseProtocol {
@@ -129,7 +133,7 @@ impl RequestResponseProtocol {
         Self {
             service,
             peers: HashMap::new(),
-            next_request_id: 0usize,
+            next_request_id: config.next_request_id,
             event_tx: config.event_tx,
             command_rx: config.command_rx,
             pending_outbound: HashMap::new(),
@@ -139,12 +143,8 @@ impl RequestResponseProtocol {
     }
 
     /// Get next ephemeral request ID.
-    // TODO: make this a helper of `RequestId`.
     fn next_request_id(&mut self) -> RequestId {
-        let request_id = self.next_request_id;
-        self.next_request_id += 1;
-
-        request_id
+        RequestId::from(self.next_request_id.fetch_add(1usize, Ordering::Relaxed))
     }
 
     /// Connection established to remote peer.

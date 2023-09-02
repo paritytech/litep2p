@@ -24,6 +24,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
     pin::Pin,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
 };
 
@@ -132,7 +136,7 @@ pub struct RequestResponseHandle {
     command_tx: Sender<RequestResponseCommand>,
 
     /// Next ephemeral request ID.
-    next_request_id: RequestId,
+    next_request_id: Arc<AtomicUsize>,
 }
 
 impl RequestResponseHandle {
@@ -140,21 +144,13 @@ impl RequestResponseHandle {
     pub(crate) fn new(
         event_rx: Receiver<RequestResponseEvent>,
         command_tx: Sender<RequestResponseCommand>,
+        next_request_id: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             event_rx,
             command_tx,
-            next_request_id: 0usize,
+            next_request_id,
         }
-    }
-
-    /// Get next ephemeral request ID.
-    // TODO: make this a helper of `RequestId`.
-    fn next_request_id(&mut self) -> RequestId {
-        let request_id = self.next_request_id;
-        self.next_request_id += 1;
-
-        request_id
     }
 
     /// Reject request.
@@ -165,6 +161,12 @@ impl RequestResponseHandle {
             .command_tx
             .send(RequestResponseCommand::RejectRequest { request_id })
             .await;
+    }
+
+    /// Get next request ID.
+    fn next_request_id(&self) -> RequestId {
+        let request_id = self.next_request_id.fetch_add(1usize, Ordering::Relaxed);
+        RequestId::from(request_id)
     }
 
     /// Send request to remote peer.

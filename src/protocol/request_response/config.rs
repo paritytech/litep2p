@@ -29,6 +29,8 @@ use crate::{
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
+use std::sync::{atomic::AtomicUsize, Arc};
+
 /// Request-response configuration.
 #[derive(Debug)]
 pub struct RequestResponseConfig {
@@ -43,6 +45,9 @@ pub struct RequestResponseConfig {
 
     /// RX channel for receiving commands from the user protocol.
     pub(crate) command_rx: Receiver<RequestResponseCommand>,
+
+    /// Next ephemeral request ID.
+    pub(crate) next_request_id: Arc<AtomicUsize>,
 }
 
 impl RequestResponseConfig {
@@ -53,13 +58,15 @@ impl RequestResponseConfig {
     ) -> (Self, RequestResponseHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let handle = RequestResponseHandle::new(event_rx, command_tx);
+        let next_request_id = Default::default();
+        let handle = RequestResponseHandle::new(event_rx, command_tx, Arc::clone(&next_request_id));
 
         (
             Self {
-                protocol_name,
                 event_tx,
                 command_rx,
+                protocol_name,
+                next_request_id,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
             },
             handle,

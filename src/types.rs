@@ -45,7 +45,28 @@ impl SubstreamId {
 }
 
 /// Request ID.
-pub type RequestId = usize;
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct RequestId(usize);
+
+impl RequestId {
+    /// Create new [`RequestId`].
+    pub fn new() -> Self {
+        RequestId(0usize)
+    }
+
+    /// Get next [`RequestID`].
+    pub fn next(&mut self) -> RequestId {
+        let substream_id = self.0;
+        self.0 += 1usize;
+
+        RequestId(substream_id)
+    }
+
+    /// Get [`RequestId`] from a number that can be converted into a `usize`.
+    pub fn from<T: Into<usize>>(value: T) -> Self {
+        RequestId(value.into())
+    }
+}
 
 /// Connection ID.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
