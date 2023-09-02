@@ -42,6 +42,12 @@ pub use handle::{BitswapEvent, BitswapHandle};
 mod config;
 mod handle;
 
+mod schema {
+    pub(super) mod kademlia {
+        include!(concat!(env!("OUT_DIR"), "/bitswap.rs"));
+    }
+}
+
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::bitswap";
 
