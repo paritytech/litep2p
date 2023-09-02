@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::PublicKey,
     error::{AddressError, Error},
     peer_id::PeerId,
     transport::{
@@ -312,9 +311,6 @@ impl Transport for WebRtcTransport {
             .with(Protocol::Udp(self.listen_address.port()))
             .with(Protocol::WebRTC)
             .with(Protocol::Certhash(certificate))
-            .with(Protocol::P2p(
-                PeerId::from(PublicKey::Ed25519(self.context.keypair.public())).into(),
-            ))
     }
 
     /// Start transport event loop.
