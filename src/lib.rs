@@ -24,7 +24,7 @@ use crate::{
     error::Error,
     peer_id::PeerId,
     protocol::{
-        libp2p::{identify::Identify, kademlia::Kademlia, ping::Ping},
+        libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
         mdns::Mdns,
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
@@ -191,6 +191,19 @@ impl Litep2p {
                 Some((service, identify_config))
             }
         };
+
+        // start bitswap protocol event loop if enabled
+        if let Some(bitswap_config) = config.bitswap.take() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                protocol = ?bitswap_config.protocol,
+                "enable ipfs bitswap protocol",
+            );
+
+            let service = transport_manager
+                .register_protocol(bitswap_config.protocol.clone(), bitswap_config.codec);
+            tokio::spawn(async move { Bitswap::new(service, bitswap_config).run().await });
+        }
 
         // enable tcp transport if the config exists
         if let Some(config) = config.tcp.take() {

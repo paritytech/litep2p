@@ -18,9 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{types::RequestId, PeerId};
+use crate::{
+    protocol::libp2p::bitswap::{BlockPresenceType, WantType},
+    PeerId,
+};
 
-use tokio::sync::mpsc::Receiver;
+use cid::Cid;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
     pin::Pin,
@@ -31,32 +35,75 @@ use std::{
 #[derive(Debug)]
 pub enum BitswapEvent {
     /// Bitswap request.
-    Request,
+    Request {
+        // Peer ID.
+        peer: PeerId,
 
-    /// Bitswap response.
-    Response,
+        /// Requested CIDs.
+        cids: Vec<(Cid, WantType)>,
+    },
+}
+
+#[derive(Debug)]
+pub enum ResponseType {
+    /// Block.
+    Block {
+        /// CID.
+        cid: Cid,
+
+        /// Found block.
+        block: Vec<u8>,
+    },
+
+    /// Presense.
+    Presence {
+        /// CID.
+        cid: Cid,
+
+        /// Whether the requested block exists or not.
+        presence: BlockPresenceType,
+    },
+}
+
+/// Commands sent from the user to `Bitswap`.
+#[derive(Debug)]
+pub enum BitswapCommand {
+    /// Send bitswap response.
+    SendResponse {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// CIDs.
+        cids: Vec<(Cid, ResponseType)>,
+    },
 }
 
 /// Handle for communicating with the bitswap protocol.
 pub struct BitswapHandle {
     /// RX channel for receiving bitswap events.
     event_rx: Receiver<BitswapEvent>,
+
+    /// TX channel for sending commads to `Bitswap`.
+    cmd_tx: Sender<BitswapCommand>,
 }
 
 impl BitswapHandle {
     /// Create new [`BitswapHandle`].
-    pub(super) fn new(event_rx: Receiver<BitswapEvent>) -> Self {
-        Self { event_rx }
+    pub(super) fn new(event_rx: Receiver<BitswapEvent>, cmd_tx: Sender<BitswapCommand>) -> Self {
+        Self { event_rx, cmd_tx }
     }
 
     /// Send `request` to `peer`.
-    pub async fn send_request(&self, peer: PeerId, request: Vec<u8>) {
-        todo!();
+    pub async fn send_request(&self, _peer: PeerId, _request: Vec<u8>) {
+        unimplemented!("bitswap requests are not supported");
     }
 
     /// Send `response` to `peer`.
-    pub async fn send_response(&self, request_id: RequestId, response: Vec<u8>) {
-        todo!();
+    pub async fn send_response(&self, peer: PeerId, cids: Vec<(Cid, ResponseType)>) {
+        let _ = self
+            .cmd_tx
+            .send(BitswapCommand::SendResponse { peer, cids })
+            .await;
     }
 }
 

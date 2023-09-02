@@ -10,6 +10,7 @@
   * `/ipfs/ping/1.0.0`
   * `/ipfs/identify/1.0.0`
   * `/ipfs/kad/1.0.0`
+  * `/ipfs/bitswap/1.2.0`
   * Multicast DNS
   * Notification protocol
   * Request-response protocol

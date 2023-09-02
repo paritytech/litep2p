@@ -18,32 +18,33 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
 use crate::{
-    error::{Error, SubstreamError},
+    error::Error,
     peer_id::PeerId,
-    protocol::{Direction, Transport, TransportEvent, TransportService},
+    protocol::{
+        libp2p::bitswap::handle::ResponseType, Direction, Transport, TransportEvent,
+        TransportService,
+    },
     substream::Substream,
     types::SubstreamId,
 };
 
+use cid::{multihash::Code, Cid, Version};
 use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
-use tokio::sync::mpsc::Sender;
+use prost::Message;
+use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::{
-    collections::{HashMap, HashSet},
-    time::{Duration, Instant},
-};
+use std::collections::HashMap;
 
-pub use config::BitswapConfig;
-pub use handle::{BitswapEvent, BitswapHandle};
+pub use config::Config;
+pub use handle::{BitswapCommand, BitswapEvent, BitswapHandle};
+pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
 
 mod config;
 mod handle;
 
 mod schema {
-    pub(super) mod kademlia {
+    pub(super) mod bitswap {
         include!(concat!(env!("OUT_DIR"), "/bitswap.rs"));
     }
 }
@@ -51,74 +52,168 @@ mod schema {
 /// Log target for the file.
 const LOG_TARGET: &str = "ipfs::bitswap";
 
+/// Bitswap metadata.
+#[derive(Debug)]
+struct Prefix {
+    /// CID version.
+    version: Version,
+
+    /// CID codec.
+    codec: u64,
+
+    /// CID multihash type.
+    multihash_type: u64,
+
+    /// CID multihash length.
+    multihash_len: u8,
+}
+
+impl Prefix {
+    /// Convert the prefix to encoded bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut res = Vec::with_capacity(4 * 10);
+
+        let mut buf = unsigned_varint::encode::u64_buffer();
+        let version = unsigned_varint::encode::u64(self.version.into(), &mut buf);
+        res.extend_from_slice(version);
+
+        let mut buf = unsigned_varint::encode::u64_buffer();
+        let codec = unsigned_varint::encode::u64(self.codec, &mut buf);
+        res.extend_from_slice(codec);
+
+        let mut buf = unsigned_varint::encode::u64_buffer();
+        let multihash_type = unsigned_varint::encode::u64(self.multihash_type, &mut buf);
+        res.extend_from_slice(multihash_type);
+
+        let mut buf = unsigned_varint::encode::u64_buffer();
+        let multihash_len = unsigned_varint::encode::u64(self.multihash_len as u64, &mut buf);
+        res.extend_from_slice(multihash_len);
+        res
+    }
+}
+
 /// Bitswap protocol.
 pub struct Bitswap {
     // Connection service.
     service: TransportService,
 
     /// TX channel for sending events to the user protocol.
-    tx: Sender<BitswapEvent>,
+    event_tx: Sender<BitswapEvent>,
 
-    /// Connected peers.
-    peers: HashSet<PeerId>,
-
-    /// Pending outbound substreams.
-    pending_opens: HashMap<SubstreamId, PeerId>,
+    /// RX channel for receiving commands from `BitswapHandle`.
+    cmd_rx: Receiver<BitswapCommand>,
 
     /// Pending outbound substreams.
-    pending_outbound: FuturesUnordered<BoxFuture<'static, ()>>,
+    pending_outbound: HashMap<SubstreamId, Vec<(Cid, ResponseType)>>,
 
     /// Pending inbound substreams.
-    pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
+    pending_inbound:
+        FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Vec<(Cid, WantType)>)>>>,
 }
 
 impl Bitswap {
     /// Create new [`Ping`] protocol.
-    pub fn new(service: TransportService, config: BitswapConfig) -> Self {
+    pub fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
-            tx: config.event_tx,
-            peers: HashSet::new(),
-            pending_opens: HashMap::new(),
-            pending_outbound: FuturesUnordered::new(),
+            cmd_rx: config.cmd_rx,
+            event_tx: config.event_tx,
+            pending_outbound: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
         }
     }
 
-    /// Connection established to remote peer.
-    async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
+    /// Substream opened to remote peer.
+    fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
+        tracing::debug!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
-        Ok(())
+        self.pending_inbound.push(Box::pin(async move {
+            let message = substream.next().await.ok_or(Error::ConnectionClosed)??;
+            let message = schema::bitswap::Message::decode(message)?;
+
+            let Some(wantlist) = message.wantlist else {
+                tracing::debug!(target: LOG_TARGET, "bitswap message doesn't contain `WantList`");
+                return Err(Error::InvalidData);
+            };
+
+            Ok((
+                peer,
+                wantlist
+                    .entries
+                    .into_iter()
+                    .filter_map(|entry| {
+                        let cid = Cid::read_bytes(entry.block.as_slice()).ok()?;
+
+                        let want_type = match entry.want_type {
+                            0 => WantType::Block,
+                            1 => WantType::Have,
+                            _ => return None,
+                        };
+
+                        (cid.version() == cid::Version::V1
+                            && cid.hash().code() == u64::from(Code::Blake2b256)
+                            && cid.hash().size() == 32)
+                            .then_some((cid, want_type))
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+        }));
     }
 
-    /// Connection closed to remote peer.
-    fn on_connection_closed(&mut self, peer: PeerId) {
-        tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
-    }
-
-    /// Handle outbound substream.
-    fn on_outbound_substream(
+    /// Send response to bitswap request.
+    async fn on_outbound_substream(
         &mut self,
         peer: PeerId,
         substream_id: SubstreamId,
         mut substream: Box<dyn Substream>,
     ) {
+        let Some(entries) = self.pending_outbound.remove(&substream_id) else {
+            tracing::warn!(target: LOG_TARGET, ?peer, ?substream_id, "pending outbound entry doesn't exist");
+            return;
+        };
+
+        let mut response = schema::bitswap::Message::default();
+
+        for entry in entries {
+            match entry.1 {
+                ResponseType::Block { cid, block } => {
+                    let prefix = Prefix {
+                        version: cid.version(),
+                        codec: cid.codec(),
+                        multihash_type: cid.hash().code(),
+                        multihash_len: cid.hash().size(),
+                    }
+                    .to_bytes();
+
+                    response.payload.push(schema::bitswap::Block {
+                        prefix,
+                        data: block,
+                    });
+                }
+                ResponseType::Presence { cid, presence } => {
+                    response
+                        .block_presences
+                        .push(schema::bitswap::BlockPresence {
+                            cid: cid.to_bytes(),
+                            r#type: presence as i32,
+                        });
+                }
+            }
+        }
+
+        let _ = substream.send(response.encode_to_vec().into()).await;
     }
 
-    /// Substream opened to remote peer.
-    fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
-        tracing::warn!(target: LOG_TARGET, ?peer, "handle inbound substream");
-    }
-
-    /// Failed to open substream to remote peer.
-    fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
-        tracing::debug!(
-            target: LOG_TARGET,
-            ?substream,
-            ?error,
-            "failed to open substream"
-        );
+    /// Handle bitswap response.
+    async fn on_bitswap_response(&mut self, peer: PeerId, cids: Vec<(Cid, ResponseType)>) {
+        match self.service.open_substream(peer).await {
+            Err(error) => {
+                tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream to peer")
+            }
+            Ok(substream_id) => {
+                self.pending_outbound.insert(substream_id, cids);
+            }
+        }
     }
 
     /// Start [`Ping`] event loop.
@@ -128,55 +223,28 @@ impl Bitswap {
         loop {
             tokio::select! {
                 event = self.service.next_event() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer).await {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?error,
-                                "failed to register peer",
-                            );
-                        }
-                    }
-                    Some(TransportEvent::ConnectionClosed { peer }) => {
-                        self.on_connection_closed(peer);
-                    }
                     Some(TransportEvent::SubstreamOpened {
                         peer,
                         substream,
                         direction,
                         ..
                     }) => match direction {
-                        Direction::Inbound => {
-                            self.on_inbound_substream(peer, substream);
-                        }
-                        Direction::Outbound(substream_id) => {
-                            match self.pending_opens.remove(&substream_id) {
-                                Some(stored_peer) => {
-                                    debug_assert!(peer == stored_peer);
-                                    self.on_outbound_substream(peer, substream_id, substream);
-                                }
-                                None => {
-                                    todo!("substream {substream_id:?} does not exist");
-                                }
-                            }
-                        }
+                        Direction::Inbound => self.on_inbound_substream(peer, substream),
+                        Direction::Outbound(substream_id) =>
+                            self.on_outbound_substream(peer, substream_id, substream).await,
                     },
-                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
-                        self.on_substream_open_failure(substream, error);
+                    None => return,
+                    event => tracing::trace!(target: LOG_TARGET, ?event, "unhandled event"),
+                },
+                command = self.cmd_rx.recv() => match command {
+                    Some(BitswapCommand::SendResponse { peer, cids }) => {
+                        self.on_bitswap_response(peer, cids).await;
                     }
-                    Some(TransportEvent::DialFailure { .. }) => {}
                     None => return,
                 },
-                _event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
-                event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => {
-                    match event {
-                        Some(_) => {}
-                        event => tracing::trace!(
-                            target: LOG_TARGET,
-                            ?event,
-                            "failed to handle bitswap for an outbound peer"
-                        ),
+                event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {
+                    if let Some(Ok((peer, cids))) = event {
+                        let _ = self.event_tx.send(BitswapEvent::Request { peer, cids }).await;
                     }
                 }
             }

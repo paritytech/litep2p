@@ -21,7 +21,7 @@
 use crate::{
     crypto::ed25519::Keypair,
     protocol::{
-        libp2p::{identify, kademlia, ping},
+        libp2p::{bitswap, identify, kademlia, ping},
         mdns::Config as MdnsConfig,
         notification, request_response, UserProtocol,
     },
@@ -80,6 +80,9 @@ pub struct Litep2pConfigBuilder {
     /// Kademlia protocol config.
     kademlia: Option<kademlia::Config>,
 
+    /// Bitswap protocol config.
+    bitswap: Option<bitswap::Config>,
+
     /// Notification protocols.
     notification_protocols: HashMap<ProtocolName, notification::NotificationConfig>,
 
@@ -111,6 +114,7 @@ impl Litep2pConfigBuilder {
             ping: None,
             identify: None,
             kademlia: None,
+            bitswap: None,
             mdns: None,
             user_protocols: HashMap::new(),
             notification_protocols: HashMap::new(),
@@ -173,6 +177,12 @@ impl Litep2pConfigBuilder {
         self
     }
 
+    /// Enable IPFS Bitswap protocol.
+    pub fn with_libp2p_bitswap(mut self, config: bitswap::Config) -> Self {
+        self.bitswap = Some(config);
+        self
+    }
+
     /// Install request-response protocol.
     pub fn with_request_response_protocol(
         mut self,
@@ -214,6 +224,7 @@ impl Litep2pConfigBuilder {
             ping: self.ping.take(),
             identify: self.identify.take(),
             kademlia: self.kademlia.take(),
+            bitswap: self.bitswap.take(),
             user_protocols: self.user_protocols,
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
@@ -244,8 +255,11 @@ pub struct Litep2pConfig {
     /// Identify protocol configuration, if enabled.
     pub(crate) identify: Option<identify::Config>,
 
-    /// Kdaemlia protocol configuration, if enabled.
+    /// Kademlia protocol configuration, if enabled.
     pub(crate) kademlia: Option<kademlia::Config>,
+
+    /// Bitswap protocol configuration, if enabled.
+    pub(crate) bitswap: Option<bitswap::Config>,
 
     /// Notification protocols.
     pub(crate) notification_protocols: HashMap<ProtocolName, notification::NotificationConfig>,

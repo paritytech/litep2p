@@ -20,11 +20,11 @@
 
 use crate::{
     codec::ProtocolCodec,
-    protocol::libp2p::bitswap::{BitswapEvent, BitswapHandle},
+    protocol::libp2p::bitswap::{BitswapCommand, BitswapEvent, BitswapHandle},
     types::protocol::ProtocolName,
 };
 
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 /// IPFS Bitswap protocol name as a string.
 pub const PROTOCOL_NAME: &str = "/ipfs/bitswap/1.2.0";
@@ -33,29 +33,35 @@ pub const PROTOCOL_NAME: &str = "/ipfs/bitswap/1.2.0";
 const MAX_PAYLOAD_SIZE: usize = 2_097_152;
 
 /// Bitswap configuration.
-pub struct BitswapConfig {
+#[derive(Debug)]
+pub struct Config {
+    /// Protocol name.
+    pub(crate) protocol: ProtocolName,
+
+    /// Protocol codec.
+    pub(crate) codec: ProtocolCodec,
+
     /// TX channel for sending events to the user protocol.
     pub(super) event_tx: Sender<BitswapEvent>,
 
-    /// Protocol name.
-    pub(super) protocol_name: ProtocolName,
-
-    /// Protocol codec.
-    pub(super) protocol_codec: ProtocolCodec,
+    /// RX channel for receiving commands from the user.
+    pub(super) cmd_rx: Receiver<BitswapCommand>,
 }
 
-impl BitswapConfig {
+impl Config {
     /// Create new [`BitswapConfig`].
     pub fn new() -> (Self, BitswapHandle) {
         let (event_tx, event_rx) = channel(256);
+        let (cmd_tx, cmd_rx) = channel(256);
 
         (
             Self {
+                cmd_rx,
                 event_tx,
-                protocol_name: ProtocolName::from(PROTOCOL_NAME),
-                protocol_codec: ProtocolCodec::UnsignedVarint(Some(MAX_PAYLOAD_SIZE)),
+                protocol: ProtocolName::from(PROTOCOL_NAME),
+                codec: ProtocolCodec::UnsignedVarint(Some(MAX_PAYLOAD_SIZE)),
             },
-            BitswapHandle::new(event_rx),
+            BitswapHandle::new(event_rx, cmd_tx),
         )
     }
 }
