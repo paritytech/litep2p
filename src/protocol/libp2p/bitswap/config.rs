@@ -19,40 +19,43 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    codec::ProtocolCodec,
     protocol::libp2p::bitswap::{BitswapEvent, BitswapHandle},
     types::protocol::ProtocolName,
 };
 
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{channel, Sender};
 
 /// IPFS Bitswap protocol name as a string.
 pub const PROTOCOL_NAME: &str = "/ipfs/bitswap/1.2.0";
 
-/// Size for `/ipfs/bitswap/1.2.0` payloads.
-const PAYLOAD_SIZE: usize = 2_097_152;
+/// Maximum Size for `/ipfs/bitswap/1.2.0` payloads.
+const MAX_PAYLOAD_SIZE: usize = 2_097_152;
 
 /// Bitswap configuration.
 pub struct BitswapConfig {
     /// TX channel for sending events to the user protocol.
     pub(super) event_tx: Sender<BitswapEvent>,
-}
 
-/// Bitswap configuration builder.
-pub struct BitswapConfigBuilder {
     /// Protocol name.
-    protocol_name: ProtocolName,
+    pub(super) protocol_name: ProtocolName,
+
+    /// Protocol codec.
+    pub(super) protocol_codec: ProtocolCodec,
 }
 
-impl BitswapConfigBuilder {
-    /// Create new [`BitswapConfigBuilder`].
-    pub fn new() -> Self {
-        Self {
-            protocol_name: ProtocolName::from(PROTOCOL_NAME),
-        }
-    }
+impl BitswapConfig {
+    /// Create new [`BitswapConfig`].
+    pub fn new() -> (Self, BitswapHandle) {
+        let (event_tx, event_rx) = channel(256);
 
-    /// Build [`BitswapConfig`] and [`BitswapHandle`].
-    pub fn build() -> (BitswapConfig, BitswapHandle) {
-        todo!();
+        (
+            Self {
+                event_tx,
+                protocol_name: ProtocolName::from(PROTOCOL_NAME),
+                protocol_codec: ProtocolCodec::UnsignedVarint(Some(MAX_PAYLOAD_SIZE)),
+            },
+            BitswapHandle::new(event_rx),
+        )
     }
 }

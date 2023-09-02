@@ -18,16 +18,52 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use crate::{types::RequestId, PeerId};
+
+use tokio::sync::mpsc::Receiver;
+
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+
 /// Events emitted by the bitswap protocol.
 #[derive(Debug)]
-pub enum BitswapEvent {}
+pub enum BitswapEvent {
+    /// Bitswap request.
+    Request,
+
+    /// Bitswap response.
+    Response,
+}
 
 /// Handle for communicating with the bitswap protocol.
-pub struct BitswapHandle {}
+pub struct BitswapHandle {
+    /// RX channel for receiving bitswap events.
+    event_rx: Receiver<BitswapEvent>,
+}
 
 impl BitswapHandle {
     /// Create new [`BitswapHandle`].
-    pub(super) fn new() -> Self {
-        Self {}
+    pub(super) fn new(event_rx: Receiver<BitswapEvent>) -> Self {
+        Self { event_rx }
+    }
+
+    /// Send `request` to `peer`.
+    pub async fn send_request(&self, peer: PeerId, request: Vec<u8>) {
+        todo!();
+    }
+
+    /// Send `response` to `peer`.
+    pub async fn send_response(&self, request_id: RequestId, response: Vec<u8>) {
+        todo!();
+    }
+}
+
+impl futures::Stream for BitswapHandle {
+    type Item = BitswapEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.event_rx).poll_recv(cx)
     }
 }
