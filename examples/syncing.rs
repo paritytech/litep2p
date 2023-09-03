@@ -21,17 +21,20 @@
 //! This example demonstrates how application using `litep2p` might structure itself
 //! to implement, e.g, a syncing protocol using notification and request-response protocols
 
-use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
     protocol::{
-        notification::{NotificationConfig, NotificationHandle},
-        request_response::{RequestResponseConfig, RequestResponseHandle},
+        notification::{NotificationConfig, NotificationConfigBuilder, NotificationHandle},
+        request_response::{
+            RequestResponseConfig, RequestResponseConfigBuilder, RequestResponseHandle,
+        },
     },
     transport::quic::config::TransportConfig as QuicTransportConfig,
     types::protocol::ProtocolName,
     Litep2p,
 };
+
+use futures::StreamExt;
 
 /// Object responsible for syncing the blockchain.
 struct SyncingEngine {
@@ -41,7 +44,7 @@ struct SyncingEngine {
     /// Request-response handle used to send and receive block requests/responses.
     block_sync_handle: RequestResponseHandle,
 
-    /// Request-response handle used to send and receive block requests/responses.
+    /// Request-response handle used to send and receive state requests/responses.
     state_sync_handle: RequestResponseHandle,
 }
 
@@ -71,24 +74,24 @@ impl SyncingEngine {
 
     /// Initialize notification protocol for block announcements
     fn init_block_announce() -> (NotificationConfig, NotificationHandle) {
-        NotificationConfig::new(
-            ProtocolName::from(
-                "/c0c89622f83f6f3c6b94bc307fec1652a3aa58ac88a564c34706633f44cbb3d1/block-announces/1",
-            ),
-            1024usize,
-            vec![1, 2, 3, 4],
-            Vec::new(),
-        )
+        NotificationConfigBuilder::new(ProtocolName::from("/sync/block-announce/1"))
+            .with_max_size(1024usize)
+            .with_handshake(vec![1, 2, 3, 4])
+            .build()
     }
 
     /// Initialize request-response protocol for block syncing.
     fn init_block_sync() -> (RequestResponseConfig, RequestResponseHandle) {
-        RequestResponseConfig::new(ProtocolName::from("/sync/block/1"), 1024 * 1024)
+        RequestResponseConfigBuilder::new(ProtocolName::from("/sync/block/1"))
+            .with_max_size(1024 * 1024)
+            .build()
     }
 
     /// Initialize request-response protocol for state syncing.
     fn init_state_sync() -> (RequestResponseConfig, RequestResponseHandle) {
-        RequestResponseConfig::new(ProtocolName::from("/sync/state/1"), 1024 * 1024)
+        RequestResponseConfigBuilder::new(ProtocolName::from("/sync/state/1"))
+            .with_max_size(1024 * 1024)
+            .build()
     }
 
     /// Start event loop for [`SyncingEngine`].

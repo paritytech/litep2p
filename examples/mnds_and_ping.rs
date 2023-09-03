@@ -21,7 +21,6 @@
 //! This examples demonstrates using mDNS to discover peers in the local network and
 //! calculating their PING time.
 
-use futures::{Stream, StreamExt};
 use litep2p::{
     config::Litep2pConfigBuilder,
     protocol::{
@@ -32,35 +31,9 @@ use litep2p::{
     Litep2p,
 };
 
+use futures::{Stream, StreamExt};
+
 use std::time::Duration;
-
-/// helper function for creating `Litep2p` object
-async fn make_litep2p() -> (
-    Litep2p,
-    Box<dyn Stream<Item = PingEvent> + Send + Unpin>,
-    Box<dyn Stream<Item = MdnsEvent> + Send + Unpin>,
-) {
-    // initialize IPFS ping and mDNS
-    let (ping_config, ping_event_stream) = PingConfig::default();
-    let (mdns_config, mdns_event_stream) = MdnsConfig::new(Duration::from_secs(30));
-
-    // build `Litep2p`, passing in configurations for IPFS and mDNS
-    let litep2p_config = Litep2pConfigBuilder::new()
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: yamux::Config::default(),
-        })
-        .with_libp2p_ping(ping_config)
-        .with_mdns(mdns_config)
-        .build();
-
-    // build litep2p and return it + event streams
-    (
-        Litep2p::new(litep2p_config).await.unwrap(),
-        ping_event_stream,
-        mdns_event_stream,
-    )
-}
 
 /// simple event loop which discovers peers over mDNS,
 /// establishes a connection to them and calculates the PING time
@@ -84,6 +57,34 @@ async fn peer_event_loop(
             }
         }
     }
+}
+
+/// helper function for creating `Litep2p` object
+async fn make_litep2p() -> (
+    Litep2p,
+    Box<dyn Stream<Item = PingEvent> + Send + Unpin>,
+    Box<dyn Stream<Item = MdnsEvent> + Send + Unpin>,
+) {
+    // initialize IPFS ping and mDNS
+    let (ping_config, ping_event_stream) = PingConfig::default();
+    let (mdns_config, mdns_event_stream) = MdnsConfig::new(Duration::from_secs(30));
+
+    // build `Litep2p`, passing in configurations for IPFS and mDNS
+    let litep2p_config = Litep2pConfigBuilder::new()
+        .with_tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: yamux::Config::default(),
+        })
+        .with_libp2p_ping(ping_config)
+        .with_mdns(mdns_config)
+        .build();
+
+    // build `Litep2p` and return it + event streams
+    (
+        Litep2p::new(litep2p_config).await.unwrap(),
+        ping_event_stream,
+        mdns_event_stream,
+    )
 }
 
 #[tokio::main]

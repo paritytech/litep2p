@@ -21,7 +21,6 @@
 //! This example demonstrates a simple echo server using the notification protocol
 //! in which client connects to server and sends a message to server every 3 seconds
 
-use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
     protocol::notification::{
@@ -31,10 +30,13 @@ use litep2p::{
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent,
 };
+
+use futures::StreamExt;
 use multiaddr::Multiaddr;
+
 use std::time::Duration;
 
-// event loop for the client
+/// event loop for the client
 async fn client_event_loop(
     mut litep2p: Litep2p,
     mut handle: NotificationHandle,
