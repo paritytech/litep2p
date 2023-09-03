@@ -26,11 +26,16 @@
 `litep2p` has taken a different approach with API design and as such is not a drop-in replacement for `libp2p`. Below is a sample usage of the library:
 
 ```rust
-use futures::Stream;
+use futures::StreamExt;
 use litep2p::{
-    config::Litep2pBuilder,
-    protocol::{libp2p::ping::PingConfig, request_response::RequestResponseConfig},
-    transport::{quic::QuicTransportConfig, tcp::TcpTransportConfig},
+    config::Litep2pConfigBuilder,
+    protocol::{libp2p::ping::PingConfig, request_response::RequestResponseConfigBuilder},
+    transport::{
+        quic::config::TransportConfig as QuicTransportConfig,
+        tcp::config::TransportConfig as TcpTransportConfig,
+    },
+    types::protocol::ProtocolName,
+    Litep2p,
 };
 
 // simple example which enables `/ipfs/ping/1.0.0` and `/request/1` protocols
@@ -38,7 +43,7 @@ use litep2p::{
 #[tokio::main]
 async fn main() {
     // enable IPFS PING protocol
-    let (ping_config, mut ping_event_stream) = PingConfig::new().build().unwrap();
+    let (ping_config, mut ping_event_stream) = PingConfig::default();
 
     // enable `/request/1` request-response protocol
     let (req_resp_config, mut req_resp_handle) =
@@ -47,7 +52,7 @@ async fn main() {
             .build();
 
     // build `Litep2pConfig` object
-    let mut config = Litep2pBuilder::new()
+    let config = Litep2pConfigBuilder::new()
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: yamux::Config::default(),
@@ -55,10 +60,9 @@ async fn main() {
         .with_quic(QuicTransportConfig {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         })
-        .with_ping(ping_config)
-        .with_request_response(req_resp_config)
-        .build()
-        .unwrap();
+        .with_libp2p_ping(ping_config)
+        .with_request_response_protocol(req_resp_config)
+        .build();
 
     // build `Litep2p` object
     let mut litep2p = Litep2p::new(config).await.unwrap();
@@ -73,7 +77,7 @@ async fn main() {
 }
 ```
 
-See[`examples`](https://github.com/altonen/lite2p/examples) for more details on how to use the library
+See[`examples`](https://github.com/altonen/litep2p/tree/master/examples) for more details on how to use the library
 
 ## Copying
 
