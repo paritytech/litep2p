@@ -23,7 +23,7 @@ use crate::{
     peer_id::PeerId,
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
-        webrtc::handshake::WebRtcHandshake,
+        webrtc::connection::WebRtcConnection,
         Transport,
     },
 };
@@ -48,7 +48,6 @@ use std::{
 };
 
 mod connection;
-mod handshake;
 mod util;
 
 mod schema {
@@ -239,7 +238,7 @@ impl WebRtcTransport {
                     .expect("client to handle input successfully");
 
                     let (tx, rx) = channel(64);
-                    let connection = WebRtcHandshake::new(
+                    let connection = WebRtcConnection::new(
                         rtc,
                         self.context.next_connection_id(),
                         noise_channel_id,
@@ -317,7 +316,7 @@ impl Transport for WebRtcTransport {
     async fn start(mut self) -> crate::Result<()> {
         loop {
             // TODO: correct buf size + don't reallocate
-            let mut buf = vec![0; 2000];
+            let mut buf = vec![0; 16384];
 
             tokio::select! {
                 result = self.socket.recv_from(&mut buf) => match result {

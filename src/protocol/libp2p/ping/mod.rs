@@ -137,7 +137,7 @@ impl Ping {
 
     /// Substream opened to remote peer.
     fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
-        tracing::warn!(target: LOG_TARGET, ?peer, "handle inbound substream");
+        tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
         self.pending_inbound.push(Box::pin(async move {
             let payload = substream.next().await.unwrap().unwrap();

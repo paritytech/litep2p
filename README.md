@@ -40,6 +40,7 @@ async fn main() {
     // enable IPFS PING protocol
     let (ping_config, mut ping_event_stream) = PingConfig::new().build().unwrap();
 
+    // enable `/request/1` request-response protocol
     let (req_resp_config, mut req_resp_handle) =
         RequestResponseConfigBuilder::new(ProtocolName::from("/request/1"))
             .with_max_size(1024)

@@ -19,21 +19,24 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::noise::NoiseContext,
+    config::Role,
+    crypto::{ed25519::Keypair, noise::NoiseContext},
     error::Error,
-    multistream_select::{dialer_propose, listener_negotiate},
+    multistream_select::listener_negotiate,
     peer_id::PeerId,
-    protocol::{Direction, ProtocolCommand, ProtocolSet},
+    protocol::{Direction, ProtocolSet},
     substream::{channel::SubstreamBackend, Substream as SubstreamT},
     transport::webrtc::{
         util::{SubstreamContext, WebRtcMessage},
         WebRtcEvent,
     },
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{ConnectionId, SubstreamId},
 };
 
+use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
-    channel::{ChannelConfig, ChannelData, ChannelId},
+    change::Fingerprint,
+    channel::{ChannelData, ChannelId},
     net::Receive,
     Event, IceConnectionState, Input, Output, Rtc,
 };
@@ -46,47 +49,74 @@ use std::{
     time::{Duration, Instant},
 };
 
-// TODO: don't treat all random errors as fatal errors that close the connection
-
 /// Logging target for the file.
 const LOG_TARGET: &str = "webrtc::connection";
 
-enum SubstreamState {
-    /// Substream state is poisoned.
+/// Create Noise prologue.
+fn noise_prologue_new(local_fingerprint: Vec<u8>, remote_fingerprint: Vec<u8>) -> Vec<u8> {
+    const PREFIX: &[u8] = b"libp2p-webrtc-noise:";
+    let mut prologue =
+        Vec::with_capacity(PREFIX.len() + local_fingerprint.len() + remote_fingerprint.len());
+    prologue.extend_from_slice(PREFIX);
+    prologue.extend_from_slice(&remote_fingerprint);
+    prologue.extend_from_slice(&local_fingerprint);
+
+    prologue
+}
+
+/// WebRTC connection state.
+#[derive(Debug)]
+enum State {
+    /// Connection state is poisoned.
     Poisoned,
 
-    /// Substream (outbound) is opening.
-    Opening {
-        /// Protocol.
-        protocol: ProtocolName,
+    /// Connection state is closed.
+    Closed,
 
-        /// Substream ID,
-        substream: SubstreamId,
+    /// Connection state is opened.
+    Opened {
+        /// Noise handshaker.
+        handshaker: NoiseContext,
     },
 
-    /// Substream is open.
-    Open {
-        /// Substream ID.
-        substream_id: SubstreamId,
+    /// Handshake has been sent
+    HandshakeSent {
+        /// Noise handshaker.
+        handshaker: NoiseContext,
+    },
 
-        /// Substream.
-        substream: SubstreamContext,
+    /// Connection is open.
+    Open {
+        /// Remote peer ID.
+        peer: PeerId,
     },
 }
 
 /// WebRTC connection.
-pub struct WebRtcConnection {
+pub(super) struct WebRtcConnection {
+    /// Connection ID.
+    pub(super) connection_id: ConnectionId,
+
     /// `str0m` WebRTC object.
-    rtc: Rtc,
+    pub(super) rtc: Rtc,
+
+    /// Noise channel ID.
+    _noise_channel_id: ChannelId,
+
+    /// Identity keypair.
+    id_keypair: Keypair,
+
+    /// Connection state.
+    state: State,
+
+    /// Protocol set.
+    protocol_set: ProtocolSet,
 
     /// WebRTC data channels.
     channels: HashMap<SubstreamId, SubstreamContext>,
 
-    /// Remote address.
-    remote_address: SocketAddr,
-
-    /// Remote peer ID.
-    remote_peer_id: PeerId,
+    /// Peer address
+    peer_address: SocketAddr,
 
     /// Local address.
     local_address: SocketAddr,
@@ -103,56 +133,49 @@ pub struct WebRtcConnection {
     /// Next substream ID.
     substream_id: SubstreamId,
 
-    /// Open substreams.
-    substreams: HashMap<ChannelId, SubstreamState>,
-
-    /// Noise context.
-    _noise_context: NoiseContext,
-
-    /// Protocol set.
-    protocol_set: ProtocolSet,
-
-    /// Pending outbound substreams.
-    pending_outbound: HashMap<ChannelId, (ProtocolName, SubstreamId)>,
+    /// ID mappings.
+    id_mapping: HashMap<ChannelId, SubstreamId>,
 }
 
 impl WebRtcConnection {
     pub(super) fn new(
         rtc: Rtc,
-        remote_peer_id: PeerId,
-        remote_address: SocketAddr,
+        connection_id: ConnectionId,
+        _noise_channel_id: ChannelId,
+        id_keypair: Keypair,
+        protocol_set: ProtocolSet,
+        peer_address: SocketAddr,
         local_address: SocketAddr,
         socket: Arc<UdpSocket>,
         dgram_rx: Receiver<Vec<u8>>,
-        _noise_context: NoiseContext,
-        protocol_set: ProtocolSet,
     ) -> WebRtcConnection {
         WebRtcConnection {
             rtc,
             socket,
             dgram_rx,
             protocol_set,
-            _noise_context,
+            id_keypair,
+            peer_address,
             local_address,
-            remote_address,
-            remote_peer_id,
+            connection_id,
+            _noise_channel_id,
+            state: State::Closed,
             channels: HashMap::new(),
-            substreams: HashMap::new(),
+            id_mapping: HashMap::new(),
             backend: SubstreamBackend::new(),
             substream_id: SubstreamId::new(),
-            pending_outbound: HashMap::new(),
         }
     }
 
-    /// Poll output from the `Rtc` object.
-    async fn poll_output(&mut self) -> crate::Result<WebRtcEvent> {
+    pub(super) async fn poll_output(&mut self) -> crate::Result<WebRtcEvent> {
         match self.rtc.poll_output() {
             Ok(output) => self.handle_output(output).await,
             Err(error) => {
                 tracing::debug!(
                     target: LOG_TARGET,
+                    connection_id = ?self.connection_id,
                     ?error,
-                    "`WebRtConnection::poll_output()` failed",
+                    "`WebRtcConnection::poll_output()` failed",
                 );
                 return Err(Error::WebRtc(error));
             }
@@ -164,7 +187,7 @@ impl WebRtcConnection {
         let message = Input::Receive(
             Instant::now(),
             Receive {
-                source: self.remote_address,
+                source: self.peer_address,
                 destination: self.local_address,
                 contents: buffer
                     .as_slice()
@@ -175,7 +198,7 @@ impl WebRtcConnection {
 
         match self.rtc.accepts(&message) {
             true => self.rtc.handle_input(message).map_err(|error| {
-                tracing::debug!(target: LOG_TARGET, source = ?self.remote_address, ?error, "failed to handle data");
+                tracing::debug!(target: LOG_TARGET, source = ?self.peer_address, ?error, "failed to handle data");
                 Error::InputRejected
             }),
             false => return Err(Error::InputRejected),
@@ -201,27 +224,9 @@ impl WebRtcConnection {
                     Ok(WebRtcEvent::Noop)
                 }
                 Event::ChannelOpen(cid, name) => {
-                    tracing::warn!("CHANNEL OPEN: {cid:?} {name:?}");
-
-                    if let Some((protocol, substream)) = self.pending_outbound.remove(&cid) {
-                        tracing::info!("NEGOTIATE {protocol:?} for opened substream");
-                        let message = WebRtcMessage::encode(dialer_propose(&protocol)?, None);
-
-                        self.rtc
-                            .channel(cid)
-                            .ok_or(Error::ChannelDoesntExist)?
-                            .write(true, message.as_ref())
-                            .map_err(|error| Error::WebRtc(error))?;
-
-                        self.substreams.insert(
-                            cid,
-                            SubstreamState::Opening {
-                                protocol,
-                                substream,
-                            },
-                        );
-                    }
-                    Ok(WebRtcEvent::Noop)
+                    // TODO: remove, report issue to smoldot
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    self.on_channel_open(cid, name).map(|_| WebRtcEvent::Noop)
                 }
                 Event::ChannelData(data) => self.on_channel_data(data).await,
                 Event::ChannelClose(channel_id) => {
@@ -230,11 +235,28 @@ impl WebRtcConnection {
                     Ok(WebRtcEvent::Noop)
                 }
                 Event::Connected => {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        "client connected but is already connected"
-                    );
-                    return Err(Error::InvalidState);
+                    match std::mem::replace(&mut self.state, State::Poisoned) {
+                        State::Closed => {
+                            let remote_fingerprint = self.remote_fingerprint();
+                            let local_fingerprint = self.local_fingerprint();
+
+                            let handshaker = NoiseContext::with_prologue(
+                                &self.id_keypair,
+                                noise_prologue_new(local_fingerprint, remote_fingerprint),
+                            );
+
+                            self.state = State::Opened { handshaker };
+                        }
+                        state => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?state,
+                                "invalid state for connection"
+                            );
+                            return Err(Error::InvalidState);
+                        }
+                    }
+                    Ok(WebRtcEvent::Noop)
                 }
                 event => {
                     tracing::warn!(target: LOG_TARGET, ?event, "unhandled event");
@@ -242,6 +264,124 @@ impl WebRtcConnection {
                 }
             },
         }
+    }
+
+    /// Get remote fingerprint to bytes.
+    fn remote_fingerprint(&mut self) -> Vec<u8> {
+        let fingerprint = self
+            .rtc
+            .direct_api()
+            .remote_dtls_fingerprint()
+            .clone()
+            .expect("fingerprint to exist");
+        Self::fingerprint_to_bytes(&fingerprint)
+    }
+
+    /// Get local fingerprint as bytes.
+    fn local_fingerprint(&mut self) -> Vec<u8> {
+        Self::fingerprint_to_bytes(&self.rtc.direct_api().local_dtls_fingerprint())
+    }
+
+    /// Convert `Fingerprint` to bytes.
+    fn fingerprint_to_bytes(fingerprint: &Fingerprint) -> Vec<u8> {
+        const MULTIHASH_SHA256_CODE: u64 = 0x12;
+        Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint.bytes)
+            .expect("fingerprint's len to be 32 bytes")
+            .to_bytes()
+    }
+
+    fn on_noise_channel_open(&mut self) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, "send initial noise handshake");
+
+        let State::Opened { mut handshaker } = std::mem::replace(&mut self.state, State::Poisoned)
+        else {
+            return Err(Error::InvalidState);
+        };
+
+        // create first noise handshake and send it to remote peer
+        let payload = WebRtcMessage::encode(handshaker.first_message(Role::Dialer), None);
+
+        self.rtc
+            .channel(self._noise_channel_id)
+            .ok_or(Error::ChannelDoesntExist)?
+            .write(true, payload.as_slice())
+            .map_err(|error| Error::WebRtc(error))?;
+
+        self.state = State::HandshakeSent { handshaker };
+        Ok(())
+    }
+
+    fn on_channel_open(&mut self, id: ChannelId, name: String) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, channel_id = ?id, channel_name = ?name, "channel opened");
+
+        if id == self._noise_channel_id {
+            return self.on_noise_channel_open();
+        }
+
+        Ok(())
+    }
+
+    async fn on_noise_channel_data(&mut self, data: Vec<u8>) -> crate::Result<WebRtcEvent> {
+        tracing::trace!(target: LOG_TARGET, "handle noise handshake reply");
+
+        let State::HandshakeSent { mut handshaker } =
+            std::mem::replace(&mut self.state, State::Poisoned)
+        else {
+            return Err(Error::InvalidState);
+        };
+
+        let message = WebRtcMessage::decode(&data)?
+            .payload
+            .ok_or(Error::InvalidData)?;
+        let public_key = handshaker.get_remote_public_key(&message)?;
+        let remote_peer_id = PeerId::from_public_key(&public_key);
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?remote_peer_id,
+            "remote reply parsed successfully"
+        );
+
+        // create second noise handshake message and send it to remote
+        let payload = WebRtcMessage::encode(handshaker.second_message(), None);
+
+        let mut channel = self
+            .rtc
+            .channel(self._noise_channel_id)
+            .ok_or(Error::ChannelDoesntExist)?;
+
+        channel
+            .write(true, payload.as_slice())
+            .map_err(|error| Error::WebRtc(error))?;
+
+        let remote_fingerprint = self
+            .rtc
+            .direct_api()
+            .remote_dtls_fingerprint()
+            .clone()
+            .expect("fingerprint to exist")
+            .bytes;
+
+        const MULTIHASH_SHA256_CODE: u64 = 0x12;
+        let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint)
+            .expect("fingerprint's len to be 32 bytes");
+
+        let address = Multiaddr::empty()
+            .with(Protocol::from(self.peer_address.ip()))
+            .with(Protocol::Udp(self.peer_address.port()))
+            .with(Protocol::WebRTC)
+            .with(Protocol::Certhash(certificate))
+            .with(Protocol::P2p(PeerId::from(public_key).into()));
+
+        self.protocol_set
+            .report_connection_established(self.connection_id, remote_peer_id, address)
+            .await?;
+
+        self.state = State::Open {
+            peer: remote_peer_id,
+        };
+
+        Ok(WebRtcEvent::Noop)
     }
 
     /// Negotiate protocol for the channel
@@ -265,125 +405,61 @@ impl WebRtcConnection {
 
         let substream_id = self.substream_id.next();
         let (mut substream, tx) = self.backend.substream(substream_id);
-        self.substreams.insert(
-            d.id,
-            SubstreamState::Open {
-                substream_id,
-                substream: SubstreamContext::new(d.id, tx.clone()),
-            },
-        );
         let substream: Box<dyn SubstreamT> = {
             substream.apply_codec(self.protocol_set.protocol_codec(&protocol));
             Box::new(substream)
         };
 
+        self.id_mapping.insert(d.id, substream_id);
         self.channels
             .insert(substream_id, SubstreamContext::new(d.id, tx));
 
-        let _ = self
-            .protocol_set
-            .report_substream_open(
-                self.remote_peer_id,
-                protocol.clone(),
-                Direction::Inbound,
-                substream,
-            )
-            .await;
+        if let State::Open { peer, .. } = &mut self.state {
+            let _ = self
+                .protocol_set
+                .report_substream_open(*peer, protocol.clone(), Direction::Inbound, substream)
+                .await;
+        }
 
         Ok(WebRtcEvent::Noop)
     }
 
-    /// Handle channel data.
-    async fn on_channel_data(&mut self, d: ChannelData) -> crate::Result<WebRtcEvent> {
-        let Some(state) = self.substreams.get_mut(&d.id) else {
-            return self.negotiate_protocol(d).await;
-        };
+    /// Send received message to protocol for processing.
+    async fn send_message_to_protocol(&mut self, d: ChannelData) -> crate::Result<WebRtcEvent> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            channel_id = ?d.id,
+            "process protocol event",
+        );
 
-        match std::mem::replace(state, SubstreamState::Poisoned) {
-            SubstreamState::Poisoned => todo!(),
-            SubstreamState::Open {
-                substream_id,
-                substream,
-            } => {
-                // TODO: might be empty message with flags
-                let message = WebRtcMessage::decode(&d.data)?
-                    .payload
-                    .ok_or(Error::InvalidData)?;
+        // TODO: might be empty message with flags
+        let message = WebRtcMessage::decode(&d.data)?
+            .payload
+            .ok_or(Error::InvalidData)?;
 
-                let res = substream
-                    .tx
-                    .send(message)
-                    .await
-                    .map(|_| WebRtcEvent::Noop)
-                    .map_err(From::from);
+        // TODO: zzz
+        let id = self
+            .id_mapping
+            .get(&d.id)
+            .ok_or(Error::ChannelDoesntExist)?;
+        let context = self
+            .channels
+            .get_mut(&id)
+            .ok_or(Error::ChannelDoesntExist)?;
 
-                *state = SubstreamState::Open {
-                    substream_id,
-                    substream,
-                };
-                res
-            }
-            SubstreamState::Opening {
-                protocol,
-                substream: user_substream_id,
-            } => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "handle multistream-select response"
-                );
-
-                // TODO: process response
-                let substream_id = self.substream_id.next();
-                let (mut substream, tx) = self.backend.substream(substream_id);
-                *state = SubstreamState::Open {
-                    substream_id,
-                    substream: SubstreamContext::new(d.id, tx.clone()),
-                };
-                let substream: Box<dyn SubstreamT> = {
-                    substream.apply_codec(self.protocol_set.protocol_codec(&protocol));
-                    Box::new(substream)
-                };
-                self.channels
-                    .insert(substream_id, SubstreamContext::new(d.id, tx));
-
-                let _ = self
-                    .protocol_set
-                    .report_substream_open(
-                        self.remote_peer_id,
-                        protocol.clone(),
-                        Direction::Outbound(user_substream_id),
-                        substream,
-                    )
-                    .await;
-
-                Ok(WebRtcEvent::Noop)
-            }
-        }
+        let _ = context.tx.send(message).await;
+        Ok(WebRtcEvent::Noop)
     }
 
-    /// Open outbound substream.
-    fn open_substream(
-        &mut self,
-        protocol: ProtocolName,
-        substream: SubstreamId,
-    ) -> crate::Result<()> {
-        tracing::info!(target: LOG_TARGET, "TRY TO OPEN DATA CHANNEL");
-
-        let channel_id = self.rtc.direct_api().create_data_channel(ChannelConfig {
-            label: protocol.to_string(),
-            ordered: false,
-            reliability: Default::default(),
-            negotiated: None,
-            protocol: protocol.to_string(),
-        });
-
-        self.pending_outbound
-            .insert(channel_id, (protocol, substream));
-
-        tracing::error!("CHANNEL OPEN INITIATED, ID: {channel_id:?}");
-
-        Ok(())
+    async fn on_channel_data(&mut self, d: ChannelData) -> crate::Result<WebRtcEvent> {
+        match &self.state {
+            State::HandshakeSent { .. } => self.on_noise_channel_data(d.data).await,
+            State::Open { .. } => match self.id_mapping.get(&d.id) {
+                Some(_) => self.send_message_to_protocol(d).await,
+                None => self.negotiate_protocol(d).await,
+            },
+            _ => Err(Error::InvalidState),
+        }
     }
 
     /// Run the event loop of a negotiated WebRTC connection.
@@ -418,17 +494,16 @@ impl WebRtcConnection {
             tokio::select! {
                 message = self.dgram_rx.recv() => match message {
                     Some(message) => match self.on_input(message).await {
-                        Ok(_) => {}
-                        Err(Error::InputRejected) => tracing::debug!(target: LOG_TARGET, "input rejected"),
+                        Ok(_) | Err(Error::InputRejected) => {},
                         Err(error) => {
-                            tracing::debug!(target: LOG_TARGET, ?error, "failed to handle input zzz");
+                            tracing::debug!(target: LOG_TARGET, ?error, "failed to handle input");
                             return Err(error)
                         }
                     }
                     None => {
                         tracing::debug!(
                             target: LOG_TARGET,
-                            source = ?self.remote_address,
+                            source = ?self.peer_address,
                             "transport shut down, shutting down connection",
                         );
                         return Ok(());
@@ -446,14 +521,6 @@ impl WebRtcConnection {
                         .write(true, message.as_ref())
                         .map_err(|error| Error::WebRtc(error))?;
                 }
-                command = self.protocol_set.next_event() => match command {
-                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id, .. }) => {
-                        let _ = self.open_substream(protocol, substream_id);
-                    }
-                    None => {
-                        return Err(Error::EssentialTaskClosed);
-                    }
-                },
                 _ = tokio::time::sleep(duration) => {}
             }
 
