@@ -18,15 +18,17 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! TCP transport.
+
 use crate::{
     error::{AddressError, Error},
-    peer_id::PeerId,
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         tcp::{config::TransportConfig, connection::TcpConnection},
         Transport,
     },
     types::ConnectionId,
+    PeerId,
 };
 
 use futures::{
@@ -49,7 +51,7 @@ pub mod config;
 const LOG_TARGET: &str = "tcp";
 
 #[derive(Debug)]
-pub struct TcpError {
+pub(super) struct TcpError {
     /// Error.
     error: Error,
 
@@ -68,7 +70,7 @@ impl TcpError {
 
 /// TCP transport.
 #[derive(Debug)]
-pub struct TcpTransport {
+pub(crate) struct TcpTransport {
     /// Transport context.
     context: TransportHandle,
 

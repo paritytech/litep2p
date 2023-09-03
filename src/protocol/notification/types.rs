@@ -19,8 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    peer_id::PeerId, protocol::notification::handle::NotificationSink,
-    types::protocol::ProtocolName,
+    protocol::notification::handle::NotificationSink, types::protocol::ProtocolName, PeerId,
 };
 
 /// Default channel size for synchronous notifications.

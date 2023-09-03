@@ -18,17 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-//! TCP transport configuration.
+//! WebRTC transport configuration.
 
 use multiaddr::Multiaddr;
-use yamux::Config;
 
-/// TCP transport configuration.
-#[derive(Debug, Clone)]
+/// WebRTC transport configuration.
+#[derive(Debug)]
 pub struct TransportConfig {
-    /// Listen address for the transport.
+    /// WebRTC listening address.
     pub listen_address: Multiaddr,
-
-    /// Yamux configuration.
-    pub yamux_config: Config,
 }

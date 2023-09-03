@@ -18,19 +18,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::error::Error;
-
-use bytes::Bytes;
-use tokio_util::codec::{Decoder, Encoder};
+//! Protocol codecs.
 
 pub mod identity;
 pub mod unsigned_varint;
 
-// TODO: documentation
-pub trait Codec: Encoder<Bytes, Error = Error> + Decoder<Item = Bytes, Error = Error> {}
-
-impl<T: Encoder<Bytes, Error = Error> + Decoder<Item = Bytes, Error = Error>> Codec for T {}
-
+/// Supported protocol codecs.
 #[derive(Debug, Copy, Clone)]
 pub enum ProtocolCodec {
     /// Identity codec where the argument denotes the payload size.

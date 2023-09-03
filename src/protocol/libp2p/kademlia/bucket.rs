@@ -22,8 +22,8 @@
 //! Kademlia k-bucket implementation.
 
 use crate::{
-    peer_id::PeerId,
     protocol::libp2p::kademlia::types::{ConnectionType, KademliaPeer, Key},
+    PeerId,
 };
 
 /// K-bucket entry.

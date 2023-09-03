@@ -23,7 +23,7 @@
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates.
 
-use crate::{crypto::tls::certificate, peer_id::PeerId};
+use crate::{crypto::tls::certificate, PeerId};
 
 use rustls::{
     cipher_suite::{

@@ -24,9 +24,13 @@
 use litep2p::{
     config::Litep2pConfigBuilder,
     protocol::{
-        notification::{NotificationConfig, NotificationConfigBuilder, NotificationHandle},
+        notification::{
+            Config as NotificationConfig, ConfigBuilder as NotificationConfigBuilder,
+            NotificationHandle,
+        },
         request_response::{
-            RequestResponseConfig, RequestResponseConfigBuilder, RequestResponseHandle,
+            Config as RequestResponseConfig, ConfigBuilder as RequestResponseConfigBuilder,
+            RequestResponseHandle,
         },
     },
     transport::quic::config::TransportConfig as QuicTransportConfig,

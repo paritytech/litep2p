@@ -18,15 +18,16 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! [`/ipfs/identify/1.0.0`](https://github.com/libp2p/specs/blob/master/identify/README.md) implementation.
+
 use crate::{
     codec::ProtocolCodec,
     crypto::PublicKey,
     error::{Error, SubstreamError},
-    peer_id::PeerId,
     protocol::{Direction, Transport, TransportEvent, TransportService},
     substream::Substream,
     types::{protocol::ProtocolName, SubstreamId},
-    DEFAULT_CHANNEL_SIZE,
+    PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{SinkExt, Stream, StreamExt};
@@ -41,10 +42,10 @@ use std::collections::{HashMap, HashSet};
 const LOG_TARGET: &str = "ipfs::identify";
 
 /// IPFS Identify protocol name
-pub const PROTOCOL_NAME: &str = "/ipfs/id/1.0.0";
+const PROTOCOL_NAME: &str = "/ipfs/id/1.0.0";
 
 /// IPFS Identify push protocol name.
-pub const PUSH_PROTOCOL_NAME: &str = "/ipfs/id/push/1.0.0";
+const _PUSH_PROTOCOL_NAME: &str = "/ipfs/id/push/1.0.0";
 
 /// Size for `/ipfs/ping/1.0.0` payloads.
 // TODO: what is the max size?
@@ -77,9 +78,9 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create new [`IdentifyConfig`].
+    /// Create new [`Config`].
     ///
-    /// Returns a config that is given to `Litep2pConfig` and an event stream for ping events.
+    /// Returns a config that is given to `Litep2pConfig` and an event stream for [`IdentifyEvent`]s.
     pub fn new() -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -97,12 +98,12 @@ impl Config {
     }
 }
 
-/// Events emitted by `IpfsIdentify`.
+/// Events emitted by Identify protocol.
 #[derive(Debug)]
 pub enum IdentifyEvent {
     /// Peer identified.
     PeerIdentified {
-        /// Remote peer ID.
+        /// Peer ID.
         peer: PeerId,
 
         /// Supported protocols.
@@ -110,7 +111,7 @@ pub enum IdentifyEvent {
     },
 }
 
-pub struct Identify {
+pub(crate) struct Identify {
     // Connection service.
     service: TransportService,
 
@@ -135,7 +136,7 @@ pub struct Identify {
 
 impl Identify {
     /// Create new [`Identify`] protocol.
-    pub fn new(service: TransportService, config: Config) -> Self {
+    pub(crate) fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
             tx: config.tx_event,

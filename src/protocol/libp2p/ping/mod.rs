@@ -18,12 +18,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! [`/ipfs/ping/1.0.0`](https://github.com/libp2p/specs/blob/master/ping/ping.md) implementation.
+
 use crate::{
     error::{Error, SubstreamError},
-    peer_id::PeerId,
     protocol::{Direction, Transport, TransportEvent, TransportService},
     substream::Substream,
     types::SubstreamId,
+    PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
@@ -34,7 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use config::{PingConfig, PingConfigBuilder};
+pub use config::{Config, ConfigBuilder};
 
 mod config;
 
@@ -51,13 +53,13 @@ pub enum PingEvent {
         /// Peer ID.
         peer: PeerId,
 
-        /// Ping.
+        /// Measured ping time with the peer.
         ping: Duration,
     },
 }
 
 /// Ping protocol.
-pub struct Ping {
+pub(crate) struct Ping {
     /// Maximum failures before the peer is considered unreachable.
     _max_failures: usize,
 
@@ -82,7 +84,7 @@ pub struct Ping {
 
 impl Ping {
     /// Create new [`Ping`] protocol.
-    pub fn new(service: TransportService, config: PingConfig) -> Self {
+    pub fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
             tx: config.tx_event,

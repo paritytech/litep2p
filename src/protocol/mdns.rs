@@ -19,6 +19,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! [Multicast DNS](https://en.wikipedia.org/wiki/Multicast_DNS) implementation.
+
 use crate::{error::Error, transport::manager::TransportManagerHandle, DEFAULT_CHANNEL_SIZE};
 
 use futures::Stream;
@@ -73,9 +75,9 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create new [`MdnsConfig`]
+    /// Create new [`Config`].
     ///
-    /// Return the configuration and an event stream for receiving mDNS events.
+    /// Return the configuration and an event stream for receiving [`MdnsEvent`]s.
     pub fn new(
         query_interval: Duration,
     ) -> (Self, Box<dyn Stream<Item = MdnsEvent> + Send + Unpin>) {
@@ -88,7 +90,7 @@ impl Config {
 }
 
 /// Main mDNS object.
-pub struct Mdns {
+pub(crate) struct Mdns {
     /// UDP socket for multicast requests/responses.
     socket: UdpSocket,
 
@@ -119,7 +121,7 @@ pub struct Mdns {
 
 impl Mdns {
     /// Create new [`Mdns`].
-    pub fn new(
+    pub(crate) fn new(
         _transport_handle: TransportManagerHandle,
         config: Config,
         listen_addresses: Vec<Multiaddr>,

@@ -23,9 +23,9 @@
 use crate::{
     codec::ProtocolCodec,
     error::Error,
-    peer_id::PeerId,
     substream::Substream,
     types::{protocol::ProtocolName, SubstreamId},
+    PeerId,
 };
 
 use multiaddr::Multiaddr;
@@ -124,6 +124,9 @@ pub enum TransportEvent {
     },
 }
 
+/// Transport service.
+///
+/// Provides an interfaces for (`Litep2p`)[crate::Litep2p] protocols to interact with the underlying transport protocols.
 #[async_trait::async_trait]
 pub trait Transport {
     /// Dial `peer` using `PeerId`.

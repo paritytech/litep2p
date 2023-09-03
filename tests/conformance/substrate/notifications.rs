@@ -21,7 +21,6 @@
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    peer_id::PeerId as Litep2pPeerId,
     protocol::notification::{
         handle::NotificationHandle,
         types::{
@@ -30,7 +29,7 @@ use litep2p::{
     },
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName as Litep2pProtocol,
-    Litep2p, Litep2pEvent,
+    Litep2p, Litep2pEvent, PeerId as Litep2pPeerId,
 };
 
 use futures::StreamExt;

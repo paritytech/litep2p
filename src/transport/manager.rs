@@ -22,9 +22,9 @@ use crate::{
     codec::ProtocolCodec,
     crypto::{ed25519::Keypair, PublicKey},
     error::{AddressError, Error},
-    peer_id::PeerId,
     protocol::{InnerTransportEvent, ProtocolSet, TransportService},
     types::{protocol::ProtocolName, ConnectionId},
+    PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};

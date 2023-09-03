@@ -22,7 +22,7 @@ use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::request_response::{
-        RequestResponseConfig, RequestResponseError, RequestResponseEvent,
+        Config as RequestResponseConfig, RequestResponseError, RequestResponseEvent,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,

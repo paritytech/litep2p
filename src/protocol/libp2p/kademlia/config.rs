@@ -33,6 +33,7 @@ const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
 /// Kademlia replication factor.
 const REPLICATION_FACTOR: usize = 20usize;
 
+/// Kademlia configuration.
 #[derive(Debug)]
 pub struct Config {
     /// Protocol name.
@@ -52,50 +53,52 @@ pub struct Config {
     pub(super) cmd_rx: Receiver<KademliaCommand>,
 }
 
-/// Kademlia configuration builder.
-#[derive(Debug)]
-pub struct ConfigBuilder {
-    /// Protocol name.
-    pub(crate) protocol: ProtocolName,
-
-    /// Protocol codec.
-    pub(crate) codec: ProtocolCodec,
-
-    /// Replication factor.
-    pub(super) replication_factor: usize,
-}
-
-impl ConfigBuilder {
-    /// Create new [`Config`].
-    pub fn new() -> Self {
-        Self {
-            protocol: ProtocolName::from(PROTOCOL_NAME),
-            // TODO: set correct size
-            codec: ProtocolCodec::UnsignedVarint(None),
-            replication_factor: REPLICATION_FACTOR,
-        }
-    }
-
-    /// Configuration replication factor.
-    pub fn with_replication_factor(mut self, replication_factor: usize) -> Self {
-        self.replication_factor = replication_factor;
-        self
-    }
-
-    /// Build Kademlia configuration.
-    pub fn build(self) -> (Config, KademliaHandle) {
+impl Config {
+    fn new(replication_factor: usize) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
         (
             Config {
-                protocol: self.protocol,
-                codec: self.codec,
-                replication_factor: self.replication_factor,
+                protocol: ProtocolName::from(PROTOCOL_NAME),
+                codec: ProtocolCodec::UnsignedVarint(None),
+                replication_factor,
                 cmd_rx,
                 event_tx,
             },
             KademliaHandle::new(cmd_tx, event_rx),
         )
+    }
+
+    /// Build default Kademlia configuration.
+    pub fn default() -> (Self, KademliaHandle) {
+        Self::new(REPLICATION_FACTOR)
+    }
+}
+
+/// Configuration builder for Kademlia.
+#[derive(Debug)]
+pub struct ConfigBuilder {
+    /// Replication factor.
+    pub(super) replication_factor: usize,
+}
+
+impl ConfigBuilder {
+    /// Create new [`ConfigBuilder`].
+    pub fn new() -> Self {
+        Self {
+            replication_factor: REPLICATION_FACTOR,
+        }
+    }
+
+    /// Set replication factor.
+    pub fn with_replication_factor(mut self, replication_factor: usize) -> Self {
+        self.replication_factor = replication_factor;
+        self
+    }
+
+    /// Build Kademlia [`Config`].
+    pub fn build(self) -> (Config, KademliaHandle) {
+        Config::new(self.replication_factor)
     }
 }

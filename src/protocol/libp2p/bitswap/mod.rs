@@ -18,15 +18,17 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! [`/ipfs/bitswap/1.2.0`](https://github.com/ipfs/specs/blob/main/BITSWAP.md) implementation.
+
 use crate::{
     error::Error,
-    peer_id::PeerId,
     protocol::{
-        libp2p::bitswap::handle::ResponseType, Direction, Transport, TransportEvent,
-        TransportService,
+        libp2p::bitswap::handle::{BitswapCommand, ResponseType},
+        Direction, Transport, TransportEvent, TransportService,
     },
     substream::Substream,
     types::SubstreamId,
+    PeerId,
 };
 
 use cid::{multihash::Code, Cid, Version};
@@ -37,7 +39,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use std::collections::HashMap;
 
 pub use config::Config;
-pub use handle::{BitswapCommand, BitswapEvent, BitswapHandle};
+pub use handle::{BitswapEvent, BitswapHandle};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
 
 mod config;
@@ -93,7 +95,7 @@ impl Prefix {
 }
 
 /// Bitswap protocol.
-pub struct Bitswap {
+pub(crate) struct Bitswap {
     // Connection service.
     service: TransportService,
 
@@ -112,8 +114,8 @@ pub struct Bitswap {
 }
 
 impl Bitswap {
-    /// Create new [`Ping`] protocol.
-    pub fn new(service: TransportService, config: Config) -> Self {
+    /// Create new [`Bitswap`] protocol.
+    pub(crate) fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
             cmd_rx: config.cmd_rx,
@@ -216,7 +218,7 @@ impl Bitswap {
         }
     }
 
-    /// Start [`Ping`] event loop.
+    /// Start [`Bitswap`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting bitswap event loop");
 

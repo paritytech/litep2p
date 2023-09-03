@@ -25,7 +25,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-use crate::peer_id::PeerId;
+use crate::PeerId;
 use rustls::{ClientConfig, ServerConfig};
 use s2n_quic::provider::tls::{
     rustls::{Client as TlsClient, Server as TlsServer},

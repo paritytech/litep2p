@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    peer_id::PeerId,
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{find_node::FindNodeContext, get_record::GetRecordContext},
@@ -27,6 +26,7 @@ use crate::{
         types::{KademliaPeer, Key},
         Quorum,
     },
+    PeerId,
 };
 
 use bytes::Bytes;

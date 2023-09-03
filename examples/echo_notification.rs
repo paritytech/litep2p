@@ -24,7 +24,8 @@
 use litep2p::{
     config::Litep2pConfigBuilder,
     protocol::notification::{
-        NotificationConfigBuilder, NotificationEvent, NotificationHandle, ValidationResult,
+        ConfigBuilder as NotificationConfigBuilder, NotificationEvent, NotificationHandle,
+        ValidationResult,
     },
     transport::quic::config::TransportConfig as QuicTransportConfig,
     types::protocol::ProtocolName,

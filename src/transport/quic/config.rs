@@ -18,9 +18,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! QUIC transport configuration.
+
 use multiaddr::Multiaddr;
 
-/// QUIC configuration.
+/// QUIC transport configuration.
 #[derive(Debug, Clone)]
 pub struct TransportConfig {
     /// Listen address address for the transport.

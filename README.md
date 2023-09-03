@@ -23,13 +23,13 @@
 
 ## Usage
 
-`litep2p` has taken a different approach with API design and as such is not a drop-in replacement for `libp2p`. Below is a sample usage of the library:
+`litep2p` has taken a different approach with API design and as such is not a drop-in replacement for [`rust-libp2p`](https://github.com/libp2p/rust-libp2p/). Below is a sample usage of the library:
 
 ```rust
 use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
-    protocol::{libp2p::ping::PingConfig, request_response::RequestResponseConfigBuilder},
+    protocol::{libp2p::ping, request_response::ConfigBuilder},
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
         tcp::config::TransportConfig as TcpTransportConfig,
@@ -43,11 +43,11 @@ use litep2p::{
 #[tokio::main]
 async fn main() {
     // enable IPFS PING protocol
-    let (ping_config, mut ping_event_stream) = PingConfig::default();
+    let (ping_config, mut ping_event_stream) = ping::Config::default();
 
     // enable `/request/1` request-response protocol
     let (req_resp_config, mut req_resp_handle) =
-        RequestResponseConfigBuilder::new(ProtocolName::from("/request/1"))
+        ConfigBuilder::new(ProtocolName::from("/request/1"))
             .with_max_size(1024)
             .build();
 

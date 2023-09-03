@@ -22,14 +22,13 @@ use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
-    peer_id::PeerId,
-    protocol::libp2p::ping::PingConfig,
+    protocol::libp2p::ping::Config as PingConfig,
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
         tcp::config::TransportConfig as TcpTransportConfig,
         websocket::config::TransportConfig as WebSocketTransportConfig,
     },
-    Litep2p, Litep2pEvent,
+    Litep2p, Litep2pEvent, PeerId,
 };
 
 use futures::StreamExt;

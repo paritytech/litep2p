@@ -33,7 +33,7 @@ use std::sync::{atomic::AtomicUsize, Arc};
 
 /// Request-response configuration.
 #[derive(Debug)]
-pub struct RequestResponseConfig {
+pub struct Config {
     /// Protocol name.
     pub(crate) protocol_name: ProtocolName,
 
@@ -50,7 +50,7 @@ pub struct RequestResponseConfig {
     pub(crate) next_request_id: Arc<AtomicUsize>,
 }
 
-impl RequestResponseConfig {
+impl Config {
     /// Create new [`Config`].
     pub fn new(
         protocol_name: ProtocolName,
@@ -79,7 +79,8 @@ impl RequestResponseConfig {
     }
 }
 
-pub struct RequestResponseConfigBuilder {
+/// Builder for [`Config`].
+pub struct ConfigBuilder {
     /// Protocol name.
     pub(crate) protocol_name: ProtocolName,
 
@@ -87,7 +88,8 @@ pub struct RequestResponseConfigBuilder {
     max_message_size: Option<usize>,
 }
 
-impl RequestResponseConfigBuilder {
+impl ConfigBuilder {
+    /// Create new [`ConfigBuilder`].
     pub fn new(protocol_name: ProtocolName) -> Self {
         Self {
             protocol_name,
@@ -95,15 +97,15 @@ impl RequestResponseConfigBuilder {
         }
     }
 
-    /// Add maximum message size.
+    /// Set maximum message size.
     pub fn with_max_size(mut self, max_message_size: usize) -> Self {
         self.max_message_size = Some(max_message_size);
         self
     }
 
-    /// Build [`RequestResponseConfig`].
-    pub fn build(mut self) -> (RequestResponseConfig, RequestResponseHandle) {
-        RequestResponseConfig::new(
+    /// Build [`Config`].
+    pub fn build(mut self) -> (Config, RequestResponseHandle) {
+        Config::new(
             self.protocol_name,
             self.max_message_size
                 .take()

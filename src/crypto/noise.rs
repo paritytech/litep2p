@@ -24,8 +24,7 @@
 use crate::{
     config::Role,
     crypto::{ed25519::Keypair, PublicKey},
-    error,
-    peer_id::PeerId,
+    error, PeerId,
 };
 
 use futures::{
@@ -723,7 +722,7 @@ impl NoiseContext {
         NoiseContext::make_noise_and_payload(noise, keypair, id_keys)
     }
 
-    /// Create new [`NoiseHandshake`] with prologue.
+    /// Create new [`NoiseContext`] with prologue.
     pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> Self {
         let noise = snow::Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise patterns"));
         let keypair = noise.generate_keypair().unwrap();

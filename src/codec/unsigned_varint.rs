@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! [`unsigned-varint`](https://github.com/multiformats/unsigned-varint) codec.
+
 use crate::error::Error;
 
 use bytes::{Bytes, BytesMut};
@@ -26,6 +28,7 @@ use unsigned_varint::codec::UviBytes;
 
 use std::fmt;
 
+/// Unsigned varint codec.
 #[derive(Default)]
 pub struct UnsignedVarint {
     codec: UviBytes<bytes::Bytes>,

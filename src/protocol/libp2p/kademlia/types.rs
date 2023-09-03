@@ -21,7 +21,7 @@
 
 //! Kademlia types.
 
-use crate::{peer_id::PeerId, protocol::libp2p::kademlia::schema};
+use crate::{protocol::libp2p::kademlia::schema, PeerId};
 
 use multiaddr::Multiaddr;
 use sha2::{

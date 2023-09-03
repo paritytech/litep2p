@@ -19,12 +19,12 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    peer_id::PeerId,
     protocol::libp2p::kademlia::{
         record::{Key as RecordKey, Record},
         schema,
         types::KademliaPeer,
     },
+    PeerId,
 };
 
 use bytes::{Bytes, BytesMut};

@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! [`Litep2p`](`crate::Litep2p`) configuration.
+
 use crate::{
     crypto::ed25519::Keypair,
     protocol::{
@@ -27,7 +29,8 @@ use crate::{
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
-        tcp::config::TransportConfig as TcpTransportConfig, webrtc::WebRtcTransportConfig,
+        tcp::config::TransportConfig as TcpTransportConfig,
+        webrtc::config::TransportConfig as WebRtcTransportConfig,
         websocket::config::TransportConfig as WebSocketTransportConfig,
     },
     types::protocol::ProtocolName,
@@ -54,6 +57,7 @@ impl From<Role> for yamux::Mode {
     }
 }
 
+/// Configuration builder for [`Litep2p`](`crate::Litep2p`).
 #[derive(Debug)]
 pub struct Litep2pConfigBuilder {
     // TCP transport configuration.
@@ -72,7 +76,7 @@ pub struct Litep2pConfigBuilder {
     keypair: Option<Keypair>,
 
     /// Ping protocol config.
-    ping: Option<ping::PingConfig>,
+    ping: Option<ping::Config>,
 
     /// Identify protocol config.
     identify: Option<identify::Config>,
@@ -84,10 +88,10 @@ pub struct Litep2pConfigBuilder {
     bitswap: Option<bitswap::Config>,
 
     /// Notification protocols.
-    notification_protocols: HashMap<ProtocolName, notification::NotificationConfig>,
+    notification_protocols: HashMap<ProtocolName, notification::Config>,
 
     /// Request-response protocols.
-    request_response_protocols: HashMap<ProtocolName, request_response::RequestResponseConfig>,
+    request_response_protocols: HashMap<ProtocolName, request_response::Config>,
 
     /// User protocols.
     user_protocols: HashMap<ProtocolName, Box<dyn UserProtocol>>,
@@ -103,7 +107,7 @@ impl Default for Litep2pConfigBuilder {
 }
 
 impl Litep2pConfigBuilder {
-    /// Create new empty [`LiteP2pConfigBuilder`].
+    /// Create new empty [`Litep2pConfigBuilder`].
     pub fn new() -> Self {
         Self {
             tcp: None,
@@ -153,14 +157,14 @@ impl Litep2pConfigBuilder {
     }
 
     /// Install notification protocol.
-    pub fn with_notification_protocol(mut self, config: notification::NotificationConfig) -> Self {
+    pub fn with_notification_protocol(mut self, config: notification::Config) -> Self {
         self.notification_protocols
             .insert(config.protocol_name().clone(), config);
         self
     }
 
     /// Enable IPFS Ping protocol.
-    pub fn with_libp2p_ping(mut self, config: ping::PingConfig) -> Self {
+    pub fn with_libp2p_ping(mut self, config: ping::Config) -> Self {
         self.ping = Some(config);
         self
     }
@@ -184,10 +188,7 @@ impl Litep2pConfigBuilder {
     }
 
     /// Install request-response protocol.
-    pub fn with_request_response_protocol(
-        mut self,
-        config: request_response::RequestResponseConfig,
-    ) -> Self {
+    pub fn with_request_response_protocol(mut self, config: request_response::Config) -> Self {
         self.request_response_protocols
             .insert(config.protocol_name().clone(), config);
         self
@@ -232,6 +233,7 @@ impl Litep2pConfigBuilder {
     }
 }
 
+/// Configuration for [`Litep2p`](`crate::Litep2p`).
 #[derive(Debug)]
 pub struct Litep2pConfig {
     // TCP transport configuration.
@@ -250,7 +252,7 @@ pub struct Litep2pConfig {
     pub(crate) keypair: Keypair,
 
     /// Ping protocol configuration, if enabled.
-    pub(crate) ping: Option<ping::PingConfig>,
+    pub(crate) ping: Option<ping::Config>,
 
     /// Identify protocol configuration, if enabled.
     pub(crate) identify: Option<identify::Config>,
@@ -262,11 +264,10 @@ pub struct Litep2pConfig {
     pub(crate) bitswap: Option<bitswap::Config>,
 
     /// Notification protocols.
-    pub(crate) notification_protocols: HashMap<ProtocolName, notification::NotificationConfig>,
+    pub(crate) notification_protocols: HashMap<ProtocolName, notification::Config>,
 
     /// Request-response protocols.
-    pub(crate) request_response_protocols:
-        HashMap<ProtocolName, request_response::RequestResponseConfig>,
+    pub(crate) request_response_protocols: HashMap<ProtocolName, request_response::Config>,
 
     /// User protocols.
     pub(crate) user_protocols: HashMap<ProtocolName, Box<dyn UserProtocol>>,

@@ -22,8 +22,8 @@ use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::{libp2p::ping::PingConfig, notification::NotificationConfig},
-    transport::webrtc::WebRtcTransportConfig,
+    protocol::{libp2p::ping, notification::Config as NotificationConfig},
+    transport::webrtc::config::TransportConfig,
     types::protocol::ProtocolName,
     Litep2p,
 };
@@ -35,7 +35,7 @@ async fn webrtc_test() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config, mut ping_event_stream) = PingConfig::default();
+    let (ping_config, mut ping_event_stream) = ping::Config::default();
     let (notif_config, mut notif_event_stream) = NotificationConfig::new(
         ProtocolName::from(
             "/c0c89622f83f6f3c6b94bc307fec1652a3aa58ac88a564c34706633f44cbb3d1/block-announces/1",
@@ -47,7 +47,7 @@ async fn webrtc_test() {
 
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_webrtc(WebRtcTransportConfig {
+        .with_webrtc(TransportConfig {
             listen_address: "/ip4/192.168.1.173/udp/8888/webrtc-direct".parse().unwrap(),
         })
         .with_libp2p_ping(ping_config)

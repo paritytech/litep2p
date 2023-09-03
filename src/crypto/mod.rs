@@ -19,12 +19,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! Crypto-related code.
+
 use crate::{error::*, peer_id::*};
 
 pub mod ed25519;
-pub mod noise;
-pub mod tls;
-pub mod keys_proto {
+pub(crate) mod noise;
+pub(crate) mod tls;
+pub(crate) mod keys_proto {
     include!(concat!(env!("OUT_DIR"), "/keys_proto.rs"));
 }
 

@@ -18,10 +18,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! WebSocket transport configuration.
+
 use multiaddr::Multiaddr;
 use yamux::Config;
 
-/// WebSocket config.
+/// WebSocket transport configuration.
 #[derive(Debug)]
 pub struct TransportConfig {
     /// Listen address address for the transport.

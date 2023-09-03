@@ -24,7 +24,7 @@
 use litep2p::{
     config::Litep2pConfigBuilder,
     protocol::{
-        libp2p::ping::{PingConfig, PingEvent},
+        libp2p::ping::{Config as PingConfig, PingEvent},
         mdns::{Config as MdnsConfig, MdnsEvent},
     },
     transport::tcp::config::TransportConfig as TcpTransportConfig,

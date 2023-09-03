@@ -21,7 +21,6 @@
 use crate::{
     error::{Error, SubstreamError},
     mock::substream::MockSubstream,
-    peer_id::PeerId,
     protocol::{
         connection::ConnectionHandle,
         notification::{
@@ -33,6 +32,7 @@ use crate::{
         InnerTransportEvent, ProtocolCommand,
     },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    PeerId,
 };
 
 use bytes::BytesMut;

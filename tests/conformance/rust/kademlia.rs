@@ -161,12 +161,12 @@ async fn find_node() {
 
     kad_handle
         .add_known_peer(
-            litep2p::peer_id::PeerId::from_bytes(&peer_id.to_bytes()).unwrap(),
+            litep2p::PeerId::from_bytes(&peer_id.to_bytes()).unwrap(),
             vec![listen_addr],
         )
         .await;
 
-    let target = litep2p::peer_id::PeerId::random();
+    let target = litep2p::PeerId::random();
     kad_handle.find_node(target).await;
 
     loop {
@@ -280,7 +280,7 @@ async fn put_record() {
 
     kad_handle
         .add_known_peer(
-            litep2p::peer_id::PeerId::from_bytes(&peer_id.to_bytes()).unwrap(),
+            litep2p::PeerId::from_bytes(&peer_id.to_bytes()).unwrap(),
             vec![listen_addr],
         )
         .await;
@@ -405,7 +405,7 @@ async fn get_record() {
 
     kad_handle
         .add_known_peer(
-            litep2p::peer_id::PeerId::from_bytes(&peer_id.to_bytes()).unwrap(),
+            litep2p::PeerId::from_bytes(&peer_id.to_bytes()).unwrap(),
             vec![listen_addr],
         )
         .await;

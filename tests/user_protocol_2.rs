@@ -22,11 +22,10 @@ use litep2p::{
     codec::ProtocolCodec,
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    peer_id::PeerId,
     protocol::{Transport, TransportEvent, TransportService, UserProtocol},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName,
-    Litep2p, Litep2pEvent,
+    Litep2p, Litep2pEvent, PeerId,
 };
 
 use multiaddr::Multiaddr;

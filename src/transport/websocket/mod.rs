@@ -18,15 +18,17 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! WebSocket transport.
+
 use crate::{
     error::{AddressError, Error},
-    peer_id::PeerId,
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         websocket::{config::TransportConfig, connection::WebSocketConnection},
         Transport,
     },
     types::ConnectionId,
+    PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -45,7 +47,7 @@ mod stream;
 pub mod config;
 
 #[derive(Debug)]
-pub struct WebSocketError {
+pub(super) struct WebSocketError {
     /// Error.
     error: Error,
 

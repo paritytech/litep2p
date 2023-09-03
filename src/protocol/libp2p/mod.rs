@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! Supported [`libp2p`](https://libp2p.io/) protocols.
+
 pub mod bitswap;
 pub mod identify;
 pub mod kademlia;

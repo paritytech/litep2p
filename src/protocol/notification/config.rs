@@ -109,13 +109,13 @@ impl ConfigBuilder {
         }
     }
 
-    /// Add maximum notification size.
+    /// Set maximum notification size.
     pub fn with_max_size(mut self, max_notification_size: usize) -> Self {
         self.max_notification_size = Some(max_notification_size);
         self
     }
 
-    /// Add custom handshake.
+    /// Set handshake.
     pub fn with_handshake(mut self, handshake: Vec<u8>) -> Self {
         self.handshake = Some(handshake);
         self

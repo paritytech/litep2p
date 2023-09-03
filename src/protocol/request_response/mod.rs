@@ -18,15 +18,17 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! Request-response protocol implementation.
+
 use crate::{
     error::{Error, SubstreamError},
-    peer_id::PeerId,
     protocol::{
         request_response::handle::RequestResponseCommand, Direction, Transport, TransportEvent,
         TransportService,
     },
     substream::Substream,
     types::{RequestId, SubstreamId},
+    PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
@@ -45,7 +47,7 @@ use std::{
     time::Duration,
 };
 
-pub use config::{RequestResponseConfig, RequestResponseConfigBuilder};
+pub use config::{Config, ConfigBuilder};
 pub use handle::{RequestResponseError, RequestResponseEvent, RequestResponseHandle};
 
 mod config;
@@ -58,7 +60,7 @@ const LOG_TARGET: &str = "request-response::protocol";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Pending request.
-pub type PendingRequest = (PeerId, RequestId, Result<Vec<u8>, RequestResponseError>);
+type PendingRequest = (PeerId, RequestId, Result<Vec<u8>, RequestResponseError>);
 
 /// Request context.
 struct RequestContext {
@@ -129,7 +131,7 @@ pub(crate) struct RequestResponseProtocol {
 
 impl RequestResponseProtocol {
     /// Create new [`RequestResponseProtocol`].
-    pub(crate) fn new(service: TransportService, config: RequestResponseConfig) -> Self {
+    pub(crate) fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
             peers: HashMap::new(),
@@ -179,7 +181,7 @@ impl RequestResponseProtocol {
                 "state mismatch: peer doesn't exist"
             );
             debug_assert!(false);
-            return
+            return;
         };
 
         for request_id in context.active {
@@ -316,9 +318,7 @@ impl RequestResponseProtocol {
         );
 
         let Some(RequestContext {
-            request_id,
-            peer,
-            ..
+            request_id, peer, ..
         }) = self.pending_outbound.remove(&substream)
         else {
             tracing::error!(

@@ -18,16 +18,18 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! QUIC transport.
+
 use crate::{
     crypto::tls::{certificate::generate, TlsProvider},
     error::{AddressError, Error},
-    peer_id::PeerId,
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         quic::{config::TransportConfig, connection::QuicConnection},
         Transport,
     },
     types::ConnectionId,
+    PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};

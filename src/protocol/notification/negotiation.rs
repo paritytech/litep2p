@@ -21,7 +21,7 @@
 //! Implementation of the notification handshaking.
 
 #![allow(unused)]
-use crate::{peer_id::PeerId, substream::Substream};
+use crate::{substream::Substream, PeerId};
 
 use futures::{FutureExt, Sink, Stream};
 use futures_timer::Delay;

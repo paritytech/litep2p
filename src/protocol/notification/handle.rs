@@ -20,12 +20,12 @@
 
 use crate::{
     error::Error,
-    peer_id::PeerId,
     protocol::notification::types::{
         InnerNotificationEvent, NotificationCommand, NotificationError, NotificationEvent,
         ValidationResult,
     },
     types::protocol::ProtocolName,
+    PeerId,
 };
 
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -115,6 +115,10 @@ impl NotificationEventHandle {
     }
 }
 
+/// Notification sink.
+///
+/// Allows the user to send notifications both synchronously and asynchronously.
+// TODO: make this public at some point?
 #[derive(Debug, Clone)]
 pub(crate) struct NotificationSink {
     /// Peer ID.
@@ -139,7 +143,7 @@ impl NotificationSink {
 
     /// Send notification to peer synchronously.
     ///
-    /// If the channel is clogged, `NotificationError::Clogged` is returned.
+    /// If the channel is clogged, [`NotificationError::ChannelClogged`] is returned.
     pub(crate) fn send_sync_notification(
         &mut self,
         notification: Vec<u8>,
@@ -151,7 +155,7 @@ impl NotificationSink {
 
     /// Send notification to peer asynchronously.
     ///
-    /// Returns `Err(PeerDoesntExist(PeerId))` if the connection has been closed.
+    /// Returns [Error::PeerDoesntExist(PeerId)](crate::error::Error::PeerDoesntExist) if the connection has been closed.
     pub(crate) async fn send_async_notification(
         &mut self,
         notification: Vec<u8>,
@@ -163,7 +167,7 @@ impl NotificationSink {
     }
 }
 
-/// Handle allowing the user protocol to interact with this notification protocol.
+/// Handle allowing the user protocol to interact with the notification protocol.
 pub struct NotificationHandle {
     /// RX channel for receiving events from the notification protocol.
     event_rx: Receiver<InnerNotificationEvent>,
@@ -188,9 +192,9 @@ impl NotificationHandle {
         }
     }
 
-    /// Open substream to peer.
+    /// Open substream to `peer`.
     ///
-    /// Returns `PeerAlreadyExists(PeerId)` if there already exists a substream to the peer.
+    /// Returns [`Error::PeerAlreadyExists(PeerId)`](crate::error::Error::PeerAlreadyExists) if substream is already open to `peer`.
     pub async fn open_substream(&self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
 
@@ -204,7 +208,7 @@ impl NotificationHandle {
             .map_or(Ok(()), |_| Ok(()))
     }
 
-    /// Close substream to peer.
+    /// Close substream to `peer`.
     pub async fn close_substream(&self, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?peer, "close substream");
 
@@ -228,7 +232,7 @@ impl NotificationHandle {
             .await;
     }
 
-    /// Send validation result to `NotificationProtocol` for the inbound substream.
+    /// Send validation result to the notification protocol for the inbound substream.
     pub async fn send_validation_result(&self, peer: PeerId, result: ValidationResult) {
         tracing::trace!(target: LOG_TARGET, ?peer, ?result, "send validation result");
 
@@ -238,7 +242,9 @@ impl NotificationHandle {
             .await;
     }
 
-    /// Send synchronous notification to user.
+    /// Send synchronous notification to `peer`.
+    ///
+    /// If the channel is clogged, [`NotificationError::ChannelClogged`] is returned.
     pub fn send_sync_notification(
         &mut self,
         peer: PeerId,
@@ -252,9 +258,9 @@ impl NotificationHandle {
         }
     }
 
-    /// Send asynchronous notification to user.
+    /// Send asynchronous notification to `peer`.
     ///
-    /// Returns `Err(PeerDoesntExist(PeerId))` if the connection has been closed.
+    /// Returns [`Error::PeerDoesntExist(PeerId)`](crate::error::Error::PeerDoesntExist) if the connection has been closed.
     pub async fn send_async_notification(
         &mut self,
         peer: PeerId,

@@ -18,9 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! [`/ipfs/kad/1.0.0`](https://github.com/libp2p/specs/blob/master/kad-dht/README.md) implementation.
+
 use crate::{
     error::Error,
-    peer_id::PeerId,
     protocol::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
@@ -35,6 +36,7 @@ use crate::{
     },
     substream::{Substream, SubstreamSet},
     types::SubstreamId,
+    PeerId,
 };
 
 use bytes::BytesMut;
@@ -107,7 +109,7 @@ impl PeerContext {
 }
 
 /// Main Kademlia object.
-pub struct Kademlia {
+pub(crate) struct Kademlia {
     /// Transport service.
     service: TransportService,
 
@@ -144,7 +146,7 @@ pub struct Kademlia {
 
 impl Kademlia {
     /// Create new [`Kademlia`].
-    pub fn new(service: TransportService, config: Config) -> Self {
+    pub(crate) fn new(service: TransportService, config: Config) -> Self {
         let local_key = Key::from(service.local_peer_id);
 
         Self {

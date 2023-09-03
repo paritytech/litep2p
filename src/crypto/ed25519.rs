@@ -21,7 +21,7 @@
 
 //! Ed25519 keys.
 
-use crate::{error::DecodingError, peer_id::PeerId};
+use crate::{error::DecodingError, PeerId};
 
 use core::{cmp, fmt, hash};
 use ed25519_dalek::{self as ed25519, Signer as _, Verifier as _};

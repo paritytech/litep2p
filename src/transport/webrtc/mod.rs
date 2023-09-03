@@ -18,14 +18,16 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! WebRTC transport.
+
 use crate::{
     error::{AddressError, Error},
-    peer_id::PeerId,
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
-        webrtc::connection::WebRtcConnection,
+        webrtc::{config::TransportConfig, connection::WebRtcConnection},
         Transport,
     },
+    PeerId,
 };
 
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
@@ -47,6 +49,8 @@ use std::{
     time::Instant,
 };
 
+pub mod config;
+
 mod connection;
 mod util;
 
@@ -66,12 +70,6 @@ const LOG_TARGET: &str = "webrtc";
 /// Hardcoded remote fingerprint.
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
-
-#[derive(Debug)]
-pub struct WebRtcTransportConfig {
-    /// WebRTC listening address.
-    pub listen_address: Multiaddr,
-}
 
 /// WebRTC transport.
 pub(crate) struct WebRtcTransport {
@@ -270,7 +268,7 @@ impl WebRtcTransport {
 
 #[async_trait::async_trait]
 impl Transport for WebRtcTransport {
-    type Config = WebRtcTransportConfig;
+    type Config = TransportConfig;
 
     /// Create new [`Transport`] object.
     async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>

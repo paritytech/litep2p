@@ -24,11 +24,11 @@ use crate::{
     crypto::noise::{self, Encrypted, NoiseConfiguration},
     error::{Error, NegotiationError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
-    peer_id::PeerId,
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
     transport::substream::Substream,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    PeerId,
 };
 
 use futures::{
@@ -605,10 +605,9 @@ mod tests {
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
-        let (Ok(mut dialer), Ok((listener, dialer_address))) = tokio::join!(
-            TcpStream::connect(address.clone()),
-            listener.accept(),
-        ) else {
+        let (Ok(mut dialer), Ok((listener, dialer_address))) =
+            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+        else {
             panic!("failed to establish connection");
         };
 
@@ -727,10 +726,9 @@ mod tests {
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
-        let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
-            TcpStream::connect(address.clone()),
-            listener.accept(),
-        ) else {
+        let (Ok(dialer), Ok((listener, dialer_address))) =
+            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+        else {
             panic!("failed to establish connection");
         };
 
@@ -796,10 +794,9 @@ mod tests {
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
-        let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
-            TcpStream::connect(address.clone()),
-            listener.accept(),
-        ) else {
+        let (Ok(dialer), Ok((listener, dialer_address))) =
+            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+        else {
             panic!("failed to establish connection");
         };
 
@@ -974,10 +971,9 @@ mod tests {
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
-        let (Ok(_dialer), Ok((listener, dialer_address))) = tokio::join!(
-            TcpStream::connect(address.clone()),
-            listener.accept(),
-        ) else {
+        let (Ok(_dialer), Ok((listener, dialer_address))) =
+            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+        else {
             panic!("failed to establish connection");
         };
 
@@ -1033,10 +1029,9 @@ mod tests {
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
-        let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
-            TcpStream::connect(address.clone()),
-            listener.accept(),
-        ) else {
+        let (Ok(dialer), Ok((listener, dialer_address))) =
+            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+        else {
             panic!("failed to establish connection");
         };
 
@@ -1189,10 +1184,9 @@ mod tests {
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
-        let (Ok(dialer), Ok((listener, dialer_address))) = tokio::join!(
-            TcpStream::connect(address.clone()),
-            listener.accept(),
-        ) else {
+        let (Ok(dialer), Ok((listener, dialer_address))) =
+            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+        else {
             panic!("failed to establish connection");
         };
 

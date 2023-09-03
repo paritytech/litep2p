@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! Substream-related helper code.
+
 use crate::error::{Error, SubstreamError};
 
 use bytes::{Bytes, BytesMut};
@@ -95,11 +97,6 @@ impl<K: SubstreamSetKey> SubstreamSet<K> {
         self.substreams.remove(key)
     }
 
-    /// Get length of the [`SubstreamSet`].
-    pub fn len(&self) -> usize {
-        self.substreams.len()
-    }
-
     /// Return true if the [`SubstreamSet`] is empty.
     pub fn is_empty(&mut self) -> bool {
         self.substreams.len() == 0usize
@@ -108,11 +105,6 @@ impl<K: SubstreamSetKey> SubstreamSet<K> {
     /// Get mutable reference to stored substream.
     pub fn get_mut(&mut self, key: &K) -> Option<&mut Box<dyn Substream>> {
         self.substreams.get_mut(key)
-    }
-
-    /// Check if [`SubstreamSet`] contains a substream for `peer`.
-    pub fn contains(&self, peer: &K) -> bool {
-        self.substreams.contains_key(peer)
     }
 }
 
@@ -143,7 +135,7 @@ impl<K: SubstreamSetKey> Stream for SubstreamSet<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mock::substream::MockSubstream, peer_id::PeerId};
+    use crate::{mock::substream::MockSubstream, PeerId};
     use futures::{SinkExt, StreamExt};
 
     #[test]

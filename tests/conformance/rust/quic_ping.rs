@@ -29,7 +29,7 @@ use libp2p::{
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::libp2p::ping::{PingConfig, PingEvent},
+    protocol::libp2p::ping::{Config as PingConfig, PingEvent},
     transport::quic::config::TransportConfig as QuicTransportConfig,
     Litep2p,
 };

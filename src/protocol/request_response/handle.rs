@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{peer_id::PeerId, types::RequestId};
+use crate::{types::RequestId, PeerId};
 
 use tokio::sync::mpsc::{Receiver, Sender};
 

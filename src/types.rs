@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! Types used by [`Litep2p`](`crate::Litep2p`) protocols/transport.
+
 pub mod protocol;
 
 /// Substream ID.
@@ -30,7 +32,7 @@ impl SubstreamId {
         SubstreamId(0usize)
     }
 
-    /// Get next [`SubstreamID`].
+    /// Get next [`SubstreamId`].
     pub fn next(&mut self) -> SubstreamId {
         let substream_id = self.0;
         self.0 += 1usize;
@@ -54,7 +56,7 @@ impl RequestId {
         RequestId(0usize)
     }
 
-    /// Get next [`RequestID`].
+    /// Get next [`RequestId`].
     pub fn next(&mut self) -> RequestId {
         let substream_id = self.0;
         self.0 += 1usize;
@@ -78,8 +80,7 @@ impl ConnectionId {
         ConnectionId(0usize)
     }
 
-    /// Get next [`ConnectionID`].
-    // TODO: remove
+    /// Get next [`ConnectionId`].
     pub fn next(&mut self) -> ConnectionId {
         let connection_id = self.0;
         self.0 += 1usize;

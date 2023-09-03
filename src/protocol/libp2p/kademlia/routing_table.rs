@@ -22,11 +22,11 @@
 //! Kademlia routing table implementation.
 
 use crate::{
-    peer_id::PeerId,
     protocol::libp2p::kademlia::{
         bucket::{KBucket, KBucketEntry},
         types::{ConnectionType, Distance, KademliaPeer, Key, U256},
     },
+    PeerId,
 };
 
 use multiaddr::{Multiaddr, Protocol};

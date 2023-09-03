@@ -18,9 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! Notification protocol implementation.
+
 use crate::{
     error::Error,
-    peer_id::PeerId,
     protocol::{
         notification::{
             handle::{NotificationEventHandle, NotificationSink},
@@ -31,6 +32,7 @@ use crate::{
     },
     substream::{Substream, SubstreamSet},
     types::{protocol::ProtocolName, SubstreamId},
+    PeerId,
 };
 
 use bytes::BytesMut;
@@ -43,7 +45,7 @@ use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
 use std::collections::{hash_map::Entry, HashMap};
 
-pub use config::{Config as NotificationConfig, ConfigBuilder as NotificationConfigBuilder};
+pub use config::{Config, ConfigBuilder};
 pub use handle::NotificationHandle;
 pub use types::{NotificationError, NotificationEvent, ValidationResult};
 
@@ -60,7 +62,7 @@ const LOG_TARGET: &str = "notification::protocol";
 
 /// Inbound substream state.
 #[derive(Debug)]
-pub enum InboundState {
+enum InboundState {
     /// Substream is closed.
     Closed,
 
@@ -78,7 +80,8 @@ pub enum InboundState {
 
     /// Substream is being accepted (handshake received and sent in one go)
     /// as the substream was already accepted.
-    Accepting,
+    // TODO: zzz
+    _Accepting,
 
     /// Substream is open.
     Open {
@@ -89,7 +92,7 @@ pub enum InboundState {
 
 /// Outbound substream state.
 #[derive(Debug)]
-pub enum OutboundState {
+enum OutboundState {
     /// Substream is closed.
     Closed,
 
@@ -117,14 +120,14 @@ pub enum OutboundState {
 }
 
 #[derive(Debug)]
-pub enum PeerState {
+enum PeerState {
     /// Peer state is poisoned due to invalid state transition.
     Poisoned,
 
     /// Connection to peer is closed.
     Closed {
         /// TODO:
-        pending_open: Option<SubstreamId>,
+        _pending_open: Option<SubstreamId>,
     },
 
     /// Outbound substream initiated.
@@ -163,13 +166,15 @@ impl PeerContext {
     /// Create new [`PeerContext`].
     fn new() -> Self {
         Self {
-            state: PeerState::Closed { pending_open: None },
+            state: PeerState::Closed {
+                _pending_open: None,
+            },
         }
     }
 }
 
 #[derive(Debug)]
-pub struct NotificationProtocol {
+pub(crate) struct NotificationProtocol {
     /// Transport service.
     service: TransportService,
 
@@ -196,7 +201,7 @@ pub struct NotificationProtocol {
 }
 
 impl NotificationProtocol {
-    pub fn new(service: TransportService, config: NotificationConfig) -> Self {
+    pub(crate) fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
             peers: HashMap::new(),
@@ -448,7 +453,7 @@ impl NotificationProtocol {
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
             PeerState::OutboundInitiated { substream } => {
                 context.state = PeerState::Closed {
-                    pending_open: Some(substream),
+                    _pending_open: Some(substream),
                 };
             }
             // TODO: introduce `NotifiationStreamRejected`
@@ -465,11 +470,15 @@ impl NotificationProtocol {
                             .expect("inbound substream to exist");
 
                         let _ = outbound.close().await;
-                        context.state = PeerState::Closed { pending_open: None };
+                        context.state = PeerState::Closed {
+                            _pending_open: None,
+                        };
                     }
                     OutboundState::Open { mut outbound, .. } => {
                         let _ = outbound.close().await;
-                        context.state = PeerState::Closed { pending_open: None };
+                        context.state = PeerState::Closed {
+                            _pending_open: None,
+                        };
                     }
                     state => {
                         tracing::error!(
@@ -485,7 +494,7 @@ impl NotificationProtocol {
                 match inbound {
                     InboundState::ReadingHandshake
                     | InboundState::SendingHandshake
-                    | InboundState::Accepting => {
+                    | InboundState::_Accepting => {
                         // the inbound substream must exist in `negotiation` because the `InboundState`
                         // is indicating that `HandshakeService` is reading/writing from/to the substream.
                         let mut inbound = self
@@ -494,11 +503,15 @@ impl NotificationProtocol {
                             .expect("inbound substream to exist");
 
                         let _ = inbound.close().await;
-                        context.state = PeerState::Closed { pending_open: None };
+                        context.state = PeerState::Closed {
+                            _pending_open: None,
+                        };
                     }
                     InboundState::Open { mut inbound } => {
                         let _ = inbound.close().await;
-                        context.state = PeerState::Closed { pending_open: None };
+                        context.state = PeerState::Closed {
+                            _pending_open: None,
+                        };
                     }
                     InboundState::Closed => {}
                     state => {
@@ -520,7 +533,9 @@ impl NotificationProtocol {
                     let _ = outbound.close().await;
                     let _ = inbound.close().await;
 
-                    context.state = PeerState::Closed { pending_open: None };
+                    context.state = PeerState::Closed {
+                        _pending_open: None,
+                    };
                     self.event_handle
                         .report_notification_stream_closed(peer)
                         .await;
@@ -571,7 +586,9 @@ impl NotificationProtocol {
             } => match result {
                 ValidationResult::Reject => {
                     let _ = inbound.close().await;
-                    context.state = PeerState::Closed { pending_open: None };
+                    context.state = PeerState::Closed {
+                        _pending_open: None,
+                    };
 
                     Ok(())
                 }
@@ -588,7 +605,9 @@ impl NotificationProtocol {
                         }
                         Err(error) => {
                             let _ = inbound.close().await;
-                            context.state = PeerState::Closed { pending_open: None };
+                            context.state = PeerState::Closed {
+                                _pending_open: None,
+                            };
                             return Err(error);
                         }
                     },
@@ -629,7 +648,9 @@ impl NotificationProtocol {
                 self.peers
                     .get_mut(&peer)
                     .expect("peer to exist since an event was received")
-                    .state = PeerState::Closed { pending_open: None };
+                    .state = PeerState::Closed {
+                    _pending_open: None,
+                };
                 // TODO: if the node is still handshaking, don't return this event
                 self.event_handle
                     .report_notification_stream_closed(peer)
@@ -729,7 +750,7 @@ impl NotificationProtocol {
                     PeerState::Validating {
                         protocol,
                         outbound,
-                        inbound: InboundState::Accepting,
+                        inbound: InboundState::_Accepting,
                     } => {
                         context.state = PeerState::Validating {
                             protocol,
@@ -905,7 +926,7 @@ impl NotificationProtocol {
     }
 
     /// Start [`NotificationProtocol`] event loop.
-    pub async fn run(mut self) {
+    pub(crate) async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting notification event loop");
 
         loop {

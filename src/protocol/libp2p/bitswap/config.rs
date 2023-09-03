@@ -49,7 +49,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create new [`BitswapConfig`].
+    /// Create new [`Config`].
     pub fn new() -> (Self, BitswapHandle) {
         let (event_tx, event_rx) = channel(256);
         let (cmd_tx, cmd_rx) = channel(256);

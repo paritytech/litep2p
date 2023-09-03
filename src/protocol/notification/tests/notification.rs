@@ -49,7 +49,7 @@ async fn sync_notifications_clogged() {
                     handshake: vec![1, 2, 3, 4],
                     outbound: Box::new(MockSubstream::new()),
                 },
-                inbound: InboundState::Accepting,
+                inbound: InboundState::_Accepting,
             },
         },
     );
@@ -104,7 +104,7 @@ async fn async_notifications_clogged() {
                     handshake: vec![1, 2, 3, 4],
                     outbound: Box::new(MockSubstream::new()),
                 },
-                inbound: InboundState::Accepting,
+                inbound: InboundState::_Accepting,
             },
         },
     );

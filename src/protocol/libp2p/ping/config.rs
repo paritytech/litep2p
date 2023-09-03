@@ -38,7 +38,7 @@ const MAX_FAILURES: usize = 3;
 
 /// Ping configuration.
 #[derive(Debug)]
-pub struct PingConfig {
+pub struct Config {
     /// Protocol name.
     pub(crate) protocol: ProtocolName,
 
@@ -52,10 +52,10 @@ pub struct PingConfig {
     pub(crate) tx_event: Sender<PingEvent>,
 }
 
-impl PingConfig {
-    /// Create new [`PingConfig`] with default values.
+impl Config {
+    /// Create new [`Config`] with default values.
     ///
-    /// Returns a config that is given to `Litep2pConfig` and an event stream for ping events.
+    /// Returns a config that is given to `Litep2pConfig` and an event stream for [`PingEvent`]s.
     pub fn default() -> (Self, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -71,8 +71,8 @@ impl PingConfig {
     }
 }
 
-/// PING configuration builder.
-pub struct PingConfigBuilder {
+/// Ping configuration builder.
+pub struct ConfigBuilder {
     /// Protocol name.
     protocol: ProtocolName,
 
@@ -83,8 +83,8 @@ pub struct PingConfigBuilder {
     max_failures: usize,
 }
 
-impl PingConfigBuilder {
-    /// Create new default [`PingConfig`] which can be modified by the user.
+impl ConfigBuilder {
+    /// Create new default [`Config`] which can be modified by the user.
     pub fn new() -> Self {
         Self {
             max_failures: MAX_FAILURES,
@@ -99,12 +99,12 @@ impl PingConfigBuilder {
         self
     }
 
-    /// Build [`PingConfig`].
-    pub fn build(self) -> (PingConfig, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
+    /// Build [`Config`].
+    pub fn build(self) -> (Config, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
         (
-            PingConfig {
+            Config {
                 tx_event,
                 max_failures: self.max_failures,
                 protocol: self.protocol,

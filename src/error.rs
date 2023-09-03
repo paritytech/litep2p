@@ -21,15 +21,15 @@
 
 #![allow(clippy::enum_variant_names)]
 
-//! Errors during identity key operations.
+//! [`Litep2p`](`crate::Litep2p`) error types.
 
 // TODO: clean up all these errors into something coherent
 // TODO: move `NegotiationError` under `SubstreamError`
 
 use crate::{
-    peer_id::PeerId,
     protocol::Direction,
     types::{protocol::ProtocolName, SubstreamId},
+    PeerId,
 };
 
 use multiaddr::Multiaddr;

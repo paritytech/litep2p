@@ -24,7 +24,7 @@
 
 use crate::{
     crypto::{ed25519::Keypair, PublicKey},
-    peer_id::PeerId,
+    PeerId,
 };
 
 // use libp2p_identity as identity;

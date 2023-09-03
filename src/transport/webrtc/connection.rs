@@ -23,7 +23,6 @@ use crate::{
     crypto::{ed25519::Keypair, noise::NoiseContext},
     error::Error,
     multistream_select::listener_negotiate,
-    peer_id::PeerId,
     protocol::{Direction, ProtocolSet},
     substream::{channel::SubstreamBackend, Substream as SubstreamT},
     transport::webrtc::{
@@ -31,6 +30,7 @@ use crate::{
         WebRtcEvent,
     },
     types::{ConnectionId, SubstreamId},
+    PeerId,
 };
 
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};

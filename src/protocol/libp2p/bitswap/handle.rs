@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! Bitswap handle for communicating with the bitswap protocol implementation.
+
 use crate::{
     protocol::libp2p::bitswap::{BlockPresenceType, WantType},
     PeerId,
@@ -36,7 +38,7 @@ use std::{
 pub enum BitswapEvent {
     /// Bitswap request.
     Request {
-        // Peer ID.
+        /// Peer ID.
         peer: PeerId,
 
         /// Requested CIDs.
@@ -44,6 +46,7 @@ pub enum BitswapEvent {
     },
 }
 
+/// Response type for received bitswap request.
 #[derive(Debug)]
 pub enum ResponseType {
     /// Block.
@@ -67,7 +70,7 @@ pub enum ResponseType {
 
 /// Commands sent from the user to `Bitswap`.
 #[derive(Debug)]
-pub enum BitswapCommand {
+pub(super) enum BitswapCommand {
     /// Send bitswap response.
     SendResponse {
         /// Peer ID.
@@ -94,6 +97,8 @@ impl BitswapHandle {
     }
 
     /// Send `request` to `peer`.
+    ///
+    /// Not supported by the current implementation.
     pub async fn send_request(&self, _peer: PeerId, _request: Vec<u8>) {
         unimplemented!("bitswap requests are not supported");
     }

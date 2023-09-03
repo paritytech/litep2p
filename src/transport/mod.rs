@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+//! Transport protocol implementations provided by [`Litep2p`](`crate::Litep2p`).
+
 use crate::transport::manager::TransportHandle;
 
 use multiaddr::Multiaddr;

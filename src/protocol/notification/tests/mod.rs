@@ -20,13 +20,15 @@
 
 use crate::{
     crypto::ed25519::Keypair,
-    peer_id::PeerId,
     protocol::{
-        notification::{handle::NotificationHandle, NotificationConfig, NotificationProtocol},
+        notification::{
+            handle::NotificationHandle, Config as NotificationConfig, NotificationProtocol,
+        },
         InnerTransportEvent, ProtocolCommand, TransportService,
     },
     transport::manager::TransportManager,
     types::protocol::ProtocolName,
+    PeerId,
 };
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};

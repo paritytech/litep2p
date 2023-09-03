@@ -19,8 +19,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    peer_id::PeerId,
     protocol::libp2p::kademlia::{Record, RecordKey},
+    PeerId,
 };
 
 use futures::Stream;
@@ -102,7 +102,7 @@ pub enum KademliaEvent {
     },
 }
 
-/// Handle for communicating with `Kademlia`.
+/// Handle for communicating with the Kademlia protocol.
 pub struct KademliaHandle {
     /// TX channel for sending commands to `Kademlia`.
     cmd_tx: Sender<KademliaCommand>,

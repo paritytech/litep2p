@@ -32,7 +32,7 @@ use litep2p::{
     crypto::ed25519::Keypair,
     protocol::libp2p::{
         identify::{Config as IdentifyConfig, IdentifyEvent},
-        ping::{PingConfig, PingEvent},
+        ping::{Config as PingConfig, PingEvent},
     },
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p,

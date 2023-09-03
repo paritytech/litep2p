@@ -22,7 +22,6 @@ use crate::{
     codec::ProtocolCodec,
     crypto::ed25519::Keypair,
     error::Error,
-    peer_id::PeerId,
     protocol::{
         connection::{ConnectionHandle, Permit},
         Direction, Transport, TransportEvent,
@@ -30,7 +29,7 @@ use crate::{
     substream::Substream,
     transport::manager::{ProtocolContext, TransportManagerEvent, TransportManagerHandle},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
-    DEFAULT_CHANNEL_SIZE,
+    PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -160,6 +159,7 @@ impl From<InnerTransportEvent> for TransportEvent {
     }
 }
 
+/// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact with the underlying transport protocols.
 #[derive(Debug)]
 pub struct TransportService {
     /// Local peer ID.

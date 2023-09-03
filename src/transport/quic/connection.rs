@@ -23,11 +23,11 @@ use crate::{
     config::Role,
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
-    peer_id::PeerId,
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
     transport::substream::Substream,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
@@ -477,7 +477,8 @@ mod tests {
         let (
             Some(TransportEvent::ConnectionClosed { .. }),
             Some(TransportEvent::ConnectionClosed { .. }),
-        ) = tokio::join!(service1.next_event(), service2.next_event()) else {
+        ) = tokio::join!(service1.next_event(), service2.next_event())
+        else {
             panic!("invalid event received");
         };
 

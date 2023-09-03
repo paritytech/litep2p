@@ -24,10 +24,9 @@ use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    peer_id::PeerId,
     protocol::libp2p::kademlia::{ConfigBuilder as KademliaConfigBuilder, RecordKey},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
-    Litep2p,
+    Litep2p, PeerId,
 };
 
 async fn spawn_litep2p(port: u16) {

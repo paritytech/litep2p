@@ -255,7 +255,7 @@ impl FromStr for PeerId {
 
 #[cfg(test)]
 mod tests {
-    use crate::{crypto::ed25519::Keypair, peer_id::PeerId};
+    use crate::{crypto::ed25519::Keypair, PeerId};
 
     #[test]
     fn peer_id_is_public_key() {

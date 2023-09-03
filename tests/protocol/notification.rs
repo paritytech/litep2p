@@ -24,9 +24,8 @@ use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     error::Error,
-    peer_id::PeerId,
     protocol::notification::{
-        NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
+        Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
@@ -34,7 +33,7 @@ use litep2p::{
         websocket::config::TransportConfig as WebSocketTransportConfig,
     },
     types::protocol::ProtocolName,
-    Litep2p, Litep2pEvent,
+    Litep2p, Litep2pEvent, PeerId,
 };
 
 use futures::StreamExt;

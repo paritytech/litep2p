@@ -21,7 +21,7 @@
 use futures::StreamExt;
 use litep2p::{
     config::Litep2pConfigBuilder, crypto::ed25519::Keypair,
-    protocol::libp2p::ping::PingConfigBuilder,
+    protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
     transport::quic::config::TransportConfig as QuicTransportConfig,
     transport::tcp::config::TransportConfig as TcpTransportConfig, Litep2p,
 };

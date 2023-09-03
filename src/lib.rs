@@ -22,7 +22,6 @@ use crate::{
     config::Litep2pConfig,
     crypto::PublicKey,
     error::Error,
-    peer_id::PeerId,
     protocol::{
         libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
         mdns::Mdns,
@@ -42,14 +41,16 @@ use crate::{
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
-// TODO: which of these need to be pub?
+pub use peer_id::PeerId;
+
+pub(crate) mod peer_id;
+pub(crate) mod substream;
+
 pub mod codec;
 pub mod config;
 pub mod crypto;
 pub mod error;
-pub mod peer_id;
 pub mod protocol;
-pub mod substream;
 pub mod transport;
 pub mod types;
 
@@ -77,7 +78,7 @@ pub enum Litep2pEvent {
         address: Multiaddr,
     },
 
-    /// Conneciton closed to remote peer.
+    /// Connection closed to remote peer.
     ConnectionClosed {
         /// Peer ID.
         peer: PeerId,
@@ -354,7 +355,7 @@ impl Litep2p {
 mod tests {
     use crate::{
         config::Litep2pConfigBuilder,
-        protocol::{libp2p::ping::PingConfig, notification::NotificationConfig},
+        protocol::{libp2p::ping, notification::Config as NotificationConfig},
         transport::tcp::config::TransportConfig as TcpTransportConfig,
         types::protocol::ProtocolName,
         Litep2p, Litep2pEvent, PeerId,
@@ -381,7 +382,7 @@ mod tests {
             vec![1, 2, 3, 4],
             Vec::new(),
         );
-        let (ping_config, _ping_event_stream) = PingConfig::default();
+        let (ping_config, _ping_event_stream) = ping::Config::default();
 
         let config = Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
@@ -417,7 +418,7 @@ mod tests {
             vec![1, 2, 3, 4],
             Vec::new(),
         );
-        let (ping_config, _ping_event_stream) = PingConfig::default();
+        let (ping_config, _ping_event_stream) = ping::Config::default();
 
         let config = Litep2pConfigBuilder::new()
             .with_notification_protocol(config1)
@@ -446,7 +447,7 @@ mod tests {
             vec![1, 2, 3, 4],
             Vec::new(),
         );
-        let (ping_config, _ping_event_stream) = PingConfig::default();
+        let (ping_config, _ping_event_stream) = ping::Config::default();
 
         let config = Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {

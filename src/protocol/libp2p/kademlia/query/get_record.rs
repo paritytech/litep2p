@@ -21,7 +21,6 @@
 #![allow(unused)]
 
 use crate::{
-    peer_id::PeerId,
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{QueryAction, QueryId},
@@ -29,6 +28,7 @@ use crate::{
         types::{Distance, KademliaPeer, Key},
         Quorum,
     },
+    PeerId,
 };
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -107,7 +107,7 @@ impl GetRecordContext {
 
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
-        let Some(peer) =  self.pending.remove(&peer) else {
+        let Some(peer) = self.pending.remove(&peer) else {
             tracing::warn!(target: LOG_TARGET, ?peer, "pending peer doesn't exist");
             debug_assert!(false);
             return;
