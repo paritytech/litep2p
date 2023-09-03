@@ -114,17 +114,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                     }
                 }
                 State::ReadyPending { to_write } => {
-                    match self
-                        .stream
-                        .start_send_unpin(Message::Binary(to_write.clone()))
-                    {
+                    match self.stream.start_send_unpin(Message::Binary(to_write.clone())) {
                         Ok(_) => {
                             self.state = State::FlushPending;
                             continue;
                         }
-                        Err(_error) => {
-                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()))
-                        }
+                        Err(_error) =>
+                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
                     }
                 }
                 State::FlushPending => match self.stream.poll_flush_unpin(cx) {
@@ -136,13 +132,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                         self.write_buffer = Vec::with_capacity(2000);
                         return Poll::Ready(Ok(()));
                     }
-                    Poll::Ready(Err(_)) => {
-                        return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()))
-                    }
+                    Poll::Ready(Err(_)) =>
+                        return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
                 },
-                State::Poisoned => {
-                    return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()))
-                }
+                State::Poisoned =>
+                    return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
             }
         }
     }
@@ -169,9 +163,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncRead for BufferedStream<S>
                         Message::Binary(chunk) => self.read_buffer.replace(chunk.into()),
                         _event => return Poll::Ready(Err(std::io::ErrorKind::Unsupported.into())),
                     },
-                    Poll::Ready(Some(Err(_error))) => {
-                        return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()))
-                    }
+                    Poll::Ready(Some(Err(_error))) =>
+                        return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
                     Poll::Ready(None) => return Poll::Ready(Ok(0)),
                     Poll::Pending => return Poll::Pending,
                 };

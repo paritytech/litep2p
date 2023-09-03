@@ -190,10 +190,7 @@ impl QuicConnection {
             "accept inbound substream"
         );
 
-        let protocols = protocols
-            .iter()
-            .map(|protocol| &**protocol)
-            .collect::<Vec<&str>>();
+        let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
         let (io, protocol) = Self::negotiate_protocol(stream, &Role::Listener, protocols).await?;
 
         tracing::trace!(
@@ -587,11 +584,7 @@ mod tests {
 
         let _ = service1.open_substream(peer).await.unwrap();
 
-        let stream = connection2
-            .accept_bidirectional_stream()
-            .await
-            .unwrap()
-            .unwrap();
+        let stream = connection2.accept_bidirectional_stream().await.unwrap().unwrap();
 
         assert!(
             listener_select_proto(stream, vec!["/unsupported/1", "/unsupported/2"])
@@ -652,11 +645,7 @@ mod tests {
         });
 
         let _ = service1.open_substream(peer).await.unwrap();
-        let stream = connection2
-            .accept_bidirectional_stream()
-            .await
-            .unwrap()
-            .unwrap();
+        let stream = connection2.accept_bidirectional_stream().await.unwrap().unwrap();
 
         drop(stream);
         drop(connection2);
@@ -715,15 +704,10 @@ mod tests {
 
         let _ = service1.open_substream(peer).await.unwrap();
 
-        let stream = connection2
-            .accept_bidirectional_stream()
-            .await
-            .unwrap()
-            .unwrap();
+        let stream = connection2.accept_bidirectional_stream().await.unwrap().unwrap();
 
-        let (_io, _proto) = listener_select_proto(stream, vec!["/notif/1", "/notif/2"])
-            .await
-            .unwrap();
+        let (_io, _proto) =
+            listener_select_proto(stream, vec!["/notif/1", "/notif/2"]).await.unwrap();
 
         let Some(TransportEvent::SubstreamOpened { .. }) = service1.next_event().await else {
             panic!("invalid event received");

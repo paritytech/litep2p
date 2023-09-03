@@ -182,10 +182,7 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
     );
 
     // send response to the received request
-    handle2
-        .send_response(request_id, vec![1, 3, 3, 8])
-        .await
-        .unwrap();
+    handle2.send_response(request_id, vec![1, 3, 3, 8]).await.unwrap();
     assert_eq!(
         handle1.next().await.unwrap(),
         RequestResponseEvent::ResponseReceived {
@@ -426,10 +423,7 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
         {
             assert_eq!(peer, peer1);
             assert_eq!(request, vec![1, 3, 3, 6 + i]);
-            handle2
-                .send_response(request_id, vec![2, 3, 3, 6 + i])
-                .await
-                .unwrap();
+            handle2.send_response(request_id, vec![2, 3, 3, 6 + i]).await.unwrap();
         } else {
             panic!("invalid event received");
         };
@@ -971,10 +965,7 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
     );
 
     // try to send too large response to the received request
-    handle2
-        .send_response(request_id, vec![0u8; 257])
-        .await
-        .unwrap();
+    handle2.send_response(request_id, vec![0u8; 257]).await.unwrap();
 
     assert_eq!(
         handle1.next().await.unwrap(),

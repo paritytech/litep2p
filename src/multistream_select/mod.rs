@@ -68,7 +68,6 @@
 //! supporting one of the intermediate protocols. See
 //! [`dialer_select_proto`](self::dialer_select_proto) and the documentation
 //! of [`Version::V1Lazy`] for further details.
-//!
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 

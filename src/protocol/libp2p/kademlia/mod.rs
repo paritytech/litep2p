@@ -228,11 +228,8 @@ impl Kademlia {
         );
         let _ = self.pending_substreams.remove(&substream_id);
 
-        let pending_action = &mut self
-            .peers
-            .get_mut(&peer)
-            .ok_or(Error::PeerDoesntExist(peer))?
-            .pending_action;
+        let pending_action =
+            &mut self.peers.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?.pending_action;
 
         match std::mem::replace(pending_action, None) {
             None => {
@@ -291,10 +288,8 @@ impl Kademlia {
                     "handle `FIND_NODE` request"
                 );
 
-                let substream = self
-                    .substreams
-                    .get_mut(&peer)
-                    .ok_or(Error::SubstreamDoesntExist)?;
+                let substream =
+                    self.substreams.get_mut(&peer).ok_or(Error::SubstreamDoesntExist)?;
 
                 let message = KademliaMessage::find_node_response(
                     self.routing_table.closest(Key::from(target), 20),
@@ -314,8 +309,7 @@ impl Kademlia {
                 );
 
                 for info in peers {
-                    self.service
-                        .add_known_address(&info.peer, info.addresses.iter().cloned())
+                    self.service.add_known_address(&info.peer, info.addresses.iter().cloned())
                 }
 
                 match self
@@ -353,8 +347,7 @@ impl Kademlia {
                 );
 
                 for info in peers {
-                    self.service
-                        .add_known_address(&info.peer, info.addresses.iter().cloned())
+                    self.service.add_known_address(&info.peer, info.addresses.iter().cloned())
                 }
 
                 match self
@@ -436,8 +429,7 @@ impl Kademlia {
                         tracing::debug!(target: LOG_TARGET, ?query, ?peer, "dial peer");
 
                         let _ = self.service.dial(&peer).await;
-                        self.pending_dials
-                            .insert(peer, PeerAction::SendFindNode(query));
+                        self.pending_dials.insert(peer, PeerAction::SendFindNode(query));
                         Ok(())
                     }
                     Ok(substream_id) => {
@@ -458,10 +450,7 @@ impl Kademlia {
                     .event_tx
                     .send(KademliaEvent::FindNodeResult {
                         target,
-                        peers: peers
-                            .into_iter()
-                            .map(|info| (info.peer, info.addresses))
-                            .collect(),
+                        peers: peers.into_iter().map(|info| (info.peer, info.addresses)).collect(),
                     })
                     .await;
                 Ok(())
@@ -477,9 +466,8 @@ impl Kademlia {
                 for peer in peers {
                     match self.substreams.get_mut(&peer.peer) {
                         Some(substream) => {
-                            if let Err(error) = substream
-                                .send(KademliaMessage::put_value(record.clone()))
-                                .await
+                            if let Err(error) =
+                                substream.send(KademliaMessage::put_value(record.clone())).await
                             {
                                 tracing::debug!(target: LOG_TARGET, ?error, "failed to send message to peer");
                                 self.disconnect_peer(peer.peer, None).await;
@@ -509,10 +497,7 @@ impl Kademlia {
             QueryAction::GetRecordQueryDone { record } => {
                 self.store.put(record.clone());
 
-                let _ = self
-                    .event_tx
-                    .send(KademliaEvent::GetRecordResult { record })
-                    .await;
+                let _ = self.event_tx.send(KademliaEvent::GetRecordResult { record }).await;
                 Ok(())
             }
             QueryAction::QuerySucceeded { .. } => unreachable!(),

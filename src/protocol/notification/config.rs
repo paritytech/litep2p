@@ -125,9 +125,7 @@ impl ConfigBuilder {
     pub fn build(mut self) -> (Config, NotificationHandle) {
         Config::new(
             self.protocol_name,
-            self.max_notification_size
-                .take()
-                .expect("notification size to be specified"),
+            self.max_notification_size.take().expect("notification size to be specified"),
             self.handshake.take().expect("handshake to be specified"),
             Vec::new(),
         )

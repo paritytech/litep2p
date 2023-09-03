@@ -189,10 +189,7 @@ impl WebRtcConnection {
             Receive {
                 source: self.peer_address,
                 destination: self.local_address,
-                contents: buffer
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| Error::InvalidData)?,
+                contents: buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?,
             },
         );
 
@@ -330,9 +327,7 @@ impl WebRtcConnection {
             return Err(Error::InvalidState);
         };
 
-        let message = WebRtcMessage::decode(&data)?
-            .payload
-            .ok_or(Error::InvalidData)?;
+        let message = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
         let public_key = handshaker.get_remote_public_key(&message)?;
         let remote_peer_id = PeerId::from_public_key(&public_key);
 
@@ -345,14 +340,10 @@ impl WebRtcConnection {
         // create second noise handshake message and send it to remote
         let payload = WebRtcMessage::encode(handshaker.second_message(), None);
 
-        let mut channel = self
-            .rtc
-            .channel(self._noise_channel_id)
-            .ok_or(Error::ChannelDoesntExist)?;
+        let mut channel =
+            self.rtc.channel(self._noise_channel_id).ok_or(Error::ChannelDoesntExist)?;
 
-        channel
-            .write(true, payload.as_slice())
-            .map_err(|error| Error::WebRtc(error))?;
+        channel.write(true, payload.as_slice()).map_err(|error| Error::WebRtc(error))?;
 
         let remote_fingerprint = self
             .rtc
@@ -388,9 +379,7 @@ impl WebRtcConnection {
     async fn negotiate_protocol(&mut self, d: ChannelData) -> crate::Result<WebRtcEvent> {
         tracing::trace!(target: LOG_TARGET, channel_id = ?d.id, "negotiate protocol for the channel");
 
-        let payload = WebRtcMessage::decode(&d.data)?
-            .payload
-            .ok_or(Error::InvalidData)?;
+        let payload = WebRtcMessage::decode(&d.data)?.payload.ok_or(Error::InvalidData)?;
 
         let (protocol, response) =
             listener_negotiate(&mut self.protocol_set.protocols.keys(), payload.into())?;
@@ -411,8 +400,7 @@ impl WebRtcConnection {
         };
 
         self.id_mapping.insert(d.id, substream_id);
-        self.channels
-            .insert(substream_id, SubstreamContext::new(d.id, tx));
+        self.channels.insert(substream_id, SubstreamContext::new(d.id, tx));
 
         if let State::Open { peer, .. } = &mut self.state {
             let _ = self
@@ -433,19 +421,11 @@ impl WebRtcConnection {
         );
 
         // TODO: might be empty message with flags
-        let message = WebRtcMessage::decode(&d.data)?
-            .payload
-            .ok_or(Error::InvalidData)?;
+        let message = WebRtcMessage::decode(&d.data)?.payload.ok_or(Error::InvalidData)?;
 
         // TODO: zzz
-        let id = self
-            .id_mapping
-            .get(&d.id)
-            .ok_or(Error::ChannelDoesntExist)?;
-        let context = self
-            .channels
-            .get_mut(&id)
-            .ok_or(Error::ChannelDoesntExist)?;
+        let id = self.id_mapping.get(&d.id).ok_or(Error::ChannelDoesntExist)?;
+        let context = self.channels.get_mut(&id).ok_or(Error::ChannelDoesntExist)?;
 
         let _ = context.tx.send(message).await;
         Ok(WebRtcEvent::Noop)

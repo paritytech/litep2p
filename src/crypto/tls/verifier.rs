@@ -70,8 +70,8 @@ pub struct Libp2pCertificateVerifier {
 ///
 /// - Exactly one certificate must be presented.
 /// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a
-///   signature of its public key.
+/// - The certificate must have a valid libp2p extension that includes a signature of its public
+///   key.
 impl Libp2pCertificateVerifier {
     pub fn _new() -> Self {
         Self {
@@ -169,11 +169,11 @@ impl ServerCertVerifier for Libp2pCertificateVerifier {
 
 /// libp2p requires the following of X.509 client certificate chains:
 ///
-/// - Exactly one certificate must be presented. In particular, client
-///   authentication is mandatory in libp2p.
+/// - Exactly one certificate must be presented. In particular, client authentication is mandatory
+///   in libp2p.
 /// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a
-///   signature of its public key.
+/// - The certificate must have a valid libp2p extension that includes a signature of its public
+///   key.
 impl ClientCertVerifier for Libp2pCertificateVerifier {
     fn offer_client_auth(&self) -> bool {
         true
@@ -267,9 +267,8 @@ impl From<certificate::VerificationError> for rustls::Error {
         use webpki::Error::*;
         match e {
             InvalidSignatureForPublicKey => rustls::Error::InvalidCertificateSignature,
-            UnsupportedSignatureAlgorithm | UnsupportedSignatureAlgorithmForPublicKey => {
-                rustls::Error::InvalidCertificateSignatureType
-            }
+            UnsupportedSignatureAlgorithm | UnsupportedSignatureAlgorithmForPublicKey =>
+                rustls::Error::InvalidCertificateSignatureType,
             e => rustls::Error::InvalidCertificateData(format!("invalid peer certificate: {e}")),
         }
     }

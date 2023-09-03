@@ -182,17 +182,11 @@ impl RoutingTable {
             match BucketIndex::new(&self.local_key.distance(&target)) {
                 Some(index) => (
                     index.get(),
-                    self.buckets[index.get()]
-                        .closest_iter(target.clone())
-                        .cloned()
-                        .collect(),
+                    self.buckets[index.get()].closest_iter(target.clone()).cloned().collect(),
                 ),
                 None => (
                     0,
-                    self.buckets[0]
-                        .closest_iter(target.clone())
-                        .cloned()
-                        .collect(),
+                    self.buckets[0].closest_iter(target.clone()).cloned().collect(),
                 ),
             };
 

@@ -184,9 +184,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2
-        .send_validation_result(peer1, ValidationResult::Accept)
-        .await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -196,9 +194,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1
-        .send_validation_result(peer2, ValidationResult::Accept)
-        .await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -217,12 +213,8 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         }
     );
 
-    handle1
-        .send_sync_notification(peer2, vec![1, 3, 3, 7])
-        .unwrap();
-    handle2
-        .send_sync_notification(peer1, vec![1, 3, 3, 8])
-        .unwrap();
+    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]).unwrap();
+    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]).unwrap();
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -349,9 +341,7 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2
-        .send_validation_result(peer1, ValidationResult::Reject)
-        .await;
+    handle2.send_validation_result(peer1, ValidationResult::Reject).await;
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -471,9 +461,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2
-        .send_validation_result(peer1, ValidationResult::Accept)
-        .await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -483,9 +471,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1
-        .send_validation_result(peer2, ValidationResult::Accept)
-        .await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -504,12 +490,8 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         }
     );
 
-    handle1
-        .send_sync_notification(peer2, vec![1, 3, 3, 7])
-        .unwrap();
-    handle2
-        .send_sync_notification(peer1, vec![1, 3, 3, 8])
-        .unwrap();
+    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]).unwrap();
+    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]).unwrap();
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -645,9 +627,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2
-        .send_validation_result(peer1, ValidationResult::Accept)
-        .await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
 
     // accept the inbound substreams
     assert_eq!(
@@ -658,9 +638,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1
-        .send_validation_result(peer2, ValidationResult::Accept)
-        .await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -703,9 +681,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1
-        .send_validation_result(peer2, ValidationResult::Accept)
-        .await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -715,9 +691,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2
-        .send_validation_result(peer1, ValidationResult::Accept)
-        .await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
 
     // verify that both peers get the open event
     assert_eq!(
@@ -738,12 +712,8 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
     );
 
     // send notifications to verify that the connection works again
-    handle1
-        .send_sync_notification(peer2, vec![1, 3, 3, 7])
-        .unwrap();
-    handle2
-        .send_sync_notification(peer1, vec![1, 3, 3, 8])
-        .unwrap();
+    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]).unwrap();
+    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]).unwrap();
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -872,9 +842,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2
-        .send_validation_result(peer1, ValidationResult::Accept)
-        .await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
 
     // accept the substreams
     assert_eq!(
@@ -885,9 +853,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1
-        .send_validation_result(peer2, ValidationResult::Accept)
-        .await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -933,9 +899,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
             handshake: vec![6, 6, 6, 6],
         }
     );
-    handle1
-        .send_validation_result(peer2, ValidationResult::Accept)
-        .await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
 
     // accept the substreams
     assert_eq!(
@@ -946,9 +910,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
             handshake: vec![5, 5, 5, 5],
         }
     );
-    handle2
-        .send_validation_result(peer1, ValidationResult::Accept)
-        .await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
 
     // verify that both peers get the open event
     assert_eq!(
@@ -1081,9 +1043,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1
-        .send_validation_result(peer2, ValidationResult::Accept)
-        .await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
 
     // accept the substreams
     assert_eq!(
@@ -1094,9 +1054,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2
-        .send_validation_result(peer1, ValidationResult::Accept)
-        .await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -1115,12 +1073,8 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         }
     );
 
-    handle1
-        .send_sync_notification(peer2, vec![1, 3, 3, 7])
-        .unwrap();
-    handle2
-        .send_sync_notification(peer1, vec![1, 3, 3, 8])
-        .unwrap();
+    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]).unwrap();
+    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]).unwrap();
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -1213,9 +1167,7 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport, tran
         }
     });
 
-    handle1
-        .send_sync_notification(PeerId::random(), vec![1, 3, 3, 7])
-        .unwrap();
+    handle1.send_sync_notification(PeerId::random(), vec![1, 3, 3, 7]).unwrap();
 }
 
 #[tokio::test]
@@ -1576,9 +1528,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2
-        .send_validation_result(peer1, ValidationResult::Accept)
-        .await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -1588,9 +1538,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1
-        .send_validation_result(peer2, ValidationResult::Accept)
-        .await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
 
     assert_eq!(
         handle2.next().await.unwrap(),

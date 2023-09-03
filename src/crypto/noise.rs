@@ -77,9 +77,7 @@ impl NoiseConfiguration {
 
         let builder: Builder<'_> =
             Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise pattern"));
-        let dh_keypair = builder
-            .generate_keypair()
-            .expect("keypair generation to succeed");
+        let dh_keypair = builder.generate_keypair().expect("keypair generation to succeed");
         let static_key = dh_keypair.private;
 
         let noise = match role {
@@ -101,9 +99,7 @@ impl NoiseConfiguration {
             ..Default::default()
         };
         let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-        noise_payload
-            .encode(&mut payload)
-            .expect("Vec<u8> provides capacity as needed");
+        noise_payload.encode(&mut payload).expect("Vec<u8> provides capacity as needed");
 
         Self {
             payload,
@@ -335,10 +331,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSoc
                         tracing::trace!(target: LOG_TARGET, "read: decrypting {} bytes", len,);
                         this.decrypt_buffer.resize(len, 0u8);
 
-                        match this
-                            .noise
-                            .read_message(&this.read_buffer, &mut this.decrypt_buffer)
-                        {
+                        match this.noise.read_message(&this.read_buffer, &mut this.decrypt_buffer) {
                             Ok(nread) => {
                                 this.decrypt_buffer.resize(nread, 0u8);
                                 let amount = std::cmp::min(buf.len(), nread);
@@ -398,8 +391,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSo
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
         let this = Pin::into_inner(self);
-        this.write_buffer
-            .resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
+        this.write_buffer.resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
 
         match this.noise.write_message(buf, &mut this.write_buffer) {
             Ok(nwritten) => {
@@ -538,10 +530,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Encrypted<S> {
                         tracing::trace!(target: LOG_TARGET, "read: decrypting {} bytes", len,);
                         this.decrypt_buffer.resize(len, 0u8);
 
-                        match this
-                            .noise
-                            .read_message(&this.read_buffer, &mut this.decrypt_buffer)
-                        {
+                        match this.noise.read_message(&this.read_buffer, &mut this.decrypt_buffer) {
                             Ok(nread) => {
                                 this.decrypt_buffer.resize(nread, 0u8);
                                 let amount = std::cmp::min(buf.len(), nread);
@@ -602,8 +591,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Encrypted<S> {
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
         let this = Pin::into_inner(self);
-        this.write_buffer
-            .resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
+        this.write_buffer.resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
 
         match this.noise.write_message(buf, &mut this.write_buffer) {
             Ok(nwritten) => {
@@ -714,10 +702,8 @@ impl NoiseContext {
         let noise = snow::Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise patterns"));
         let keypair = noise.generate_keypair().unwrap();
 
-        let noise = noise
-            .local_private_key(&keypair.private)
-            .build_initiator()
-            .expect("to succeed");
+        let noise =
+            noise.local_private_key(&keypair.private).build_initiator().expect("to succeed");
 
         NoiseContext::make_noise_and_payload(noise, keypair, id_keys)
     }
@@ -751,9 +737,7 @@ impl NoiseContext {
         };
 
         let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-        noise_payload
-            .encode(&mut payload)
-            .expect("Vec<u8> to provide needed capacity");
+        noise_payload.encode(&mut payload).expect("Vec<u8> to provide needed capacity");
 
         Self {
             noise,
@@ -797,10 +781,7 @@ impl NoiseContext {
 
                 let mut buffer = vec![0u8; 256];
 
-                let nwritten = self
-                    .noise
-                    .write_message(&[], &mut buffer)
-                    .expect("to succeed");
+                let nwritten = self.noise.write_message(&[], &mut buffer).expect("to succeed");
                 buffer.truncate(nwritten);
 
                 let size = nwritten as u16;
@@ -821,10 +802,7 @@ impl NoiseContext {
 
         let mut buffer = vec![0u8; 2048];
 
-        let nwritten = self
-            .noise
-            .write_message(&self.payload, &mut buffer)
-            .expect("to succeed");
+        let nwritten = self.noise.write_message(&self.payload, &mut buffer).expect("to succeed");
         buffer.truncate(nwritten);
 
         let size = nwritten as u16;
@@ -852,9 +830,7 @@ mod tests {
         let keypair1 = Keypair::generate();
         let _keypair2 = Keypair::generate();
 
-        let listener = TcpListener::bind("[::1]:0".parse::<SocketAddr>().unwrap())
-            .await
-            .unwrap();
+        let listener = TcpListener::bind("[::1]:0".parse::<SocketAddr>().unwrap()).await.unwrap();
 
         let (stream1, stream2) = tokio::join!(
             TcpStream::connect(listener.local_addr().unwrap()),

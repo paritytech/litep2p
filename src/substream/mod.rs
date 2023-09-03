@@ -119,12 +119,11 @@ impl<K: SubstreamSetKey> Stream for SubstreamSet<K> {
             match Pin::new(&mut substream).poll_next(cx) {
                 Poll::Pending => continue,
                 Poll::Ready(Some(data)) => return Poll::Ready(Some((*key, data))),
-                Poll::Ready(None) => {
+                Poll::Ready(None) =>
                     return Poll::Ready(Some((
                         *key,
                         Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
-                    )))
-                }
+                    ))),
             }
         }
 
@@ -221,10 +220,7 @@ mod tests {
             .expect_poll_next()
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
-        substream
-            .expect_poll_next()
-            .times(1)
-            .return_once(|_| Poll::Ready(None));
+        substream.expect_poll_next().times(1).return_once(|_| Poll::Ready(None));
         substream.expect_poll_next().returning(|_| Poll::Pending);
         let substream = Box::new(substream);
         set.insert(peer, substream);
@@ -255,18 +251,9 @@ mod tests {
             .expect_poll_next()
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
-        substream
-            .expect_poll_ready()
-            .times(1)
-            .return_once(|_| Poll::Ready(Ok(())));
-        substream
-            .expect_start_send()
-            .times(1)
-            .return_once(|_| Ok(()));
-        substream
-            .expect_poll_flush()
-            .times(1)
-            .return_once(|_| Poll::Ready(Ok(())));
+        substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
+        substream.expect_start_send().times(1).return_once(|_| Ok(()));
+        substream.expect_poll_flush().times(1).return_once(|_| Poll::Ready(Ok(())));
         substream
             .expect_poll_next()
             .times(1)

@@ -63,17 +63,16 @@ pub struct NegotiatedComplete<TInner> {
 
 impl<TInner> Future for NegotiatedComplete<TInner>
 where
-    // `Unpin` is required not because of implementation details but because we produce the
-    // `Negotiated` as the output of the future.
+    // `Unpin` is required not because of
+    // implementation details but because we produce
+    // the `Negotiated` as the output of the
+    // future.
     TInner: AsyncRead + AsyncWrite + Unpin,
 {
     type Output = Result<Negotiated<TInner>, NegotiationError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut io = self
-            .inner
-            .take()
-            .expect("NegotiatedFuture called after completion.");
+        let mut io = self.inner.take().expect("NegotiatedFuture called after completion.");
         match Negotiated::poll(Pin::new(&mut io), cx) {
             Poll::Pending => {
                 self.inner = Some(io);
@@ -323,10 +322,7 @@ where
         // Ensure all data has been flushed and expected negotiation messages
         // have been received.
         ready!(self.as_mut().poll(cx).map_err(Into::<io::Error>::into)?);
-        ready!(self
-            .as_mut()
-            .poll_flush(cx)
-            .map_err(Into::<io::Error>::into)?);
+        ready!(self.as_mut().poll_flush(cx).map_err(Into::<io::Error>::into)?);
 
         // Continue with the shutdown of the underlying I/O stream.
         match self.project().state.project() {
@@ -392,9 +388,8 @@ impl Error for NegotiationError {
 impl fmt::Display for NegotiationError {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
-            NegotiationError::ProtocolError(p) => {
-                fmt.write_fmt(format_args!("Protocol error: {p}"))
-            }
+            NegotiationError::ProtocolError(p) =>
+                fmt.write_fmt(format_args!("Protocol error: {p}")),
             NegotiationError::Failed => fmt.write_str("Protocol negotiation failed."),
         }
     }

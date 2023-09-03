@@ -243,10 +243,7 @@ impl TcpConnection {
             "accept inbound substream"
         );
 
-        let protocols = protocols
-            .iter()
-            .map(|protocol| &**protocol)
-            .collect::<Vec<&str>>();
+        let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
         let (io, protocol) = Self::negotiate_protocol(stream, &Role::Listener, protocols).await?;
 
         tracing::trace!(
@@ -561,11 +558,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -622,11 +616,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -676,11 +667,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -689,9 +677,7 @@ mod tests {
         let stream = TokioAsyncWriteCompatExt::compat_write(stream);
 
         // attempt to negotiate yamux, skipping noise entirely
-        assert!(listener_select_proto(stream, vec!["/yamux/1.0.0"])
-            .await
-            .is_err());
+        assert!(listener_select_proto(stream, vec!["/yamux/1.0.0"]).await.is_err());
 
         assert!(std::matches!(
             manager.next().await,
@@ -743,11 +729,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -755,11 +738,7 @@ mod tests {
         let dialer = TokioAsyncWriteCompatExt::compat_write(dialer);
 
         // attempt to negotiate yamux, skipping noise entirely
-        assert!(
-            dialer_select_proto(dialer, vec!["/yamux/1.0.0"], Version::V1)
-                .await
-                .is_err()
-        );
+        assert!(dialer_select_proto(dialer, vec!["/yamux/1.0.0"], Version::V1).await.is_err());
 
         assert!(std::matches!(
             manager.next().await,
@@ -811,11 +790,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -823,9 +799,7 @@ mod tests {
         let dialer = TokioAsyncWriteCompatExt::compat_write(dialer);
 
         // attempt to negotiate yamux, skipping noise entirely
-        assert!(dialer_select_proto(dialer, vec!["/noise"], Version::V1)
-            .await
-            .is_ok());
+        assert!(dialer_select_proto(dialer, vec!["/noise"], Version::V1).await.is_ok());
 
         assert!(std::matches!(
             manager.next().await,
@@ -871,11 +845,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -930,11 +901,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -988,11 +956,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -1046,11 +1011,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -1058,25 +1020,18 @@ mod tests {
         let dialer = TokioAsyncWriteCompatExt::compat_write(dialer);
 
         // negotiate noise
-        let (_protocol, stream) = dialer_select_proto(dialer, vec!["/noise"], Version::V1)
-            .await
-            .unwrap();
+        let (_protocol, stream) =
+            dialer_select_proto(dialer, vec!["/noise"], Version::V1).await.unwrap();
 
         let keypair = Keypair::generate();
         let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer);
 
         // do a noise handshake
-        let (stream, _peer) = noise::handshake(stream.inner(), noise_config)
-            .await
-            .unwrap();
+        let (stream, _peer) = noise::handshake(stream.inner(), noise_config).await.unwrap();
         let stream: Encrypted<Compat<TcpStream>> = stream;
 
         // after the handshake, try to negotiate some random protocol instead of yamux
-        assert!(
-            dialer_select_proto(stream, vec!["/unsupported/1"], Version::V1)
-                .await
-                .is_err()
-        );
+        assert!(dialer_select_proto(stream, vec!["/unsupported/1"], Version::V1).await.is_err());
 
         assert!(std::matches!(
             manager.next().await,
@@ -1122,11 +1077,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -1141,15 +1093,11 @@ mod tests {
         let noise_config = NoiseConfiguration::new(&keypair, Role::Listener);
 
         // do a noise handshake
-        let (stream, _peer) = noise::handshake(stream.inner(), noise_config)
-            .await
-            .unwrap();
+        let (stream, _peer) = noise::handshake(stream.inner(), noise_config).await.unwrap();
         let stream: Encrypted<Compat<TcpStream>> = stream;
 
         // after the handshake, try to negotiate some random protocol instead of yamux
-        assert!(listener_select_proto(stream, vec!["/unsupported/1"])
-            .await
-            .is_err());
+        assert!(listener_select_proto(stream, vec!["/unsupported/1"]).await.is_err());
 
         assert!(std::matches!(
             manager.next().await,
@@ -1201,11 +1149,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -1213,17 +1158,14 @@ mod tests {
         let dialer = TokioAsyncWriteCompatExt::compat_write(dialer);
 
         // negotiate noise
-        let (_protocol, stream) = dialer_select_proto(dialer, vec!["/noise"], Version::V1)
-            .await
-            .unwrap();
+        let (_protocol, stream) =
+            dialer_select_proto(dialer, vec!["/noise"], Version::V1).await.unwrap();
 
         let keypair = Keypair::generate();
         let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer);
 
         // do a noise handshake
-        let (stream, _peer) = noise::handshake(stream.inner(), noise_config)
-            .await
-            .unwrap();
+        let (stream, _peer) = noise::handshake(stream.inner(), noise_config).await.unwrap();
         let _stream: Encrypted<Compat<TcpStream>> = stream;
 
         // after noise handshake, don't negotiate anything and wait for the substream to time out
@@ -1271,11 +1213,8 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) => {
-                    handle
-                        .report_dial_failure(ConnectionId::from(0usize), multiaddr, error)
-                        .await
-                }
+                Err(error) =>
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
             }
         });
 
@@ -1290,9 +1229,7 @@ mod tests {
         let noise_config = NoiseConfiguration::new(&keypair, Role::Listener);
 
         // do a noise handshake
-        let (stream, _peer) = noise::handshake(stream.inner(), noise_config)
-            .await
-            .unwrap();
+        let (stream, _peer) = noise::handshake(stream.inner(), noise_config).await.unwrap();
         let _stream: Encrypted<Compat<TcpStream>> = stream;
 
         // after noise handshake, don't negotiate anything and wait for the substream to time out

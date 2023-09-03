@@ -100,9 +100,7 @@ impl GetRecordContext {
 
     /// Get the found record.
     pub fn found_record(mut self) -> Record {
-        self.found_records
-            .pop()
-            .expect("record to exist since query succeeded")
+        self.found_records.pop().expect("record to exist since query succeeded")
     }
 
     /// Register response failure for `peer`.
@@ -136,23 +134,19 @@ impl GetRecordContext {
         }
 
         self.candidates.extend(peers.clone());
-        self.candidates.make_contiguous().sort_by(|a, b| {
-            self.target
-                .distance(&a.key)
-                .cmp(&self.target.distance(&b.key))
-        });
+        self.candidates
+            .make_contiguous()
+            .sort_by(|a, b| self.target.distance(&a.key).cmp(&self.target.distance(&b.key)));
     }
 
     /// Get next action for `peer`.
     // TODO: remove this and store the next action to `PeerAction`
     pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
-        self.pending
-            .contains_key(peer)
-            .then_some(QueryAction::SendMessage {
-                query: self.query,
-                peer: *peer,
-                message: KademliaMessage::get_record(self.target.clone().into_preimage()),
-            })
+        self.pending.contains_key(peer).then_some(QueryAction::SendMessage {
+            query: self.query,
+            peer: *peer,
+            message: KademliaMessage::get_record(self.target.clone().into_preimage()),
+        })
     }
 
     /// Schedule next peer for outbound `GET_VALUE` query.
@@ -185,9 +179,8 @@ impl GetRecordContext {
         let continue_search = match self.quorum {
             Quorum::All => (self.record_count + self.found_records.len() < self.replication_factor),
             Quorum::One => (self.record_count + self.found_records.len() < 1),
-            Quorum::N(num_responses) => {
-                (self.record_count + self.found_records.len() < num_responses.into())
-            }
+            Quorum::N(num_responses) =>
+                (self.record_count + self.found_records.len() < num_responses.into()),
         };
 
         // if the search must continue, try to schedule next outbound message if possible

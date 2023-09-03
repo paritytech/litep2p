@@ -60,7 +60,8 @@ async fn client_event_loop(
     // the protocol/handshake but for more complex protocol implementations it may be necessary have
     // validation in both ends.
     //
-    // currently it's not possible to automatically accept inbound substreams but that is on the roadmap
+    // currently it's not possible to automatically accept inbound substreams but that is on the
+    // roadmap
     let peer = loop {
         tokio::select! {
             _ = litep2p.next_event() => {}

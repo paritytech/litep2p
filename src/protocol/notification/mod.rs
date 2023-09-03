@@ -246,9 +246,7 @@ impl NotificationProtocol {
                 self.negotiation.remove_outbound(&peer);
                 self.negotiation.remove_inbound(&peer);
                 // TODO: only report if the peer is actually in a state where it concerns the user
-                self.event_handle
-                    .report_notification_stream_closed(peer)
-                    .await;
+                self.event_handle.report_notification_stream_closed(peer).await;
                 Ok(())
             }
             None => {
@@ -358,7 +356,8 @@ impl NotificationProtocol {
         let context = self.peers.get_mut(&peer).expect("peer to exist");
 
         // the peer can be in two different states when an outbound substream has opened:
-        //  - `PeerState::Closed` - remote node opened a substream to local node and it needs to be validated
+        //  - `PeerState::Closed` - remote node opened a substream to local node and it needs to be
+        //    validated
         //  - `PeerState::` - TODO
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
             PeerState::Closed { .. } => {
@@ -462,8 +461,9 @@ impl NotificationProtocol {
             } => {
                 match outbound {
                     OutboundState::Negotiating => {
-                        // the outbound substream must exist in `negotiation` because the `OutboundState`
-                        // is indicating that `HandshakeService` is reading/writing from/to the substream.
+                        // the outbound substream must exist in `negotiation` because the
+                        // `OutboundState` is indicating that
+                        // `HandshakeService` is reading/writing from/to the substream.
                         let mut outbound = self
                             .negotiation
                             .remove_outbound(&peer)
@@ -495,8 +495,9 @@ impl NotificationProtocol {
                     InboundState::ReadingHandshake
                     | InboundState::SendingHandshake
                     | InboundState::_Accepting => {
-                        // the inbound substream must exist in `negotiation` because the `InboundState`
-                        // is indicating that `HandshakeService` is reading/writing from/to the substream.
+                        // the inbound substream must exist in `negotiation` because the
+                        // `InboundState` is indicating that
+                        // `HandshakeService` is reading/writing from/to the substream.
                         let mut inbound = self
                             .negotiation
                             .remove_inbound(&peer)
@@ -536,9 +537,7 @@ impl NotificationProtocol {
                     context.state = PeerState::Closed {
                         _pending_open: None,
                     };
-                    self.event_handle
-                        .report_notification_stream_closed(peer)
-                        .await;
+                    self.event_handle.report_notification_stream_closed(peer).await;
                 }
                 None => {
                     tracing::error!(
@@ -635,11 +634,10 @@ impl NotificationProtocol {
         tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle substream event");
 
         match message {
-            Ok(message) => {
+            Ok(message) =>
                 self.event_handle
                     .report_notification_received(peer, message.freeze().into())
-                    .await
-            }
+                    .await,
             Err(_) => {
                 self.negotiation.remove_outbound(&peer);
                 self.negotiation.remove_inbound(&peer);
@@ -652,9 +650,7 @@ impl NotificationProtocol {
                     _pending_open: None,
                 };
                 // TODO: if the node is still handshaking, don't return this event
-                self.event_handle
-                    .report_notification_stream_closed(peer)
-                    .await;
+                self.event_handle.report_notification_stream_closed(peer).await;
             }
         }
     }

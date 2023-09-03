@@ -128,12 +128,11 @@ impl<R> LengthDelimited<R> {
         while !this.write_buffer.is_empty() {
             match this.inner.as_mut().poll_write(cx, this.write_buffer) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(0)) => {
+                Poll::Ready(Ok(0)) =>
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::WriteZero,
                         "Failed to write buffered frame.",
-                    )))
-                }
+                    ))),
                 Poll::Ready(Ok(n)) => this.write_buffer.advance(n),
                 Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             }
@@ -156,13 +155,12 @@ where
             match this.read_state {
                 ReadState::ReadLength { buf, pos } => {
                     match this.inner.as_mut().poll_read(cx, &mut buf[*pos..*pos + 1]) {
-                        Poll::Ready(Ok(0)) => {
+                        Poll::Ready(Ok(0)) =>
                             if *pos == 0 {
                                 return Poll::Ready(None);
                             } else {
                                 return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())));
-                            }
-                        }
+                            },
                         Poll::Ready(Ok(n)) => {
                             debug_assert_eq!(n, 1);
                             *pos += n;
@@ -196,14 +194,9 @@ where
                     }
                 }
                 ReadState::ReadData { len, pos } => {
-                    match this
-                        .inner
-                        .as_mut()
-                        .poll_read(cx, &mut this.read_buffer[*pos..])
-                    {
-                        Poll::Ready(Ok(0)) => {
-                            return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())))
-                        }
+                    match this.inner.as_mut().poll_read(cx, &mut this.read_buffer[*pos..]) {
+                        Poll::Ready(Ok(0)) =>
+                            return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into()))),
                         Poll::Ready(Ok(n)) => *pos += n,
                         Poll::Pending => return Poll::Pending,
                         Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
@@ -249,12 +242,11 @@ where
 
         let len = match u16::try_from(item.len()) {
             Ok(len) if len <= MAX_FRAME_SIZE => len,
-            _ => {
+            _ =>
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Maximum frame size exceeded.",
-                ))
-            }
+                )),
         };
 
         let mut uvi_buf = unsigned_varint::encode::u16_buffer();

@@ -158,8 +158,7 @@ impl Litep2pConfigBuilder {
 
     /// Install notification protocol.
     pub fn with_notification_protocol(mut self, config: notification::Config) -> Self {
-        self.notification_protocols
-            .insert(config.protocol_name().clone(), config);
+        self.notification_protocols.insert(config.protocol_name().clone(), config);
         self
     }
 
@@ -189,8 +188,7 @@ impl Litep2pConfigBuilder {
 
     /// Install request-response protocol.
     pub fn with_request_response_protocol(mut self, config: request_response::Config) -> Self {
-        self.request_response_protocols
-            .insert(config.protocol_name().clone(), config);
+        self.request_response_protocols.insert(config.protocol_name().clone(), config);
         self
     }
 

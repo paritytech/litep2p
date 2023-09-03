@@ -46,10 +46,7 @@ use std::task::Poll;
 async fn non_existent_peer() {
     let (mut notif, _handle, _sender, _) = make_notification_protocol();
 
-    if let Err(err) = notif
-        .on_validation_result(PeerId::random(), ValidationResult::Accept)
-        .await
-    {
+    if let Err(err) = notif.on_validation_result(PeerId::random(), ValidationResult::Accept).await {
         assert!(std::matches!(err, Error::PeerDoesntExist(_)));
     }
 }
@@ -68,18 +65,9 @@ async fn substream_accepted() {
         .expect_poll_next()
         .times(1)
         .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
-    substream
-        .expect_poll_ready()
-        .times(1)
-        .return_once(|_| Poll::Ready(Ok(())));
-    substream
-        .expect_start_send()
-        .times(1)
-        .return_once(|_| Ok(()));
-    substream
-        .expect_poll_flush()
-        .times(1)
-        .return_once(|_| Poll::Ready(Ok(())));
+    substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
+    substream.expect_start_send().times(1).return_once(|_| Ok(()));
+    substream.expect_poll_flush().times(1).return_once(|_| Poll::Ready(Ok(())));
 
     let (proto_tx, mut proto_rx) = channel(256);
     tx.send(InnerTransportEvent::ConnectionEstablished {
@@ -127,10 +115,7 @@ async fn substream_accepted() {
             handshake: handshake.into()
         },
     );
-    notif
-        .on_validation_result(peer, ValidationResult::Accept)
-        .await
-        .unwrap();
+    notif.on_validation_result(peer, ValidationResult::Accept).await.unwrap();
 
     // poll negotiation to finish the handshake
     let (peer, event) = notif.negotiation.next().await.unwrap();
@@ -173,10 +158,7 @@ async fn substream_rejected() {
         .expect_poll_next()
         .times(1)
         .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
-    substream
-        .expect_poll_close()
-        .times(1)
-        .return_once(|_| Poll::Ready(Ok(())));
+    substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
 
     // connect peer and verify it's in closed state
     notif.on_connection_established(peer).await.unwrap();
@@ -214,12 +196,10 @@ async fn substream_rejected() {
             handshake: handshake.into()
         },
     );
-    notif
-        .on_validation_result(peer, ValidationResult::Reject)
-        .await
-        .unwrap();
+    notif.on_validation_result(peer, ValidationResult::Reject).await.unwrap();
 
-    // substream is rejected so no outbound substraem is opened and peer is converted to closed state
+    // substream is rejected so no outbound substraem is opened and peer is converted to closed
+    // state
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Closed { .. } => {}
         state => panic!("invalid state for peer: {state:?}"),
@@ -294,10 +274,7 @@ async fn accept_fails_due_to_closed_substream() {
         },
     );
 
-    notif
-        .on_validation_result(peer, ValidationResult::Accept)
-        .await
-        .unwrap();
+    notif.on_validation_result(peer, ValidationResult::Accept).await.unwrap();
 
     // get negotiation event
     let (event_peer, event) = notif.negotiation.next().await.unwrap();
@@ -326,10 +303,7 @@ async fn accept_fails_due_to_closed_connection() {
         .expect_poll_next()
         .times(1)
         .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
-    substream
-        .expect_poll_close()
-        .times(1)
-        .return_once(|_| Poll::Ready(Ok(())));
+    substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
 
     let (proto_tx, proto_rx) = channel(256);
     tx.send(InnerTransportEvent::ConnectionEstablished {
@@ -382,10 +356,7 @@ async fn accept_fails_due_to_closed_connection() {
     // and instead marks the connection as closed
     drop(proto_rx);
 
-    assert!(notif
-        .on_validation_result(peer, ValidationResult::Accept)
-        .await
-        .is_err());
+    assert!(notif.on_validation_result(peer, ValidationResult::Accept).await.is_err());
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Closed { .. } => {}
@@ -411,10 +382,7 @@ async fn open_substream_accepted() {
     // try to accept a closed substream
     notif.on_close_substream(peer).await;
 
-    assert!(notif
-        .on_validation_result(peer, ValidationResult::Accept)
-        .await
-        .is_err());
+    assert!(notif.on_validation_result(peer, ValidationResult::Accept).await.is_err());
 }
 
 #[tokio::test]
@@ -435,8 +403,5 @@ async fn open_substream_rejected() {
     // try to reject a closed substream
     notif.on_close_substream(peer).await;
 
-    assert!(notif
-        .on_validation_result(peer, ValidationResult::Reject)
-        .await
-        .is_err());
+    assert!(notif.on_validation_result(peer, ValidationResult::Reject).await.is_err());
 }

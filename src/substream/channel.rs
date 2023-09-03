@@ -92,21 +92,15 @@ impl Sink<bytes::Bytes> for Substream {
         };
         let id = self.id;
 
-        Pin::new(&mut self.tx)
-            .start_send((id, item))
-            .map_err(|_| Error::Unknown)
+        Pin::new(&mut self.tx).start_send((id, item)).map_err(|_| Error::Unknown)
     }
 
     fn poll_flush<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Result<(), Error>> {
-        Pin::new(&mut self.tx)
-            .poll_flush(cx)
-            .map_err(|_| Error::Unknown)
+        Pin::new(&mut self.tx).poll_flush(cx).map_err(|_| Error::Unknown)
     }
 
     fn poll_close<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Result<(), Error>> {
-        Pin::new(&mut self.tx)
-            .poll_close(cx)
-            .map_err(|_| Error::Unknown)
+        Pin::new(&mut self.tx).poll_close(cx).map_err(|_| Error::Unknown)
     }
 }
 
@@ -167,14 +161,8 @@ mod tests {
         substream1.apply_codec(ProtocolCodec::UnsignedVarint(None));
         substream2.apply_codec(ProtocolCodec::UnsignedVarint(None));
 
-        substream1
-            .send(bytes::Bytes::from(vec![1, 3, 3, 7]))
-            .await
-            .unwrap();
-        substream2
-            .send(bytes::Bytes::from(vec![1, 3, 3, 8]))
-            .await
-            .unwrap();
+        substream1.send(bytes::Bytes::from(vec![1, 3, 3, 7])).await.unwrap();
+        substream2.send(bytes::Bytes::from(vec![1, 3, 3, 8])).await.unwrap();
 
         let event = backend.next_event().await.unwrap();
         assert_eq!(event.0, SubstreamId::from(1usize));

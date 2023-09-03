@@ -86,9 +86,7 @@ impl KademliaMessage {
         };
 
         let mut buf = BytesMut::with_capacity(message.encoded_len());
-        message
-            .encode(&mut buf)
-            .expect("Vec<u8> to provide needed capacity");
+        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
 
         buf.freeze()
     }
@@ -109,9 +107,7 @@ impl KademliaMessage {
         };
 
         let mut buf = BytesMut::with_capacity(message.encoded_len());
-        message
-            .encode(&mut buf)
-            .expect("BytesMut to provide needed capacity");
+        message.encode(&mut buf).expect("BytesMut to provide needed capacity");
 
         buf.freeze()
     }
@@ -126,9 +122,7 @@ impl KademliaMessage {
         };
 
         let mut buf = BytesMut::with_capacity(message.encoded_len());
-        message
-            .encode(&mut buf)
-            .expect("BytesMut to provide needed capacity");
+        message.encode(&mut buf).expect("BytesMut to provide needed capacity");
 
         buf.freeze()
     }
@@ -142,9 +136,7 @@ impl KademliaMessage {
         };
 
         let mut buf = Vec::with_capacity(message.encoded_len());
-        message
-            .encode(&mut buf)
-            .expect("Vec<u8> to provide needed capacity");
+        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
 
         buf
     }
@@ -170,9 +162,7 @@ impl KademliaMessage {
                     })
                 }
                 1 => Some(Self::GetRecordResponse {
-                    record: message
-                        .record
-                        .map(|record| Record::new(record.key, record.value)),
+                    record: message.record.map(|record| Record::new(record.key, record.value)),
                     peers: message
                         .closer_peers
                         .iter()

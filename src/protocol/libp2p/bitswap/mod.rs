@@ -193,12 +193,10 @@ impl Bitswap {
                     });
                 }
                 ResponseType::Presence { cid, presence } => {
-                    response
-                        .block_presences
-                        .push(schema::bitswap::BlockPresence {
-                            cid: cid.to_bytes(),
-                            r#type: presence as i32,
-                        });
+                    response.block_presences.push(schema::bitswap::BlockPresence {
+                        cid: cid.to_bytes(),
+                        r#type: presence as i32,
+                    });
                 }
             }
         }

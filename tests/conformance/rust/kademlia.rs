@@ -124,10 +124,7 @@ async fn find_node() {
 
     for i in 0..addresses.len() {
         libp2p.dial(addresses[i].clone()).unwrap();
-        let _ = libp2p
-            .behaviour_mut()
-            .kad
-            .add_address(&peer_ids[i], addresses[i].clone());
+        let _ = libp2p.behaviour_mut().kad.add_address(&peer_ids[i], addresses[i].clone());
     }
     libp2p.dial(address).unwrap();
 
@@ -230,10 +227,7 @@ async fn put_record() {
 
     for i in 0..addresses.len() {
         libp2p.dial(addresses[i].clone()).unwrap();
-        let _ = libp2p
-            .behaviour_mut()
-            .kad
-            .add_address(&peer_ids[i], addresses[i].clone());
+        let _ = libp2p.behaviour_mut().kad.add_address(&peer_ids[i], addresses[i].clone());
     }
     libp2p.dial(address).unwrap();
 
@@ -345,10 +339,7 @@ async fn get_record() {
 
     for i in 0..addresses.len() {
         libp2p.dial(addresses[i].clone()).unwrap();
-        let _ = libp2p
-            .behaviour_mut()
-            .kad
-            .add_address(&peer_ids[i], addresses[i].clone());
+        let _ = libp2p.behaviour_mut().kad.add_address(&peer_ids[i], addresses[i].clone());
     }
 
     // publish record on the network
@@ -358,11 +349,7 @@ async fn get_record() {
         publisher: None,
         expires: None,
     };
-    libp2p
-        .behaviour_mut()
-        .kad
-        .put_record(record, libp2p::kad::Quorum::All)
-        .unwrap();
+    libp2p.behaviour_mut().kad.put_record(record, libp2p::kad::Quorum::All).unwrap();
 
     #[allow(unused)]
     let mut listen_addr = None;
@@ -410,9 +397,7 @@ async fn get_record() {
         )
         .await;
 
-    kad_handle
-        .get_record(RecordKey::new(&vec![1, 2, 3, 4]), Quorum::All)
-        .await;
+    kad_handle.get_record(RecordKey::new(&vec![1, 2, 3, 4]), Quorum::All).await;
 
     match kad_handle.next().await.unwrap() {
         KademliaEvent::GetRecordResult { .. } => {}

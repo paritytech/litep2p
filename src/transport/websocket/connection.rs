@@ -66,9 +66,8 @@ fn multiaddr_into_url(address: Multiaddr) -> crate::Result<Url> {
         .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
     {
         Protocol::Tcp(port) => match protocol_stack.next() {
-            Some(Protocol::Ws(_)) => {
-                url::Url::parse(&format!("ws://{ip4}:{port}/")).map_err(|_| Error::InvalidData)
-            }
+            Some(Protocol::Ws(_)) =>
+                url::Url::parse(&format!("ws://{ip4}:{port}/")).map_err(|_| Error::InvalidData),
             _ => return Err(Error::TransportNotSupported(address.clone())),
         },
         _ => Err(Error::TransportNotSupported(address)),
@@ -300,10 +299,7 @@ impl WebSocketConnection {
             "accept inbound substream"
         );
 
-        let protocols = protocols
-            .iter()
-            .map(|protocol| &**protocol)
-            .collect::<Vec<&str>>();
+        let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
         let (io, protocol) = Self::negotiate_protocol(stream, &Role::Listener, protocols).await?;
 
         tracing::trace!(

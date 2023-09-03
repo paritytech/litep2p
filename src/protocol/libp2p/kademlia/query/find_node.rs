@@ -123,22 +123,18 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
 
         self.candidates.extend(peers.clone());
-        self.candidates.make_contiguous().sort_by(|a, b| {
-            self.target
-                .distance(&a.key)
-                .cmp(&self.target.distance(&b.key))
-        });
+        self.candidates
+            .make_contiguous()
+            .sort_by(|a, b| self.target.distance(&a.key).cmp(&self.target.distance(&b.key)));
     }
 
     /// Get next action for `peer`.
     pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
-        self.pending
-            .contains_key(peer)
-            .then_some(QueryAction::SendMessage {
-                query: self.query,
-                peer: *peer,
-                message: KademliaMessage::find_node(self.target.clone().into_preimage()),
-            })
+        self.pending.contains_key(peer).then_some(QueryAction::SendMessage {
+            query: self.query,
+            peer: *peer,
+            message: KademliaMessage::find_node(self.target.clone().into_preimage()),
+        })
     }
 
     /// Schedule next peer for outbound `FIND_NODE` query.

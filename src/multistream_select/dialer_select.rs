@@ -94,8 +94,9 @@ enum State<R, N> {
 
 impl<R, I> Future for DialerSelectFuture<R, I>
 where
-    // The Unpin bound here is required because we produce a `Negotiated<R>` as the output.
-    // It also makes the implementation considerably easier to write.
+    // The Unpin bound here is required because we produce
+    // a `Negotiated<R>` as the output. It also makes
+    // the implementation considerably easier to write.
     R: AsyncRead + AsyncWrite + Unpin,
     I: Iterator,
     I::Item: AsRef<[u8]>,
@@ -234,9 +235,7 @@ pub fn dialer_propose<'a>(proposed_protocol: &ProtocolName) -> crate::Result<Vec
     // encode proposed protocol
     let mut proto_bytes = BytesMut::with_capacity(512);
     let message = Message::Protocol(Protocol::try_from(proposed_protocol.as_bytes()).unwrap());
-    let _ = message
-        .encode(&mut proto_bytes)
-        .map_err(|_| Error::InvalidData)?;
+    let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
     let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
 
     header.append(&mut proto_bytes.into());
@@ -249,8 +248,6 @@ pub fn dialer_accept<'a>(proposed_protocol: &ProtocolName) -> crate::Result<Vec<
     // encode proposed protocol
     let mut proto_bytes = BytesMut::with_capacity(512);
     let message = Message::Protocol(Protocol::try_from(proposed_protocol.as_bytes()).unwrap());
-    let _ = message
-        .encode(&mut proto_bytes)
-        .map_err(|_| Error::InvalidData)?;
+    let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
     UnsignedVarint::encode(proto_bytes)
 }

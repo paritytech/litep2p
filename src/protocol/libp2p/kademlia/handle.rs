@@ -119,10 +119,7 @@ impl KademliaHandle {
 
     /// Add known peer.
     pub async fn add_known_peer(&self, peer: PeerId, addresses: Vec<Multiaddr>) {
-        let _ = self
-            .cmd_tx
-            .send(KademliaCommand::AddKnownPeer { peer, addresses })
-            .await;
+        let _ = self.cmd_tx.send(KademliaCommand::AddKnownPeer { peer, addresses }).await;
     }
 
     /// Send `FIND_NODE` query to known peers.
@@ -132,18 +129,12 @@ impl KademliaHandle {
 
     /// Store record to DHT.
     pub async fn put_record(&mut self, record: Record) {
-        let _ = self
-            .cmd_tx
-            .send(KademliaCommand::PutRecord { record })
-            .await;
+        let _ = self.cmd_tx.send(KademliaCommand::PutRecord { record }).await;
     }
 
     /// Get record from DHT.
     pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) {
-        let _ = self
-            .cmd_tx
-            .send(KademliaCommand::GetRecord { key, quorum })
-            .await;
+        let _ = self.cmd_tx.send(KademliaCommand::GetRecord { key, quorum }).await;
     }
 }
 

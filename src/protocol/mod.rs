@@ -126,7 +126,8 @@ pub enum TransportEvent {
 
 /// Transport service.
 ///
-/// Provides an interfaces for (`Litep2p`)[crate::Litep2p] protocols to interact with the underlying transport protocols.
+/// Provides an interfaces for (`Litep2p`)[crate::Litep2p] protocols to interact with the underlying
+/// transport protocols.
 #[async_trait::async_trait]
 pub trait Transport {
     /// Dial `peer` using `PeerId`.
@@ -136,7 +137,8 @@ pub trait Transport {
 
     /// Dial peer using a `Multiaddr`.
     ///
-    /// Call fails if the address is not in correct format or it contains an unsupported/disabled transport.
+    /// Call fails if the address is not in correct format or it contains an unsupported/disabled
+    /// transport.
     ///
     /// Calling this function is only necessary for those addresses that are discovered out-of-band
     /// since `Litep2p` internally keeps track of all peer addresses it has learned through user

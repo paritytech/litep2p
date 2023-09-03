@@ -40,7 +40,8 @@ enum ConnectionType {
     Inactive(WeakSender<ProtocolCommand>),
 }
 
-/// Type representing a handle to connection which allows protocols to communicate with the connection.
+/// Type representing a handle to connection which allows protocols to communicate with the
+/// connection.
 #[derive(Debug, Clone)]
 pub struct ConnectionHandle {
     /// Connection type.
@@ -58,10 +59,11 @@ impl ConnectionHandle {
         }
     }
 
-    /// Get active sender from the [`ConnectionHandle`] and then downgrade it to an inactive connection.
+    /// Get active sender from the [`ConnectionHandle`] and then downgrade it to an inactive
+    /// connection.
     ///
-    /// This function is only called once when the connection is established to remote peer and that one
-    /// time the connection type must be `Active`, unless there is a logic bug in `litep2p`.
+    /// This function is only called once when the connection is established to remote peer and that
+    /// one time the connection type must be `Active`, unless there is a logic bug in `litep2p`.
     pub fn downgrade(&mut self) -> Self {
         let connection = match &self.connection {
             ConnectionType::Active(connection) => {
@@ -103,9 +105,8 @@ impl ConnectionHandle {
     ) -> crate::Result<()> {
         match &self.connection {
             ConnectionType::Active(active) => active.clone(),
-            ConnectionType::Inactive(inactive) => {
-                inactive.upgrade().ok_or(Error::ConnectionClosed)?
-            }
+            ConnectionType::Inactive(inactive) =>
+                inactive.upgrade().ok_or(Error::ConnectionClosed)?,
         }
         .send(ProtocolCommand::OpenSubstream {
             protocol: protocol.clone(),

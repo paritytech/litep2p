@@ -57,20 +57,18 @@ where
     I: IntoIterator,
     I::Item: AsRef<[u8]>,
 {
-    let protocols = protocols
-        .into_iter()
-        .filter_map(|n| match Protocol::try_from(n.as_ref()) {
-            Ok(p) => Some((n, p)),
-            Err(e) => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    "Listener: Ignoring invalid protocol: {} due to {}",
-                    String::from_utf8_lossy(n.as_ref()),
-                    e
-                );
-                None
-            }
-        });
+    let protocols = protocols.into_iter().filter_map(|n| match Protocol::try_from(n.as_ref()) {
+        Ok(p) => Some((n, p)),
+        Err(e) => {
+            tracing::warn!(
+                target: LOG_TARGET,
+                "Listener: Ignoring invalid protocol: {} due to {}",
+                String::from_utf8_lossy(n.as_ref()),
+                e
+            );
+            None
+        }
+    });
     ListenerSelectFuture {
         protocols: SmallVec::from_iter(protocols),
         state: State::RecvHeader {
@@ -121,8 +119,10 @@ enum State<R, N> {
 
 impl<R, N> Future for ListenerSelectFuture<R, N>
 where
-    // The Unpin bound here is required because we produce a `Negotiated<R>` as the output.
-    // It also makes the implementation considerably easier to write.
+    // The Unpin bound here is required because we
+    // produce a `Negotiated<R>` as the output.
+    // It also makes the implementation considerably
+    // easier to write.
     R: AsyncRead + AsyncWrite + Unpin,
     N: AsRef<[u8]> + Clone,
 {
@@ -138,9 +138,8 @@ where
                         Poll::Ready(Some(Ok(Message::Header(h)))) => match h {
                             HeaderLine::V1 => *this.state = State::SendHeader { io },
                         },
-                        Poll::Ready(Some(Ok(_))) => {
-                            return Poll::Ready(Err(ProtocolError::InvalidMessage.into()))
-                        }
+                        Poll::Ready(Some(Ok(_))) =>
+                            return Poll::Ready(Err(ProtocolError::InvalidMessage.into())),
                         Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(From::from(err))),
                         // Treat EOF error as [`NegotiationError::Failed`], not as
                         // [`NegotiationError::ProtocolError`], allowing dropping or closing an I/O
@@ -339,7 +338,8 @@ pub fn listener_negotiate<'a>(
         ));
     };
 
-    // skip the multistream-select header because it's not part of user protocols but verify it's present
+    // skip the multistream-select header because it's not part of user protocols but verify it's
+    // present
     let mut protocol_iter = protocols.into_iter();
     let header =
         Protocol::try_from(&b"/multistream/1.0.0"[..]).expect("valid multitstream-select header");
@@ -362,9 +362,7 @@ pub fn listener_negotiate<'a>(
                 // encode negotiated protocol
                 let mut proto_bytes = BytesMut::with_capacity(512);
                 let message = Message::Protocol(protocol);
-                let _ = message
-                    .encode(&mut proto_bytes)
-                    .map_err(|_| Error::InvalidData)?;
+                let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
                 let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
 
                 header.append(&mut proto_bytes.into());

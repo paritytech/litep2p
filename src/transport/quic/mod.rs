@@ -151,9 +151,7 @@ impl QuicTransport {
     async fn accept_connection(&mut self, connection: Connection) -> crate::Result<()> {
         let connection_id = self.context.next_connection_id();
         let address = socket_addr_to_multi_addr(
-            &connection
-                .remote_addr()
-                .expect("remote address to be known"),
+            &connection.remote_addr().expect("remote address to be known"),
         );
 
         let Ok(peer) = self.rx.try_recv() else {
@@ -165,9 +163,7 @@ impl QuicTransport {
 
         // TODO: verify that the peer can actually be accepted
         let mut protocol_set = self.context.protocol_set();
-        protocol_set
-            .report_connection_established(connection_id, peer, address)
-            .await?;
+        protocol_set.report_connection_established(connection_id, peer, address).await?;
 
         tokio::spawn(async move {
             let quic_connection =
@@ -208,9 +204,7 @@ impl QuicTransport {
                 };
 
                 let mut protocol_set = self.context.protocol_set();
-                protocol_set
-                    .report_connection_established(connection_id, peer, address)
-                    .await?;
+                protocol_set.report_connection_established(connection_id, peer, address).await?;
 
                 tokio::spawn(async move {
                     let quic_connection =
@@ -233,9 +227,7 @@ impl QuicTransport {
                         Error::TransportError(error.to_string())
                     };
 
-                    self.context
-                        .report_dial_failure(connection_id, address, error)
-                        .await;
+                    self.context.report_dial_failure(connection_id, address, error).await;
                     Ok(())
                 }
                 None => {
@@ -402,15 +394,12 @@ mod tests {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         };
 
-        let transport1 = QuicTransport::new(handle1, transport_config1)
-            .await
-            .unwrap();
+        let transport1 = QuicTransport::new(handle1, transport_config1).await.unwrap();
 
         let _peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let listen_address = Transport::listen_address(&transport1).to_string();
-        let listen_address: Multiaddr = format!("{}/p2p/{}", listen_address, _peer1.to_string())
-            .parse()
-            .unwrap();
+        let listen_address: Multiaddr =
+            format!("{}/p2p/{}", listen_address, _peer1.to_string()).parse().unwrap();
         tokio::spawn(transport1.start());
 
         let keypair2 = Keypair::generate();
@@ -436,9 +425,7 @@ mod tests {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         };
 
-        let transport2 = QuicTransport::new(handle2, transport_config2)
-            .await
-            .unwrap();
+        let transport2 = QuicTransport::new(handle2, transport_config2).await.unwrap();
         tokio::spawn(transport2.start());
 
         command_tx2
@@ -478,10 +465,7 @@ mod tests {
             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Udp(8888));
 
-        match transport
-            .on_dial_peer(address, ConnectionId::from(0usize))
-            .await
-        {
+        match transport.on_dial_peer(address, ConnectionId::from(0usize)).await {
             Err(Error::AddressError(AddressError::PeerIdMissing)) => {}
             _ => panic!("invalid result for `on_dial_peer()`"),
         }
@@ -516,10 +500,7 @@ mod tests {
 
         assert!(transport.pending_dials.is_empty());
 
-        match transport
-            .on_dial_peer(address, ConnectionId::from(0usize))
-            .await
-        {
+        match transport.on_dial_peer(address, ConnectionId::from(0usize)).await {
             Ok(()) => {}
             _ => panic!("invalid result for `on_dial_peer()`"),
         }
@@ -563,10 +544,7 @@ mod tests {
 
         assert!(transport.pending_dials.is_empty());
 
-        match transport
-            .on_dial_peer(address.clone(), ConnectionId::from(0usize))
-            .await
-        {
+        match transport.on_dial_peer(address.clone(), ConnectionId::from(0usize)).await {
             Ok(()) => {}
             _ => panic!("invalid result for `on_dial_peer()`"),
         }

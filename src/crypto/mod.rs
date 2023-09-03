@@ -60,9 +60,7 @@ impl PublicKey {
         let public_key = keys_proto::PublicKey::from(self);
 
         let mut buf = Vec::with_capacity(public_key.encoded_len());
-        public_key
-            .encode(&mut buf)
-            .expect("Vec<u8> provides capacity as needed");
+        public_key.encode(&mut buf).expect("Vec<u8> provides capacity as needed");
         buf
     }
 
@@ -102,9 +100,8 @@ impl TryFrom<keys_proto::PublicKey> for PublicKey {
             .ok_or_else(|| DecodingError::unknown_key_type(pubkey.r#type))?;
 
         match key_type {
-            keys_proto::KeyType::Ed25519 => {
-                ed25519::PublicKey::decode(&pubkey.data).map(PublicKey::Ed25519)
-            }
+            keys_proto::KeyType::Ed25519 =>
+                ed25519::PublicKey::decode(&pubkey.data).map(PublicKey::Ed25519),
             key_type => {
                 tracing::error!(target: LOG_TARGET, ?key_type, "unsupported key type");
                 todo!();

@@ -279,10 +279,7 @@ where
     fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
         let mut buf = BytesMut::new();
         item.encode(&mut buf)?;
-        self.project()
-            .inner
-            .start_send(buf.freeze())
-            .map_err(From::from)
+        self.project().inner.start_send(buf.freeze()).map_err(From::from)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

@@ -107,9 +107,7 @@ impl ConfigBuilder {
     pub fn build(mut self) -> (Config, RequestResponseHandle) {
         Config::new(
             self.protocol_name,
-            self.max_message_size
-                .take()
-                .expect("maximum message size to be set"),
+            self.max_message_size.take().expect("maximum message size to be set"),
         )
     }
 }

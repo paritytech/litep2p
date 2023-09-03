@@ -78,9 +78,7 @@ impl Keypair {
 
 impl fmt::Debug for Keypair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Keypair")
-            .field("public", &self.0.public)
-            .finish()
+        f.debug_struct("Keypair").field("public", &self.0.public).finish()
     }
 }
 
@@ -156,9 +154,7 @@ impl cmp::Ord for PublicKey {
 impl PublicKey {
     /// Verify the Ed25519 signature on a message using the public key.
     pub fn verify(&self, msg: &[u8], sig: &[u8]) -> bool {
-        ed25519::Signature::try_from(sig)
-            .and_then(|s| self.0.verify(msg, &s))
-            .is_ok()
+        ed25519::Signature::try_from(sig).and_then(|s| self.0.verify(msg, &s)).is_ok()
     }
 
     /// Encode the public key into a byte array in compressed form, i.e.

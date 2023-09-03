@@ -223,10 +223,8 @@ impl HandshakeService {
 
         match direction {
             Direction::Outbound => {
-                let (substream, _, _) = self
-                    .substreams
-                    .remove(&(peer, direction))
-                    .expect("peer to exist");
+                let (substream, _, _) =
+                    self.substreams.remove(&(peer, direction)).expect("peer to exist");
 
                 return Some((
                     peer,
@@ -238,10 +236,8 @@ impl HandshakeService {
                 ));
             }
             Direction::Inbound => {
-                let (substream, _, _) = self
-                    .substreams
-                    .remove(&(peer, direction))
-                    .expect("peer to exist");
+                let (substream, _, _) =
+                    self.substreams.remove(&(peer, direction)).expect("peer to exist");
 
                 return Some((
                     peer,
@@ -253,10 +249,8 @@ impl HandshakeService {
                 ));
             }
             Direction::InboundAccepting => {
-                let (substream, _, _) = self
-                    .substreams
-                    .remove(&(peer, direction))
-                    .expect("peer to exist");
+                let (substream, _, _) =
+                    self.substreams.remove(&(peer, direction)).expect("peer to exist");
 
                 return Some((peer, HandshakeEvent::InboundAccepted { peer, substream }));
             }
@@ -297,12 +291,11 @@ impl Stream for HandshakeService {
                             *state = HandshakeState::SinkReady;
                             continue;
                         }
-                        Poll::Ready(Err(_)) => {
+                        Poll::Ready(Err(_)) =>
                             return Poll::Ready(Some((
                                 *peer,
                                 HandshakeEvent::OutboundNegotiationError { peer: *peer },
-                            )))
-                        }
+                            ))),
                         Poll::Pending => continue 'outer,
                     },
                     HandshakeState::SinkReady => {
@@ -311,12 +304,11 @@ impl Stream for HandshakeService {
                                 *state = HandshakeState::HandshakeSent;
                                 continue;
                             }
-                            Err(_) => {
+                            Err(_) =>
                                 return Poll::Ready(Some((
                                     *peer,
                                     HandshakeEvent::OutboundNegotiationError { peer: *peer },
-                                )))
-                            }
+                                ))),
                         }
                     }
                     HandshakeState::HandshakeSent => match pinned.poll_flush(cx) {
@@ -334,12 +326,11 @@ impl Stream for HandshakeService {
                                 continue 'outer;
                             }
                         },
-                        Poll::Ready(Err(_)) => {
+                        Poll::Ready(Err(_)) =>
                             return Poll::Ready(Some((
                                 *peer,
                                 HandshakeEvent::OutboundNegotiationError { peer: *peer },
-                            )))
-                        }
+                            ))),
                         Poll::Pending => continue 'outer,
                     },
                     HandshakeState::ReadHandshake => match pinned.poll_next(cx) {
@@ -372,10 +363,8 @@ impl Stream for HandshakeService {
         if let Some((peer, direction, handshake)) = inner.ready.pop_front() {
             match direction {
                 Direction::Outbound => {
-                    let (substream, _, _) = inner
-                        .substreams
-                        .remove(&(peer, direction))
-                        .expect("peer to exist");
+                    let (substream, _, _) =
+                        inner.substreams.remove(&(peer, direction)).expect("peer to exist");
                     return Poll::Ready(Some((
                         peer,
                         HandshakeEvent::OutboundNegotiated {
@@ -386,10 +375,8 @@ impl Stream for HandshakeService {
                     )));
                 }
                 Direction::Inbound => {
-                    let (substream, _, _) = inner
-                        .substreams
-                        .remove(&(peer, direction))
-                        .expect("peer to exist");
+                    let (substream, _, _) =
+                        inner.substreams.remove(&(peer, direction)).expect("peer to exist");
                     return Poll::Ready(Some((
                         peer,
                         HandshakeEvent::InboundNegotiated {
@@ -400,10 +387,8 @@ impl Stream for HandshakeService {
                     )));
                 }
                 Direction::InboundAccepting => {
-                    let (substream, _, _) = inner
-                        .substreams
-                        .remove(&(peer, direction))
-                        .expect("peer to exist");
+                    let (substream, _, _) =
+                        inner.substreams.remove(&(peer, direction)).expect("peer to exist");
                     return Poll::Ready(Some((
                         peer,
                         HandshakeEvent::InboundAccepted { peer, substream },

@@ -102,7 +102,8 @@ pub(crate) enum RequestResponseCommand {
         /// When a response is received or the request fails, the event contains this ID that
         /// the user protocol can associate with the correct request.
         ///
-        /// If the user protocol only has one active request per peer, this ID can be safely discarded.
+        /// If the user protocol only has one active request per peer, this ID can be safely
+        /// discarded.
         request_id: RequestId,
 
         /// Request.
@@ -127,7 +128,8 @@ pub(crate) enum RequestResponseCommand {
     },
 }
 
-/// Handle given to the user protocol which allows it to interact with the request-response protocol.
+/// Handle given to the user protocol which allows it to interact with the request-response
+/// protocol.
 pub struct RequestResponseHandle {
     /// TX channel for sending commands to the request-response protocol.
     event_rx: Receiver<RequestResponseEvent>,
@@ -157,10 +159,7 @@ impl RequestResponseHandle {
     pub async fn reject_request(&mut self, request_id: RequestId) {
         tracing::trace!(target: LOG_TARGET, ?request_id, "reject request");
 
-        let _ = self
-            .command_tx
-            .send(RequestResponseCommand::RejectRequest { request_id })
-            .await;
+        let _ = self.command_tx.send(RequestResponseCommand::RejectRequest { request_id }).await;
     }
 
     /// Get next request ID.

@@ -177,11 +177,8 @@ impl TcpTransport {
             }
             Err(error) => match error.connection_id {
                 Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                    Some(address) => {
-                        self.context
-                            .report_dial_failure(connection_id, address, error.error)
-                            .await
-                    }
+                    Some(address) =>
+                        self.context.report_dial_failure(connection_id, address, error.error).await,
                     None => tracing::debug!(
                         target: LOG_TARGET,
                         ?error,
@@ -317,9 +314,7 @@ mod tests {
         )
         .is_ok());
         assert!(TcpTransport::get_socket_address(
-            &"/ip4/127.0.0.1/tcp/8888"
-                .parse()
-                .expect("valid multiaddress")
+            &"/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress")
         )
         .is_ok());
         assert!(TcpTransport::get_socket_address(
@@ -564,10 +559,7 @@ mod tests {
 
         assert!(transport.pending_dials.is_empty());
 
-        match transport
-            .on_dial_peer(multiaddr.clone(), ConnectionId::from(0usize))
-            .await
-        {
+        match transport.on_dial_peer(multiaddr.clone(), ConnectionId::from(0usize)).await {
             Ok(()) => {}
             _ => panic!("invalid result for `on_dial_peer()`"),
         }

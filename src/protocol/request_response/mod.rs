@@ -296,8 +296,7 @@ impl RequestResponseProtocol {
             .map_err(From::from)
         {
             Ok(_) => {
-                self.pending_outbound_responses
-                    .insert(request_id, substream);
+                self.pending_outbound_responses.insert(request_id, substream);
                 Ok(())
             }
             Err(error) => Err(error),

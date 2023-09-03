@@ -105,8 +105,7 @@ impl KBucket {
         &'a mut self,
         target: Key<K>,
     ) -> impl Iterator<Item = &'a KademliaPeer> {
-        self.nodes
-            .sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
+        self.nodes.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
         self.nodes.iter()
     }
 }
@@ -123,9 +122,7 @@ mod tests {
         let _ = (0..10)
             .map(|_| {
                 let peer = PeerId::random();
-                bucket
-                    .nodes
-                    .push(KademliaPeer::new(peer, vec![], ConnectionType::Connected));
+                bucket.nodes.push(KademliaPeer::new(peer, vec![], ConnectionType::Connected));
 
                 peer
             })

@@ -80,7 +80,8 @@ pub struct Config {
 impl Config {
     /// Create new [`Config`].
     ///
-    /// Returns a config that is given to `Litep2pConfig` and an event stream for [`IdentifyEvent`]s.
+    /// Returns a config that is given to `Litep2pConfig` and an event stream for
+    /// [`IdentifyEvent`]s.
     pub fn new() -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -144,11 +145,7 @@ impl Identify {
             public: config.public.expect("public key to be supplied"),
             listen_addresses: config.listen_addresses,
             pending_outbound: HashMap::new(),
-            protocols: config
-                .protocols
-                .iter()
-                .map(|protocol| protocol.to_string())
-                .collect(),
+            protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
         }
     }
 
@@ -196,9 +193,7 @@ impl Identify {
             protocols: self.protocols.clone(),
         };
         let mut msg = Vec::with_capacity(identify.encoded_len());
-        identify
-            .encode(&mut msg)
-            .expect("`msg` to have enough capacity");
+        identify.encode(&mut msg).expect("`msg` to have enough capacity");
 
         // TODO: this is not good
         substream.send(msg.into()).await

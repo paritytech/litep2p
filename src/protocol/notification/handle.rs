@@ -88,10 +88,7 @@ impl NotificationEventHandle {
 
     /// Notification stream closed.
     pub(crate) async fn report_notification_stream_closed(&self, peer: PeerId) {
-        let _ = self
-            .tx
-            .send(InnerNotificationEvent::NotificationStreamClosed { peer })
-            .await;
+        let _ = self.tx.send(InnerNotificationEvent::NotificationStreamClosed { peer }).await;
     }
 
     /// Failed to open notification stream.
@@ -155,7 +152,8 @@ impl NotificationSink {
 
     /// Send notification to peer asynchronously.
     ///
-    /// Returns [Error::PeerDoesntExist(PeerId)](crate::error::Error::PeerDoesntExist) if the connection has been closed.
+    /// Returns [Error::PeerDoesntExist(PeerId)](crate::error::Error::PeerDoesntExist) if the
+    /// connection has been closed.
     pub(crate) async fn send_async_notification(
         &mut self,
         notification: Vec<u8>,
@@ -194,7 +192,8 @@ impl NotificationHandle {
 
     /// Open substream to `peer`.
     ///
-    /// Returns [`Error::PeerAlreadyExists(PeerId)`](crate::error::Error::PeerAlreadyExists) if substream is already open to `peer`.
+    /// Returns [`Error::PeerAlreadyExists(PeerId)`](crate::error::Error::PeerAlreadyExists) if
+    /// substream is already open to `peer`.
     pub async fn open_substream(&self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
 
@@ -216,20 +215,14 @@ impl NotificationHandle {
             return;
         }
 
-        let _ = self
-            .command_tx
-            .send(NotificationCommand::CloseSubstream { peer })
-            .await;
+        let _ = self.command_tx.send(NotificationCommand::CloseSubstream { peer }).await;
     }
 
     /// Set new handshake.
     pub async fn set_handshake(&mut self, handshake: Vec<u8>) {
         tracing::trace!(target: LOG_TARGET, ?handshake, "set handshake");
 
-        let _ = self
-            .command_tx
-            .send(NotificationCommand::SetHandshake { handshake })
-            .await;
+        let _ = self.command_tx.send(NotificationCommand::SetHandshake { handshake }).await;
     }
 
     /// Send validation result to the notification protocol for the inbound substream.
@@ -260,7 +253,8 @@ impl NotificationHandle {
 
     /// Send asynchronous notification to `peer`.
     ///
-    /// Returns [`Error::PeerDoesntExist(PeerId)`](crate::error::Error::PeerDoesntExist) if the connection has been closed.
+    /// Returns [`Error::PeerDoesntExist(PeerId)`](crate::error::Error::PeerDoesntExist) if the
+    /// connection has been closed.
     pub async fn send_async_notification(
         &mut self,
         peer: PeerId,
@@ -310,18 +304,16 @@ impl futures::Stream for NotificationHandle {
 
                     Poll::Ready(Some(NotificationEvent::NotificationStreamClosed { peer }))
                 }
-                InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
+                InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
                     Poll::Ready(Some(NotificationEvent::NotificationStreamOpenFailure {
                         peer,
                         error,
-                    }))
-                }
-                InnerNotificationEvent::NotificationReceived { peer, notification } => {
+                    })),
+                InnerNotificationEvent::NotificationReceived { peer, notification } =>
                     Poll::Ready(Some(NotificationEvent::NotificationReceived {
                         peer,
                         notification,
-                    }))
-                }
+                    })),
             },
         }
     }

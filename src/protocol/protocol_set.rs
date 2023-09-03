@@ -132,15 +132,12 @@ pub enum InnerTransportEvent {
 impl From<InnerTransportEvent> for TransportEvent {
     fn from(event: InnerTransportEvent) -> Self {
         match event {
-            InnerTransportEvent::ConnectionEstablished { peer, address, .. } => {
-                TransportEvent::ConnectionEstablished { peer, address }
-            }
-            InnerTransportEvent::ConnectionClosed { peer, .. } => {
-                TransportEvent::ConnectionClosed { peer }
-            }
-            InnerTransportEvent::DialFailure { peer, address } => {
-                TransportEvent::DialFailure { peer, address }
-            }
+            InnerTransportEvent::ConnectionEstablished { peer, address, .. } =>
+                TransportEvent::ConnectionEstablished { peer, address },
+            InnerTransportEvent::ConnectionClosed { peer, .. } =>
+                TransportEvent::ConnectionClosed { peer },
+            InnerTransportEvent::DialFailure { peer, address } =>
+                TransportEvent::DialFailure { peer, address },
             InnerTransportEvent::SubstreamOpened {
                 peer,
                 protocol,
@@ -152,14 +149,14 @@ impl From<InnerTransportEvent> for TransportEvent {
                 direction,
                 substream,
             },
-            InnerTransportEvent::SubstreamOpenFailure { substream, error } => {
-                TransportEvent::SubstreamOpenFailure { substream, error }
-            }
+            InnerTransportEvent::SubstreamOpenFailure { substream, error } =>
+                TransportEvent::SubstreamOpenFailure { substream, error },
         }
     }
 }
 
-/// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact with the underlying transport protocols.
+/// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact with the underlying
+/// transport protocols.
 #[derive(Debug)]
 pub struct TransportService {
     /// Local peer ID.
@@ -283,8 +280,7 @@ impl Transport for TransportService {
             })
             .collect();
 
-        self.transport_handle
-            .add_know_address(peer, addresses.into_iter());
+        self.transport_handle.add_know_address(peer, addresses.into_iter());
     }
 
     async fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
@@ -383,8 +379,9 @@ pub enum ProtocolCommand {
         /// Connection permit.
         ///
         /// `Permit` allows the connection to be kept open while the permit is held and it is given
-        /// to the substream to hold once it has been opened. When the substream is dropped, the permit
-        /// is dropped and the connection may be closed if no other permit is being held.
+        /// to the substream to hold once it has been opened. When the substream is dropped, the
+        /// permit is dropped and the connection may be closed if no other permit is being
+        /// held.
         permit: Permit,
     },
 }
@@ -461,10 +458,7 @@ impl ProtocolSet {
     pub fn protocol_codec(&self, protocol: &ProtocolName) -> ProtocolCodec {
         // NOTE: `protocol` must exist in `self.protocol` as it was negotiated
         // using the protocols from this set
-        self.protocols
-            .get(&protocol)
-            .expect("protocol to exist")
-            .codec
+        self.protocols.get(&protocol).expect("protocol to exist").codec
     }
 
     /// Report to `protocol` that connection failed to open substream for `peer`.

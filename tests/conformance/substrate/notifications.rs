@@ -397,8 +397,8 @@ async fn litep2p_reject_substream() {
 // This can cause this test to fail be as `litep2p` thinks it still connected to the peer while in
 // fact the peer has disconnected
 //
-// TODO: this might have to be fixed on `litep2p` side because in practice nothing should prevent a node
-// from disconnecting and reconning right after.
+// TODO: this might have to be fixed on `litep2p` side because in practice nothing should prevent a
+// node from disconnecting and reconning right after.
 #[tokio::test]
 #[ignore]
 async fn substrate_close_substream() {

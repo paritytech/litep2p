@@ -74,9 +74,7 @@ async fn sync_notifications_clogged() {
     );
 
     for _ in 0..SYNC_CHANNEL_SIZE {
-        handle
-            .send_sync_notification(peer, vec![1, 3, 3, 7])
-            .unwrap();
+        handle.send_sync_notification(peer, vec![1, 3, 3, 7]).unwrap();
     }
 
     // try to send one more notification and verify that the call would block
@@ -129,10 +127,7 @@ async fn async_notifications_clogged() {
     );
 
     for _ in 0..ASYNC_CHANNEL_SIZE {
-        handle
-            .send_async_notification(peer, vec![1, 3, 3, 7])
-            .await
-            .unwrap();
+        handle.send_async_notification(peer, vec![1, 3, 3, 7]).await.unwrap();
     }
 
     // try to send one more notification and verify that the call would block

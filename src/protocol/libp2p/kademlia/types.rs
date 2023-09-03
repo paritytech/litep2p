@@ -288,11 +288,7 @@ impl From<&KademliaPeer> for schema::kademlia::Peer {
     fn from(peer: &KademliaPeer) -> Self {
         schema::kademlia::Peer {
             id: peer.peer.to_bytes(),
-            addrs: peer
-                .addresses
-                .iter()
-                .map(|address| address.to_vec())
-                .collect(),
+            addrs: peer.addresses.iter().map(|address| address.to_vec()).collect(),
             connection: peer.connection.into(),
         }
     }

@@ -347,19 +347,11 @@ impl QueryEngine {
             QueryType::FindNode { context } => QueryAction::FindNodeQuerySucceeded {
                 query,
                 target: context.target.into_preimage(),
-                peers: context
-                    .responses
-                    .into_iter()
-                    .map(|(_, peer)| peer)
-                    .collect::<Vec<_>>(),
+                peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
             },
             QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
                 record,
-                peers: context
-                    .responses
-                    .into_iter()
-                    .map(|(_, peer)| peer)
-                    .collect::<Vec<_>>(),
+                peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 record: context.found_record(),
@@ -388,9 +380,8 @@ impl QueryEngine {
                 Some(QueryAction::QuerySucceeded { query }) => {
                     return Some(self.on_query_succeeded(query));
                 }
-                Some(QueryAction::QueryFailed { query }) => {
-                    return Some(self.on_query_failed(query))
-                }
+                Some(QueryAction::QueryFailed { query }) =>
+                    return Some(self.on_query_failed(query)),
                 Some(_) => return action,
                 _ => continue,
             }

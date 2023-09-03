@@ -105,10 +105,7 @@ impl BitswapHandle {
 
     /// Send `response` to `peer`.
     pub async fn send_response(&self, peer: PeerId, cids: Vec<(Cid, ResponseType)>) {
-        let _ = self
-            .cmd_tx
-            .send(BitswapCommand::SendResponse { peer, cids })
-            .await;
+        let _ = self.cmd_tx.send(BitswapCommand::SendResponse { peer, cids }).await;
     }
 }
 

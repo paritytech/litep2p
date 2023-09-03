@@ -194,17 +194,16 @@ impl WebRtcTransport {
 
     /// Handle socket input.
     async fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<()> {
-        // if the `Rtc` object already exists for `souce`, pass the message directly to that connection.
+        // if the `Rtc` object already exists for `souce`, pass the message directly to that
+        // connection.
         if let Some(tx) = self.peers.get_mut(&source) {
             return tx.send(buffer).await.map_err(From::from);
         }
 
         // if the peer doesn't exist, decode the message and expect to receive `Stun`
         // so that a new connection can be initialized
-        let contents: DatagramRecv = buffer
-            .as_slice()
-            .try_into()
-            .map_err(|_| Error::InvalidData)?;
+        let contents: DatagramRecv =
+            buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
 
         match contents {
             DatagramRecv::Stun(message) => {
