@@ -18,14 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
 use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     error::Error,
     protocol::notification::{
-        Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
+        Config as NotificationConfig, ConfigBuilder, NotificationError, NotificationEvent,
+        ValidationResult,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
@@ -1094,48 +1093,31 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
 
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_tcp() {
-    send_sync_notification_to_non_existent_peer(
-        Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-        Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-    )
+    send_sync_notification_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
+        listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        yamux_config: Default::default(),
+    }))
     .await
 }
 
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_quic() {
-    send_sync_notification_to_non_existent_peer(
-        Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-        }),
-    )
+    send_sync_notification_to_non_existent_peer(Transport::Quic(QuicTransportConfig {
+        listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+    }))
     .await;
 }
 
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_websocket() {
-    send_sync_notification_to_non_existent_peer(
-        Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-        Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-    )
+    send_sync_notification_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
+        listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+        yamux_config: Default::default(),
+    }))
     .await;
 }
 
-async fn send_sync_notification_to_non_existent_peer(transport1: Transport, transport2: Transport) {
+async fn send_sync_notification_to_non_existent_peer(transport1: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -1172,51 +1154,31 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport, tran
 
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_tcp() {
-    send_async_notification_to_non_existent_peer(
-        Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-        Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-    )
+    send_async_notification_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
+        listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        yamux_config: Default::default(),
+    }))
     .await
 }
 
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_quic() {
-    send_async_notification_to_non_existent_peer(
-        Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-        }),
-    )
+    send_async_notification_to_non_existent_peer(Transport::Quic(QuicTransportConfig {
+        listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+    }))
     .await;
 }
 
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_websocket() {
-    send_async_notification_to_non_existent_peer(
-        Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-        Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-    )
+    send_async_notification_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
+        listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+        yamux_config: Default::default(),
+    }))
     .await;
 }
 
-async fn send_async_notification_to_non_existent_peer(
-    transport1: Transport,
-    transport2: Transport,
-) {
+async fn send_async_notification_to_non_existent_peer(transport1: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -1256,48 +1218,31 @@ async fn send_async_notification_to_non_existent_peer(
 
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_tcp() {
-    try_to_connect_to_non_existent_peer(
-        Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-        Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-    )
+    try_to_connect_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
+        listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        yamux_config: Default::default(),
+    }))
     .await
 }
 
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_quic() {
-    try_to_connect_to_non_existent_peer(
-        Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-        }),
-    )
+    try_to_connect_to_non_existent_peer(Transport::Quic(QuicTransportConfig {
+        listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+    }))
     .await;
 }
 
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_websocket() {
-    try_to_connect_to_non_existent_peer(
-        Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-        Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-    )
+    try_to_connect_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
+        listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+        yamux_config: Default::default(),
+    }))
     .await;
 }
 
-async fn try_to_connect_to_non_existent_peer(transport1: Transport, transport2: Transport) {
+async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -1342,48 +1287,31 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport, transport2: 
 
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_tcp() {
-    try_to_disconnect_non_existent_peer(
-        Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-        Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-    )
+    try_to_disconnect_non_existent_peer(Transport::Tcp(TcpTransportConfig {
+        listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        yamux_config: Default::default(),
+    }))
     .await
 }
 
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_quic() {
-    try_to_disconnect_non_existent_peer(
-        Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-        }),
-    )
+    try_to_disconnect_non_existent_peer(Transport::Quic(QuicTransportConfig {
+        listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+    }))
     .await;
 }
 
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_websocket() {
-    try_to_disconnect_non_existent_peer(
-        Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-        Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
-        }),
-    )
+    try_to_disconnect_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
+        listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+        yamux_config: Default::default(),
+    }))
     .await;
 }
 
-async fn try_to_disconnect_non_existent_peer(transport1: Transport, transport2: Transport) {
+async fn try_to_disconnect_non_existent_peer(transport1: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -1680,6 +1608,112 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         NotificationEvent::NotificationStreamOpenFailure {
             peer: peer2,
             error: NotificationError::Rejected,
+        }
+    );
+}
+
+#[tokio::test]
+async fn unsupported_protocol_tcp() {
+    unsupported_protocol(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn unsupported_protocol_quic() {
+    unsupported_protocol(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn unsupported_protocol_websocket() {
+    unsupported_protocol(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+async fn unsupported_protocol(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (notif_config2, _handle2) = ConfigBuilder::new(ProtocolName::from("/notif/2"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .build();
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected and spawn the litep2p objects in the background
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer2,
+            error: NotificationError::Rejected
         }
     );
 }

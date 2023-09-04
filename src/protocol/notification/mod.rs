@@ -196,6 +196,9 @@ pub(crate) struct NotificationProtocol {
     /// Receivers.
     receivers: StreamMap<PeerId, Select<ReceiverStream<Vec<u8>>, ReceiverStream<Vec<u8>>>>,
 
+    /// Pending outboudn substreams.
+    pending_outbound: HashMap<SubstreamId, PeerId>,
+
     /// zzz
     negotiation: HandshakeService,
 }
@@ -210,6 +213,7 @@ impl NotificationProtocol {
             command_rx: config.command_rx,
             substreams: SubstreamSet::new(),
             receivers: StreamMap::new(),
+            pending_outbound: HashMap::new(),
             negotiation: HandshakeService::new(config.handshake),
         }
     }
@@ -276,6 +280,11 @@ impl NotificationProtocol {
             ?substream_id,
             "handle outbound substream",
         );
+
+        if self.pending_outbound.remove(&substream_id).is_none() {
+            tracing::warn!(target: LOG_TARGET, ?peer, ?substream_id, "pending outbound substream doesn't exist");
+            debug_assert!(false);
+        }
 
         // peer must exist since an outbound substream was received from them
         let context = self.peers.get_mut(&peer).expect("peer to exist");
@@ -406,13 +415,43 @@ impl NotificationProtocol {
     }
 
     /// Failed to open substream to remote peer.
-    fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
+    async fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
         tracing::debug!(
             target: LOG_TARGET,
             ?substream,
             ?error,
             "failed to open substream"
         );
+
+        let Some(peer) = self.pending_outbound.remove(&substream) else {
+            tracing::warn!(target: LOG_TARGET, ?substream, "pending outbound substream doesn't exist");
+            debug_assert!(false);
+            return;
+        };
+
+        let Some(context) = self.peers.get_mut(&peer) else {
+            tracing::warn!(target: LOG_TARGET, ?peer, "peer doesn't exist");
+            debug_assert!(false);
+            return;
+        };
+
+        match &mut context.state {
+            PeerState::OutboundInitiated { .. } => {
+                context.state = PeerState::Closed {
+                    _pending_open: None,
+                };
+                self.event_handle
+                    .report_notification_stream_open_failure(peer, NotificationError::Rejected)
+                    .await;
+            }
+            state => {
+                tracing::warn!(target: LOG_TARGET, ?state, "peer is in invalid state");
+                context.state = PeerState::Closed {
+                    _pending_open: None,
+                };
+                debug_assert!(false);
+            }
+        }
     }
 
     /// Open substream to remote `peer`.
@@ -432,6 +471,7 @@ impl NotificationProtocol {
         if let PeerState::Closed { .. } = std::mem::replace(&mut context.state, PeerState::Poisoned)
         {
             let substream = self.service.open_substream(peer).await?;
+            self.pending_outbound.insert(substream, peer);
             context.state = PeerState::OutboundInitiated { substream };
         }
 
@@ -634,10 +674,11 @@ impl NotificationProtocol {
         tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle substream event");
 
         match message {
-            Ok(message) =>
+            Ok(message) => {
                 self.event_handle
                     .report_notification_received(peer, message.freeze().into())
-                    .await,
+                    .await
+            }
             Err(_) => {
                 self.negotiation.remove_outbound(&peer);
                 self.negotiation.remove_inbound(&peer);
@@ -850,7 +891,7 @@ impl NotificationProtocol {
                     }
                 },
                 Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
-                    self.on_substream_open_failure(substream, error);
+                    self.on_substream_open_failure(substream, error).await;
                 }
                 Some(TransportEvent::DialFailure { .. }) => todo!(),
                 None => return,
