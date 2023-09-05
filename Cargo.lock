@@ -736,7 +736,7 @@ dependencies = [
  "multibase",
  "multihash 0.18.1",
  "serde",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
 ]
 
 [[package]]
@@ -2522,7 +2522,7 @@ dependencies = [
  "rw-stream-sink",
  "smallvec",
  "thiserror",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
  "void",
 ]
 
@@ -2604,7 +2604,7 @@ dependencies = [
  "smallvec",
  "thiserror",
  "uint",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
  "void",
 ]
 
@@ -2658,7 +2658,7 @@ dependencies = [
  "parking_lot 0.12.1",
  "rand 0.8.5",
  "smallvec",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
 ]
 
 [[package]]
@@ -2963,7 +2963,7 @@ checksum = "57bcfdad1b858c2db7c38303a6d2ad4dfaf5eb53dfeb0910128b2c26d6158503"
 
 [[package]]
 name = "litep2p"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-channel",
  "async-trait",
@@ -3010,7 +3010,7 @@ dependencies = [
  "tracing-subscriber 0.3.17",
  "trust-dns-resolver",
  "uint",
- "unsigned-varint 0.7.1 (git+https://github.com/paritytech/unsigned-varint.git?rev=9925adb)",
+ "unsigned-varint",
  "url",
  "webpki 0.22.0",
  "x509-parser 0.15.0",
@@ -3238,7 +3238,7 @@ dependencies = [
  "percent-encoding",
  "serde",
  "static_assertions",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
  "url",
 ]
 
@@ -3263,7 +3263,7 @@ dependencies = [
  "digest 0.10.7",
  "multihash-derive",
  "sha2 0.10.7",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
 ]
 
 [[package]]
@@ -3280,7 +3280,7 @@ dependencies = [
  "multihash-derive",
  "sha2 0.10.7",
  "sha3",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
 ]
 
 [[package]]
@@ -3314,7 +3314,7 @@ dependencies = [
  "log",
  "pin-project",
  "smallvec",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
 ]
 
 [[package]]
@@ -4137,7 +4137,7 @@ dependencies = [
  "bytes",
  "quick-protobuf",
  "thiserror",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
 ]
 
 [[package]]
@@ -4943,7 +4943,7 @@ dependencies = [
  "sp-runtime",
  "substrate-prometheus-endpoint",
  "thiserror",
- "unsigned-varint 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unsigned-varint",
  "wasm-timer",
  "zeroize",
 ]
@@ -6618,22 +6618,14 @@ dependencies = [
 
 [[package]]
 name = "unsigned-varint"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d86a8dc7f45e4c1b0d30e43038c38f274e77af056aa5f74b93c2cf9eb3c1c836"
+checksum = "6889a77d49f1f013504cec6bf97a2c730394adedaeb1deb5ea08949a50541105"
 dependencies = [
  "asynchronous-codec",
  "bytes",
  "futures-io",
  "futures-util",
-]
-
-[[package]]
-name = "unsigned-varint"
-version = "0.7.1"
-source = "git+https://github.com/paritytech/unsigned-varint.git?rev=9925adb#9925adb711595a8166eb7b6a7cc330e31b623143"
-dependencies = [
- "bytes",
  "tokio-util",
 ]
 
