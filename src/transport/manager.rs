@@ -229,6 +229,7 @@ pub struct TransportHandle {
     pub protocols: HashMap<ProtocolName, ProtocolContext>,
     pub next_connection_id: Arc<AtomicUsize>,
     pub next_substream_id: Arc<AtomicUsize>,
+    pub protocol_names: Vec<ProtocolName>,
 }
 
 impl TransportHandle {
@@ -280,7 +281,7 @@ impl TransportHandle {
 
         match address.iter().last() {
             Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                Ok(peer) =>
+                Ok(peer) => {
                     for (_, context) in &self.protocols {
                         let _ = context
                             .tx
@@ -289,7 +290,8 @@ impl TransportHandle {
                                 address: address.clone(),
                             })
                             .await;
-                    },
+                    }
+                }
                 Err(error) => {
                     tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
                     debug_assert!(false);
@@ -329,12 +331,23 @@ pub struct ProtocolContext {
 
     /// TX channel for sending events to protocol.
     pub tx: Sender<InnerTransportEvent>,
+
+    /// Fallback names for the protocol.
+    pub fallback_names: Vec<ProtocolName>,
 }
 
 impl ProtocolContext {
     /// Create new [`ProtocolContext`].
-    fn new(codec: ProtocolCodec, tx: Sender<InnerTransportEvent>) -> Self {
-        Self { tx, codec }
+    fn new(
+        codec: ProtocolCodec,
+        tx: Sender<InnerTransportEvent>,
+        fallback_names: Vec<ProtocolName>,
+    ) -> Self {
+        Self {
+            tx,
+            codec,
+            fallback_names,
+        }
     }
 }
 
@@ -371,6 +384,9 @@ pub struct TransportManager {
 
     /// Installed protocols.
     protocols: HashMap<ProtocolName, ProtocolContext>,
+
+    /// All names (main and fallback(s)) of the installed protocols.
+    protocol_names: HashSet<ProtocolName>,
 
     /// Listen addresses.
     listen_addresses: HashSet<Multiaddr>,
@@ -428,6 +444,7 @@ impl TransportManager {
                 local_peer_id,
                 protocols: HashMap::new(),
                 transports: HashMap::new(),
+                protocol_names: HashSet::new(),
                 listen_addresses: HashSet::new(),
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
@@ -458,18 +475,31 @@ impl TransportManager {
     pub fn register_protocol(
         &mut self,
         protocol: ProtocolName,
+        fallback_names: Vec<ProtocolName>,
         codec: ProtocolCodec,
     ) -> TransportService {
-        assert!(!self.protocols.contains_key(&protocol));
+        assert!(!self.protocol_names.contains(&protocol));
+
+        for fallback in &fallback_names {
+            if self.protocol_names.contains(fallback) {
+                panic!("duplicate fallback protocol given: {fallback:?}");
+            }
+        }
 
         let (service, sender) = TransportService::new(
             self.local_peer_id,
             protocol.clone(),
+            fallback_names.clone(),
             self.next_substream_id.clone(),
             self.transport_manager_handle.clone(),
         );
 
-        self.protocols.insert(protocol, ProtocolContext::new(codec, sender));
+        self.protocols.insert(
+            protocol.clone(),
+            ProtocolContext::new(codec, sender, fallback_names.clone()),
+        );
+        self.protocol_names.insert(protocol);
+        self.protocol_names.extend(fallback_names);
 
         service
     }
@@ -486,6 +516,7 @@ impl TransportManager {
             tx: self.event_tx.clone(),
             keypair: self.keypair.clone(),
             protocols: self.protocols.clone(),
+            protocol_names: self.protocol_names.iter().cloned().collect(),
             next_substream_id: self.next_substream_id.clone(),
             next_connection_id: self.next_connection_id.clone(),
         }
@@ -558,8 +589,9 @@ impl TransportManager {
 
                 self.pending_dns_resolves.push(Box::pin(async move {
                     match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
-                        Ok(resolver) =>
-                            (connection, original, resolver.lookup_ip(dns_address).await),
+                        Ok(resolver) => {
+                            (connection, original, resolver.lookup_ip(dns_address).await)
+                        }
                         Err(error) => (connection, original, Err(error)),
                     }
                 }));
@@ -854,10 +886,57 @@ mod tests {
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
+            ProtocolCodec::UnsignedVarint(None),
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    #[cfg(debug_assertions)]
+    fn fallback_protocol_as_duplicate_main_protocol() {
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+
+        manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            Vec::new(),
+            ProtocolCodec::UnsignedVarint(None),
+        );
+        manager.register_protocol(
+            ProtocolName::from("/notif/2"),
+            vec![
+                ProtocolName::from("/notif/2/new"),
+                ProtocolName::from("/notif/1"),
+            ],
+            ProtocolCodec::UnsignedVarint(None),
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    #[cfg(debug_assertions)]
+    fn duplicate_fallback_protocol() {
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+
+        manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            vec![
+                ProtocolName::from("/notif/1/new"),
+                ProtocolName::from("/notif/1"),
+            ],
+            ProtocolCodec::UnsignedVarint(None),
+        );
+        manager.register_protocol(
+            ProtocolName::from("/notif/2"),
+            vec![
+                ProtocolName::from("/notif/2/new"),
+                ProtocolName::from("/notif/1/new"),
+            ],
             ProtocolCodec::UnsignedVarint(None),
         );
     }

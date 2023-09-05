@@ -657,6 +657,7 @@ mod tests {
         let (transport_service, _tx) = TransportService::new(
             peer,
             ProtocolName::from("/kad/1"),
+            Vec::new(),
             Default::default(),
             handle,
         );

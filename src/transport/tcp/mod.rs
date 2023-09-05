@@ -177,8 +177,9 @@ impl TcpTransport {
             }
             Err(error) => match error.connection_id {
                 Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                    Some(address) =>
-                        self.context.report_dial_failure(connection_id, address, error.error).await,
+                    Some(address) => {
+                        self.context.report_dial_failure(connection_id, address, error.error).await
+                    }
                     None => tracing::debug!(
                         target: LOG_TARGET,
                         ?error,
@@ -355,6 +356,7 @@ mod tests {
         let (_cmd_tx1, cmd_rx1) = channel(64);
 
         let handle1 = crate::transport::manager::TransportHandle {
+            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair1.clone(),
@@ -366,6 +368,7 @@ mod tests {
                 ProtocolContext {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
                 },
             )]),
         };
@@ -387,6 +390,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair2.clone(),
@@ -398,6 +402,7 @@ mod tests {
                 ProtocolContext {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
                 },
             )]),
         };
@@ -447,6 +452,7 @@ mod tests {
         let (_cmd_tx1, cmd_rx1) = channel(64);
 
         let handle1 = crate::transport::manager::TransportHandle {
+            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair1.clone(),
@@ -458,6 +464,7 @@ mod tests {
                 ProtocolContext {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
                 },
             )]),
         };
@@ -476,6 +483,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair2.clone(),
@@ -487,6 +495,7 @@ mod tests {
                 ProtocolContext {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
                 },
             )]),
         };

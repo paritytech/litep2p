@@ -51,6 +51,7 @@ fn make_notification_protocol() -> (
     let (transport_service, tx) = TransportService::new(
         peer,
         ProtocolName::from("/notif/1"),
+        Vec::new(),
         std::sync::Arc::new(Default::default()),
         handle,
     );

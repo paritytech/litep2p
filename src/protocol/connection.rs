@@ -100,6 +100,7 @@ impl ConnectionHandle {
     pub async fn open_substream(
         &mut self,
         protocol: ProtocolName,
+        fallback_names: Vec<ProtocolName>,
         substream_id: SubstreamId,
         permit: Permit,
     ) -> crate::Result<()> {
@@ -110,6 +111,7 @@ impl ConnectionHandle {
         }
         .send(ProtocolCommand::OpenSubstream {
             protocol: protocol.clone(),
+            fallback_names,
             substream_id,
             permit,
         })

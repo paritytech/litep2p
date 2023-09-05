@@ -45,6 +45,7 @@ async fn sync_notifications_clogged() {
         PeerContext {
             state: PeerState::Validating {
                 protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
                 outbound: OutboundState::Open {
                     handshake: vec![1, 2, 3, 4],
                     outbound: Box::new(MockSubstream::new()),
@@ -68,6 +69,7 @@ async fn sync_notifications_clogged() {
         handle.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer,
             handshake: vec![1, 2, 3, 4]
         },
@@ -98,6 +100,7 @@ async fn async_notifications_clogged() {
         PeerContext {
             state: PeerState::Validating {
                 protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
                 outbound: OutboundState::Open {
                     handshake: vec![1, 2, 3, 4],
                     outbound: Box::new(MockSubstream::new()),
@@ -121,6 +124,7 @@ async fn async_notifications_clogged() {
         handle.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer,
             handshake: vec![1, 2, 3, 4]
         },

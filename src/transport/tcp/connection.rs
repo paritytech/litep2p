@@ -171,6 +171,7 @@ impl TcpConnection {
         permit: Permit,
         direction: Direction,
         protocol: ProtocolName,
+        fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<NegotiatedSubstream> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
 
@@ -190,8 +191,12 @@ impl TcpConnection {
             }
         };
 
-        let (io, protocol) =
-            Self::negotiate_protocol(stream, &Role::Dialer, vec![&protocol]).await?;
+        // TODO: protocols don't change after they've been initialized so this should be done only once
+        let protocols = std::iter::once(&*protocol)
+            .chain(fallback_names.iter().map(|protocol| &**protocol))
+            .collect();
+
+        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Dialer, protocols).await?;
 
         Ok(NegotiatedSubstream {
             io: io.inner(),
@@ -364,7 +369,7 @@ impl TcpConnection {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
                         let substream = self.next_substream_id.next();
-                        let protocols = self.protocol_set.protocols.keys().cloned().collect();
+                        let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
 
                         self.pending_substreams.push(Box::pin(async move {
@@ -470,7 +475,7 @@ impl TcpConnection {
                     }
                 }
                 protocol = self.protocol_set.next_event() => match protocol {
-                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id, permit }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let control = self.control.clone();
 
                         tracing::trace!(
@@ -483,7 +488,7 @@ impl TcpConnection {
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(5),
-                                Self::open_substream(control, permit, Direction::Outbound(substream_id), protocol.clone()),
+                                Self::open_substream(control, permit, Direction::Outbound(substream_id), protocol.clone(), fallback_names),
                             )
                             .await
                             {
@@ -540,6 +545,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -558,8 +564,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -592,6 +599,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -616,8 +624,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -649,6 +658,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -667,8 +677,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -705,6 +716,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -729,8 +741,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -766,6 +779,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -790,8 +804,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -827,6 +842,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -845,8 +861,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -883,6 +900,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -901,8 +919,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -932,6 +951,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -956,8 +976,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -987,6 +1008,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -1011,8 +1033,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -1059,6 +1082,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -1077,8 +1101,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -1125,6 +1150,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -1149,8 +1175,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -1195,6 +1222,7 @@ mod tests {
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
@@ -1213,8 +1241,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 

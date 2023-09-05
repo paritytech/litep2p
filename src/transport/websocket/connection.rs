@@ -66,8 +66,9 @@ fn multiaddr_into_url(address: Multiaddr) -> crate::Result<Url> {
         .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
     {
         Protocol::Tcp(port) => match protocol_stack.next() {
-            Some(Protocol::Ws(_)) =>
-                url::Url::parse(&format!("ws://{ip4}:{port}/")).map_err(|_| Error::InvalidData),
+            Some(Protocol::Ws(_)) => {
+                url::Url::parse(&format!("ws://{ip4}:{port}/")).map_err(|_| Error::InvalidData)
+            }
             _ => return Err(Error::TransportNotSupported(address.clone())),
         },
         _ => Err(Error::TransportNotSupported(address)),
@@ -322,6 +323,7 @@ impl WebSocketConnection {
         permit: Permit,
         direction: Direction,
         protocol: ProtocolName,
+        fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<NegotiatedSubstream> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
 
@@ -341,8 +343,12 @@ impl WebSocketConnection {
             }
         };
 
-        let (io, protocol) =
-            Self::negotiate_protocol(stream, &Role::Dialer, vec![&protocol]).await?;
+        // TODO: protocols don't change after they've been initialized so this should be done only once
+        let protocols = std::iter::once(&*protocol)
+            .chain(fallback_names.iter().map(|protocol| &**protocol))
+            .collect();
+
+        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Dialer, protocols).await?;
 
         Ok(NegotiatedSubstream {
             io: io.inner(),
@@ -359,7 +365,7 @@ impl WebSocketConnection {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
                         let substream = self.protocol_set.next_substream_id();
-                        let protocols = self.protocol_set.protocols.keys().cloned().collect();
+                        let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
 
                         self.pending_substreams.push(Box::pin(async move {
@@ -462,7 +468,7 @@ impl WebSocketConnection {
                     }
                 }
                 protocol = self.protocol_set.next_event() => match protocol {
-                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id, permit }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let control = self.control.clone();
 
                         tracing::trace!(
@@ -475,7 +481,13 @@ impl WebSocketConnection {
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(5), // TODO: make this configurable
-                                Self::open_substream(control, permit, Direction::Outbound(substream_id), protocol.clone()),
+                                Self::open_substream(
+                                    control,
+                                    permit,
+                                    Direction::Outbound(substream_id),
+                                    protocol.clone(),
+                                    fallback_names
+                                ),
                             )
                             .await
                             {

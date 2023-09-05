@@ -382,7 +382,7 @@ impl WebRtcConnection {
         let payload = WebRtcMessage::decode(&d.data)?.payload.ok_or(Error::InvalidData)?;
 
         let (protocol, response) =
-            listener_negotiate(&mut self.protocol_set.protocols.keys(), payload.into())?;
+            listener_negotiate(&mut self.protocol_set.protocols().iter(), payload.into())?;
 
         let message = WebRtcMessage::encode(response.to_vec(), None);
 

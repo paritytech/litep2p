@@ -81,6 +81,7 @@ impl UserProtocol for CustomProtocol {
                         protocol: _,
                         direction: _,
                         substream: _,
+                        fallback: _,
                     } => {}
                     TransportEvent::SubstreamOpenFailure {
                         substream: _,
