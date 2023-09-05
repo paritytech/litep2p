@@ -89,13 +89,19 @@ async fn substream_accepted() {
 
     // open inbound substream and verify that peer state has changed to `Validating`
     notif
-        .on_inbound_substream(ProtocolName::from("/notif/1"), peer, Box::new(substream))
+        .on_inbound_substream(
+            ProtocolName::from("/notif/1"),
+            None,
+            peer,
+            Box::new(substream),
+        )
         .await
         .unwrap();
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
             protocol: _,
+            fallback: None,
             inbound: InboundState::ReadingHandshake,
             outbound: OutboundState::Closed,
         } => {}
@@ -111,6 +117,7 @@ async fn substream_accepted() {
         handle.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer,
             handshake: handshake.into()
         },
@@ -135,6 +142,7 @@ async fn substream_accepted() {
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
             protocol: _,
+            fallback: None,
             inbound: InboundState::Open { .. },
             outbound: OutboundState::OutboundInitiated { substream },
         } => {
@@ -170,13 +178,19 @@ async fn substream_rejected() {
 
     // open inbound substream and verify that peer state has changed to `Validating`
     notif
-        .on_inbound_substream(ProtocolName::from("/notif/1"), peer, Box::new(substream))
+        .on_inbound_substream(
+            ProtocolName::from("/notif/1"),
+            None,
+            peer,
+            Box::new(substream),
+        )
         .await
         .unwrap();
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
             protocol: _,
+            fallback: None,
             inbound: InboundState::ReadingHandshake,
             outbound: OutboundState::Closed,
         } => {}
@@ -192,6 +206,7 @@ async fn substream_rejected() {
         handle.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer,
             handshake: handshake.into()
         },
@@ -247,13 +262,19 @@ async fn accept_fails_due_to_closed_substream() {
 
     // open inbound substream and verify that peer state has changed to `InboundOpen`
     notif
-        .on_inbound_substream(ProtocolName::from("/notif/1"), peer, Box::new(substream))
+        .on_inbound_substream(
+            ProtocolName::from("/notif/1"),
+            None,
+            peer,
+            Box::new(substream),
+        )
         .await
         .unwrap();
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
             protocol: _,
+            fallback: None,
             inbound: InboundState::ReadingHandshake,
             outbound: OutboundState::Closed,
         } => {}
@@ -269,6 +290,7 @@ async fn accept_fails_due_to_closed_substream() {
         handle.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer,
             handshake: handshake.into()
         },
@@ -325,13 +347,19 @@ async fn accept_fails_due_to_closed_connection() {
 
     // open inbound substream and verify that peer state has changed to `InboundOpen`
     notif
-        .on_inbound_substream(ProtocolName::from("/notif/1"), peer, Box::new(substream))
+        .on_inbound_substream(
+            ProtocolName::from("/notif/1"),
+            None,
+            peer,
+            Box::new(substream),
+        )
         .await
         .unwrap();
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
             protocol: _,
+            fallback: None,
             inbound: InboundState::ReadingHandshake,
             outbound: OutboundState::Closed,
         } => {}
@@ -347,6 +375,7 @@ async fn accept_fails_due_to_closed_connection() {
         handle.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer,
             handshake: handshake.into()
         },

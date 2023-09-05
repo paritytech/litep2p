@@ -179,6 +179,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -189,6 +190,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -199,6 +201,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -207,6 +210,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -336,6 +340,7 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -456,6 +461,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -466,6 +472,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -476,6 +483,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -484,6 +492,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -622,6 +631,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -633,6 +643,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -643,6 +654,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -651,6 +663,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -676,6 +689,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -686,6 +700,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -697,6 +712,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -705,6 +721,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -837,6 +854,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -848,6 +866,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -858,6 +877,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -866,6 +886,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -894,6 +915,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![6, 6, 6, 6],
         }
@@ -905,6 +927,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![5, 5, 5, 5],
         }
@@ -916,6 +939,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![5, 5, 5, 5],
         }
@@ -924,6 +948,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![6, 6, 6, 6],
         }
@@ -1038,6 +1063,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1049,6 +1075,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1059,6 +1086,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1067,6 +1095,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1452,6 +1481,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1462,6 +1492,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1472,6 +1503,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1480,6 +1512,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1597,6 +1630,7 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         handle2.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
             protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1714,6 +1748,286 @@ async fn unsupported_protocol(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpenFailure {
             peer: peer2,
             error: NotificationError::Rejected
+        }
+    );
+}
+
+#[tokio::test]
+async fn dialer_fallback_protocol_works_tcp() {
+    dialer_fallback_protocol_works(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dialer_fallback_protocol_works_quic() {
+    dialer_fallback_protocol_works(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dialer_fallback_protocol_works_websocket() {
+    dialer_fallback_protocol_works(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/notif/2"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .with_fallback_names(vec![ProtocolName::from("/notif/1")])
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (notif_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .build();
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected and spawn the litep2p objects in the background
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/2"),
+            fallback: Some(ProtocolName::from("/notif/1")),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/2"),
+            fallback: Some(ProtocolName::from("/notif/1")),
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+}
+
+#[tokio::test]
+async fn listener_fallback_protocol_works_tcp() {
+    listener_fallback_protocol_works(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn listener_fallback_protocol_works_quic() {
+    listener_fallback_protocol_works(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn listener_fallback_protocol_works_websocket() {
+    listener_fallback_protocol_works(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+async fn listener_fallback_protocol_works(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (notif_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/2"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .with_fallback_names(vec![ProtocolName::from("/notif/1")])
+        .build();
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected and spawn the litep2p objects in the background
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/2"),
+            fallback: Some(ProtocolName::from("/notif/1")),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/2"),
+            fallback: Some(ProtocolName::from("/notif/1")),
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
         }
     );
 }

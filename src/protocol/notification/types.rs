@@ -59,6 +59,9 @@ pub(crate) enum InnerNotificationEvent {
         /// Protocol name.
         protocol: ProtocolName,
 
+        /// Fallback, if the substream was negotiated using a fallback protocol.
+        fallback: Option<ProtocolName>,
+
         /// Peer ID.
         peer: PeerId,
 
@@ -70,6 +73,9 @@ pub(crate) enum InnerNotificationEvent {
     NotificationStreamOpened {
         /// Protocol name.
         protocol: ProtocolName,
+
+        /// Fallback, if the substream was negotiated using a fallback protocol.
+        fallback: Option<ProtocolName>,
 
         /// Peer ID.
         peer: PeerId,
@@ -114,6 +120,9 @@ pub enum NotificationEvent {
         /// Protocol name.
         protocol: ProtocolName,
 
+        /// Fallback, if the substream was negotiated using a fallback protocol.
+        fallback: Option<ProtocolName>,
+
         /// Peer ID.
         peer: PeerId,
 
@@ -125,6 +134,9 @@ pub enum NotificationEvent {
     NotificationStreamOpened {
         /// Protocol name.
         protocol: ProtocolName,
+
+        /// Fallback, if the substream was negotiated using a fallback protocol.
+        fallback: Option<ProtocolName>,
 
         /// Peer ID.
         peer: PeerId,

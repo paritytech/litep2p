@@ -54,6 +54,7 @@ impl NotificationEventHandle {
     pub(crate) async fn report_inbound_substream(
         &self,
         protocol: ProtocolName,
+        fallback: Option<ProtocolName>,
         peer: PeerId,
         handshake: Vec<u8>,
     ) {
@@ -61,6 +62,7 @@ impl NotificationEventHandle {
             .tx
             .send(InnerNotificationEvent::ValidateSubstream {
                 protocol,
+                fallback,
                 peer,
                 handshake,
             })
@@ -71,6 +73,7 @@ impl NotificationEventHandle {
     pub(crate) async fn report_notification_stream_opened(
         &self,
         protocol: ProtocolName,
+        fallback: Option<ProtocolName>,
         peer: PeerId,
         handshake: Vec<u8>,
         sink: NotificationSink,
@@ -79,6 +82,7 @@ impl NotificationEventHandle {
             .tx
             .send(InnerNotificationEvent::NotificationStreamOpened {
                 protocol,
+                fallback,
                 peer,
                 handshake,
                 sink,
@@ -278,15 +282,18 @@ impl futures::Stream for NotificationHandle {
             Some(event) => match event {
                 InnerNotificationEvent::ValidateSubstream {
                     protocol,
+                    fallback,
                     peer,
                     handshake,
                 } => Poll::Ready(Some(NotificationEvent::ValidateSubstream {
                     protocol,
+                    fallback,
                     peer,
                     handshake,
                 })),
                 InnerNotificationEvent::NotificationStreamOpened {
                     protocol,
+                    fallback,
                     peer,
                     handshake,
                     sink,
@@ -295,6 +302,7 @@ impl futures::Stream for NotificationHandle {
 
                     Poll::Ready(Some(NotificationEvent::NotificationStreamOpened {
                         protocol,
+                        fallback,
                         peer,
                         handshake,
                     }))
@@ -304,16 +312,18 @@ impl futures::Stream for NotificationHandle {
 
                     Poll::Ready(Some(NotificationEvent::NotificationStreamClosed { peer }))
                 }
-                InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
+                InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
                     Poll::Ready(Some(NotificationEvent::NotificationStreamOpenFailure {
                         peer,
                         error,
-                    })),
-                InnerNotificationEvent::NotificationReceived { peer, notification } =>
+                    }))
+                }
+                InnerNotificationEvent::NotificationReceived { peer, notification } => {
                     Poll::Ready(Some(NotificationEvent::NotificationReceived {
                         peer,
                         notification,
-                    })),
+                    }))
+                }
             },
         }
     }
