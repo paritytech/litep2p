@@ -18,7 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{types::RequestId, PeerId};
+use crate::{
+    types::{protocol::ProtocolName, RequestId},
+    PeerId,
+};
 
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -57,6 +60,9 @@ pub enum RequestResponseEvent {
     RequestReceived {
         /// Peer Id.
         peer: PeerId,
+
+        /// Fallback protocol, if the substream was negotiated using a fallback.
+        fallback: Option<ProtocolName>,
 
         /// Request ID.
         request_id: RequestId,

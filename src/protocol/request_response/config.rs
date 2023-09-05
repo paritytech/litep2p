@@ -37,6 +37,9 @@ pub struct Config {
     /// Protocol name.
     pub(crate) protocol_name: ProtocolName,
 
+    /// Fallback names for the main protocol name.
+    pub(crate) fallback_names: Vec<ProtocolName>,
+
     /// Codec used by the protocol.
     pub(crate) codec: ProtocolCodec,
 
@@ -54,6 +57,7 @@ impl Config {
     /// Create new [`Config`].
     pub fn new(
         protocol_name: ProtocolName,
+        fallback_names: Vec<ProtocolName>,
         max_message_size: usize,
     ) -> (Self, RequestResponseHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -66,6 +70,7 @@ impl Config {
                 event_tx,
                 command_rx,
                 protocol_name,
+                fallback_names,
                 next_request_id,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
             },
@@ -84,6 +89,9 @@ pub struct ConfigBuilder {
     /// Protocol name.
     pub(crate) protocol_name: ProtocolName,
 
+    /// Fallback names for the main protocol name.
+    pub(crate) fallback_names: Vec<ProtocolName>,
+
     /// Maximum message size.
     max_message_size: Option<usize>,
 }
@@ -93,6 +101,7 @@ impl ConfigBuilder {
     pub fn new(protocol_name: ProtocolName) -> Self {
         Self {
             protocol_name,
+            fallback_names: Vec::new(),
             max_message_size: None,
         }
     }
@@ -103,10 +112,17 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set fallback names.
+    pub fn with_fallback_names(mut self, fallback_names: Vec<ProtocolName>) -> Self {
+        self.fallback_names = fallback_names;
+        self
+    }
+
     /// Build [`Config`].
     pub fn build(mut self) -> (Config, RequestResponseHandle) {
         Config::new(
             self.protocol_name,
+            self.fallback_names,
             self.max_message_size.take().expect("maximum message size to be set"),
         )
     }

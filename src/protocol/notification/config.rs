@@ -46,7 +46,7 @@ pub struct Config {
     pub(crate) handshake: Vec<u8>,
 
     /// Protocol aliases.
-    pub(crate) protocol_aliases: Vec<ProtocolName>,
+    pub(crate) fallback_names: Vec<ProtocolName>,
 
     /// TX channel passed to the protocol used for sending events.
     pub(crate) event_tx: Sender<InnerNotificationEvent>,
@@ -61,7 +61,7 @@ impl Config {
         protocol_name: ProtocolName,
         max_notification_size: usize,
         handshake: Vec<u8>,
-        protocol_aliases: Vec<ProtocolName>,
+        fallback_names: Vec<ProtocolName>,
     ) -> (Self, NotificationHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -73,7 +73,7 @@ impl Config {
                 codec: ProtocolCodec::UnsignedVarint(Some(max_notification_size)),
                 _max_notification_size: max_notification_size,
                 handshake,
-                protocol_aliases,
+                fallback_names,
                 event_tx,
                 command_rx,
             },

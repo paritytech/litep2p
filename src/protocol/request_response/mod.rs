@@ -27,7 +27,7 @@ use crate::{
         TransportService,
     },
     substream::Substream,
-    types::{RequestId, SubstreamId},
+    types::{protocol::ProtocolName, RequestId, SubstreamId},
     PeerId,
 };
 
@@ -268,6 +268,7 @@ impl RequestResponseProtocol {
     async fn on_inbound_substream(
         &mut self,
         peer: PeerId,
+        fallback: Option<ProtocolName>,
         mut substream: Box<dyn Substream>,
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
@@ -289,6 +290,7 @@ impl RequestResponseProtocol {
             .event_tx
             .send(RequestResponseEvent::RequestReceived {
                 peer,
+                fallback,
                 request_id,
                 request,
             })
@@ -458,10 +460,11 @@ impl RequestResponseProtocol {
                         peer,
                         substream,
                         direction,
+                        fallback,
                         ..
                     }) => match direction {
                         Direction::Inbound => {
-                            if let Err(error) = self.on_inbound_substream(peer, substream).await {
+                            if let Err(error) = self.on_inbound_substream(peer, fallback, substream).await {
                                 tracing::debug!(
                                     target: LOG_TARGET,
                                     ?peer,
