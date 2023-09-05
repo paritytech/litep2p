@@ -24,10 +24,6 @@ use super::certificate;
 pub enum UpgradeError {
     #[error("Failed to generate certificate")]
     CertificateGeneration(#[from] certificate::GenError),
-    #[error("Failed to upgrade server connection")]
-    ServerUpgrade(std::io::Error),
-    #[error("Failed to upgrade client connection")]
-    ClientUpgrade(std::io::Error),
     #[error("Failed to parse certificate")]
     BadCertificate(#[from] certificate::ParseError),
 }

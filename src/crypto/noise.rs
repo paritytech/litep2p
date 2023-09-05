@@ -697,17 +697,6 @@ impl fmt::Debug for NoiseContext {
 }
 
 impl NoiseContext {
-    /// Create new [`NoiseContext`].
-    pub fn new(id_keys: &Keypair) -> Self {
-        let noise = snow::Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise patterns"));
-        let keypair = noise.generate_keypair().unwrap();
-
-        let noise =
-            noise.local_private_key(&keypair.private).build_initiator().expect("to succeed");
-
-        NoiseContext::make_noise_and_payload(noise, keypair, id_keys)
-    }
-
     /// Create new [`NoiseContext`] with prologue.
     pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> Self {
         let noise = snow::Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise patterns"));

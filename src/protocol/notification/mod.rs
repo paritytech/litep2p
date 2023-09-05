@@ -281,13 +281,9 @@ impl NotificationProtocol {
             "handle outbound substream",
         );
 
-        if self.pending_outbound.remove(&substream_id).is_none() {
-            tracing::warn!(target: LOG_TARGET, ?peer, ?substream_id, "pending outbound substream doesn't exist");
-            debug_assert!(false);
-        }
-
         // peer must exist since an outbound substream was received from them
         let context = self.peers.get_mut(&peer).expect("peer to exist");
+        let pending_peer = self.pending_outbound.remove(&substream_id);
 
         // the peer can be in two different states when an outbound substream has opened:
         //  - `PeerState::OutboundInitiated` - local node opened an outbound substream
@@ -295,6 +291,7 @@ impl NotificationProtocol {
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
             PeerState::OutboundInitiated { substream } => {
                 debug_assert!(substream == substream_id);
+                debug_assert!(pending_peer == Some(peer));
 
                 self.negotiation.negotiate_outbound(peer, outbound);
                 context.state = PeerState::Validating {
