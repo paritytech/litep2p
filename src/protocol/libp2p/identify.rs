@@ -268,6 +268,7 @@ impl Identify {
                     protocol,
                     direction,
                     substream,
+                    ..
                 } => match direction {
                     Direction::Inbound => {
                         if let Err(error) =

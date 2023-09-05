@@ -862,6 +862,7 @@ impl NotificationProtocol {
                     substream,
                     direction,
                     protocol,
+                    ..
                 }) => match direction {
                     Direction::Inbound => {
                         if let Err(error) = self.on_inbound_substream(protocol, peer, substream).await {

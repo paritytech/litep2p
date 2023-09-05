@@ -98,6 +98,9 @@ pub enum TransportEvent {
         /// the protocol can handle the substream appropriately.
         protocol: ProtocolName,
 
+        /// Fallback protocol.
+        fallback: Option<ProtocolName>,
+
         /// Substream direction.
         ///
         /// Informs the protocol whether the substream is inbound (opened by the remote node)

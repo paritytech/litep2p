@@ -123,7 +123,11 @@ impl Litep2p {
                 "enable notification protocol",
             );
 
-            let service = transport_manager.register_protocol(protocol, config.codec);
+            let service = transport_manager.register_protocol(
+                protocol,
+                config.protocol_aliases.clone(),
+                config.codec,
+            );
             tokio::spawn(async move { NotificationProtocol::new(service, config).run().await });
         }
 
@@ -135,7 +139,7 @@ impl Litep2p {
                 "enable request-response protocol",
             );
 
-            let service = transport_manager.register_protocol(protocol, config.codec);
+            let service = transport_manager.register_protocol(protocol, Vec::new(), config.codec);
             tokio::spawn(async move { RequestResponseProtocol::new(service, config).run().await });
         }
 
@@ -143,7 +147,8 @@ impl Litep2p {
         for (protocol_name, protocol) in config.user_protocols.into_iter() {
             tracing::debug!(target: LOG_TARGET, protocol = ?protocol_name, "enable user protocol");
 
-            let service = transport_manager.register_protocol(protocol_name, protocol.codec());
+            let service =
+                transport_manager.register_protocol(protocol_name, Vec::new(), protocol.codec());
             tokio::spawn(async move { protocol.run(service).await });
         }
 
@@ -155,8 +160,11 @@ impl Litep2p {
                 "enable ipfs ping protocol",
             );
 
-            let service = transport_manager
-                .register_protocol(ping_config.protocol.clone(), ping_config.codec);
+            let service = transport_manager.register_protocol(
+                ping_config.protocol.clone(),
+                Vec::new(),
+                ping_config.codec,
+            );
             tokio::spawn(async move { Ping::new(service, ping_config).run().await });
         }
 
@@ -168,8 +176,11 @@ impl Litep2p {
                 "enable ipfs kademlia protocol",
             );
 
-            let service = transport_manager
-                .register_protocol(kademlia_config.protocol.clone(), kademlia_config.codec);
+            let service = transport_manager.register_protocol(
+                kademlia_config.protocol.clone(),
+                Vec::new(),
+                kademlia_config.codec,
+            );
             tokio::spawn(async move { Kademlia::new(service, kademlia_config).run().await });
         }
 
@@ -185,6 +196,7 @@ impl Litep2p {
 
                 let service = transport_manager.register_protocol(
                     identify_config.protocol.clone(),
+                    Vec::new(),
                     identify_config.codec.clone(),
                 );
                 identify_config.public = Some(PublicKey::Ed25519(config.keypair.public()));
@@ -201,8 +213,11 @@ impl Litep2p {
                 "enable ipfs bitswap protocol",
             );
 
-            let service = transport_manager
-                .register_protocol(bitswap_config.protocol.clone(), bitswap_config.codec);
+            let service = transport_manager.register_protocol(
+                bitswap_config.protocol.clone(),
+                Vec::new(),
+                bitswap_config.codec,
+            );
             tokio::spawn(async move { Bitswap::new(service, bitswap_config).run().await });
         }
 

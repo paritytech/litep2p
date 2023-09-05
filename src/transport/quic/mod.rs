@@ -377,6 +377,7 @@ mod tests {
         let (_command_tx1, command_rx1) = channel(64);
 
         let handle1 = TransportHandle {
+            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             tx: event_tx1,
@@ -387,6 +388,7 @@ mod tests {
                 ProtocolContext {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
                 },
             )]),
         };
@@ -408,6 +410,7 @@ mod tests {
         let (command_tx2, command_rx2) = channel(64);
 
         let handle2 = TransportHandle {
+            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             tx: event_tx2,
@@ -418,6 +421,7 @@ mod tests {
                 ProtocolContext {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
                 },
             )]),
         };

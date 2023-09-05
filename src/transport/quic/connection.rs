@@ -140,6 +140,7 @@ impl QuicConnection {
         permit: Permit,
         direction: Direction,
         protocol: ProtocolName,
+        fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<NegotiatedSubstream> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
 
@@ -165,14 +166,18 @@ impl QuicConnection {
             }
         };
 
-        let (io, protocol) =
-            Self::negotiate_protocol(stream, &Role::Dialer, vec![&protocol]).await?;
+        // TODO: protocols don't change after they've been initialized so this should be done only once
+        let protocols = std::iter::once(&*protocol)
+            .chain(fallback_names.iter().map(|protocol| &**protocol))
+            .collect();
+
+        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Dialer, protocols).await?;
 
         Ok(NegotiatedSubstream {
             io: io.inner(),
             direction,
-            protocol,
             permit,
+            protocol,
         })
     }
 
@@ -217,8 +222,7 @@ impl QuicConnection {
                 substream = self.connection.accept_bidirectional_stream() => match substream {
                     Ok(Some(stream)) => {
                         let substream = self.protocol_set.next_substream_id();
-                        // TODO: these should not be cloned on every substream
-                        let protocols = self.protocol_set.protocols.keys().cloned().collect();
+                        let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
 
                         self.pending_substreams.push(Box::pin(async move {
@@ -317,12 +321,13 @@ impl QuicConnection {
                     }
                 }
                 protocol = self.protocol_set.next_event() => match protocol {
-                    Some(ProtocolCommand::OpenSubstream { protocol, substream_id, permit }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let handle = self.connection.handle();
 
                         tracing::trace!(
                             target: LOG_TARGET,
                             ?protocol,
+                            ?fallback_names,
                             ?substream_id,
                             "open substream"
                         );
@@ -330,7 +335,13 @@ impl QuicConnection {
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(5), // TODO: make this configurable
-                                Self::open_substream(handle, permit, Direction::Outbound(substream_id), protocol.clone()),
+                                Self::open_substream(
+                                    handle,
+                                    permit,
+                                    Direction::Outbound(substream_id),
+                                    protocol.clone(),
+                                    fallback_names
+                                ),
                             )
                             .await
                             {
@@ -443,10 +454,12 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
@@ -503,10 +516,12 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
@@ -557,10 +572,12 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
@@ -619,10 +636,12 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);
@@ -677,10 +696,12 @@ mod tests {
 
         let mut service1 = manager.register_protocol(
             ProtocolName::from("/notif/1"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut service2 = manager.register_protocol(
             ProtocolName::from("/notif/2"),
+            Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
         let transport_handle = manager.register_transport(SupportedTransport::Quic);

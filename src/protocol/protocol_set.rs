@@ -103,6 +103,12 @@ pub enum InnerTransportEvent {
         /// the protocol can handle the substream appropriately.
         protocol: ProtocolName,
 
+        /// Fallback name.
+        ///
+        /// If the substream was negotiated using a fallback name of the main protocol,
+        /// `fallback` is `Some`.
+        fallback: Option<ProtocolName>,
+
         /// Substream direction.
         ///
         /// Informs the protocol whether the substream is inbound (opened by the remote node)
@@ -132,25 +138,31 @@ pub enum InnerTransportEvent {
 impl From<InnerTransportEvent> for TransportEvent {
     fn from(event: InnerTransportEvent) -> Self {
         match event {
-            InnerTransportEvent::ConnectionEstablished { peer, address, .. } =>
-                TransportEvent::ConnectionEstablished { peer, address },
-            InnerTransportEvent::ConnectionClosed { peer, .. } =>
-                TransportEvent::ConnectionClosed { peer },
-            InnerTransportEvent::DialFailure { peer, address } =>
-                TransportEvent::DialFailure { peer, address },
+            InnerTransportEvent::ConnectionEstablished { peer, address, .. } => {
+                TransportEvent::ConnectionEstablished { peer, address }
+            }
+            InnerTransportEvent::ConnectionClosed { peer, .. } => {
+                TransportEvent::ConnectionClosed { peer }
+            }
+            InnerTransportEvent::DialFailure { peer, address } => {
+                TransportEvent::DialFailure { peer, address }
+            }
             InnerTransportEvent::SubstreamOpened {
                 peer,
                 protocol,
+                fallback,
                 direction,
                 substream,
             } => TransportEvent::SubstreamOpened {
                 peer,
                 protocol,
+                fallback,
                 direction,
                 substream,
             },
-            InnerTransportEvent::SubstreamOpenFailure { substream, error } =>
-                TransportEvent::SubstreamOpenFailure { substream, error },
+            InnerTransportEvent::SubstreamOpenFailure { substream, error } => {
+                TransportEvent::SubstreamOpenFailure { substream, error }
+            }
         }
     }
 }
@@ -164,6 +176,9 @@ pub struct TransportService {
 
     /// Protocol.
     protocol: ProtocolName,
+
+    /// Fallback names for the protocol.
+    fallback_names: Vec<ProtocolName>,
 
     /// Open connections.
     // TODO: this can be refactored
@@ -187,6 +202,7 @@ impl TransportService {
     pub(crate) fn new(
         local_peer_id: PeerId,
         protocol: ProtocolName,
+        fallback_names: Vec<ProtocolName>,
         next_substream_id: Arc<AtomicUsize>,
         transport_handle: TransportManagerHandle,
     ) -> (Self, Sender<InnerTransportEvent>) {
@@ -197,6 +213,7 @@ impl TransportService {
                 rx,
                 protocol,
                 local_peer_id,
+                fallback_names,
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
@@ -305,8 +322,14 @@ impl Transport for TransportService {
             "open substream",
         );
 
+        // TODO: so much clonin
         connection
-            .open_substream(self.protocol.clone(), substream_id, permit)
+            .open_substream(
+                self.protocol.clone(),
+                self.fallback_names.clone(),
+                substream_id,
+                permit,
+            )
             .await
             .map(|_| substream_id)
     }
@@ -366,6 +389,17 @@ pub enum ProtocolCommand {
         /// Protocol name.
         protocol: ProtocolName,
 
+        /// Fallback names.
+        ///
+        /// If the protocol has changed its name but wishes to suppor the old name(s), it must
+        /// provide the old protocol names in `fallback_names`. These are fed into
+        /// `multistream-select` which them attempts to negotiate a protocol for the substream
+        /// using one of the provided names and if the substream is negotiated successfully, will
+        /// report back the actual protocol name that was negotiated, in case the protocol
+        /// needs to deal with the old version of the protocol in different way compared to
+        /// the new version.
+        fallback_names: Vec<ProtocolName>,
+
         /// Substream ID.
         ///
         /// Protocol allocates an ephemeral ID for outbound substreams which allows it to track
@@ -399,6 +433,7 @@ pub struct ProtocolSet {
     connection: ConnectionHandle,
     rx: Receiver<ProtocolCommand>,
     next_substream_id: Arc<AtomicUsize>,
+    fallback_names: HashMap<ProtocolName, ProtocolName>,
 }
 
 impl ProtocolSet {
@@ -410,12 +445,25 @@ impl ProtocolSet {
     ) -> Self {
         let (tx, rx) = channel(256);
 
+        let fallback_names = protocols
+            .iter()
+            .map(|(protocol, context)| {
+                context
+                    .fallback_names
+                    .iter()
+                    .map(|fallback| (fallback.clone(), protocol.clone()))
+                    .collect::<HashMap<_, _>>()
+            })
+            .flatten()
+            .collect();
+
         ProtocolSet {
             rx,
             mgr_tx,
             keypair,
             protocols,
             next_substream_id,
+            fallback_names,
             connection: ConnectionHandle::new(tx),
         }
     }
@@ -430,6 +478,15 @@ impl ProtocolSet {
         SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed))
     }
 
+    /// Get the list of all supported protocols.
+    pub fn protocols(&self) -> Vec<ProtocolName> {
+        self.protocols
+            .keys()
+            .cloned()
+            .chain(self.fallback_names.keys().cloned())
+            .collect()
+    }
+
     /// Report to `protocol` that substream was opened for `peer`.
     pub async fn report_substream_open(
         &mut self,
@@ -440,6 +497,11 @@ impl ProtocolSet {
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
 
+        let (protocol, fallback) = match self.fallback_names.get(&protocol) {
+            Some(main_protocol) => (main_protocol.clone(), Some(protocol)),
+            None => (protocol, None),
+        };
+
         self.protocols
             .get_mut(&protocol)
             .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
@@ -447,6 +509,7 @@ impl ProtocolSet {
             .send(InnerTransportEvent::SubstreamOpened {
                 peer,
                 protocol: protocol.clone(),
+                fallback,
                 direction,
                 substream,
             })
@@ -458,7 +521,10 @@ impl ProtocolSet {
     pub fn protocol_codec(&self, protocol: &ProtocolName) -> ProtocolCodec {
         // NOTE: `protocol` must exist in `self.protocol` as it was negotiated
         // using the protocols from this set
-        self.protocols.get(&protocol).expect("protocol to exist").codec
+        self.protocols
+            .get(self.fallback_names.get(&protocol).map_or(protocol, |protocol| protocol))
+            .expect("protocol to exist")
+            .codec
     }
 
     /// Report to `protocol` that connection failed to open substream for `peer`.
@@ -539,5 +605,140 @@ impl ProtocolSet {
     /// Poll next substream open query from one of the installed protocols.
     pub async fn next_event(&mut self) -> Option<ProtocolCommand> {
         self.rx.recv().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock::substream::MockSubstream;
+
+    #[tokio::test]
+    async fn fallback_is_provided() {
+        let (tx, _rx) = channel(64);
+        let (tx1, _rx1) = channel(64);
+
+        let mut protocol_set = ProtocolSet::new(
+            Keypair::generate(),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: vec![
+                        ProtocolName::from("/notif/1/fallback/1"),
+                        ProtocolName::from("/notif/1/fallback/2"),
+                    ],
+                },
+            )]),
+        );
+
+        let expected_protocols = HashSet::from([
+            ProtocolName::from("/notif/1"),
+            ProtocolName::from("/notif/1/fallback/1"),
+            ProtocolName::from("/notif/1/fallback/2"),
+        ]);
+
+        for protocol in protocol_set.protocols().iter() {
+            assert!(expected_protocols.contains(protocol));
+        }
+
+        protocol_set
+            .report_substream_open(
+                PeerId::random(),
+                ProtocolName::from("/notif/1/fallback/2"),
+                Direction::Inbound,
+                Box::new(MockSubstream::new()),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn main_protocol_reported_if_main_protocol_negotiated() {
+        let (tx, _rx) = channel(64);
+        let (tx1, mut rx1) = channel(64);
+
+        let mut protocol_set = ProtocolSet::new(
+            Keypair::generate(),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: vec![
+                        ProtocolName::from("/notif/1/fallback/1"),
+                        ProtocolName::from("/notif/1/fallback/2"),
+                    ],
+                },
+            )]),
+        );
+
+        protocol_set
+            .report_substream_open(
+                PeerId::random(),
+                ProtocolName::from("/notif/1"),
+                Direction::Inbound,
+                Box::new(MockSubstream::new()),
+            )
+            .await
+            .unwrap();
+
+        match rx1.recv().await.unwrap() {
+            InnerTransportEvent::SubstreamOpened {
+                protocol, fallback, ..
+            } => {
+                assert!(fallback.is_none());
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+            }
+            _ => panic!("invalid event received"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fallback_is_reported_to_protocol() {
+        let (tx, _rx) = channel(64);
+        let (tx1, mut rx1) = channel(64);
+
+        let mut protocol_set = ProtocolSet::new(
+            Keypair::generate(),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: vec![
+                        ProtocolName::from("/notif/1/fallback/1"),
+                        ProtocolName::from("/notif/1/fallback/2"),
+                    ],
+                },
+            )]),
+        );
+
+        protocol_set
+            .report_substream_open(
+                PeerId::random(),
+                ProtocolName::from("/notif/1/fallback/2"),
+                Direction::Inbound,
+                Box::new(MockSubstream::new()),
+            )
+            .await
+            .unwrap();
+
+        match rx1.recv().await.unwrap() {
+            InnerTransportEvent::SubstreamOpened {
+                protocol, fallback, ..
+            } => {
+                assert_eq!(fallback, Some(ProtocolName::from("/notif/1/fallback/2")));
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+            }
+            _ => panic!("invalid event received"),
+        }
     }
 }
