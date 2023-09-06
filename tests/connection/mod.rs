@@ -36,6 +36,9 @@ use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use tokio::net::{TcpListener, UdpSocket};
 
+#[cfg(test)]
+mod protocol_dial_invalid_address;
+
 enum Transport {
     Tcp(TcpTransportConfig),
     Quic(QuicTransportConfig),
