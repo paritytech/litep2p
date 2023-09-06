@@ -373,6 +373,33 @@ pub struct PeerContext {
     addresses: HashSet<Multiaddr>,
 }
 
+/// DNS lookup result.
+struct DnsLookupResult {
+    /// Connection ID.
+    connection_id: ConnectionId,
+
+    /// Address that was dialed.
+    address: Multiaddr,
+
+    /// Result of the lookup.
+    result: Result<LookupIp, ResolveError>,
+}
+
+impl DnsLookupResult {
+    /// Create new [`DnsLookupResult`].
+    fn new(
+        connection_id: ConnectionId,
+        address: Multiaddr,
+        result: Result<LookupIp, ResolveError>,
+    ) -> Self {
+        Self {
+            connection_id,
+            address,
+            result,
+        }
+    }
+}
+
 /// Litep2p connection manager.
 pub struct TransportManager {
     /// Local peer ID.
@@ -418,9 +445,7 @@ pub struct TransportManager {
     pending_connections: HashMap<ConnectionId, PeerId>,
 
     /// Pending DNS resolves.
-    pending_dns_resolves: FuturesUnordered<
-        BoxFuture<'static, (ConnectionId, Multiaddr, Result<LookupIp, ResolveError>)>,
-    >,
+    pending_dns_resolves: FuturesUnordered<BoxFuture<'static, DnsLookupResult>>,
 }
 
 impl TransportManager {
@@ -588,9 +613,12 @@ impl TransportManager {
 
                 self.pending_dns_resolves.push(Box::pin(async move {
                     match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
-                        Ok(resolver) =>
-                            (connection, original, resolver.lookup_ip(dns_address).await),
-                        Err(error) => (connection, original, Err(error)),
+                        Ok(resolver) => DnsLookupResult::new(
+                            connection,
+                            original,
+                            resolver.lookup_ip(dns_address).await,
+                        ),
+                        Err(error) => DnsLookupResult::new(connection, original, Err(error)),
                     }
                 }));
 
@@ -726,27 +754,17 @@ impl TransportManager {
                 }
                 _ => return Err(Error::TransportNotSupported(address)),
             },
-            Protocol::Dns(_) => {
-                // TODO: zzz
-                let mut ip6 = Vec::new();
-                let mut ip4 = Vec::new();
-
-                for ip in address_iter {
-                    match ip {
-                        IpAddr::V4(inner) => ip4.push(inner),
-                        IpAddr::V6(inner) => ip6.push(inner),
-                    }
-                }
-
-                if !ip6.is_empty() {
-                    new_address.push(Protocol::Ip6(ip6[0]));
-                } else if !ip4.is_empty() {
-                    new_address.push(Protocol::Ip4(ip4[0]));
-                } else {
-                    return Err(Error::TransportNotSupported(address));
-                }
+            Protocol::Dns(_) => match address_iter.next() {
+                Some(address) => match address {
+                    IpAddr::V4(inner) => new_address.push(Protocol::Ip4(inner)),
+                    IpAddr::V6(inner) => new_address.push(Protocol::Ip6(inner)),
+                },
+                None => return Err(Error::TransportNotSupported(address)),
+            },
+            _ => {
+                tracing::error!(target: LOG_TARGET, "got invalid dns address");
+                return Err(Error::TransportNotSupported(address));
             }
-            _ => panic!("somehow got invalid dns address"),
         };
 
         for protocol in protocol_stack {
@@ -843,14 +861,23 @@ impl TransportManager {
             tokio::select! {
                 event = self.event_rx.recv() => return Some(self.on_transport_manager_event(event?)),
                 event = self.pending_dns_resolves.select_next_some(), if !self.pending_dns_resolves.is_empty() => {
-                    match self.on_resolved_dns_address(event.1.clone(), event.2).await {
+                    match self.on_resolved_dns_address(event.address.clone(), event.result).await {
                         Ok(address) => {
-                            tracing::debug!(target: LOG_TARGET, ?address, "connect to remote peer");
+                            tracing::debug!(target: LOG_TARGET, ?address, "dns address resolved, connect to remote peer");
 
-                            // TODO: no unwraps
-                            self.dial_address(address.clone()).await.unwrap();
+                            if let Err(error) = self.dial_address(address.clone()).await {
+                                return Some(TransportManagerEvent::DialFailure {
+                                    connection: event.connection_id,
+                                    address: event.address,
+                                    error
+                                });
+                            }
                         }
-                        Err(error) => return Some(TransportManagerEvent::DialFailure { connection: event.0, address: event.1, error }),
+                        Err(error) => return Some(TransportManagerEvent::DialFailure {
+                            connection: event.connection_id,
+                            address: event.address,
+                            error
+                        }),
                     }
                 }
                 command = self.cmd_rx.recv() => match command? {
