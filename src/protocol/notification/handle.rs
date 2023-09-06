@@ -312,18 +312,16 @@ impl futures::Stream for NotificationHandle {
 
                     Poll::Ready(Some(NotificationEvent::NotificationStreamClosed { peer }))
                 }
-                InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
+                InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
                     Poll::Ready(Some(NotificationEvent::NotificationStreamOpenFailure {
                         peer,
                         error,
-                    }))
-                }
-                InnerNotificationEvent::NotificationReceived { peer, notification } => {
+                    })),
+                InnerNotificationEvent::NotificationReceived { peer, notification } =>
                     Poll::Ready(Some(NotificationEvent::NotificationReceived {
                         peer,
                         notification,
-                    }))
-                }
+                    })),
             },
         }
     }

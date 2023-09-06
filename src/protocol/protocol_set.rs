@@ -138,15 +138,12 @@ pub enum InnerTransportEvent {
 impl From<InnerTransportEvent> for TransportEvent {
     fn from(event: InnerTransportEvent) -> Self {
         match event {
-            InnerTransportEvent::ConnectionEstablished { peer, address, .. } => {
-                TransportEvent::ConnectionEstablished { peer, address }
-            }
-            InnerTransportEvent::ConnectionClosed { peer, .. } => {
-                TransportEvent::ConnectionClosed { peer }
-            }
-            InnerTransportEvent::DialFailure { peer, address } => {
-                TransportEvent::DialFailure { peer, address }
-            }
+            InnerTransportEvent::ConnectionEstablished { peer, address, .. } =>
+                TransportEvent::ConnectionEstablished { peer, address },
+            InnerTransportEvent::ConnectionClosed { peer, .. } =>
+                TransportEvent::ConnectionClosed { peer },
+            InnerTransportEvent::DialFailure { peer, address } =>
+                TransportEvent::DialFailure { peer, address },
             InnerTransportEvent::SubstreamOpened {
                 peer,
                 protocol,
@@ -160,9 +157,8 @@ impl From<InnerTransportEvent> for TransportEvent {
                 direction,
                 substream,
             },
-            InnerTransportEvent::SubstreamOpenFailure { substream, error } => {
-                TransportEvent::SubstreamOpenFailure { substream, error }
-            }
+            InnerTransportEvent::SubstreamOpenFailure { substream, error } =>
+                TransportEvent::SubstreamOpenFailure { substream, error },
         }
     }
 }

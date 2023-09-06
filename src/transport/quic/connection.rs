@@ -166,7 +166,8 @@ impl QuicConnection {
             }
         };
 
-        // TODO: protocols don't change after they've been initialized so this should be done only once
+        // TODO: protocols don't change after they've been initialized so this should be done only
+        // once
         let protocols = std::iter::once(&*protocol)
             .chain(fallback_names.iter().map(|protocol| &**protocol))
             .collect();

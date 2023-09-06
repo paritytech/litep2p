@@ -281,7 +281,7 @@ impl TransportHandle {
 
         match address.iter().last() {
             Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                Ok(peer) => {
+                Ok(peer) =>
                     for (_, context) in &self.protocols {
                         let _ = context
                             .tx
@@ -290,8 +290,7 @@ impl TransportHandle {
                                 address: address.clone(),
                             })
                             .await;
-                    }
-                }
+                    },
                 Err(error) => {
                     tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
                     debug_assert!(false);
@@ -589,9 +588,8 @@ impl TransportManager {
 
                 self.pending_dns_resolves.push(Box::pin(async move {
                     match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
-                        Ok(resolver) => {
-                            (connection, original, resolver.lookup_ip(dns_address).await)
-                        }
+                        Ok(resolver) =>
+                            (connection, original, resolver.lookup_ip(dns_address).await),
                         Err(error) => (connection, original, Err(error)),
                     }
                 }));

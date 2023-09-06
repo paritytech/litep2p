@@ -177,9 +177,8 @@ impl TcpTransport {
             }
             Err(error) => match error.connection_id {
                 Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                    Some(address) => {
-                        self.context.report_dial_failure(connection_id, address, error.error).await
-                    }
+                    Some(address) =>
+                        self.context.report_dial_failure(connection_id, address, error.error).await,
                     None => tracing::debug!(
                         target: LOG_TARGET,
                         ?error,
