@@ -281,7 +281,7 @@ impl TransportHandle {
 
         match address.iter().last() {
             Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                Ok(peer) =>
+                Ok(peer) => {
                     for (_, context) in &self.protocols {
                         let _ = context
                             .tx
@@ -290,7 +290,8 @@ impl TransportHandle {
                                 address: address.clone(),
                             })
                             .await;
-                    },
+                    }
+                }
                 Err(error) => {
                     tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
                     debug_assert!(false);
@@ -375,6 +376,9 @@ pub struct PeerContext {
 
 /// DNS lookup result.
 struct DnsLookupResult {
+    /// Peer ID.
+    peer: PeerId,
+
     /// Connection ID.
     connection_id: ConnectionId,
 
@@ -388,14 +392,16 @@ struct DnsLookupResult {
 impl DnsLookupResult {
     /// Create new [`DnsLookupResult`].
     fn new(
+        peer: PeerId,
         connection_id: ConnectionId,
         address: Multiaddr,
         result: Result<LookupIp, ResolveError>,
     ) -> Self {
         Self {
-            connection_id,
-            address,
+            peer,
             result,
+            address,
+            connection_id,
         }
     }
 }
@@ -608,17 +614,24 @@ impl TransportManager {
                 let dns_address = addr.to_string();
                 let original = address.clone();
                 let connection = self.next_connection_id();
-
-                // TODO: parse peer id from the address
+                let peer: PeerId = match protocol_stack
+                    .find(|protocol| std::matches!(protocol, Protocol::P2p(_)))
+                {
+                    Some(Protocol::P2p(multihash)) => {
+                        PeerId::from_multihash(multihash).map_err(|_| Error::InvalidData)?
+                    }
+                    _ => return Err(Error::AddressError(AddressError::PeerIdMissing)),
+                };
 
                 self.pending_dns_resolves.push(Box::pin(async move {
                     match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
                         Ok(resolver) => DnsLookupResult::new(
+                            peer,
                             connection,
                             original,
                             resolver.lookup_ip(dns_address).await,
                         ),
-                        Err(error) => DnsLookupResult::new(connection, original, Err(error)),
+                        Err(error) => DnsLookupResult::new(peer, connection, original, Err(error)),
                     }
                 }));
 
@@ -794,7 +807,6 @@ impl TransportManager {
                     tracing::debug!(target: LOG_TARGET, ?peer, ?address, ?error, "dial failure");
 
                     if let Some(context) = self.peers.write().get_mut(&peer) {
-                        // TODO: if a protocol dialed the peer, inform them about dial failure
                         context.state = PeerState::Disconnected;
                     }
 
@@ -855,6 +867,19 @@ impl TransportManager {
         }
     }
 
+    /// Report dial failure to protocols.
+    async fn report_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
+        for (_, context) in &self.protocols {
+            let _ = context
+                .tx
+                .send(InnerTransportEvent::DialFailure {
+                    peer,
+                    address: address.clone(),
+                })
+                .await;
+        }
+    }
+
     /// Poll next event from [`TransportManager`].
     pub async fn next(&mut self) -> Option<TransportManagerEvent> {
         loop {
@@ -866,6 +891,8 @@ impl TransportManager {
                             tracing::debug!(target: LOG_TARGET, ?address, "dns address resolved, connect to remote peer");
 
                             if let Err(error) = self.dial_address(address.clone()).await {
+                                self.report_dial_failure(event.peer, event.address.clone()).await;
+
                                 return Some(TransportManagerEvent::DialFailure {
                                     connection: event.connection_id,
                                     address: event.address,
@@ -873,11 +900,15 @@ impl TransportManager {
                                 });
                             }
                         }
-                        Err(error) => return Some(TransportManagerEvent::DialFailure {
-                            connection: event.connection_id,
-                            address: event.address,
-                            error
-                        }),
+                        Err(error) => {
+                            self.report_dial_failure(event.peer, event.address.clone()).await;
+
+                            return Some(TransportManagerEvent::DialFailure {
+                                connection: event.connection_id,
+                                address: event.address,
+                                error
+                            });
+                        }
                     }
                 }
                 command = self.cmd_rx.recv() => match command? {
