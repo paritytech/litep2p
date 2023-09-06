@@ -776,3 +776,55 @@ async fn simultaneous_dial_ipv6_quic() {
         }
     }
 }
+
+#[tokio::test]
+async fn websocket_over_ipv6() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (ping_config1, mut ping_event_stream1) = PingConfig::default();
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_websocket(WebSocketTransportConfig {
+            listen_address: "/ip6/::1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_libp2p_ping(ping_config1)
+        .build();
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    let (ping_config2, mut ping_event_stream2) = PingConfig::default();
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_websocket(WebSocketTransportConfig {
+            listen_address: "/ip6/::1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        })
+        .with_libp2p_ping(ping_config2)
+        .build();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+    litep2p1.connect(address2).await.unwrap();
+
+    let mut ping_received1 = false;
+    let mut ping_received2 = false;
+
+    while !ping_received1 || !ping_received2 {
+        tokio::select! {
+            _ = litep2p1.next_event() => {}
+            _ = litep2p2.next_event() => {}
+            event = ping_event_stream1.next() => {
+                if event.is_some() {
+                    ping_received1 = true;
+                }
+            }
+            event = ping_event_stream2.next() => {
+                if event.is_some() {
+                    ping_received2 = true;
+                }
+            }
+        }
+    }
+}
