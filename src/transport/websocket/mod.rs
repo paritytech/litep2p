@@ -34,6 +34,7 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::net::TcpListener;
+use url::Url;
 
 use std::{
     collections::HashMap,
@@ -153,6 +154,37 @@ impl WebSocketTransport {
 
         Ok((socket_address, maybe_peer))
     }
+
+    /// Convert `Multiaddr` into `url::Url`
+    fn multiaddr_into_url(address: Multiaddr) -> crate::Result<Url> {
+        let mut protocol_stack = address.iter();
+
+        let ip_address = match protocol_stack
+            .next()
+            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+        {
+            Protocol::Ip4(address) => address.to_string(),
+            Protocol::Ip6(address) => format!("[{}]", address.to_string()),
+            _ => return Err(Error::TransportNotSupported(address)),
+        };
+
+        match protocol_stack
+            .next()
+            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
+        {
+            Protocol::Tcp(port) => match protocol_stack.next() {
+                Some(Protocol::Ws(_)) => {
+                    let ws_address = format!("ws://{ip_address}:{port}/");
+
+                    tracing::trace!(target: LOG_TARGET, ?ws_address, "parse address");
+
+                    url::Url::parse(&ws_address).map_err(|_| Error::InvalidData)
+                }
+                _ => return Err(Error::TransportNotSupported(address.clone())),
+            },
+            _ => Err(Error::TransportNotSupported(address)),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -224,14 +256,27 @@ impl Transport for WebSocketTransport {
                         let context = self.context.protocol_set();
                         let yamux_config = self.config.yamux_config.clone();
 
+                        // try to convert the multiaddress into a `Url` and if it fails, report dial failure immediately
+                        let ws_address = match Self::multiaddr_into_url(address.clone()) {
+                            Ok(address) => address,
+                            Err(error) => {
+                                self.context.report_dial_failure(connection, address, error).await;
+                                continue;
+                            }
+                        };
+
                         tracing::debug!(target: LOG_TARGET, ?address, ?connection, "open connection");
 
+                        // TODO: make timeout configurable
                         self.pending_dials.insert(connection, address.clone());
                         self.pending_connections.push(Box::pin(async move {
                             match tokio::time::timeout(Duration::from_secs(10), async move {
-                                WebSocketConnection::open_connection(address, connection, yamux_config, context)
+                                WebSocketConnection::open_connection(address, ws_address, connection, yamux_config, context)
                                     .await
-                                    .map_err(|error| WebSocketError::new(error, Some(connection)))
+                                    .map_err(|error| {
+                                    tracing::warn!("connection failed: {error:?}");
+                                    WebSocketError::new(error, Some(connection))
+                                })
                             }).await {
                                 Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection))),
                                 Ok(Err(error)) => Err(error),

@@ -49,32 +49,6 @@ mod schema {
 /// Logging target for the file.
 const LOG_TARGET: &str = "websocket::connection";
 
-/// Convert `Multiaddr` into `url::Url`
-fn multiaddr_into_url(address: Multiaddr) -> crate::Result<Url> {
-    let mut protocol_stack = address.iter();
-
-    let ip4 = match protocol_stack
-        .next()
-        .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-    {
-        Protocol::Ip4(address) => address.to_string(),
-        _ => return Err(Error::TransportNotSupported(address)),
-    };
-
-    match protocol_stack
-        .next()
-        .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-    {
-        Protocol::Tcp(port) => match protocol_stack.next() {
-            Some(Protocol::Ws(_)) => {
-                url::Url::parse(&format!("ws://{ip4}:{port}/")).map_err(|_| Error::InvalidData)
-            }
-            _ => return Err(Error::TransportNotSupported(address.clone())),
-        },
-        _ => Err(Error::TransportNotSupported(address)),
-    }
-}
-
 #[derive(Debug)]
 pub struct NegotiatedSubstream {
     /// Substream direction.
@@ -172,12 +146,14 @@ impl WebSocketConnection {
     /// Open WebSocket connection.
     pub(crate) async fn open_connection(
         address: Multiaddr,
+        ws_address: Url,
         connection_id: ConnectionId,
         yamux_config: yamux::Config,
         mut protocol_set: ProtocolSet,
     ) -> crate::Result<Self> {
-        let (stream, _) =
-            tokio_tungstenite::connect_async(multiaddr_into_url(address.clone())?).await?;
+        tracing::trace!(target: LOG_TARGET, ?address, ?ws_address, ?connection_id, "open connection to remote peer");
+
+        let (stream, _) = tokio_tungstenite::connect_async(ws_address).await?;
         let stream = BufferedStream::new(stream);
 
         tracing::trace!(
