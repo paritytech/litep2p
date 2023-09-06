@@ -34,8 +34,6 @@ use std::{
     task::{Context, Poll},
 };
 
-pub mod channel;
-
 /// Raw substream received from one of the enabled transports.
 pub trait RawSubstream: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static {}
 
