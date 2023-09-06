@@ -45,6 +45,9 @@ pub struct Config {
     /// Handshake bytes.
     pub(crate) handshake: Vec<u8>,
 
+    /// Auto accept inbound substream.
+    pub(super) auto_accept: bool,
+
     /// Protocol aliases.
     pub(crate) fallback_names: Vec<ProtocolName>,
 
@@ -62,6 +65,7 @@ impl Config {
         max_notification_size: usize,
         handshake: Vec<u8>,
         fallback_names: Vec<ProtocolName>,
+        auto_accept: bool,
     ) -> (Self, NotificationHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -72,6 +76,7 @@ impl Config {
                 protocol_name,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_notification_size)),
                 _max_notification_size: max_notification_size,
+                auto_accept,
                 handshake,
                 fallback_names,
                 event_tx,
@@ -100,6 +105,9 @@ pub struct ConfigBuilder {
 
     /// Fallback names.
     fallback_names: Vec<ProtocolName>,
+
+    /// Auto accept inbound substream.
+    auto_accept_inbound_for_initiated: bool,
 }
 
 impl ConfigBuilder {
@@ -110,6 +118,7 @@ impl ConfigBuilder {
             max_notification_size: None,
             handshake: None,
             fallback_names: Vec::new(),
+            auto_accept_inbound_for_initiated: false,
         }
     }
 
@@ -131,6 +140,31 @@ impl ConfigBuilder {
         self
     }
 
+    /// Auto-accept inbound substreams for those connections where it was was initiated by the local
+    /// node.
+    ///
+    /// Connection in this context means a bidirectional substream pair between two peers over a
+    /// given protocol.
+    ///
+    /// By default, when a node starts a connection with a remote peer and opens an outbound
+    /// substream to them, that substream is validated and if it's accepted, remote peer sends
+    /// their handshake over that substream and opens another substream to local node. The
+    /// substream that was opened by the local node is used for sending data and the one opened
+    /// by the remote peer is used for receiving data.
+    ///
+    /// By default, even if the local node was the one that opened the first substream, this inbound
+    /// substream coming from remote peer must be validated as the handshake of the remote peer
+    /// may reveal that it's not someone that the local node is willing to accept.
+    ///
+    /// To disable this behavior, auto accepting for the inbound substream can be enabled. If local
+    /// node is the one that opened the connection and it was accepted by the remote peer, local
+    /// node is only notified via
+    /// [`NotificationStreamOpened`](super::types::NotificationEvent::NotificationStreamOpened).
+    pub fn with_auto_accept_inbound(mut self, auto_accept: bool) -> Self {
+        self.auto_accept_inbound_for_initiated = auto_accept;
+        self
+    }
+
     /// Build notification configuration.
     pub fn build(mut self) -> (Config, NotificationHandle) {
         Config::new(
@@ -138,6 +172,7 @@ impl ConfigBuilder {
             self.max_notification_size.take().expect("notification size to be specified"),
             self.handshake.take().expect("handshake to be specified"),
             self.fallback_names,
+            self.auto_accept_inbound_for_initiated,
         )
     }
 }

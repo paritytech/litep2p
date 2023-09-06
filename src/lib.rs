@@ -391,12 +391,14 @@ mod tests {
             1337usize,
             vec![1, 2, 3, 4],
             Vec::new(),
+            false,
         );
         let (config2, _service2) = NotificationConfig::new(
             ProtocolName::from("/notificaton/2"),
             1337usize,
             vec![1, 2, 3, 4],
             Vec::new(),
+            false,
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
@@ -427,12 +429,14 @@ mod tests {
             1337usize,
             vec![1, 2, 3, 4],
             Vec::new(),
+            false,
         );
         let (config2, _service2) = NotificationConfig::new(
             ProtocolName::from("/notificaton/2"),
             1337usize,
             vec![1, 2, 3, 4],
             Vec::new(),
+            false,
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
@@ -456,12 +460,14 @@ mod tests {
             1337usize,
             vec![1, 2, 3, 4],
             Vec::new(),
+            false,
         );
         let (config2, _service2) = NotificationConfig::new(
             ProtocolName::from("/notificaton/2"),
             1337usize,
             vec![1, 2, 3, 4],
             Vec::new(),
+            false,
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
