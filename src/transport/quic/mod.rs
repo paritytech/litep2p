@@ -44,7 +44,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
 mod connection;
@@ -72,8 +72,11 @@ pub(crate) struct QuicTransport {
     /// Transport context.
     context: TransportHandle,
 
-    /// Assigned listen addresss.
+    /// Assigned listen address.
     listen_address: SocketAddr,
+
+    /// Listen address assigned for clients.
+    client_listen_address: SocketAddr,
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
@@ -103,7 +106,7 @@ impl QuicTransport {
                     tracing::error!(
                         target: LOG_TARGET,
                         ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
+                        "invalid transport protocol, expected `QuicV1`",
                     );
                     return Err(Error::AddressError(AddressError::InvalidProtocol));
                 }
@@ -114,7 +117,7 @@ impl QuicTransport {
                     tracing::error!(
                         target: LOG_TARGET,
                         ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
+                        "invalid transport protocol, expected `QuicV1`",
                     );
                     return Err(Error::AddressError(AddressError::InvalidProtocol));
                 }
@@ -260,7 +263,7 @@ impl QuicTransport {
         let client = Client::builder()
             .with_tls(provider)
             .expect("TLS provider to be enabled successfully")
-            .with_io("0.0.0.0:0")?
+            .with_io(self.client_listen_address)?
             .start()?;
 
         let connect = Connect::new(socket_address).with_server_name("localhost");
@@ -299,7 +302,12 @@ impl Transport for QuicTransport {
             .expect("TLS provider to be enabled successfully")
             .with_io(listen_address)?
             .start()?;
+
         let listen_address = server.local_addr()?;
+        let client_listen_address = match listen_address.ip() {
+            std::net::IpAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            std::net::IpAddr::V6(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+        };
 
         Ok(Self {
             rx,
@@ -307,6 +315,7 @@ impl Transport for QuicTransport {
             server,
             context,
             listen_address,
+            client_listen_address,
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })

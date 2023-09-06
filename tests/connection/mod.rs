@@ -697,15 +697,61 @@ async fn simultaneous_dial_quic() {
         .build();
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
-    let mut address1 = litep2p1.listen_addresses().next().unwrap().clone();
-    address1.push(Protocol::P2p(
-        Multihash::from_bytes(&litep2p1.local_peer_id().to_bytes()).unwrap(),
-    ));
+    let address1 = litep2p1.listen_addresses().next().unwrap().clone();
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
 
-    let mut address2 = litep2p2.listen_addresses().next().unwrap().clone();
-    address2.push(Protocol::P2p(
-        Multihash::from_bytes(&litep2p2.local_peer_id().to_bytes()).unwrap(),
-    ));
+    let (res1, res2) = tokio::join!(litep2p1.connect(address2), litep2p2.connect(address1));
+    assert!(std::matches!((res1, res2), (Ok(()), Ok(()))));
+
+    let mut ping_received1 = false;
+    let mut ping_received2 = false;
+
+    while !ping_received1 || !ping_received2 {
+        tokio::select! {
+            _ = litep2p1.next_event() => {}
+            _ = litep2p2.next_event() => {}
+            event = ping_event_stream1.next() => {
+                if event.is_some() {
+                    ping_received1 = true;
+                }
+            }
+            event = ping_event_stream2.next() => {
+                if event.is_some() {
+                    ping_received2 = true;
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn simultaneous_dial_ipv6_quic() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (ping_config1, mut ping_event_stream1) = PingConfig::default();
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_quic(QuicTransportConfig {
+            listen_address: "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
+        })
+        .with_libp2p_ping(ping_config1)
+        .build();
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+
+    let (ping_config2, mut ping_event_stream2) = PingConfig::default();
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_quic(QuicTransportConfig {
+            listen_address: "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
+        })
+        .with_libp2p_ping(ping_config2)
+        .build();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let address1 = litep2p1.listen_addresses().next().unwrap().clone();
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
 
     let (res1, res2) = tokio::join!(litep2p1.connect(address2), litep2p2.connect(address1));
     assert!(std::matches!((res1, res2), (Ok(()), Ok(()))));
