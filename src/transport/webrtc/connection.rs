@@ -22,21 +22,22 @@ use crate::{
     config::Role,
     crypto::{ed25519::Keypair, noise::NoiseContext},
     error::Error,
-    multistream_select::listener_negotiate,
-    protocol::{Direction, ProtocolSet},
-    substream::{channel::SubstreamBackend, Substream as SubstreamT},
+    multistream_select::{dialer_propose, listener_negotiate},
+    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
+    substream::Substream as SubstreamT,
     transport::webrtc::{
+        substream::SubstreamBackend,
         util::{SubstreamContext, WebRtcMessage},
         WebRtcEvent,
     },
-    types::{ConnectionId, SubstreamId},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
 
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
     change::Fingerprint,
-    channel::{ChannelData, ChannelId},
+    channel::{ChannelConfig, ChannelData, ChannelId},
     net::Receive,
     Event, IceConnectionState, Input, Output, Rtc,
 };
@@ -92,7 +93,42 @@ enum State {
     },
 }
 
+/// Substream state.
+#[derive(Debug)]
+enum SubstreamState {
+    /// Substream state is poisoned.
+    Poisoned,
+
+    /// Substream (outbound) is opening.
+    Opening {
+        /// Protocol.
+        protocol: ProtocolName,
+
+        /// Negotiated fallback.
+        fallback: Option<ProtocolName>,
+
+        /// Substream ID,
+        substream_id: SubstreamId,
+
+        /// Connection permit.
+        permit: Permit,
+    },
+
+    /// Substream is open.
+    Open {
+        /// Substream ID.
+        substream_id: SubstreamId,
+
+        /// Substream.
+        substream: SubstreamContext,
+
+        /// Connection permit.
+        permit: Permit,
+    },
+}
+
 /// WebRTC connection.
+// TODO: too much stuff, refactor?
 pub(super) struct WebRtcConnection {
     /// Connection ID.
     pub(super) connection_id: ConnectionId,
@@ -112,9 +148,6 @@ pub(super) struct WebRtcConnection {
     /// Protocol set.
     protocol_set: ProtocolSet,
 
-    /// WebRTC data channels.
-    channels: HashMap<SubstreamId, SubstreamContext>,
-
     /// Peer address
     peer_address: SocketAddr,
 
@@ -133,8 +166,8 @@ pub(super) struct WebRtcConnection {
     /// Next substream ID.
     substream_id: SubstreamId,
 
-    /// ID mappings.
-    id_mapping: HashMap<ChannelId, SubstreamId>,
+    /// Open substreams.
+    substreams: HashMap<ChannelId, SubstreamState>,
 }
 
 impl WebRtcConnection {
@@ -160,8 +193,7 @@ impl WebRtcConnection {
             connection_id,
             _noise_channel_id,
             state: State::Closed,
-            channels: HashMap::new(),
-            id_mapping: HashMap::new(),
+            substreams: HashMap::new(),
             backend: SubstreamBackend::new(),
             substream_id: SubstreamId::new(),
         }
@@ -376,7 +408,7 @@ impl WebRtcConnection {
     }
 
     /// Negotiate protocol for the channel
-    async fn negotiate_protocol(&mut self, d: ChannelData) -> crate::Result<WebRtcEvent> {
+    async fn listener_negotiate_protocol(&mut self, d: ChannelData) -> crate::Result<WebRtcEvent> {
         tracing::trace!(target: LOG_TARGET, channel_id = ?d.id, "negotiate protocol for the channel");
 
         let payload = WebRtcMessage::decode(&d.data)?.payload.ok_or(Error::InvalidData)?;
@@ -393,14 +425,21 @@ impl WebRtcConnection {
             .map_err(|error| Error::WebRtc(error))?;
 
         let substream_id = self.substream_id.next();
-        let (mut substream, tx) = self.backend.substream(substream_id);
+        let (mut substream, tx) = self.backend.substream(d.id);
         let substream: Box<dyn SubstreamT> = {
             substream.apply_codec(self.protocol_set.protocol_codec(&protocol));
             Box::new(substream)
         };
+        let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
 
-        self.id_mapping.insert(d.id, substream_id);
-        self.channels.insert(substream_id, SubstreamContext::new(d.id, tx));
+        self.substreams.insert(
+            d.id,
+            SubstreamState::Open {
+                substream_id,
+                substream: SubstreamContext::new(d.id, tx),
+                permit,
+            },
+        );
 
         if let State::Open { peer, .. } = &mut self.state {
             let _ = self
@@ -490,16 +529,26 @@ impl WebRtcConnection {
                     }
                 },
                 event = self.backend.next_event() => {
-                    let (id, message) = event.ok_or(Error::EssentialTaskClosed)?;
-                    let channel_id = self.channels.get_mut(&id).ok_or(Error::ChannelDoesntExist)?.channel_id;
+                    let (channel_id, message) = event.ok_or(Error::EssentialTaskClosed)?;
 
-                    tracing::trace!(target: LOG_TARGET, ?id, ?message, "send message to remote peer");
+                    match self.substreams.get_mut(&channel_id) {
+                        None => {
+                            tracing::debug!(target: LOG_TARGET, "protocol tried to send message over substream that doesn't exist");
+                        }
+                        Some(SubstreamState::Poisoned) => {},
+                        Some(SubstreamState::Opening { .. }) => {
+                            tracing::debug!(target: LOG_TARGET, "protocol tried to send message over substream that isn't open");
+                        }
+                        Some(SubstreamState::Open { .. }) => {
+                            tracing::trace!(target: LOG_TARGET, ?channel_id, ?message, "send message to remote peer");
 
-                    self.rtc
-                        .channel(channel_id)
-                        .ok_or(Error::ChannelDoesntExist)?
-                        .write(true, message.as_ref())
-                        .map_err(|error| Error::WebRtc(error))?;
+                            self.rtc
+                                .channel(channel_id)
+                                .ok_or(Error::ChannelDoesntExist)?
+                                .write(true, message.as_ref())
+                                .map_err(|error| Error::WebRtc(error))?;
+                        }
+                    }
                 }
                 _ = tokio::time::sleep(duration) => {}
             }
