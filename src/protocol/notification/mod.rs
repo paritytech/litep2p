@@ -184,6 +184,9 @@ pub(crate) struct NotificationProtocol {
     /// Handshake bytes.
     handshake: Vec<u8>,
 
+    /// Auto accept inbound substream if the outbound substream was initiated by the local node.
+    auto_accept: bool,
+
     /// TX channel passed to the protocol used for sending events.
     event_handle: NotificationEventHandle,
 
@@ -212,6 +215,7 @@ impl NotificationProtocol {
             service,
             peers: HashMap::new(),
             handshake: config.handshake.clone(),
+            auto_accept: config.auto_accept,
             event_handle: NotificationEventHandle::new(config.event_tx),
             command_rx: config.command_rx,
             substreams: SubstreamSet::new(),
@@ -773,6 +777,18 @@ impl NotificationProtocol {
                         outbound,
                         inbound: InboundState::ReadingHandshake,
                     } => {
+                        if !std::matches!(outbound, OutboundState::Closed) && self.auto_accept {
+                            self.negotiation.send_handshake(peer, substream);
+                            context.state = PeerState::Validating {
+                                protocol,
+                                fallback,
+                                inbound: InboundState::SendingHandshake,
+                                outbound,
+                            };
+
+                            return;
+                        }
+
                         context.state = PeerState::Validating {
                             protocol: protocol.clone(),
                             fallback: fallback.clone(),
