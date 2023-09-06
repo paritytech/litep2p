@@ -213,6 +213,10 @@ impl TransportManagerHandle {
     ///
     /// Returns an error if address it not valid.
     pub async fn dial_address(&self, address: Multiaddr) -> crate::Result<()> {
+        if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
+            return Err(Error::AddressError(AddressError::PeerIdMissing));
+        }
+
         self.cmd_tx
             .send(InnerTransportManagerCommand::DialAddress { address })
             .await
@@ -281,7 +285,7 @@ impl TransportHandle {
 
         match address.iter().last() {
             Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                Ok(peer) => {
+                Ok(peer) =>
                     for (_, context) in &self.protocols {
                         let _ = context
                             .tx
@@ -290,8 +294,7 @@ impl TransportHandle {
                                 address: address.clone(),
                             })
                             .await;
-                    }
-                }
+                    },
                 Err(error) => {
                     tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
                     debug_assert!(false);
@@ -617,9 +620,8 @@ impl TransportManager {
                 let peer: PeerId = match protocol_stack
                     .find(|protocol| std::matches!(protocol, Protocol::P2p(_)))
                 {
-                    Some(Protocol::P2p(multihash)) => {
-                        PeerId::from_multihash(multihash).map_err(|_| Error::InvalidData)?
-                    }
+                    Some(Protocol::P2p(multihash)) =>
+                        PeerId::from_multihash(multihash).map_err(|_| Error::InvalidData)?,
                     _ => return Err(Error::AddressError(AddressError::PeerIdMissing)),
                 };
 
