@@ -78,7 +78,7 @@ mod negotiated;
 mod protocol;
 
 pub use crate::multistream_select::dialer_select::{
-    dialer_accept, dialer_propose, dialer_select_proto, DialerSelectFuture,
+    dialer_select_proto, DialerSelectFuture, DialerState, HandshakeResult,
 };
 pub use crate::multistream_select::listener_select::{
     listener_negotiate, listener_select_proto, ListenerSelectFuture,

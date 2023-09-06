@@ -687,11 +687,10 @@ impl NotificationProtocol {
         tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle substream event");
 
         match message {
-            Ok(message) => {
+            Ok(message) =>
                 self.event_handle
                     .report_notification_received(peer, message.freeze().into())
-                    .await
-            }
+                    .await,
             Err(_) => {
                 self.negotiation.remove_outbound(&peer);
                 self.negotiation.remove_inbound(&peer);

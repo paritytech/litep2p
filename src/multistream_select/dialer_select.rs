@@ -22,7 +22,7 @@
 
 use crate::{
     codec::unsigned_varint::UnsignedVarint,
-    error::Error,
+    error::{self, Error},
     multistream_select::{
         protocol::{HeaderLine, Message, MessageIO, Protocol, ProtocolError},
         Negotiated, NegotiationError, Version,
@@ -32,6 +32,7 @@ use crate::{
 
 use bytes::BytesMut;
 use futures::prelude::*;
+use rustls::internal::msgs::hsjoiner::HandshakeJoiner;
 use std::{
     convert::TryFrom as _,
     iter, mem,
@@ -222,32 +223,126 @@ where
     }
 }
 
-/// Propose protocol to remote peer.
-///
-/// Return an encoded multistream-select message.
-pub fn dialer_propose<'a>(proposed_protocol: &ProtocolName) -> crate::Result<Vec<u8>> {
-    // encode `/multistream-select/1.0.0` header
-    let mut bytes = BytesMut::with_capacity(64);
-    let message = Message::Header(HeaderLine::V1);
-    let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
-    let mut header = UnsignedVarint::encode(bytes)?;
+/// `multistream-select` handshake result for dialer.
+#[derive(Debug)]
+pub enum HandshakeResult {
+    /// Handshake is not complete, data missing.
+    NotReady,
 
-    // encode proposed protocol
-    let mut proto_bytes = BytesMut::with_capacity(512);
-    let message = Message::Protocol(Protocol::try_from(proposed_protocol.as_bytes()).unwrap());
-    let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
-    let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
-
-    header.append(&mut proto_bytes.into());
-
-    Ok(header)
+    /// Handshake has succeeded.
+    ///
+    /// The returned tuple contains the negotiated protocol and response
+    /// that must be sent to remote peer.
+    Succeeded(ProtocolName),
 }
 
-/// Accept selected protocol.
-pub fn dialer_accept<'a>(proposed_protocol: &ProtocolName) -> crate::Result<Vec<u8>> {
-    // encode proposed protocol
-    let mut proto_bytes = BytesMut::with_capacity(512);
-    let message = Message::Protocol(Protocol::try_from(proposed_protocol.as_bytes()).unwrap());
-    let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
-    UnsignedVarint::encode(proto_bytes)
+/// Handshake state.
+#[derive(Debug)]
+enum HandshakeState {
+    /// Wainting to receive any response from remote peer.
+    WaitingResponse,
+
+    /// Waiting to receive the actual application protocol from remote peer.
+    WaitingProtocol,
+}
+
+/// `multistream-select` dialer handshake state.
+#[derive(Debug)]
+pub struct DialerState {
+    /// Proposed main protocol.
+    protocol: ProtocolName,
+
+    /// Fallback names of the main protocol.
+    fallback_names: Vec<ProtocolName>,
+
+    /// Dialer handshake state.
+    state: HandshakeState,
+}
+
+// TODO: tests
+impl DialerState {
+    /// Propose protocol to remote peer.
+    ///
+    /// Return [`DialerState`] which is used to drive forward the negotiation and an encoded
+    /// `multistream-select` message that contains the protocol proposal for the substream.
+    pub fn propose(
+        protocol: ProtocolName,
+        fallback_names: Vec<ProtocolName>,
+    ) -> crate::Result<(Self, Vec<u8>)> {
+        // encode `/multistream-select/1.0.0` header
+        let mut bytes = BytesMut::with_capacity(64);
+        let message = Message::Header(HeaderLine::V1);
+        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
+        let mut header = UnsignedVarint::encode(bytes)?;
+
+        // encode proposed protocol
+        let mut proto_bytes = BytesMut::with_capacity(512);
+        let message = Message::Protocol(Protocol::try_from(protocol.as_bytes()).unwrap());
+        let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
+        let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
+
+        // TODO: add fallback names
+
+        header.append(&mut proto_bytes.into());
+
+        Ok((
+            Self {
+                protocol,
+                fallback_names,
+                state: HandshakeState::WaitingResponse,
+            },
+            header,
+        ))
+    }
+
+    /// Register response to [`DialerState`].
+    pub fn register_response(&mut self, payload: Vec<u8>) -> crate::Result<HandshakeResult> {
+        let Message::Protocols(protocols) =
+            Message::decode(payload.into()).map_err(|_| Error::InvalidData)?
+        else {
+            return Err(Error::NegotiationError(
+                error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
+            ));
+        };
+
+        let mut protocol_iter = protocols.into_iter();
+        loop {
+            match (&self.state, protocol_iter.next()) {
+                (HandshakeState::WaitingResponse, None) => return Err(Error::InvalidState),
+                (HandshakeState::WaitingResponse, Some(protocol)) => {
+                    let header = Protocol::try_from(&b"/multistream/1.0.0"[..])
+                        .expect("valid multitstream-select header");
+
+                    if protocol == header {
+                        self.state = HandshakeState::WaitingProtocol;
+                    } else {
+                        return Err(Error::NegotiationError(
+                            error::NegotiationError::MultistreamSelectError(
+                                NegotiationError::Failed,
+                            ),
+                        ));
+                    }
+                }
+                (HandshakeState::WaitingProtocol, Some(protocol)) => {
+                    if self.protocol.as_bytes() == protocol.as_ref() {
+                        return Ok(HandshakeResult::Succeeded(self.protocol.clone()));
+                    }
+
+                    // TODO: zzz
+                    for fallback in &self.fallback_names {
+                        if fallback.as_bytes() == protocol.as_ref() {
+                            return Ok(HandshakeResult::Succeeded(self.protocol.clone()));
+                        }
+                    }
+
+                    return Err(Error::NegotiationError(
+                        error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
+                    ));
+                }
+                (HandshakeState::WaitingProtocol, None) => {
+                    return Ok(HandshakeResult::NotReady);
+                }
+            }
+        }
+    }
 }

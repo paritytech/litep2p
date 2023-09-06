@@ -26,6 +26,7 @@ use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{Decoder, Encoder};
 
 /// Substream context.
+#[derive(Debug)]
 pub struct SubstreamContext {
     /// `str0m` channel id.
     pub channel_id: ChannelId,
