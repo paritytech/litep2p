@@ -19,7 +19,7 @@
   * TCP
   * QUIC
   * WebRTC
-  * WebSocket
+  * WebSocket (WS + WSS)
 
 ## Usage
 

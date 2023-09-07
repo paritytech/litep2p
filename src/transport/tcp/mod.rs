@@ -90,15 +90,26 @@ pub(crate) struct TcpTransport {
     pending_connections: FuturesUnordered<BoxFuture<'static, Result<TcpConnection, TcpError>>>,
 }
 
+/// Address type.
+#[derive(Debug)]
+enum AddressType {
+    /// Socket address.
+    Socket(SocketAddr),
+
+    /// DNS address.
+    Dns(String, u16),
+}
+
 impl TcpTransport {
     /// Extract socket address and `PeerId`, if found, from `address`.
-    fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
+    fn get_socket_address(address: &Multiaddr) -> crate::Result<(AddressType, Option<PeerId>)> {
         tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
         let mut iter = address.iter();
         let socket_address = match iter.next() {
             Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V6(address), port),
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -109,7 +120,21 @@ impl TcpTransport {
                 }
             },
             Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V4(address), port),
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid transport protocol, expected `Tcp`",
+                    );
+                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                }
+            },
+            Some(Protocol::Dns(address))
+            | Some(Protocol::Dns4(address))
+            | Some(Protocol::Dns6(address)) => match iter.next() {
+                Some(Protocol::Tcp(port)) => AddressType::Dns(address.to_string(), port),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -237,7 +262,11 @@ impl Transport for TcpTransport {
         );
 
         let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
-        let listener = TcpListener::bind(listen_address).await?;
+        let listener = match listen_address {
+            AddressType::Socket(socket_address) => TcpListener::bind(socket_address).await?,
+            AddressType::Dns(_, _) =>
+                return Err(Error::TransportNotSupported(config.listen_address)),
+        };
         let listen_address = listener.local_addr()?;
 
         Ok(Self {

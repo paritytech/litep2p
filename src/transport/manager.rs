@@ -27,21 +27,13 @@ use crate::{
     PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    error::ResolveError,
-    lookup_ip::LookupIp,
-    AsyncResolver,
-};
 
 use std::{
     collections::{HashMap, HashSet},
-    net::IpAddr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -213,6 +205,10 @@ impl TransportManagerHandle {
     ///
     /// Returns an error if address it not valid.
     pub async fn dial_address(&self, address: Multiaddr) -> crate::Result<()> {
+        if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
+            return Err(Error::AddressError(AddressError::PeerIdMissing));
+        }
+
         self.cmd_tx
             .send(InnerTransportManagerCommand::DialAddress { address })
             .await
@@ -416,11 +412,6 @@ pub struct TransportManager {
 
     /// Pending connections.
     pending_connections: HashMap<ConnectionId, PeerId>,
-
-    /// Pending DNS resolves.
-    pending_dns_resolves: FuturesUnordered<
-        BoxFuture<'static, (ConnectionId, Multiaddr, Result<LookupIp, ResolveError>)>,
-    >,
 }
 
 impl TransportManager {
@@ -447,7 +438,6 @@ impl TransportManager {
                 listen_addresses: HashSet::new(),
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
-                pending_dns_resolves: FuturesUnordered::new(),
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
             },
@@ -573,29 +563,12 @@ impl TransportManager {
         }
 
         let mut protocol_stack = address.iter();
-
         match protocol_stack
             .next()
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Ip4(_) | Protocol::Ip6(_) => {}
-            Protocol::Dns(addr) | Protocol::Dns4(addr) | Protocol::Dns6(addr) => {
-                let dns_address = addr.to_string();
-                let original = address.clone();
-                let connection = self.next_connection_id();
-
-                // TODO: parse peer id from the address
-
-                self.pending_dns_resolves.push(Box::pin(async move {
-                    match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
-                        Ok(resolver) =>
-                            (connection, original, resolver.lookup_ip(dns_address).await),
-                        Err(error) => (connection, original, Err(error)),
-                    }
-                }));
-
-                return Ok(());
-            }
+            Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_) => {}
             transport => {
                 tracing::error!(
                     target: LOG_TARGET,
@@ -604,14 +577,14 @@ impl TransportManager {
                 );
                 return Err(Error::TransportNotSupported(address));
             }
-        }
+        };
 
         let (supported_transport, remote_peer_id) = match protocol_stack
             .next()
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Tcp(_) => match protocol_stack.next() {
-                Some(Protocol::Ws(_)) => match protocol_stack.next() {
+                Some(Protocol::Ws(_)) | Some(Protocol::Wss(_)) => match protocol_stack.next() {
                     Some(Protocol::P2p(hash)) => (
                         SupportedTransport::WebSocket,
                         PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
@@ -692,70 +665,6 @@ impl TransportManager {
         Ok(())
     }
 
-    /// Handle resolved DNS address.
-    async fn on_resolved_dns_address(
-        &mut self,
-        address: Multiaddr,
-        result: Result<LookupIp, ResolveError>,
-    ) -> crate::Result<Multiaddr> {
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?address,
-            ?result,
-            "dns address resolved"
-        );
-
-        let Ok(resolved) = result else {
-            return Err(Error::DnsAddressResolutionFailed);
-        };
-
-        let mut address_iter = resolved.iter();
-        let mut protocol_stack = address.into_iter();
-        let mut new_address = Multiaddr::empty();
-
-        match protocol_stack.next().expect("entry to exist") {
-            Protocol::Dns4(_) => match address_iter.next() {
-                Some(IpAddr::V4(inner)) => {
-                    new_address.push(Protocol::Ip4(inner));
-                }
-                _ => return Err(Error::TransportNotSupported(address)),
-            },
-            Protocol::Dns6(_) => match address_iter.next() {
-                Some(IpAddr::V6(inner)) => {
-                    new_address.push(Protocol::Ip6(inner));
-                }
-                _ => return Err(Error::TransportNotSupported(address)),
-            },
-            Protocol::Dns(_) => {
-                // TODO: zzz
-                let mut ip6 = Vec::new();
-                let mut ip4 = Vec::new();
-
-                for ip in address_iter {
-                    match ip {
-                        IpAddr::V4(inner) => ip4.push(inner),
-                        IpAddr::V6(inner) => ip6.push(inner),
-                    }
-                }
-
-                if !ip6.is_empty() {
-                    new_address.push(Protocol::Ip6(ip6[0]));
-                } else if !ip4.is_empty() {
-                    new_address.push(Protocol::Ip4(ip4[0]));
-                } else {
-                    return Err(Error::TransportNotSupported(address));
-                }
-            }
-            _ => panic!("somehow got invalid dns address"),
-        };
-
-        for protocol in protocol_stack {
-            new_address.push(protocol);
-        }
-
-        Ok(new_address)
-    }
-
     /// Handle transport manager event.
     fn on_transport_manager_event(
         &mut self,
@@ -776,7 +685,6 @@ impl TransportManager {
                     tracing::debug!(target: LOG_TARGET, ?peer, ?address, ?error, "dial failure");
 
                     if let Some(context) = self.peers.write().get_mut(&peer) {
-                        // TODO: if a protocol dialed the peer, inform them about dial failure
                         context.state = PeerState::Disconnected;
                     }
 
@@ -842,17 +750,6 @@ impl TransportManager {
         loop {
             tokio::select! {
                 event = self.event_rx.recv() => return Some(self.on_transport_manager_event(event?)),
-                event = self.pending_dns_resolves.select_next_some(), if !self.pending_dns_resolves.is_empty() => {
-                    match self.on_resolved_dns_address(event.1.clone(), event.2).await {
-                        Ok(address) => {
-                            tracing::debug!(target: LOG_TARGET, ?address, "connect to remote peer");
-
-                            // TODO: no unwraps
-                            self.dial_address(address.clone()).await.unwrap();
-                        }
-                        Err(error) => return Some(TransportManagerEvent::DialFailure { connection: event.0, address: event.1, error }),
-                    }
-                }
                 command = self.cmd_rx.recv() => match command? {
                     InnerTransportManagerCommand::DialPeer { peer } => {
                         if let Err(error) = self.dial(&peer).await {
