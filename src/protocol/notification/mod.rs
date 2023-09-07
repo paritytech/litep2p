@@ -247,29 +247,58 @@ impl NotificationProtocol {
     }
 
     /// Connection closed to remote peer.
+    ///
+    /// If the connection was considered open (both substreams were open), user is notified that
+    /// the notification stream was closed.
+    ///
+    /// If the connection was still in progress (either substream was not fully open), the user is
+    /// reported about it only if they had opened an outbound substream (outbound is either fully
+    /// open, it had been initiated or the substream was under negotiation).
     async fn on_connection_closed(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection closed");
 
-        match self.peers.remove(&peer) {
-            Some(_) => {
-                self.substreams.remove(&peer);
-                self.receivers.remove(&peer);
-                self.negotiation.remove_outbound(&peer);
-                self.negotiation.remove_inbound(&peer);
-                // TODO: only report if the peer is actually in a state where it concerns the user
+        let Some(context) = self.peers.remove(&peer) else {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?peer,
+                "state mismatch: peer doesn't exist"
+            );
+            debug_assert!(false);
+            return Err(Error::PeerDoesntExist(peer));
+        };
+
+        // clean up all pending state for the peer
+        self.substreams.remove(&peer);
+        self.receivers.remove(&peer);
+        self.negotiation.remove_outbound(&peer);
+        self.negotiation.remove_inbound(&peer);
+
+        match context.state {
+            // outbound initiated, report open failure to peer
+            PeerState::OutboundInitiated { .. } => {
+                self.event_handle
+                    .report_notification_stream_open_failure(peer, NotificationError::Rejected)
+                    .await;
+            }
+            // substream fully open, report that the notification stream is closed
+            PeerState::Open { .. } => {
                 self.event_handle.report_notification_stream_closed(peer).await;
-                Ok(())
             }
-            None => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    "state mismatch: peer doesn't exist"
-                );
-                debug_assert!(false);
-                Err(Error::PeerDoesntExist(peer))
+            // if the substream was being validated, notify user only if the outbound state is not
+            // `Closed` states other than `Closed` indicate that the user was interested
+            // in opening the substream as well and so that user can have correct state
+            // tracking, it must be notified of this
+            PeerState::Validating { outbound, .. }
+                if !std::matches!(outbound, OutboundState::Closed) =>
+            {
+                self.event_handle
+                    .report_notification_stream_open_failure(peer, NotificationError::Rejected)
+                    .await;
             }
+            _ => {}
         }
+
+        Ok(())
     }
 
     /// Local node opened a substream to remote node.
@@ -691,10 +720,11 @@ impl NotificationProtocol {
         tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle substream event");
 
         match message {
-            Ok(message) =>
+            Ok(message) => {
                 self.event_handle
                     .report_notification_received(peer, message.freeze().into())
-                    .await,
+                    .await
+            }
             Err(_) => {
                 self.negotiation.remove_outbound(&peer);
                 self.negotiation.remove_inbound(&peer);
