@@ -277,7 +277,7 @@ impl TransportHandle {
 
         match address.iter().last() {
             Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                Ok(peer) => {
+                Ok(peer) =>
                     for (_, context) in &self.protocols {
                         let _ = context
                             .tx
@@ -286,8 +286,7 @@ impl TransportHandle {
                                 address: address.clone(),
                             })
                             .await;
-                    }
-                }
+                    },
                 Err(error) => {
                     tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
                     debug_assert!(false);
@@ -585,7 +584,7 @@ impl TransportManager {
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Tcp(_) => match protocol_stack.next() {
-                Some(Protocol::Ws(_)) => match protocol_stack.next() {
+                Some(Protocol::Ws(_)) | Some(Protocol::Wss(_)) => match protocol_stack.next() {
                     Some(Protocol::P2p(hash)) => (
                         SupportedTransport::WebSocket,
                         PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,

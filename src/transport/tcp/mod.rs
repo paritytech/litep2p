@@ -108,9 +108,8 @@ impl TcpTransport {
         let mut iter = address.iter();
         let socket_address = match iter.next() {
             Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => {
-                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port))
-                }
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -121,9 +120,8 @@ impl TcpTransport {
                 }
             },
             Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => {
-                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port))
-                }
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -204,9 +202,8 @@ impl TcpTransport {
             }
             Err(error) => match error.connection_id {
                 Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                    Some(address) => {
-                        self.context.report_dial_failure(connection_id, address, error.error).await
-                    }
+                    Some(address) =>
+                        self.context.report_dial_failure(connection_id, address, error.error).await,
                     None => tracing::debug!(
                         target: LOG_TARGET,
                         ?error,
@@ -267,9 +264,8 @@ impl Transport for TcpTransport {
         let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
         let listener = match listen_address {
             AddressType::Socket(socket_address) => TcpListener::bind(socket_address).await?,
-            AddressType::Dns(_, _) => {
-                return Err(Error::TransportNotSupported(config.listen_address))
-            }
+            AddressType::Dns(_, _) =>
+                return Err(Error::TransportNotSupported(config.listen_address)),
         };
         let listen_address = listener.local_addr()?;
 
