@@ -37,6 +37,8 @@ use litep2p::{
 
 use futures::StreamExt;
 
+use std::time::Duration;
+
 enum Transport {
     Tcp(TcpTransportConfig),
     Quic(QuicTransportConfig),
@@ -1130,6 +1132,152 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
             notification: vec![1, 3, 3, 8],
         }
     );
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+async fn both_nodes_open_substream_one_rejects_substreams_tcp() {
+    both_nodes_open_substream_one_rejects_substreams(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+async fn both_nodes_open_substream_one_rejects_substreams_quic() {
+    both_nodes_open_substream_one_rejects_substreams(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+async fn both_nodes_open_substream_one_rejects_substreams_websocket() {
+    both_nodes_open_substream_one_rejects_substreams(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+async fn both_nodes_open_substream_one_rejects_substreams(
+    transport1: Transport,
+    transport2: Transport,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+        false,
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (notif_config2, mut handle2) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+        false,
+    );
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected and spawn the litep2p objects in the background
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // both nodes open a substream at the same time
+    handle1.open_substream(peer2).await.unwrap();
+    handle2.open_substream(peer1).await.unwrap();
+
+    // first peer accepts the substream
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+
+    // the second peer rejects the substream
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Reject).await;
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer2,
+            error: NotificationError::Rejected
+        },
+    );
+
+    assert!(tokio::time::timeout(Duration::from_secs(5), handle2.next()).await.is_err());
 }
 
 #[tokio::test]

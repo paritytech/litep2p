@@ -675,6 +675,7 @@ impl NotificationProtocol {
                 inbound: InboundState::Validating { mut inbound },
             } => match result {
                 ValidationResult::Reject => {
+                    self.negotiation.remove_outbound(&peer);
                     let _ = inbound.close().await;
                     context.state = PeerState::Closed {
                         _pending_open: None,
