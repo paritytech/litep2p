@@ -159,12 +159,16 @@ impl WebSocketTransport {
     fn multiaddr_into_url(address: Multiaddr) -> crate::Result<Url> {
         let mut protocol_stack = address.iter();
 
-        let ip_address = match protocol_stack
+        let dial_address = match protocol_stack
             .next()
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Ip4(address) => address.to_string(),
             Protocol::Ip6(address) => format!("[{}]", address.to_string()),
+            Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) => {
+                address.to_string()
+            }
+
             _ => return Err(Error::TransportNotSupported(address)),
         };
 
@@ -174,7 +178,7 @@ impl WebSocketTransport {
         {
             Protocol::Tcp(port) => match protocol_stack.next() {
                 Some(Protocol::Ws(_)) => {
-                    let ws_address = format!("ws://{ip_address}:{port}/");
+                    let ws_address = format!("ws://{dial_address}:{port}/");
 
                     tracing::trace!(target: LOG_TARGET, ?ws_address, "parse address");
 
