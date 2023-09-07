@@ -27,21 +27,13 @@ use crate::{
     PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    error::ResolveError,
-    lookup_ip::LookupIp,
-    AsyncResolver,
-};
 
 use std::{
     collections::{HashMap, HashSet},
-    net::IpAddr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -378,38 +370,6 @@ pub struct PeerContext {
     addresses: HashSet<Multiaddr>,
 }
 
-/// DNS lookup result.
-struct DnsLookupResult {
-    /// Peer ID.
-    peer: PeerId,
-
-    /// Connection ID.
-    connection_id: ConnectionId,
-
-    /// Address that was dialed.
-    address: Multiaddr,
-
-    /// Result of the lookup.
-    result: Result<LookupIp, ResolveError>,
-}
-
-impl DnsLookupResult {
-    /// Create new [`DnsLookupResult`].
-    fn new(
-        peer: PeerId,
-        connection_id: ConnectionId,
-        address: Multiaddr,
-        result: Result<LookupIp, ResolveError>,
-    ) -> Self {
-        Self {
-            peer,
-            result,
-            address,
-            connection_id,
-        }
-    }
-}
-
 /// Litep2p connection manager.
 pub struct TransportManager {
     /// Local peer ID.
@@ -453,9 +413,6 @@ pub struct TransportManager {
 
     /// Pending connections.
     pending_connections: HashMap<ConnectionId, PeerId>,
-
-    /// Pending DNS resolves.
-    pending_dns_resolves: FuturesUnordered<BoxFuture<'static, DnsLookupResult>>,
 }
 
 impl TransportManager {
@@ -482,7 +439,6 @@ impl TransportManager {
                 listen_addresses: HashSet::new(),
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
-                pending_dns_resolves: FuturesUnordered::new(),
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
             },
@@ -710,60 +666,6 @@ impl TransportManager {
         Ok(())
     }
 
-    /// Handle resolved DNS address.
-    async fn on_resolved_dns_address(
-        &mut self,
-        address: Multiaddr,
-        result: Result<LookupIp, ResolveError>,
-    ) -> crate::Result<Multiaddr> {
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?address,
-            ?result,
-            "dns address resolved"
-        );
-
-        let Ok(resolved) = result else {
-            return Err(Error::DnsAddressResolutionFailed);
-        };
-
-        let mut address_iter = resolved.iter();
-        let mut protocol_stack = address.into_iter();
-        let mut new_address = Multiaddr::empty();
-
-        match protocol_stack.next().expect("entry to exist") {
-            Protocol::Dns4(_) => match address_iter.next() {
-                Some(IpAddr::V4(inner)) => {
-                    new_address.push(Protocol::Ip4(inner));
-                }
-                _ => return Err(Error::TransportNotSupported(address)),
-            },
-            Protocol::Dns6(_) => match address_iter.next() {
-                Some(IpAddr::V6(inner)) => {
-                    new_address.push(Protocol::Ip6(inner));
-                }
-                _ => return Err(Error::TransportNotSupported(address)),
-            },
-            Protocol::Dns(_) => match address_iter.next() {
-                Some(address) => match address {
-                    IpAddr::V4(inner) => new_address.push(Protocol::Ip4(inner)),
-                    IpAddr::V6(inner) => new_address.push(Protocol::Ip6(inner)),
-                },
-                None => return Err(Error::TransportNotSupported(address)),
-            },
-            _ => {
-                tracing::error!(target: LOG_TARGET, "got invalid dns address");
-                return Err(Error::TransportNotSupported(address));
-            }
-        };
-
-        for protocol in protocol_stack {
-            new_address.push(protocol);
-        }
-
-        Ok(new_address)
-    }
-
     /// Handle transport manager event.
     fn on_transport_manager_event(
         &mut self,
@@ -844,50 +746,11 @@ impl TransportManager {
         }
     }
 
-    /// Report dial failure to protocols.
-    async fn report_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
-        for (_, context) in &self.protocols {
-            let _ = context
-                .tx
-                .send(InnerTransportEvent::DialFailure {
-                    peer,
-                    address: address.clone(),
-                })
-                .await;
-        }
-    }
-
     /// Poll next event from [`TransportManager`].
     pub async fn next(&mut self) -> Option<TransportManagerEvent> {
         loop {
             tokio::select! {
                 event = self.event_rx.recv() => return Some(self.on_transport_manager_event(event?)),
-                event = self.pending_dns_resolves.select_next_some(), if !self.pending_dns_resolves.is_empty() => {
-                    match self.on_resolved_dns_address(event.address.clone(), event.result).await {
-                        Ok(address) => {
-                            tracing::debug!(target: LOG_TARGET, ?address, "dns address resolved, connect to remote peer");
-
-                            if let Err(error) = self.dial_address(address.clone()).await {
-                                self.report_dial_failure(event.peer, event.address.clone()).await;
-
-                                return Some(TransportManagerEvent::DialFailure {
-                                    connection: event.connection_id,
-                                    address: event.address,
-                                    error
-                                });
-                            }
-                        }
-                        Err(error) => {
-                            self.report_dial_failure(event.peer, event.address.clone()).await;
-
-                            return Some(TransportManagerEvent::DialFailure {
-                                connection: event.connection_id,
-                                address: event.address,
-                                error
-                            });
-                        }
-                    }
-                }
                 command = self.cmd_rx.recv() => match command? {
                     InnerTransportManagerCommand::DialPeer { peer } => {
                         if let Err(error) = self.dial(&peer).await {
