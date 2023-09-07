@@ -20,16 +20,22 @@
 
 use crate::{
     mock::substream::MockSubstream,
-    protocol::notification::{
-        tests::make_notification_protocol,
-        types::{NotificationError, NotificationEvent},
-        InboundState, OutboundState, PeerContext, PeerState,
+    protocol::{
+        connection::ConnectionHandle,
+        notification::{
+            tests::make_notification_protocol,
+            types::{NotificationError, NotificationEvent},
+            InboundState, NotificationProtocol, OutboundState, PeerContext, PeerState,
+        },
+        InnerTransportEvent, ProtocolCommand,
     },
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
 
 use futures::StreamExt;
+use multiaddr::Multiaddr;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 fn next_inbound_state(state: usize) -> InboundState {
     match state {
@@ -42,6 +48,21 @@ fn next_inbound_state(state: usize) -> InboundState {
         4 => InboundState::_Accepting,
         5 => InboundState::Open {
             inbound: Box::new(MockSubstream::new()),
+        },
+        _ => panic!(),
+    }
+}
+
+fn next_outbound_state(state: usize) -> OutboundState {
+    match state {
+        0 => OutboundState::Closed,
+        1 => OutboundState::OutboundInitiated {
+            substream: SubstreamId::new(),
+        },
+        2 => OutboundState::Negotiating,
+        3 => OutboundState::Open {
+            handshake: vec![1, 3, 3, 7],
+            outbound: Box::new(MockSubstream::new()),
         },
         _ => panic!(),
     }
@@ -164,4 +185,111 @@ async fn connection_closed(peer: PeerId, state: PeerState, event: Option<Notific
         assert_eq!(handle.next().await.unwrap(), expected);
     }
     assert!(!notif.peers.contains_key(&peer))
+}
+
+// register new connection to `NotificationProtocol`
+async fn register_peer(
+    notif: &mut NotificationProtocol,
+    sender: &mut Sender<InnerTransportEvent>,
+) -> (PeerId, Receiver<ProtocolCommand>) {
+    let peer = PeerId::random();
+    let (conn_tx, conn_rx) = channel(64);
+
+    sender
+        .send(InnerTransportEvent::ConnectionEstablished {
+            peer,
+            connection: ConnectionId::new(),
+            address: Multiaddr::empty(),
+            sender: ConnectionHandle::new(conn_tx),
+        })
+        .await
+        .unwrap();
+
+    // poll the protocol to register the peer
+    notif.next_event().await;
+
+    assert!(std::matches!(
+        notif.peers.get(&peer),
+        Some(PeerContext {
+            state: PeerState::Closed { .. }
+        })
+    ));
+
+    (peer, conn_rx)
+}
+
+#[tokio::test]
+async fn open_substream_connection_closed() {
+    open_substream(
+        PeerState::Closed {
+            _pending_open: None,
+        },
+        true,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_substream_already_initiated() {
+    open_substream(
+        PeerState::OutboundInitiated {
+            substream: SubstreamId::new(),
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_substream_already_open() {
+    open_substream(
+        PeerState::Open {
+            outbound: Box::new(MockSubstream::new()),
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_substream_under_validation() {
+    for i in 0..6 {
+        for k in 0..4 {
+            open_substream(
+                PeerState::Validating {
+                    protocol: ProtocolName::from("/notif/1"),
+                    fallback: None,
+                    outbound: next_outbound_state(k),
+                    inbound: next_inbound_state(i),
+                },
+                false,
+            )
+            .await;
+        }
+    }
+}
+
+async fn open_substream(state: PeerState, succeeds: bool) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
+    let (peer, mut receiver) = register_peer(&mut notif, &mut tx).await;
+
+    let context = notif.peers.get_mut(&peer).unwrap();
+    context.state = state;
+
+    notif.on_open_substream(peer).await.unwrap();
+    assert!(receiver.try_recv().is_ok() == succeeds);
+}
+
+#[tokio::test]
+async fn open_substream_no_connection() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
+    assert!(notif.on_open_substream(PeerId::random()).await.is_err());
 }

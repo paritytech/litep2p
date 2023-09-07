@@ -66,7 +66,7 @@ enum InboundState {
     /// Substream is closed.
     Closed,
 
-    /// Handshake is being read from the remote peer.
+    /// Handshake is being read from the remote node.
     ReadingHandshake,
 
     /// Substream and its handshake are being validated by the user protocol.
@@ -75,7 +75,7 @@ enum InboundState {
         inbound: Box<dyn Substream>,
     },
 
-    /// Handshake is being sent to the remote peer.
+    /// Handshake is being sent to the remote node.
     SendingHandshake,
 
     /// Substream is being accepted (handshake received and sent in one go)
@@ -225,7 +225,7 @@ impl NotificationProtocol {
         }
     }
 
-    /// Connection established to remote peer.
+    /// Connection established to remote node.
     async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
 
@@ -246,7 +246,7 @@ impl NotificationProtocol {
         }
     }
 
-    /// Connection closed to remote peer.
+    /// Connection closed to remote node.
     ///
     /// If the connection was considered open (both substreams were open), user is notified that
     /// the notification stream was closed.
@@ -457,7 +457,7 @@ impl NotificationProtocol {
         Ok(())
     }
 
-    /// Failed to open substream to remote peer.
+    /// Failed to open substream to remote node.
     async fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
         tracing::debug!(
             target: LOG_TARGET,
@@ -498,11 +498,18 @@ impl NotificationProtocol {
     }
 
     /// Open substream to remote `peer`.
+    ///
+    /// Outbound substream can opened only if the `PeerState` is `Closed`.
+    /// By forcing the substream to be opened only if the state is currently closed,
+    /// `NotificationProtocol` can enfore more predictable state transitions.
+    ///
+    /// Other states either imply an invalid state transition ([`PeerState::Open`]) or that an
+    /// inbound substream has already been received and its currently being validated by the user.
     async fn on_open_substream(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
 
         let Some(context) = self.peers.get_mut(&peer) else {
-            tracing::debug!(target: LOG_TARGET, ?peer, "no open connection to peer");
+            tracing::warn!(target: LOG_TARGET, ?peer, "no open connection to peer");
 
             self.event_handle
                 .report_notification_stream_open_failure(peer, NotificationError::NoConnection)
@@ -720,11 +727,10 @@ impl NotificationProtocol {
         tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle substream event");
 
         match message {
-            Ok(message) => {
+            Ok(message) =>
                 self.event_handle
                     .report_notification_received(peer, message.freeze().into())
-                    .await
-            }
+                    .await,
             Err(_) => {
                 self.negotiation.remove_outbound(&peer);
                 self.negotiation.remove_inbound(&peer);
