@@ -285,7 +285,7 @@ impl TransportHandle {
 
         match address.iter().last() {
             Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                Ok(peer) =>
+                Ok(peer) => {
                     for (_, context) in &self.protocols {
                         let _ = context
                             .tx
@@ -294,7 +294,8 @@ impl TransportHandle {
                                 address: address.clone(),
                             })
                             .await;
-                    },
+                    }
+                }
                 Err(error) => {
                     tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
                     debug_assert!(false);
@@ -607,38 +608,12 @@ impl TransportManager {
         }
 
         let mut protocol_stack = address.iter();
-
         match protocol_stack
             .next()
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Ip4(_) | Protocol::Ip6(_) => {}
-            Protocol::Dns(addr) | Protocol::Dns4(addr) | Protocol::Dns6(addr) => {
-                let dns_address = addr.to_string();
-                let original = address.clone();
-                let connection = self.next_connection_id();
-                let peer: PeerId = match protocol_stack
-                    .find(|protocol| std::matches!(protocol, Protocol::P2p(_)))
-                {
-                    Some(Protocol::P2p(multihash)) =>
-                        PeerId::from_multihash(multihash).map_err(|_| Error::InvalidData)?,
-                    _ => return Err(Error::AddressError(AddressError::PeerIdMissing)),
-                };
-
-                self.pending_dns_resolves.push(Box::pin(async move {
-                    match AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()) {
-                        Ok(resolver) => DnsLookupResult::new(
-                            peer,
-                            connection,
-                            original,
-                            resolver.lookup_ip(dns_address).await,
-                        ),
-                        Err(error) => DnsLookupResult::new(peer, connection, original, Err(error)),
-                    }
-                }));
-
-                return Ok(());
-            }
+            Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_) => {}
             transport => {
                 tracing::error!(
                     target: LOG_TARGET,
@@ -647,7 +622,7 @@ impl TransportManager {
                 );
                 return Err(Error::TransportNotSupported(address));
             }
-        }
+        };
 
         let (supported_transport, remote_peer_id) = match protocol_stack
             .next()

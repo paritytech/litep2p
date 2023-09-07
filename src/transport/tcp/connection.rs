@@ -26,7 +26,7 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
-    transport::substream::Substream,
+    transport::{substream::Substream, tcp::AddressType},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
@@ -45,7 +45,7 @@ use tokio_util::{
     },
 };
 
-use std::{fmt, net::SocketAddr, time::Duration};
+use std::{borrow::Cow, fmt, net::SocketAddr, time::Duration};
 
 // TODO: introduce `NegotiatingConnection` to clean up this code a bit?
 /// Logging target for the file.
@@ -130,10 +130,10 @@ impl fmt::Debug for TcpConnection {
 
 impl TcpConnection {
     /// Open connection to remote peer at `address`.
-    pub async fn open_connection(
+    pub(super) async fn open_connection(
         context: ProtocolSet,
         connection_id: ConnectionId,
-        address: SocketAddr,
+        address: AddressType,
         peer: Option<PeerId>,
         yamux_config: yamux::Config,
     ) -> crate::Result<Self> {
@@ -147,7 +147,13 @@ impl TcpConnection {
         let noise_config = NoiseConfiguration::new(&context.keypair, Role::Dialer);
 
         match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
-            let stream = TcpStream::connect(address).await?;
+            let stream = match &address {
+                AddressType::Socket(socket_address) => TcpStream::connect(socket_address).await?,
+                AddressType::Dns(address, port) => {
+                    TcpStream::connect(format!("{address}:{port}")).await?
+                }
+            };
+
             Self::negotiate_connection(
                 stream,
                 connection_id,
@@ -166,7 +172,7 @@ impl TcpConnection {
     }
 
     /// Open substream for `protocol`.
-    pub async fn open_substream(
+    pub(super) async fn open_substream(
         mut control: yamux::Control,
         permit: Permit,
         direction: Direction,
@@ -208,7 +214,7 @@ impl TcpConnection {
     }
 
     /// Accept a new connection.
-    pub async fn accept_connection(
+    pub(super) async fn accept_connection(
         context: ProtocolSet,
         stream: TcpStream,
         connection_id: ConnectionId,
@@ -224,7 +230,7 @@ impl TcpConnection {
                 connection_id,
                 context,
                 noise_config,
-                address,
+                AddressType::Socket(address),
                 yamux_config,
             )
             .await
@@ -237,7 +243,7 @@ impl TcpConnection {
     }
 
     /// Accept substream.
-    pub async fn accept_substream(
+    pub(super) async fn accept_substream(
         stream: yamux::Stream,
         permit: Permit,
         substream_id: SubstreamId,
@@ -300,7 +306,7 @@ impl TcpConnection {
         connection_id: ConnectionId,
         mut protocol_set: ProtocolSet,
         noise_config: NoiseConfiguration,
-        address: SocketAddr,
+        address: AddressType,
         yamux_config: yamux::Config,
     ) -> crate::Result<Self> {
         tracing::trace!(
@@ -334,9 +340,14 @@ impl TcpConnection {
         let connection = yamux::Connection::new(stream.inner(), yamux_config, role.into());
         let (control, connection) = yamux::Control::new(connection);
 
-        let address = Multiaddr::empty()
-            .with(Protocol::from(address.ip()))
-            .with(Protocol::Tcp(address.port()));
+        let address = match address {
+            AddressType::Socket(address) => Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port())),
+            AddressType::Dns(address, port) => Multiaddr::empty()
+                .with(Protocol::Dns(Cow::Owned(address)))
+                .with(Protocol::Tcp(port)),
+        };
         protocol_set
             .report_connection_established(connection_id, peer, address.clone())
             .await?;
@@ -558,15 +569,16 @@ mod tests {
             match TcpConnection::open_connection(
                 protocol_set,
                 ConnectionId::from(0usize),
-                address,
+                AddressType::Socket(address),
                 None,
                 Default::default(),
             )
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -624,8 +636,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -669,15 +682,16 @@ mod tests {
             match TcpConnection::open_connection(
                 protocol_set,
                 ConnectionId::from(0usize),
-                address,
+                AddressType::Socket(address),
                 None,
                 Default::default(),
             )
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -739,8 +753,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -801,8 +816,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -850,15 +866,16 @@ mod tests {
             match TcpConnection::open_connection(
                 protocol_set,
                 ConnectionId::from(0usize),
-                address,
+                AddressType::Socket(address),
                 None,
                 Default::default(),
             )
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -907,15 +924,16 @@ mod tests {
             match TcpConnection::open_connection(
                 protocol_set,
                 ConnectionId::from(0usize),
-                address,
+                AddressType::Socket(address),
                 None,
                 Default::default(),
             )
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -970,8 +988,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -1026,8 +1045,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -1086,15 +1106,16 @@ mod tests {
             match TcpConnection::open_connection(
                 protocol_set,
                 ConnectionId::from(0usize),
-                address,
+                AddressType::Socket(address),
                 None,
                 Default::default(),
             )
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -1166,8 +1187,9 @@ mod tests {
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
@@ -1224,15 +1246,16 @@ mod tests {
             match TcpConnection::open_connection(
                 protocol_set,
                 ConnectionId::from(0usize),
-                address,
+                AddressType::Socket(address),
                 None,
                 Default::default(),
             )
             .await
             {
                 Ok(_) => panic!("connection was supposed to fail"),
-                Err(error) =>
-                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await,
+                Err(error) => {
+                    handle.report_dial_failure(ConnectionId::from(0usize), multiaddr, error).await
+                }
             }
         });
 
