@@ -19,133 +19,561 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    mock::substream::MockSubstream,
-    protocol::notification::{
-        negotiation::HandshakeEvent,
-        tests::{add_peer, make_notification_protocol},
-        types::{NotificationError, NotificationEvent, ASYNC_CHANNEL_SIZE, SYNC_CHANNEL_SIZE},
-        InboundState, OutboundState, PeerContext, PeerState,
+    mock::substream::{DummySubstream, MockSubstream},
+    protocol::{
+        connection::ConnectionHandle,
+        notification::{
+            negotiation::HandshakeEvent,
+            tests::make_notification_protocol,
+            types::{NotificationError, NotificationEvent},
+            InboundState, NotificationProtocol, OutboundState, PeerContext, PeerState,
+            ValidationResult,
+        },
+        Direction, InnerTransportEvent, ProtocolCommand,
     },
-    types::protocol::ProtocolName,
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    PeerId,
 };
 
 use futures::StreamExt;
+use multiaddr::Multiaddr;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-#[tokio::test]
-async fn sync_notifications_clogged() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+use std::{task::Poll, time::Duration};
 
-    let (mut notif, mut handle, _sender, _tx) = make_notification_protocol();
-    let (peer, _service, _receiver) = add_peer();
-
-    notif.peers.insert(
-        peer,
-        PeerContext {
-            state: PeerState::Validating {
-                protocol: ProtocolName::from("/notif/1"),
-                fallback: None,
-                outbound: OutboundState::Open {
-                    handshake: vec![1, 2, 3, 4],
-                    outbound: Box::new(MockSubstream::new()),
-                },
-                inbound: InboundState::_Accepting,
-            },
+fn next_inbound_state(state: usize) -> InboundState {
+    match state {
+        0 => InboundState::Closed,
+        1 => InboundState::ReadingHandshake,
+        2 => InboundState::Validating {
+            inbound: Box::new(MockSubstream::new()),
         },
-    );
-
-    notif
-        .on_negotiation_event(
-            peer,
-            HandshakeEvent::InboundAccepted {
-                peer,
-                substream: Box::new(MockSubstream::new()),
-            },
-        )
-        .await;
-
-    assert_eq!(
-        handle.next().await.unwrap(),
-        NotificationEvent::NotificationStreamOpened {
-            protocol: ProtocolName::from("/notif/1"),
-            fallback: None,
-            peer,
-            handshake: vec![1, 2, 3, 4]
+        3 => InboundState::SendingHandshake,
+        4 => InboundState::Open {
+            inbound: Box::new(MockSubstream::new()),
         },
-    );
-
-    for _ in 0..SYNC_CHANNEL_SIZE {
-        handle.send_sync_notification(peer, vec![1, 3, 3, 7]).unwrap();
+        _ => panic!(),
     }
+}
 
-    // try to send one more notification and verify that the call would block
-    assert_eq!(
-        handle.send_sync_notification(peer, vec![1, 3, 3, 9]),
-        Err(NotificationError::ChannelClogged)
-    );
+fn next_outbound_state(state: usize) -> OutboundState {
+    match state {
+        0 => OutboundState::Closed,
+        1 => OutboundState::OutboundInitiated {
+            substream: SubstreamId::new(),
+        },
+        2 => OutboundState::Negotiating,
+        3 => OutboundState::Open {
+            handshake: vec![1, 3, 3, 7],
+            outbound: Box::new(MockSubstream::new()),
+        },
+        _ => panic!(),
+    }
 }
 
 #[tokio::test]
-async fn async_notifications_clogged() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+async fn connection_closed_for_outbound_open_substream() {
+    let peer = PeerId::random();
 
-    let (mut notif, mut handle, _sender, _tx) = make_notification_protocol();
-    let (peer, _service, _receiver) = add_peer();
-
-    notif.peers.insert(
-        peer,
-        PeerContext {
-            state: PeerState::Validating {
+    for i in 0..5 {
+        connection_closed(
+            peer,
+            PeerState::Validating {
                 protocol: ProtocolName::from("/notif/1"),
                 fallback: None,
                 outbound: OutboundState::Open {
                     handshake: vec![1, 2, 3, 4],
                     outbound: Box::new(MockSubstream::new()),
                 },
-                inbound: InboundState::_Accepting,
+                inbound: next_inbound_state(i),
             },
-        },
-    );
-
-    notif
-        .on_negotiation_event(
-            peer,
-            HandshakeEvent::InboundAccepted {
+            Some(NotificationEvent::NotificationStreamOpenFailure {
                 peer,
-                substream: Box::new(MockSubstream::new()),
+                error: NotificationError::Rejected,
+            }),
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn connection_closed_for_outbound_initiated_substream() {
+    let peer = PeerId::random();
+
+    for i in 0..5 {
+        connection_closed(
+            peer,
+            PeerState::Validating {
+                protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
+                outbound: OutboundState::OutboundInitiated {
+                    substream: SubstreamId::from(0usize),
+                },
+                inbound: next_inbound_state(i),
+            },
+            Some(NotificationEvent::NotificationStreamOpenFailure {
+                peer,
+                error: NotificationError::Rejected,
+            }),
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn connection_closed_for_outbound_negotiated_substream() {
+    let peer = PeerId::random();
+
+    for i in 0..5 {
+        connection_closed(
+            peer,
+            PeerState::Validating {
+                protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
+                outbound: OutboundState::Negotiating,
+                inbound: next_inbound_state(i),
+            },
+            Some(NotificationEvent::NotificationStreamOpenFailure {
+                peer,
+                error: NotificationError::Rejected,
+            }),
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn connection_closed_for_open_notification_stream() {
+    let peer = PeerId::random();
+
+    connection_closed(
+        peer,
+        PeerState::Open {
+            outbound: Box::new(MockSubstream::new()),
+        },
+        Some(NotificationEvent::NotificationStreamClosed { peer }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn connection_closed_for_initiated_substream() {
+    let peer = PeerId::random();
+
+    connection_closed(
+        peer,
+        PeerState::OutboundInitiated {
+            substream: SubstreamId::new(),
+        },
+        Some(NotificationEvent::NotificationStreamOpenFailure {
+            peer,
+            error: NotificationError::Rejected,
+        }),
+    )
+    .await;
+}
+
+// inbound state is ignored
+async fn connection_closed(peer: PeerId, state: PeerState, event: Option<NotificationEvent>) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, mut handle, _sender, _tx) = make_notification_protocol();
+
+    notif.peers.insert(peer, PeerContext { state });
+    notif.on_connection_closed(peer).await.unwrap();
+
+    if let Some(expected) = event {
+        assert_eq!(handle.next().await.unwrap(), expected);
+    }
+    assert!(!notif.peers.contains_key(&peer))
+}
+
+// register new connection to `NotificationProtocol`
+async fn register_peer(
+    notif: &mut NotificationProtocol,
+    sender: &mut Sender<InnerTransportEvent>,
+) -> (PeerId, Receiver<ProtocolCommand>) {
+    let peer = PeerId::random();
+    let (conn_tx, conn_rx) = channel(64);
+
+    sender
+        .send(InnerTransportEvent::ConnectionEstablished {
+            peer,
+            connection: ConnectionId::new(),
+            address: Multiaddr::empty(),
+            sender: ConnectionHandle::new(conn_tx),
+        })
+        .await
+        .unwrap();
+
+    // poll the protocol to register the peer
+    notif.next_event().await;
+
+    assert!(std::matches!(
+        notif.peers.get(&peer),
+        Some(PeerContext {
+            state: PeerState::Closed { .. }
+        })
+    ));
+
+    (peer, conn_rx)
+}
+
+#[tokio::test]
+async fn open_substream_connection_closed() {
+    open_substream(PeerState::Closed { pending_open: None }, true).await;
+}
+
+#[tokio::test]
+async fn open_substream_already_initiated() {
+    open_substream(
+        PeerState::OutboundInitiated {
+            substream: SubstreamId::new(),
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_substream_already_open() {
+    open_substream(
+        PeerState::Open {
+            outbound: Box::new(MockSubstream::new()),
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_substream_under_validation() {
+    for i in 0..5 {
+        for k in 0..4 {
+            open_substream(
+                PeerState::Validating {
+                    protocol: ProtocolName::from("/notif/1"),
+                    fallback: None,
+                    outbound: next_outbound_state(k),
+                    inbound: next_inbound_state(i),
+                },
+                false,
+            )
+            .await;
+        }
+    }
+}
+
+async fn open_substream(state: PeerState, succeeds: bool) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
+    let (peer, mut receiver) = register_peer(&mut notif, &mut tx).await;
+
+    let context = notif.peers.get_mut(&peer).unwrap();
+    context.state = state;
+
+    notif.on_open_substream(peer).await.unwrap();
+    assert!(receiver.try_recv().is_ok() == succeeds);
+}
+
+#[tokio::test]
+async fn open_substream_no_connection() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
+    assert!(notif.on_open_substream(PeerId::random()).await.is_err());
+}
+
+#[tokio::test]
+async fn remote_opens_multiple_inbound_substreams() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let protocol = ProtocolName::from("/notif/1");
+    let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
+    let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
+
+    // open substream, poll the result and verify that the peer is in correct state
+    tx.send(InnerTransportEvent::SubstreamOpened {
+        peer,
+        protocol: protocol.clone(),
+        fallback: None,
+        direction: Direction::Inbound,
+        substream: Box::new(DummySubstream::new()),
+    })
+    .await
+    .unwrap();
+    notif.next_event().await;
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Validating {
+                    protocol,
+                    fallback: None,
+                    outbound: OutboundState::Closed,
+                    inbound: InboundState::ReadingHandshake,
+                },
+        }) => {
+            assert_eq!(protocol, &ProtocolName::from("/notif/1"));
+        }
+        state => panic!("invalid state: {state:?}"),
+    }
+
+    // try to open another substream and verify it's discarded and the state is otherwise preserved
+    let mut substream = MockSubstream::new();
+    substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
+
+    tx.send(InnerTransportEvent::SubstreamOpened {
+        peer,
+        protocol: protocol.clone(),
+        fallback: None,
+        direction: Direction::Inbound,
+        substream: Box::new(substream),
+    })
+    .await
+    .unwrap();
+    notif.next_event().await;
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Validating {
+                    protocol,
+                    fallback: None,
+                    outbound: OutboundState::Closed,
+                    inbound: InboundState::ReadingHandshake,
+                },
+        }) => {
+            assert_eq!(protocol, &ProtocolName::from("/notif/1"));
+        }
+        state => panic!("invalid state: {state:?}"),
+    }
+}
+
+#[tokio::test]
+async fn pending_outbound_tracked_correctly() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let protocol = ProtocolName::from("/notif/1");
+    let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
+    let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
+
+    // open outbound substream
+    notif.on_open_substream(peer).await.unwrap();
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state: PeerState::OutboundInitiated { substream },
+        }) => {
+            assert_eq!(substream, &SubstreamId::new());
+        }
+        state => panic!("invalid state: {state:?}"),
+    }
+
+    // then register inbound substream and verify that the state is changed to `Validating`
+    notif
+        .on_inbound_substream(
+            protocol.clone(),
+            None,
+            peer,
+            Box::new(DummySubstream::new()),
+        )
+        .await
+        .unwrap();
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Validating {
+                    outbound: OutboundState::OutboundInitiated { .. },
+                    inbound: InboundState::ReadingHandshake,
+                    ..
+                },
+        }) => {}
+        state => panic!("invalid state: {state:?}"),
+    }
+
+    // then negotiation event for the inbound handshake
+    notif
+        .on_handshake_event(
+            peer,
+            HandshakeEvent::InboundNegotiated {
+                peer,
+                handshake: vec![1, 3, 3, 7],
+                substream: Box::new(DummySubstream::new()),
             },
         )
         .await;
 
-    assert_eq!(
-        handle.next().await.unwrap(),
-        NotificationEvent::NotificationStreamOpened {
-            protocol: ProtocolName::from("/notif/1"),
-            fallback: None,
-            peer,
-            handshake: vec![1, 2, 3, 4]
-        },
-    );
-
-    for _ in 0..ASYNC_CHANNEL_SIZE {
-        handle.send_async_notification(peer, vec![1, 3, 3, 7]).await.unwrap();
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Validating {
+                    outbound: OutboundState::OutboundInitiated { .. },
+                    inbound: InboundState::Validating { .. },
+                    ..
+                },
+        }) => {}
+        state => panic!("invalid state: {state:?}"),
     }
 
-    // try to send one more notification and verify that the call would block
-    assert!(futures::poll!(Box::pin(
-        handle.send_async_notification(peer, vec![1, 3, 3, 9])
-    ))
-    .is_pending());
+    // then reject the inbound peer even though an outbound substream was already established
+    notif.on_validation_result(peer, ValidationResult::Reject).await.unwrap();
 
-    // poll one async notification from the queue
-    let _ = notif.receivers.next().await.unwrap();
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state: PeerState::Closed { pending_open },
+        }) => {
+            assert_eq!(pending_open, &Some(SubstreamId::new()));
+        }
+        state => panic!("invalid state: {state:?}"),
+    }
 
-    // try to send the notification again and verify that this time it works
-    assert!(futures::poll!(Box::pin(
-        handle.send_async_notification(peer, vec![1, 3, 3, 9])
-    ))
-    .is_ready());
+    // finally the outbound substream registers, verify that `pending_open` is set to `None`
+    notif
+        .on_outbound_substream(
+            protocol,
+            None,
+            peer,
+            SubstreamId::new(),
+            Box::new(DummySubstream::new()),
+        )
+        .await
+        .unwrap();
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state: PeerState::Closed { pending_open },
+        }) => {
+            assert!(pending_open.is_none());
+        }
+        state => panic!("invalid state: {state:?}"),
+    }
+}
+
+#[tokio::test]
+async fn inbound_accepted_outbound_fails_to_open() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let protocol = ProtocolName::from("/notif/1");
+    let (mut notif, mut handle, sender, mut tx) = make_notification_protocol();
+    let (peer, receiver) = register_peer(&mut notif, &mut tx).await;
+
+    // register inbound substream and verify that the state is `Validating`
+    notif
+        .on_inbound_substream(
+            protocol.clone(),
+            None,
+            peer,
+            Box::new(DummySubstream::new()),
+        )
+        .await
+        .unwrap();
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Validating {
+                    outbound: OutboundState::Closed { .. },
+                    inbound: InboundState::ReadingHandshake,
+                    ..
+                },
+        }) => {}
+        state => panic!("invalid state: {state:?}"),
+    }
+
+    // then negotiation event for the inbound handshake
+    notif
+        .on_handshake_event(
+            peer,
+            HandshakeEvent::InboundNegotiated {
+                peer,
+                handshake: vec![1, 3, 3, 7],
+                substream: Box::new(DummySubstream::new()),
+            },
+        )
+        .await;
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Validating {
+                    outbound: OutboundState::Closed { .. },
+                    inbound: InboundState::Validating { .. },
+                    ..
+                },
+        }) => {}
+        state => panic!("invalid state: {state:?}"),
+    }
+
+    // discard the validation event
+    assert!(tokio::time::timeout(Duration::from_secs(5), handle.next()).await.is_ok());
+
+    // before the validation event is registered, close the connection
+    drop(sender);
+    drop(receiver);
+    drop(tx);
+
+    // then reject the inbound peer even though an outbound substream was already established
+    assert!(notif.on_validation_result(peer, ValidationResult::Accept).await.is_err());
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state: PeerState::Closed { pending_open },
+        }) => {
+            assert!(pending_open.is_none());
+        }
+        state => panic!("invalid state: {state:?}"),
+    }
+
+    // verify that the user is not reported anything
+    assert!(tokio::time::timeout(Duration::from_secs(1), handle.next()).await.is_err());
+}
+
+#[tokio::test]
+async fn open_substream_on_closed_connection() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, mut handle, sender, mut tx) = make_notification_protocol();
+    let (peer, receiver) = register_peer(&mut notif, &mut tx).await;
+
+    // before processing the open substream event, close the connection
+    drop(sender);
+    drop(receiver);
+    drop(tx);
+
+    // open outbound substream
+    notif.on_open_substream(peer).await.unwrap();
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state: PeerState::Closed { pending_open: None },
+        }) => {}
+        state => panic!("invalid state: {state:?}"),
+    }
+
+    match tokio::time::timeout(Duration::from_secs(5), handle.next())
+        .await
+        .expect("operation to succeed")
+    {
+        Some(NotificationEvent::NotificationStreamOpenFailure { error, .. }) => {
+            assert_eq!(error, NotificationError::NoConnection);
+        }
+        event => panic!("invalid event received: {event:?}"),
+    }
 }
