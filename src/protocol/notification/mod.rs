@@ -595,9 +595,23 @@ impl NotificationProtocol {
         // protocol can only request a new outbound substream to be opened if the state is `Closed`
         if let PeerState::Closed { .. } = std::mem::replace(&mut context.state, PeerState::Poisoned)
         {
-            let substream = self.service.open_substream(peer).await?;
-            self.pending_outbound.insert(substream, peer);
-            context.state = PeerState::OutboundInitiated { substream };
+            match self.service.open_substream(peer).await {
+                Ok(substream) => {
+                    self.pending_outbound.insert(substream, peer);
+                    context.state = PeerState::OutboundInitiated { substream };
+                }
+                Err(error) => {
+                    tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream");
+
+                    self.event_handle
+                        .report_notification_stream_open_failure(
+                            peer,
+                            NotificationError::NoConnection,
+                        )
+                        .await;
+                    context.state = PeerState::Closed { pending_open: None };
+                }
+            }
         }
 
         Ok(())
@@ -757,11 +771,10 @@ impl NotificationProtocol {
         tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle substream event");
 
         match message {
-            Ok(message) => {
+            Ok(message) =>
                 self.event_handle
                     .report_notification_received(peer, message.freeze().into())
-                    .await
-            }
+                    .await,
             Err(_) => {
                 self.negotiation.remove_outbound(&peer);
                 self.negotiation.remove_inbound(&peer);

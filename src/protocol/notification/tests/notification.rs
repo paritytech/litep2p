@@ -543,3 +543,38 @@ async fn inbound_accepted_outbound_fails_to_open() {
     // verify that the user is not reported anything
     assert!(tokio::time::timeout(Duration::from_secs(1), handle.next()).await.is_err());
 }
+
+#[tokio::test]
+async fn open_substream_on_closed_connection() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, mut handle, sender, mut tx) = make_notification_protocol();
+    let (peer, receiver) = register_peer(&mut notif, &mut tx).await;
+
+    // before processing the open substream event, close the connection
+    drop(sender);
+    drop(receiver);
+    drop(tx);
+
+    // open outbound substream
+    notif.on_open_substream(peer).await.unwrap();
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state: PeerState::Closed { pending_open: None },
+        }) => {}
+        state => panic!("invalid state: {state:?}"),
+    }
+
+    match tokio::time::timeout(Duration::from_secs(5), handle.next())
+        .await
+        .expect("operation to succeed")
+    {
+        Some(NotificationEvent::NotificationStreamOpenFailure { error, .. }) => {
+            assert_eq!(error, NotificationError::NoConnection);
+        }
+        event => panic!("invalid event received: {event:?}"),
+    }
+}
