@@ -78,11 +78,6 @@ enum InboundState {
     /// Handshake is being sent to the remote node.
     SendingHandshake,
 
-    /// Substream is being accepted (handshake received and sent in one go)
-    /// as the substream was already accepted.
-    // TODO: zzz
-    _Accepting,
-
     /// Substream is open.
     Open {
         /// Inbound substream.
@@ -119,6 +114,16 @@ enum OutboundState {
     },
 }
 
+impl OutboundState {
+    /// Get pending outboud substream ID, if it exists.
+    fn pending_open(&self) -> Option<SubstreamId> {
+        match &self {
+            OutboundState::OutboundInitiated { substream } => Some(*substream),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum PeerState {
     /// Peer state is poisoned due to invalid state transition.
@@ -126,7 +131,11 @@ enum PeerState {
 
     /// Connection to peer is closed.
     Closed {
-        /// TODO:
+        /// Connection might have been closed while there was an outbound substream still pending.
+        ///
+        /// To handle this state transition correctly in case the substream opens after the
+        /// connection is considered closed, store the `SubstreamId` to that it can be verified in
+        /// case the substream ever opens.
         pending_open: Option<SubstreamId>,
     },
 
@@ -203,7 +212,8 @@ pub(crate) struct NotificationProtocol {
     /// Pending outboudn substreams.
     pending_outbound: HashMap<SubstreamId, PeerId>,
 
-    /// zzz
+    /// Handshaking service which reads and writes the handshakes to inbound
+    /// and outbound substreams asynchronously.
     negotiation: HandshakeService,
 }
 
@@ -556,13 +566,16 @@ impl NotificationProtocol {
                     .await;
             }
             // if the substream was accepted by the local node and as a result, an outbound
-            // substream was accepted as a result this should not be reported to local
-            // node as the
-            PeerState::Validating {
-                outbound: OutboundState::OutboundInitiated { .. },
-                ..
-            } => {
-                context.state = PeerState::Closed { pending_open: None };
+            // substream was accepted as a result this should not be reported to local node
+            PeerState::Validating { outbound, .. } => {
+                self.negotiation.remove_inbound(&peer);
+                self.negotiation.remove_outbound(&peer);
+
+                if !std::matches!(outbound, OutboundState::Closed) {
+                    self.event_handle
+                        .report_notification_stream_open_failure(peer, NotificationError::Rejected)
+                        .await;
+                }
             }
             state => {
                 tracing::warn!(target: LOG_TARGET, ?state, "invalid state for outbound substream open failure");
@@ -593,6 +606,7 @@ impl NotificationProtocol {
         };
 
         // protocol can only request a new outbound substream to be opened if the state is `Closed`
+        // other states imply that it's already open
         if let PeerState::Closed { .. } = std::mem::replace(&mut context.state, PeerState::Poisoned)
         {
             match self.service.open_substream(peer).await {
@@ -692,17 +706,13 @@ impl NotificationProtocol {
                 // initiated, save the `SubstreamId` of that substream and later if the substream
                 // is opened, the state can be corrected to `pending_open: None`.
                 ValidationResult::Reject => {
-                    let pending_open = match outbound {
-                        OutboundState::OutboundInitiated { substream } => Some(substream),
-                        OutboundState::Negotiating => {
-                            self.negotiation.remove_outbound(&peer);
-                            None
-                        }
-                        _ => None,
+                    let _ = inbound.close().await;
+                    self.negotiation.remove_outbound(&peer);
+                    self.negotiation.remove_inbound(&peer);
+                    context.state = PeerState::Closed {
+                        pending_open: outbound.pending_open(),
                     };
 
-                    let _ = inbound.close().await;
-                    context.state = PeerState::Closed { pending_open };
                     Ok(())
                 }
                 ValidationResult::Accept => match outbound {
@@ -767,38 +777,62 @@ impl NotificationProtocol {
     }
 
     /// Handle substream event.
+    ///
+    /// If the substream was closed, remove all state, set peer state to `Closed` and notify user
+    /// that the notification stream was closed.
     async fn on_substream_event(&mut self, peer: PeerId, message: crate::Result<BytesMut>) {
         tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle substream event");
 
-        match message {
-            Ok(message) =>
-                self.event_handle
-                    .report_notification_received(peer, message.freeze().into())
-                    .await,
-            Err(_) => {
-                self.negotiation.remove_outbound(&peer);
-                self.negotiation.remove_inbound(&peer);
-                self.substreams.remove(&peer);
-                self.receivers.remove(&peer);
-                self.peers
-                    .get_mut(&peer)
-                    .expect("peer to exist since an event was received")
-                    .state = PeerState::Closed { pending_open: None };
-                // TODO: if the node is still handshaking, don't return this event
-                self.event_handle.report_notification_stream_closed(peer).await;
-            }
-        }
+        if let Ok(message) = message {
+            return self
+                .event_handle
+                .report_notification_received(peer, message.freeze().into())
+                .await;
+        };
+
+        self.substreams.remove(&peer);
+        self.receivers.remove(&peer);
+        self.peers
+            .get_mut(&peer)
+            .expect("peer to exist since an event was received")
+            .state = PeerState::Closed { pending_open: None };
+        self.event_handle.report_notification_stream_closed(peer).await;
     }
 
-    /// Handle negotiation event.
-    async fn on_negotiation_event(&mut self, peer: PeerId, event: HandshakeEvent) {
+    /// Handle handshake event.
+    ///
+    /// There are three different handshake event types:
+    ///   - outbound substream negotiated
+    ///   - inbound substream negotiated
+    ///   - substream negotiation error
+    ///
+    /// Neither outbound nor inbound substream negotiated automatically means that the connection is
+    /// considered open as both substreams must be fully negotiated for that to be the case. That is
+    /// why the peer state for inbound and outbound are set separately and at the end of the
+    /// function is the collective state of the substreams checked and if both substreams are
+    /// negotiated, the user informed that the connection is open.
+    ///
+    /// If the negotiation fails, the user may have to be informed of that. Outbound substream
+    /// failure always results in user getting notified since the existence of an outbound substream
+    /// means that the user has either initiated an outbound substreams or has accepted an inbound
+    /// substreams, resulting in an outbound substreams.
+    ///
+    /// Negotiation failure for inbound substreams which are in the state
+    /// [`InboundState::ReadingHandshake`] don't result in any notification because while the
+    /// handshake is being read from the substream, the user is oblivious to the fact that an
+    /// inbound substream has even been received.
+    async fn on_handshake_event(&mut self, peer: PeerId, event: HandshakeEvent) {
         let Some(context) = self.peers.get_mut(&peer) else {
-            tracing::error!(target: LOG_TARGET, "invalid state: notification stream opened but peer doesn't exist");
-            debug_assert!(false); // TODO: is this correct?
+            tracing::error!(target: LOG_TARGET, "invalid state: negotiation event received but peer doesn't exist");
+            debug_assert!(false);
             return;
         };
 
+        // TODO: try to get inbound and outbound state here if possible?
+
         match event {
+            // outbound substream was negotiated, the only valid state for peer is `Validating`
+            // and only valid state for `OutboundState` is `Negotiating`
             HandshakeEvent::OutboundNegotiated {
                 peer,
                 handshake,
@@ -823,24 +857,41 @@ impl NotificationProtocol {
                             inbound,
                         };
                     }
-                    _event => debug_assert!(false),
+                    state => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?state,
+                            "outbound substream negotiated but peer has invalid state"
+                        );
+                        debug_assert!(false);
+                    }
                 }
             }
-            HandshakeEvent::OutboundNegotiationError { peer } => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    state = ?context.state,
-                    "failed to negotiate outbound substream"
-                );
-
-                // TODO: set state properly
-                let _ = self.negotiation.remove_outbound(&peer);
-                return self
-                    .event_handle
-                    .report_notification_stream_open_failure(peer, NotificationError::Rejected)
-                    .await;
-            }
+            // inbound negotiation event completed
+            //
+            // the negotiation event can be on of two different types:
+            //   - remote handshake was read from the substream
+            //   - local handshake has been sent to remote node
+            //
+            // For the first case, the substream has to be validated by the local node.
+            // This means reporting the protocol name, potential negotiated fallback and the
+            // handshake. Local node will then either accept or reject the substream which is
+            // handled by [`NotificationProtocol::on_validation_result()`]. Compared to
+            // Substrate, litep2p requires both peers to validate the inbound handshake to allow
+            // more complex connection validation. If this is not necessary and the protocol wishes
+            // to auto-accept the inbound substreams that are a result of an outbound substream
+            // already accepted by the remote node, the substrem validation is skipped and the local
+            // handshake is sent right away.
+            //
+            // For the second case, the local handshake was sent to remote node successfully and the
+            // inbound substream is considered open and if the outbound substream is open as well,
+            // the connection is fully open.
+            //
+            // Only valid states for [`InboundState`] are [`InboundState::ReadingHandshake`] and
+            // [`InboundState::SendingHandshake`] because otherwise the inbound
+            // substream cannot be in [`HandshakeService`](super::negotiation::HandshakeService)
+            // unless there is a logic bug in the state machine.
             HandshakeEvent::InboundNegotiated {
                 peer,
                 handshake,
@@ -894,32 +945,49 @@ impl NotificationProtocol {
                     _state => debug_assert!(false),
                 }
             }
-            HandshakeEvent::InboundAccepted { peer: _, substream } => {
+            // error occurred during negotiation, eitehr for inbound or outbound substream
+            // user is notified of the error only if they've either initiated an outbound substream
+            // or if they accepted an inbound substream and as a result initiated an outbound
+            // substream.
+            HandshakeEvent::NegotiationError { peer, direction } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?direction,
+                    state = ?context.state,
+                    "failed to negotiate outbound substream"
+                );
+                let _ = self.negotiation.remove_outbound(&peer);
+                let _ = self.negotiation.remove_inbound(&peer);
+
+                // if an outbound substream had been initiated (whatever its state is), it means
+                // that the user knows about the connection and must be notified that it failed to
+                // negotiate.
                 match std::mem::replace(&mut context.state, PeerState::Poisoned) {
-                    PeerState::Validating {
-                        protocol,
-                        fallback,
-                        outbound,
-                        inbound: InboundState::_Accepting,
-                    } => {
-                        context.state = PeerState::Validating {
-                            protocol,
-                            fallback,
-                            outbound,
-                            inbound: InboundState::Open { inbound: substream },
+                    PeerState::Validating { outbound, .. } => {
+                        // notify user if the outbound substream is not considered closed
+                        if !std::matches!(outbound, OutboundState::Closed) {
+                            return self
+                                .event_handle
+                                .report_notification_stream_open_failure(
+                                    peer,
+                                    NotificationError::Rejected,
+                                )
+                                .await;
+                        }
+
+                        context.state = PeerState::Closed {
+                            pending_open: outbound.pending_open(),
                         };
                     }
                     _state => debug_assert!(false),
                 }
             }
-            HandshakeEvent::InboundNegotiationError { peer } => {
-                // TODO: handle error
-                tracing::error!(target: LOG_TARGET, ?peer, "inbound negotaition error");
-                self.negotiation.remove_inbound(&peer);
-            }
         }
 
-        // TODO: clean this code
+        // if both inbound and outbound substreams are considered open, notify the user that
+        // a notification stream has been opened and set up for sending and receiving
+        // notifications to and from remote node
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
             PeerState::Validating {
                 protocol,
@@ -931,7 +999,13 @@ impl NotificationProtocol {
                     },
                 inbound: InboundState::Open { inbound },
             } => {
-                tracing::debug!(target: LOG_TARGET, ?peer, "notification stream opened");
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?protocol,
+                    ?fallback,
+                    "notification stream opened"
+                );
 
                 let (async_tx, async_rx) = channel(ASYNC_CHANNEL_SIZE);
                 let (sync_tx, sync_rx) = channel(SYNC_CHANNEL_SIZE);
@@ -962,7 +1036,7 @@ impl NotificationProtocol {
         // biased select is used because the substream events must be prioritized above other events
         // that is becaused a closed substream is detected by either `substreams` or `negotiation`
         // and if that event is not handled with priority but, e.g., inbound substream is
-        // handled before it it can create a situation where the state machine gets confused
+        // handled before, it can create a situation where the state machine gets confused
         // about the peer's state.
         tokio::select! {
             biased;
@@ -974,7 +1048,7 @@ impl NotificationProtocol {
             event = self.negotiation.next(), if !self.negotiation.is_empty() => {
                 let (peer, event) = event.expect("`HandshakeService` to return `Some(..)`");
 
-                self.on_negotiation_event(peer, event).await;
+                self.on_handshake_event(peer, event).await;
             }
             event = self.receivers.next(), if !self.receivers.is_empty() => match event {
                 Some((peer, notification)) => {
@@ -1050,7 +1124,7 @@ impl NotificationProtocol {
                 Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                     self.on_substream_open_failure(substream, error).await;
                 }
-                Some(TransportEvent::DialFailure { .. }) => todo!(),
+                Some(TransportEvent::DialFailure { .. }) => {},
                 None => return,
             },
             command = self.command_rx.recv() => match command {

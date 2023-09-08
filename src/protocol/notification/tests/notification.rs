@@ -49,8 +49,7 @@ fn next_inbound_state(state: usize) -> InboundState {
             inbound: Box::new(MockSubstream::new()),
         },
         3 => InboundState::SendingHandshake,
-        4 => InboundState::_Accepting,
-        5 => InboundState::Open {
+        4 => InboundState::Open {
             inbound: Box::new(MockSubstream::new()),
         },
         _ => panic!(),
@@ -76,7 +75,7 @@ fn next_outbound_state(state: usize) -> OutboundState {
 async fn connection_closed_for_outbound_open_substream() {
     let peer = PeerId::random();
 
-    for i in 0..6 {
+    for i in 0..5 {
         connection_closed(
             peer,
             PeerState::Validating {
@@ -101,7 +100,7 @@ async fn connection_closed_for_outbound_open_substream() {
 async fn connection_closed_for_outbound_initiated_substream() {
     let peer = PeerId::random();
 
-    for i in 0..6 {
+    for i in 0..5 {
         connection_closed(
             peer,
             PeerState::Validating {
@@ -125,7 +124,7 @@ async fn connection_closed_for_outbound_initiated_substream() {
 async fn connection_closed_for_outbound_negotiated_substream() {
     let peer = PeerId::random();
 
-    for i in 0..6 {
+    for i in 0..5 {
         connection_closed(
             peer,
             PeerState::Validating {
@@ -251,7 +250,7 @@ async fn open_substream_already_open() {
 
 #[tokio::test]
 async fn open_substream_under_validation() {
-    for i in 0..6 {
+    for i in 0..5 {
         for k in 0..4 {
             open_substream(
                 PeerState::Validating {
@@ -407,7 +406,7 @@ async fn pending_outbound_tracked_correctly() {
 
     // then negotiation event for the inbound handshake
     notif
-        .on_negotiation_event(
+        .on_handshake_event(
             peer,
             HandshakeEvent::InboundNegotiated {
                 peer,
@@ -498,7 +497,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
 
     // then negotiation event for the inbound handshake
     notif
-        .on_negotiation_event(
+        .on_handshake_event(
             peer,
             HandshakeEvent::InboundNegotiated {
                 peer,

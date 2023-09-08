@@ -110,7 +110,7 @@ async fn substream_accepted() {
 
     // get negotiation event
     let (peer, event) = notif.negotiation.next().await.unwrap();
-    notif.on_negotiation_event(peer, event).await;
+    notif.on_handshake_event(peer, event).await;
 
     // user protocol receives the protocol accepts it
     assert_eq!(
@@ -126,7 +126,7 @@ async fn substream_accepted() {
 
     // poll negotiation to finish the handshake
     let (peer, event) = notif.negotiation.next().await.unwrap();
-    notif.on_negotiation_event(peer, event).await;
+    notif.on_handshake_event(peer, event).await;
 
     // protocol asks for outbound substream to be opened and its state is changed accordingly
     let ProtocolCommand::OpenSubstream {
@@ -199,7 +199,7 @@ async fn substream_rejected() {
 
     // get negotiation event
     let (peer, event) = notif.negotiation.next().await.unwrap();
-    notif.on_negotiation_event(peer, event).await;
+    notif.on_handshake_event(peer, event).await;
 
     // user protocol receives the protocol accepts it
     assert_eq!(
@@ -283,7 +283,7 @@ async fn accept_fails_due_to_closed_substream() {
 
     // get negotiation event
     let (peer, event) = notif.negotiation.next().await.unwrap();
-    notif.on_negotiation_event(peer, event).await;
+    notif.on_handshake_event(peer, event).await;
 
     // user protocol receives the protocol accepts it
     assert_eq!(
@@ -301,12 +301,12 @@ async fn accept_fails_due_to_closed_substream() {
     // get negotiation event
     let (event_peer, event) = notif.negotiation.next().await.unwrap();
     match &event {
-        HandshakeEvent::OutboundNegotiationError { peer } => {
+        HandshakeEvent::NegotiationError { peer, .. } => {
             assert_eq!(*peer, event_peer);
         }
         event => panic!("invalid event for peer: {event:?}"),
     }
-    notif.on_negotiation_event(peer, event).await;
+    notif.on_handshake_event(peer, event).await;
 
     // TODO: check state
 }
@@ -368,7 +368,7 @@ async fn accept_fails_due_to_closed_connection() {
 
     // get negotiation event
     let (peer, event) = notif.negotiation.next().await.unwrap();
-    notif.on_negotiation_event(peer, event).await;
+    notif.on_handshake_event(peer, event).await;
 
     // user protocol receives the protocol accepts it
     assert_eq!(

@@ -20,7 +20,6 @@
 
 //! Implementation of the notification handshaking.
 
-#![allow(unused)]
 use crate::{substream::Substream, PeerId};
 
 use futures::{FutureExt, Sink, Stream};
@@ -41,15 +40,12 @@ const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Substream direction.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-enum Direction {
+pub enum Direction {
     /// Outbound substream, opened by local node.
     Outbound,
 
     /// Inbound substream, opened by remote node.
     Inbound,
-
-    /// TODO:
-    InboundAccepting,
 }
 
 /// Events emitted by [`HandshakeService`].
@@ -68,9 +64,12 @@ pub enum HandshakeEvent {
     },
 
     /// Outbound substream has been negotiated.
-    OutboundNegotiationError {
+    NegotiationError {
         /// Peer ID.
         peer: PeerId,
+
+        /// Direction.
+        direction: Direction,
     },
 
     /// Inbound substream has been negotiated.
@@ -82,17 +81,6 @@ pub enum HandshakeEvent {
         handshake: Vec<u8>,
 
         /// Substream.
-        substream: Box<dyn Substream>,
-    },
-
-    /// Inbound substream has been negotiated.
-    InboundNegotiationError {
-        /// Peer ID.
-        peer: PeerId,
-    },
-
-    InboundAccepted {
-        peer: PeerId,
         substream: Box<dyn Substream>,
     },
 }
@@ -129,7 +117,7 @@ pub(crate) struct HandshakeService {
 
 impl HandshakeService {
     /// Create new [`HandshakeService`].
-    pub(crate) fn new(handshake: Vec<u8>) -> Self {
+    pub fn new(handshake: Vec<u8>) -> Self {
         Self {
             handshake,
             ready: VecDeque::new(),
@@ -138,19 +126,19 @@ impl HandshakeService {
     }
 
     /// Set handshake for the protocol.
-    pub(crate) fn set_handshake(&mut self, handshake: Vec<u8>) {
+    pub fn set_handshake(&mut self, handshake: Vec<u8>) {
         self.handshake = handshake;
     }
 
     /// Remove outbound substream from [`HandshakeService`].
-    pub(crate) fn remove_outbound(&mut self, peer: &PeerId) -> Option<Box<dyn Substream>> {
+    pub fn remove_outbound(&mut self, peer: &PeerId) -> Option<Box<dyn Substream>> {
         self.substreams
             .remove(&(*peer, Direction::Outbound))
             .map(|(substream, _, _)| substream)
     }
 
     /// Remove inbound substream from [`HandshakeService`].
-    pub(crate) fn remove_inbound(&mut self, peer: &PeerId) -> Option<Box<dyn Substream>> {
+    pub fn remove_inbound(&mut self, peer: &PeerId) -> Option<Box<dyn Substream>> {
         self.substreams
             .remove(&(*peer, Direction::Inbound))
             .map(|(substream, _, _)| substream)
@@ -166,20 +154,6 @@ impl HandshakeService {
                 substream,
                 Delay::new(NEGOTIATION_TIMEOUT),
                 HandshakeState::SendHandshake,
-            ),
-        );
-    }
-
-    /// Negotiate outbound handshake.
-    pub fn _accept_inbound(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
-        tracing::trace!(target: LOG_TARGET, ?peer, "accept inbound substream");
-
-        self.substreams.insert(
-            (peer, Direction::InboundAccepting),
-            (
-                substream,
-                Delay::new(NEGOTIATION_TIMEOUT),
-                HandshakeState::ReadHandshake,
             ),
         );
     }
@@ -248,12 +222,6 @@ impl HandshakeService {
                     },
                 ));
             }
-            Direction::InboundAccepting => {
-                let (substream, _, _) =
-                    self.substreams.remove(&(peer, direction)).expect("peer to exist");
-
-                return Some((peer, HandshakeEvent::InboundAccepted { peer, substream }));
-            }
         }
     }
 }
@@ -278,7 +246,10 @@ impl Stream for HandshakeService {
             if let Poll::Ready(()) = timer.poll_unpin(cx) {
                 return Poll::Ready(Some((
                     *peer,
-                    HandshakeEvent::OutboundNegotiationError { peer: *peer },
+                    HandshakeEvent::NegotiationError {
+                        peer: *peer,
+                        direction: *direction,
+                    },
                 )));
             }
 
@@ -294,7 +265,10 @@ impl Stream for HandshakeService {
                         Poll::Ready(Err(_)) =>
                             return Poll::Ready(Some((
                                 *peer,
-                                HandshakeEvent::OutboundNegotiationError { peer: *peer },
+                                HandshakeEvent::NegotiationError {
+                                    peer: *peer,
+                                    direction: *direction,
+                                },
                             ))),
                         Poll::Pending => continue 'outer,
                     },
@@ -307,7 +281,10 @@ impl Stream for HandshakeService {
                             Err(_) =>
                                 return Poll::Ready(Some((
                                     *peer,
-                                    HandshakeEvent::OutboundNegotiationError { peer: *peer },
+                                    HandshakeEvent::NegotiationError {
+                                        peer: *peer,
+                                        direction: *direction,
+                                    },
                                 ))),
                         }
                     }
@@ -321,37 +298,29 @@ impl Stream for HandshakeService {
                                 inner.ready.push_back((*peer, *direction, vec![]));
                                 continue 'outer;
                             }
-                            Direction::InboundAccepting => {
-                                inner.ready.push_back((*peer, *direction, vec![]));
-                                continue 'outer;
-                            }
                         },
                         Poll::Ready(Err(_)) =>
                             return Poll::Ready(Some((
                                 *peer,
-                                HandshakeEvent::OutboundNegotiationError { peer: *peer },
+                                HandshakeEvent::NegotiationError {
+                                    peer: *peer,
+                                    direction: *direction,
+                                },
                             ))),
                         Poll::Pending => continue 'outer,
                     },
                     HandshakeState::ReadHandshake => match pinned.poll_next(cx) {
-                        Poll::Ready(Some(Ok(handshake))) => match direction {
-                            Direction::InboundAccepting => {
-                                *state = HandshakeState::SendHandshake;
-                                continue;
-                            }
-                            _ => {
-                                inner.ready.push_back((
-                                    *peer,
-                                    *direction,
-                                    handshake.freeze().into(),
-                                ));
-                                continue 'outer;
-                            }
-                        },
+                        Poll::Ready(Some(Ok(handshake))) => {
+                            inner.ready.push_back((*peer, *direction, handshake.freeze().into()));
+                            continue 'outer;
+                        }
                         Poll::Ready(Some(Err(_))) | Poll::Ready(None) => {
                             return Poll::Ready(Some((
                                 *peer,
-                                HandshakeEvent::OutboundNegotiationError { peer: *peer },
+                                HandshakeEvent::NegotiationError {
+                                    peer: *peer,
+                                    direction: *direction,
+                                },
                             )));
                         }
                         Poll::Pending => continue 'outer,
@@ -384,14 +353,6 @@ impl Stream for HandshakeService {
                             handshake,
                             substream,
                         },
-                    )));
-                }
-                Direction::InboundAccepting => {
-                    let (substream, _, _) =
-                        inner.substreams.remove(&(peer, direction)).expect("peer to exist");
-                    return Poll::Ready(Some((
-                        peer,
-                        HandshakeEvent::InboundAccepted { peer, substream },
                     )));
                 }
             }
