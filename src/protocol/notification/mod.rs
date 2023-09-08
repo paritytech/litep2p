@@ -1020,7 +1020,42 @@ impl NotificationProtocol {
 
     /// Handle next notification event.
     async fn next_event(&mut self) {
+        // biased select is used because the substream events must be prioritized above other events
+        // that is becaused a closed substream is detected by either `substreams` or `negotiation`
+        // and if that event is not handled with priority but, e.g., inbound substream is
+        // handled before it it can create a situation where the state machine gets confused
+        // about the peer's state.
         tokio::select! {
+            biased;
+
+            event = self.substreams.next(), if !self.substreams.is_empty() => {
+                let (peer, event) = event.expect("`SubstreamSet` to return `Some(..)`");
+                self.on_substream_event(peer, event).await;
+            }
+            event = self.negotiation.next(), if !self.negotiation.is_empty() => {
+                let (peer, event) = event.expect("`HandshakeService` to return `Some(..)`");
+
+                self.on_negotiation_event(peer, event).await;
+            }
+            event = self.receivers.next(), if !self.receivers.is_empty() => match event {
+                Some((peer, notification)) => {
+                    tracing::info!(target: LOG_TARGET, ?peer, "send notification to peer");
+
+                    match self.peers.get_mut(&peer) {
+                        Some(context) => match &mut context.state {
+                            PeerState::Open { outbound } => {
+                                // TODO: handle error
+                                let _result = outbound.send(notification.into()).await;
+                            }
+                            state => tracing::error!(target: LOG_TARGET, ?state, "invalid state for peer"),
+                        }
+                        None => {} // TODO: handle error
+                    }
+                }
+                None => {
+                    tracing::info!(target: LOG_TARGET, "here");
+                }
+            },
             event = self.service.next_event() => match event {
                 Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                     if let Err(error) = self.on_connection_established(peer).await {
@@ -1114,34 +1149,6 @@ impl NotificationProtocol {
                     }
                 }
             },
-            event = self.substreams.next(), if !self.substreams.is_empty() => {
-                let (peer, event) = event.expect("`SubstreamSet` to return `Some(..)`");
-                self.on_substream_event(peer, event).await;
-            }
-            event = self.negotiation.next(), if !self.negotiation.is_empty() => {
-                let (peer, event) = event.expect("`HandshakeService` to return `Some(..)`");
-
-                self.on_negotiation_event(peer, event).await;
-            }
-            event = self.receivers.next(), if !self.receivers.is_empty() => match event {
-                Some((peer, notification)) => {
-                    tracing::info!(target: LOG_TARGET, ?peer, "send notification to peer");
-
-                    match self.peers.get_mut(&peer) {
-                        Some(context) => match &mut context.state {
-                            PeerState::Open { outbound } => {
-                                // TODO: handle error
-                                let _result = outbound.send(notification.into()).await;
-                            }
-                            state => tracing::error!(target: LOG_TARGET, ?state, "invalid state for peer"),
-                        }
-                        None => {} // TODO: handle error
-                    }
-                }
-                None => {
-                    tracing::info!(target: LOG_TARGET, "here");
-                }
-            }
         }
     }
 
