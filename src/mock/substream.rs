@@ -91,7 +91,7 @@ impl Sink<bytes::Bytes> for DummySubstream {
     }
 
     fn poll_close<'a>(self: Pin<&mut Self>, _cx: &mut Context<'a>) -> Poll<Result<(), Error>> {
-        Poll::Pending
+        Poll::Ready(Ok(()))
     }
 }
 
