@@ -302,18 +302,40 @@ impl NotificationProtocol {
     }
 
     /// Local node opened a substream to remote node.
+    ///
+    /// The connection can be in three different states:
+    ///   - this is the first substream that was opened and thus the connection was initiated by the
+    ///     local node
+    ///   - this is a response to a previously received inbound substream which the local node
+    ///     accepted and as a result, opened its own substream
+    ///   - local and remote nodes opened substreams at the same time
+    ///
+    /// In the first case, the local node's handshake is sent to remote node and the substream is
+    /// polled in the background until they either send their handshake or close the substream.
+    ///
+    /// For the second case, the connection was initiated by the remote node and the substream was
+    /// accepted by the local node which initiated an outbound substream to the remote node.
+    /// The only valid states for this case are [`InboundState::Open`],
+    /// and [`InboundState::SendingHandshake`] as they imply
+    /// that the inbound substream have been accepted by the local node and this opened outbound
+    /// substream is a result of a valid state transition.
+    ///
+    /// For the third case, if the nodes have opened substreams at the same time, the outbound state
+    /// must be [`OutbounState::OutboundInitiated`] to ascertain that the an outbound substream was
+    /// actually opened. Any other state would be a state mismatch and would mean that the
+    /// connection is opening substreams without the permission of the protocol handler.
     async fn on_outbound_substream(
         &mut self,
         protocol: ProtocolName,
         fallback: Option<ProtocolName>,
         peer: PeerId,
         substream_id: SubstreamId,
-        outbound: Box<dyn Substream>,
+        mut outbound: Box<dyn Substream>,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
-            ?protocol,
             ?peer,
+            ?protocol,
             ?substream_id,
             "handle outbound substream",
         );
@@ -322,10 +344,9 @@ impl NotificationProtocol {
         let context = self.peers.get_mut(&peer).expect("peer to exist");
         let pending_peer = self.pending_outbound.remove(&substream_id);
 
-        // the peer can be in two different states when an outbound substream has opened:
-        //  - `PeerState::OutboundInitiated` - local node opened an outbound substream
-        //  - `PeerState::Negotiating` - TODO
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
+            // the connection was initiated by the local node, send handshake to remote and wait to
+            // receive their handshake back
             PeerState::OutboundInitiated { substream } => {
                 debug_assert!(substream == substream_id);
                 debug_assert!(pending_peer == Some(peer));
@@ -344,7 +365,9 @@ impl NotificationProtocol {
                 inbound,
                 outbound: outbound_state,
             } => {
-                //
+                // the inbound substream has been accepted by the local node since the handshake has
+                // been read and the local handshake has either already been sent or
+                // it's in the process of being sent.
                 match inbound {
                     InboundState::SendingHandshake | InboundState::Open { .. } => {
                         context.state = PeerState::Validating {
@@ -355,6 +378,7 @@ impl NotificationProtocol {
                         };
                         self.negotiation.negotiate_outbound(peer, outbound);
                     }
+                    // nodes have opened substreams at the same time
                     inbound_state => match outbound_state {
                         OutboundState::OutboundInitiated { substream } => {
                             debug_assert!(substream == substream_id);
@@ -367,19 +391,44 @@ impl NotificationProtocol {
                             };
                             self.negotiation.negotiate_outbound(peer, outbound);
                         }
+                        // invalid state: more than one outbound substream has been opened
                         inner_state => {
                             tracing::error!(
                                 target: LOG_TARGET,
                                 ?inbound_state,
                                 ?inner_state,
-                                "invalid state"
+                                "invalid state, expected `OutboundInitiated`",
                             );
+
+                            let _ = outbound.close().await;
                             debug_assert!(false);
                         }
                     },
                 }
             }
-            _state => debug_assert!(false),
+            // the connection may have been closed while an outbound substream was pending
+            // if the outbound substream was initiated successfully, close it and reset
+            // `pending_open`
+            PeerState::Closed { _pending_open } if _pending_open == Some(substream_id) => {
+                let _ = outbound.close().await;
+
+                context.state = PeerState::Closed {
+                    _pending_open: None,
+                };
+            }
+            state => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?protocol,
+                    ?substream_id,
+                    ?state,
+                    "invalid state: more than one outbound substream opened",
+                );
+
+                let _ = outbound.close().await;
+                debug_assert!(false);
+            }
         }
 
         Ok(())
@@ -508,8 +557,19 @@ impl NotificationProtocol {
                     .report_notification_stream_open_failure(peer, NotificationError::Rejected)
                     .await;
             }
+            // if the substream was accepted by the local node and as a result, an outbound
+            // substream was accepted as a result this should not be reported to local
+            // node as the
+            PeerState::Validating {
+                outbound: OutboundState::OutboundInitiated { .. },
+                ..
+            } => {
+                context.state = PeerState::Closed {
+                    _pending_open: None,
+                };
+            }
             state => {
-                tracing::warn!(target: LOG_TARGET, ?state, "peer is in invalid state");
+                tracing::warn!(target: LOG_TARGET, ?state, "invalid state for outbound substream open failure");
                 context.state = PeerState::Closed {
                     _pending_open: None,
                 };
