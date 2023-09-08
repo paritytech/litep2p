@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    mock::substream::MockSubstream,
+    mock::substream::{DummySubstream, MockSubstream},
     protocol::{
         connection::ConnectionHandle,
         notification::{
@@ -27,7 +27,7 @@ use crate::{
             types::{NotificationError, NotificationEvent},
             InboundState, NotificationProtocol, OutboundState, PeerContext, PeerState,
         },
-        InnerTransportEvent, ProtocolCommand,
+        Direction, InnerTransportEvent, ProtocolCommand,
     },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
@@ -36,6 +36,8 @@ use crate::{
 use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+use std::task::Poll;
 
 fn next_inbound_state(state: usize) -> InboundState {
     match state {
@@ -292,4 +294,72 @@ async fn open_substream_no_connection() {
 
     let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
     assert!(notif.on_open_substream(PeerId::random()).await.is_err());
+}
+
+#[tokio::test]
+async fn remote_opens_multiple_inbound_substreams() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let protocol = ProtocolName::from("/notif/1");
+    let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
+    let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
+
+    // // open substream, poll the result and verify that the peer is in correct state
+    tx.send(InnerTransportEvent::SubstreamOpened {
+        peer,
+        protocol: protocol.clone(),
+        fallback: None,
+        direction: Direction::Inbound,
+        substream: Box::new(DummySubstream::new()),
+    })
+    .await
+    .unwrap();
+    notif.next_event().await;
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Validating {
+                    protocol,
+                    fallback: None,
+                    outbound: OutboundState::Closed,
+                    inbound: InboundState::ReadingHandshake,
+                },
+        }) => {
+            assert_eq!(protocol, &ProtocolName::from("/notif/1"));
+        }
+        state => panic!("invalid state: {state:?}"),
+    }
+
+    // try to open another substream and verify it's discarded and the state is otherwise preserved
+    let mut substream = MockSubstream::new();
+    substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
+
+    tx.send(InnerTransportEvent::SubstreamOpened {
+        peer,
+        protocol: protocol.clone(),
+        fallback: None,
+        direction: Direction::Inbound,
+        substream: Box::new(substream),
+    })
+    .await
+    .unwrap();
+    notif.next_event().await;
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Validating {
+                    protocol,
+                    fallback: None,
+                    outbound: OutboundState::Closed,
+                    inbound: InboundState::ReadingHandshake,
+                },
+        }) => {
+            assert_eq!(protocol, &ProtocolName::from("/notif/1"));
+        }
+        state => panic!("invalid state: {state:?}"),
+    }
 }

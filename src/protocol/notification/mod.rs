@@ -386,12 +386,20 @@ impl NotificationProtocol {
     }
 
     /// Remote opened a substream to local node.
+    ///
+    /// The peer can be in three different states for the inbound substream to be considered valid:
+    ///   - the connection is closed
+    ///   - outbound substream has been opened but not yet acknowledged by the remote peer
+    ///   - outbound substream has been opened and acknowledged by the remote peer and it's being
+    ///     negotiated
+    ///
+    /// If remote opened more than one substream, the new substream is simply discarded.
     async fn on_inbound_substream(
         &mut self,
         protocol: ProtocolName,
         fallback: Option<ProtocolName>,
         peer: PeerId,
-        inbound: Box<dyn Substream>,
+        mut substream: Box<dyn Substream>,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -403,13 +411,10 @@ impl NotificationProtocol {
         // peer must exist since an inbound substream was received from them
         let context = self.peers.get_mut(&peer).expect("peer to exist");
 
-        // the peer can be in two different states when an outbound substream has opened:
-        //  - `PeerState::Closed` - remote node opened a substream to local node and it needs to be
-        //    validated
-        //  - `PeerState::` - TODO
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
+            // the peer state is closed so this is a fresh inbound substream.
             PeerState::Closed { .. } => {
-                self.negotiation.read_handshake(peer, inbound);
+                self.negotiation.read_handshake(peer, substream);
 
                 context.state = PeerState::Validating {
                     protocol,
@@ -418,13 +423,17 @@ impl NotificationProtocol {
                     outbound: OutboundState::Closed,
                 };
             }
+            // if the connection is under validation (so an outbound substream has been opened and
+            // it's still pending or under negotiation), the only valid state for the
+            // inbound state is closed as it indicates that there isn't an inbound substream yet for
+            // the remote node duplicate substreams are prohibited.
             PeerState::Validating {
                 protocol,
                 fallback,
                 outbound,
                 inbound: InboundState::Closed,
             } => {
-                self.negotiation.read_handshake(peer, inbound);
+                self.negotiation.read_handshake(peer, substream);
 
                 context.state = PeerState::Validating {
                     protocol,
@@ -433,24 +442,36 @@ impl NotificationProtocol {
                     inbound: InboundState::ReadingHandshake,
                 };
             }
-            PeerState::OutboundInitiated { substream } => {
-                self.negotiation.read_handshake(peer, inbound);
+            // outbound substream may have been initiated by the local node while a remote node also
+            // opened a substream roughly at the same time
+            PeerState::OutboundInitiated {
+                substream: outbound,
+            } => {
+                self.negotiation.read_handshake(peer, substream);
 
                 context.state = PeerState::Validating {
                     protocol,
                     fallback,
-                    outbound: OutboundState::OutboundInitiated { substream },
+                    outbound: OutboundState::OutboundInitiated {
+                        substream: outbound,
+                    },
                     inbound: InboundState::ReadingHandshake,
                 };
             }
+            // remote opened another inbound substream, close it and otherwise ignore the event
+            // as this is a non-serious protocol violation.
             state => {
-                tracing::error!(
+                tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
+                    ?protocol,
+                    ?fallback,
                     ?state,
-                    "invalid state for inbound substream"
+                    "remote opened more than one inbound substreams, discarding"
                 );
-                debug_assert!(false);
+
+                let _ = substream.close().await;
+                context.state = state;
             }
         }
 

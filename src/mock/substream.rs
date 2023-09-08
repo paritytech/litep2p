@@ -62,3 +62,46 @@ mockall::mock! {
         ) -> Poll<Option<crate::Result<BytesMut>>>;
     }
 }
+
+/// Dummy substream which just implements `Stream + Sink` and returns `Poll::Pending`/`Ok(())`
+#[derive(Debug)]
+pub struct DummySubstream {}
+
+impl DummySubstream {
+    /// Create new [`DummySubstream`].
+    #[cfg(test)]
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Sink<bytes::Bytes> for DummySubstream {
+    type Error = Error;
+
+    fn poll_ready<'a>(self: Pin<&mut Self>, _cx: &mut Context<'a>) -> Poll<Result<(), Error>> {
+        Poll::Pending
+    }
+
+    fn start_send(self: Pin<&mut Self>, _item: bytes::Bytes) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn poll_flush<'a>(self: Pin<&mut Self>, _cx: &mut Context<'a>) -> Poll<Result<(), Error>> {
+        Poll::Pending
+    }
+
+    fn poll_close<'a>(self: Pin<&mut Self>, _cx: &mut Context<'a>) -> Poll<Result<(), Error>> {
+        Poll::Pending
+    }
+}
+
+impl Stream for DummySubstream {
+    type Item = crate::Result<BytesMut>;
+
+    fn poll_next<'a>(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'a>,
+    ) -> Poll<Option<crate::Result<BytesMut>>> {
+        Poll::Pending
+    }
+}
