@@ -28,22 +28,13 @@ use crate::{
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
     transport::quinn::substream::{NegotiatingSubstream, Substream},
-    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    types::{protocol::ProtocolName, SubstreamId},
     PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
 use quinn::{Connection as QuinnConnection, RecvStream, SendStream};
-use tokio_util::{
-    codec::Framed,
-    compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt},
-};
-
-use std::{
-    io,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use tokio_util::codec::Framed;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "quic::connection";
@@ -95,9 +86,6 @@ pub struct Connection {
     /// Remote peer ID.
     peer: PeerId,
 
-    /// Connection ID.
-    connection_id: ConnectionId,
-
     /// QUIC connection.
     connection: QuinnConnection,
 
@@ -109,77 +97,13 @@ pub struct Connection {
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
 }
 
-struct BidirectionalSubstream {
-    recv_stream: Compat<RecvStream>,
-    send_stream: Compat<SendStream>,
-}
-
-impl BidirectionalSubstream {
-    fn new(recv_stream: Compat<RecvStream>, send_stream: Compat<SendStream>) -> Self {
-        Self {
-            send_stream,
-            recv_stream,
-        }
-    }
-}
-
-impl AsyncRead for BidirectionalSubstream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.recv_stream).poll_read(cx, buf)
-    }
-
-    fn poll_read_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &mut [std::io::IoSliceMut<'_>],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.recv_stream).poll_read_vectored(cx, bufs)
-    }
-}
-
-impl AsyncWrite for BidirectionalSubstream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.send_stream).poll_write(cx, buf)
-    }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[io::IoSlice<'_>],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.send_stream).poll_write_vectored(cx, bufs)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.send_stream).poll_flush(cx)
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.send_stream).poll_close(cx)
-    }
-}
-
 impl Connection {
     /// Create new [`Connection`].
-    pub fn new(
-        peer: PeerId,
-        connection_id: ConnectionId,
-        connection: QuinnConnection,
-        protocol_set: ProtocolSet,
-    ) -> Self {
+    pub fn new(peer: PeerId, connection: QuinnConnection, protocol_set: ProtocolSet) -> Self {
         Self {
             peer,
             connection,
             protocol_set,
-            connection_id,
             pending_substreams: FuturesUnordered::new(),
         }
     }

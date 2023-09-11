@@ -22,13 +22,8 @@
 
 //! QUIC transport.
 
-#![allow(unused)]
-
 use crate::{
-    crypto::{
-        ed25519::Keypair,
-        tls::{certificate::generate, make_client_config, make_server_config, TlsProvider},
-    },
+    crypto::tls::{make_client_config, make_server_config},
     error::{AddressError, Error},
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
@@ -41,12 +36,7 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
-use quinn::{
-    crypto, ClientConfig, Connecting, Connection, ConnectionError, Endpoint, ServerConfig,
-    TransportConfig,
-};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use quinn::{ClientConfig, Connecting, Connection, Endpoint, ServerConfig};
 
 use std::{
     collections::HashMap,
@@ -66,9 +56,6 @@ const LOG_TARGET: &str = "quic";
 struct NegotiatedConnection {
     /// Remote peer ID.
     peer: PeerId,
-
-    /// Connection ID.
-    connection_id: ConnectionId,
 
     /// QUIC connection.
     connection: Connection,
@@ -158,7 +145,7 @@ impl QuicTransport {
     async fn accept_connection(
         &mut self,
         connection_id: ConnectionId,
-        mut connection: Connecting,
+        connection: Connecting,
     ) -> crate::Result<()> {
         self.pending_connections.push(Box::pin(async move {
             let connection = match connection.await {
@@ -170,14 +157,7 @@ impl QuicTransport {
                 return (connection_id, Err(Error::InvalidCertificate));
             };
 
-            (
-                connection_id,
-                Ok(NegotiatedConnection {
-                    peer,
-                    connection_id,
-                    connection,
-                }),
-            )
+            (connection_id, Ok(NegotiatedConnection { peer, connection }))
         }));
 
         Ok(())
@@ -222,7 +202,6 @@ impl QuicTransport {
                 tokio::spawn(
                     connection::Connection::new(
                         connection.peer,
-                        connection.connection_id,
                         connection.connection,
                         protocol_set,
                     )
@@ -251,7 +230,7 @@ impl QuicTransport {
             Arc::new(make_client_config(&self.context.keypair, Some(peer)).expect("to succeed"));
         let client_config = ClientConfig::new(crypto_config);
         let client = Endpoint::client(self.client_listen_address).unwrap();
-        let mut connection = client.connect_with(client_config, socket_address, "l").unwrap();
+        let connection = client.connect_with(client_config, socket_address, "l").unwrap();
 
         self.pending_dials.insert(connection_id, address);
         self.pending_connections.push(Box::pin(async move {
@@ -264,14 +243,7 @@ impl QuicTransport {
                 return (connection_id, Err(Error::InvalidCertificate));
             };
 
-            (
-                connection_id,
-                Ok(NegotiatedConnection {
-                    peer,
-                    connection_id,
-                    connection,
-                }),
-            )
+            (connection_id, Ok(NegotiatedConnection { peer, connection }))
         }));
 
         Ok(())
@@ -367,10 +339,12 @@ mod tests {
     use super::*;
     use crate::{
         codec::ProtocolCodec,
-        crypto::PublicKey,
+        crypto::{ed25519::Keypair, PublicKey},
         transport::manager::{ProtocolContext, TransportManagerEvent},
         types::protocol::ProtocolName,
     };
+    use multihash::Multihash;
+    use tokio::sync::mpsc::channel;
 
     #[tokio::test]
     async fn test_quinn() {
@@ -406,7 +380,7 @@ mod tests {
 
         let transport1 = QuicTransport::new(handle1, transport_config1).await.unwrap();
 
-        let mut listen_address = Transport::listen_address(&transport1);
+        let listen_address = Transport::listen_address(&transport1);
 
         tokio::spawn(async move {
             let _ = transport1.start().await;
