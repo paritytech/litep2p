@@ -200,7 +200,38 @@ impl QuicTransport {
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?connection_id, success = result.is_ok(), "connection established");
 
-        tracing::error!(target: LOG_TARGET, ?connection_id, ?result, "connection result");
+        match result {
+            Ok(connection) => {
+                let address = self.pending_dials.remove(&connection_id).map_or(
+                    {
+                        let address = connection.connection.remote_address();
+                        Multiaddr::empty()
+                            .with(Protocol::from(address.ip()))
+                            .with(Protocol::Udp(address.port()))
+                            .with(Protocol::QuicV1)
+                    },
+                    |address| address,
+                );
+
+                let mut protocol_set = self.context.protocol_set();
+                protocol_set
+                    .report_connection_established(connection_id, connection.peer, address)
+                    .await?;
+
+                tokio::spawn(
+                    connection::Connection::new(
+                        connection.peer,
+                        connection.connection_id,
+                        connection.connection,
+                        protocol_set,
+                    )
+                    .start(),
+                );
+            }
+            Err(error) => {
+                tracing::debug!(target: LOG_TARGET, ?connection_id, ?error, "failed to establish connection");
+            }
+        }
 
         Ok(())
     }
