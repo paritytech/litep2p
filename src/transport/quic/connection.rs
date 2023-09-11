@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
+    codec::{generic::Generic, identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
@@ -305,6 +305,9 @@ impl QuicConnection {
                                 }
                                 ProtocolCodec::UnsignedVarint(max_size) => {
                                     Box::new(Framed::new(substream, UnsignedVarint::new(max_size)))
+                                }
+                                ProtocolCodec::Generic => {
+                                    Box::new(Framed::new(substream, Generic::new()))
                                 }
                             };
 

@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
+    codec::{generic::Generic, identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
     crypto::noise::{self, Encrypted, NoiseConfiguration},
     error::{Error, NegotiationError},
@@ -469,6 +469,9 @@ impl TcpConnection {
                                 }
                                 ProtocolCodec::UnsignedVarint(max_size) => {
                                     Box::new(Framed::new(substream, UnsignedVarint::new(max_size)))
+                                }
+                                ProtocolCodec::Generic => {
+                                    Box::new(Framed::new(substream, Generic::new()))
                                 }
                             };
 
