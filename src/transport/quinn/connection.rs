@@ -25,6 +25,7 @@ use crate::{
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
+    transport::quinn::substream::NegotiatingSubstream,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
@@ -204,11 +205,7 @@ impl Connection {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
 
         let stream = match handle.open_bi().await {
-            Ok((send_stream, recv_stream)) => {
-                let receive = TokioAsyncReadCompatExt::compat(recv_stream);
-                let send = TokioAsyncWriteCompatExt::compat_write(send_stream);
-                BidirectionalSubstream::new(receive, send)
-            }
+            Ok((send_stream, recv_stream)) => NegotiatingSubstream::new(send_stream, recv_stream),
             Err(error) => return Err(Error::Quinn(error)),
         };
 
@@ -228,8 +225,7 @@ impl Connection {
         );
 
         let stream = io.inner();
-        let sender = stream.send_stream.into_inner();
-        let receiver = stream.recv_stream.into_inner();
+        let (sender, receiver) = stream.into_parts();
 
         Ok(NegotiatedSubstream {
             sender,
@@ -242,7 +238,7 @@ impl Connection {
 
     /// Accept bidirectional substream from rmeote peer.
     async fn accept_substream(
-        stream: BidirectionalSubstream,
+        stream: NegotiatingSubstream,
         protocols: Vec<ProtocolName>,
         substream_id: SubstreamId,
         permit: Permit,
@@ -264,8 +260,7 @@ impl Connection {
         );
 
         let stream = io.inner();
-        let sender = stream.send_stream.into_inner();
-        let receiver = stream.recv_stream.into_inner();
+        let (sender, receiver) = stream.into_parts();
 
         Ok(NegotiatedSubstream {
             permit,
@@ -286,9 +281,7 @@ impl Connection {
                         let substream = self.protocol_set.next_substream_id();
                         let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
-                        let receive = TokioAsyncReadCompatExt::compat(receive_stream);
-                        let send = TokioAsyncWriteCompatExt::compat_write(send_stream);
-                        let stream = BidirectionalSubstream::new(receive, send);
+                        let stream = NegotiatingSubstream::new(send_stream, receive_stream);
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
