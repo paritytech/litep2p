@@ -20,6 +20,7 @@
 
 use futures::{AsyncRead, AsyncWrite};
 use quinn::{RecvStream, SendStream};
+use tokio::io::{AsyncRead as TokioAsyncRead, AsyncWrite as TokioAsyncWrite};
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use std::{
@@ -27,6 +28,67 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+use crate::protocol::Permit;
+
+/// QUIC substream.
+#[derive(Debug)]
+pub struct Substream {
+    permit: Permit,
+    send_stream: SendStream,
+    recv_stream: RecvStream,
+}
+
+impl Substream {
+    /// Create new [`Substream`].
+    pub fn new(permit: Permit, send_stream: SendStream, recv_stream: RecvStream) -> Self {
+        Self {
+            permit,
+            send_stream,
+            recv_stream,
+        }
+    }
+}
+
+impl TokioAsyncRead for Substream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.recv_stream).poll_read(cx, buf)
+    }
+}
+
+impl TokioAsyncWrite for Substream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Pin::new(&mut self.send_stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.send_stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.send_stream).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<Result<usize, io::Error>> {
+        Pin::new(&mut self.send_stream).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.send_stream.is_write_vectored()
+    }
+}
 
 /// Substream pair used to negotiate a protocol for the connection.
 pub struct NegotiatingSubstream {

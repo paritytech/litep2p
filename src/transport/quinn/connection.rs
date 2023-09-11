@@ -21,18 +21,23 @@
 //! QUIC connection.
 
 use crate::{
+    codec::{generic::Generic, identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
-    transport::quinn::substream::NegotiatingSubstream,
+    substream::Substream as SubstreamT,
+    transport::quinn::substream::{NegotiatingSubstream, Substream},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite};
-use quinn::{AcceptBi, Connection as QuinnConnection, RecvStream, SendStream};
-use tokio_util::compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
+use quinn::{Connection as QuinnConnection, RecvStream, SendStream};
+use tokio_util::{
+    codec::Framed,
+    compat::{Compat, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt},
+};
 
 use std::{
     io,
@@ -75,7 +80,10 @@ struct NegotiatedSubstream {
     /// Protocol name.
     protocol: ProtocolName,
 
+    /// Substream used to send data.
     sender: SendStream,
+
+    /// Substream used to receive data.
     receiver: RecvStream,
 
     /// Permit.
@@ -308,6 +316,67 @@ impl Connection {
                         return Ok(());
                     }
                 },
+                substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
+                    match substream {
+                        Err(error) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to accept/open substream",
+                            );
+
+                            let (protocol, substream_id, error) = match error {
+                                ConnectionError::Timeout { protocol, substream_id } => {
+                                    (protocol, substream_id, Error::Timeout)
+                                }
+                                ConnectionError::FailedToNegotiate { protocol, substream_id, error } => {
+                                    (protocol, substream_id, error)
+                                }
+                            };
+
+                            if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
+                                if let Err(error) = self.protocol_set
+                                    .report_substream_open_failure(protocol, substream_id, error)
+                                    .await
+                                {
+                                    tracing::error!(
+                                        target: LOG_TARGET,
+                                        ?error,
+                                        "failed to register opened substream to protocol"
+                                    );
+                                }
+                            }
+                        }
+                        Ok(substream) => {
+                            let protocol = substream.protocol.clone();
+                            let direction = substream.direction;
+                            let substream = Substream::new(substream.permit, substream.sender, substream.receiver);
+
+                            let substream: Box<dyn SubstreamT> = match self.protocol_set.protocol_codec(&protocol) {
+                                ProtocolCodec::Identity(payload_size) => {
+                                    Box::new(Framed::new(substream, Identity::new(payload_size)))
+                                }
+                                ProtocolCodec::UnsignedVarint(max_size) => {
+                                    Box::new(Framed::new(substream, UnsignedVarint::new(max_size)))
+                                }
+                                ProtocolCodec::Generic => {
+                                    Box::new(Framed::new(substream, Generic::new()))
+                                }
+                            };
+
+                            if let Err(error) = self.protocol_set
+                                .report_substream_open(self.peer, protocol, direction, substream)
+                                .await
+                            {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    ?error,
+                                    "failed to register opened substream to protocol"
+                                );
+                            }
+                        }
+                    }
+                }
                 command = self.protocol_set.next_event() => match command {
                     None => return Ok(()),
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
