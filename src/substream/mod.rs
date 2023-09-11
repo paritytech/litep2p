@@ -95,11 +95,6 @@ impl<K: SubstreamSetKey> SubstreamSet<K> {
         self.substreams.remove(key)
     }
 
-    /// Return true if the [`SubstreamSet`] is empty.
-    pub fn is_empty(&mut self) -> bool {
-        self.substreams.len() == 0usize
-    }
-
     /// Get mutable reference to stored substream.
     pub fn get_mut(&mut self, key: &K) -> Option<&mut Box<dyn Substream>> {
         self.substreams.get_mut(key)

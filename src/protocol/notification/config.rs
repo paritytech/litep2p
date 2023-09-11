@@ -25,7 +25,7 @@ use crate::{
         types::{InnerNotificationEvent, NotificationCommand},
     },
     types::protocol::ProtocolName,
-    DEFAULT_CHANNEL_SIZE,
+    PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -54,6 +54,9 @@ pub struct Config {
     /// TX channel passed to the protocol used for sending events.
     pub(crate) event_tx: Sender<InnerNotificationEvent>,
 
+    /// TX channel passed to the substream handler for sending notifications to user.
+    pub(crate) notif_tx: Sender<(PeerId, Vec<u8>)>,
+
     /// RX channel passed to the protocol used for receiving commands.
     pub(crate) command_rx: Receiver<NotificationCommand>,
 }
@@ -69,7 +72,8 @@ impl Config {
     ) -> (Self, NotificationHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let handle = NotificationHandle::new(event_rx, command_tx);
+        let (notif_tx, notif_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let handle = NotificationHandle::new(event_rx, command_tx, notif_rx);
 
         (
             Self {
@@ -80,6 +84,7 @@ impl Config {
                 handshake,
                 fallback_names,
                 event_tx,
+                notif_tx,
                 command_rx,
             },
             handle,
@@ -140,24 +145,24 @@ impl ConfigBuilder {
         self
     }
 
-    /// Auto-accept inbound substreams for those connections where it was was initiated by the local
+    /// Auto-accept inbound substreams for those connections which were initiated by the local
     /// node.
     ///
     /// Connection in this context means a bidirectional substream pair between two peers over a
     /// given protocol.
     ///
-    /// By default, when a node starts a connection with a remote peer and opens an outbound
-    /// substream to them, that substream is validated and if it's accepted, remote peer sends
+    /// By default, when a node starts a connection with a remote node and opens an outbound
+    /// substream to them, that substream is validated and if it's accepted, remote node sends
     /// their handshake over that substream and opens another substream to local node. The
     /// substream that was opened by the local node is used for sending data and the one opened
-    /// by the remote peer is used for receiving data.
+    /// by the remote node is used for receiving data.
     ///
     /// By default, even if the local node was the one that opened the first substream, this inbound
-    /// substream coming from remote peer must be validated as the handshake of the remote peer
+    /// substream coming from remote node must be validated as the handshake of the remote node
     /// may reveal that it's not someone that the local node is willing to accept.
     ///
     /// To disable this behavior, auto accepting for the inbound substream can be enabled. If local
-    /// node is the one that opened the connection and it was accepted by the remote peer, local
+    /// node is the one that opened the connection and it was accepted by the remote node, local
     /// node is only notified via
     /// [`NotificationStreamOpened`](super::types::NotificationEvent::NotificationStreamOpened).
     pub fn with_auto_accept_inbound(mut self, auto_accept: bool) -> Self {

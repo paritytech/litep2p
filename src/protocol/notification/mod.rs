@@ -24,24 +24,23 @@ use crate::{
     error::Error,
     protocol::{
         notification::{
+            connection::Connection,
             handle::{NotificationEventHandle, NotificationSink},
             negotiation::{HandshakeEvent, HandshakeService},
             types::{NotificationCommand, ASYNC_CHANNEL_SIZE, SYNC_CHANNEL_SIZE},
         },
         Direction, Transport, TransportEvent, TransportService,
     },
-    substream::{Substream, SubstreamSet},
+    substream::Substream,
     types::{protocol::ProtocolName, SubstreamId},
-    PeerId,
+    PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use bytes::BytesMut;
-use futures::{
-    stream::{select, Select},
-    SinkExt, StreamExt,
+use futures::{SinkExt, StreamExt};
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    oneshot,
 };
-use tokio::sync::mpsc::{channel, Receiver};
-use tokio_stream::{wrappers::ReceiverStream, StreamMap};
 
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -50,6 +49,7 @@ pub use handle::NotificationHandle;
 pub use types::{NotificationError, NotificationEvent, ValidationResult};
 
 mod config;
+mod connection;
 mod handle;
 mod negotiation;
 mod types;
@@ -162,8 +162,8 @@ enum PeerState {
 
     /// Notification stream has been opened.
     Open {
-        /// Outbound substream.
-        outbound: Box<dyn Substream>,
+        /// `Oneshot::Sender` for shutting down the connection.
+        shutdown: oneshot::Sender<()>,
     },
 }
 
@@ -197,17 +197,21 @@ pub(crate) struct NotificationProtocol {
     /// TX channel passed to the protocol used for sending events.
     event_handle: NotificationEventHandle,
 
+    /// TX channel given to substream handlers for sending notifications to user.
+    notif_tx: Sender<(PeerId, Vec<u8>)>,
+
+    /// TX channel for sending shut down notifications from connection handlers to
+    /// [`NotificationProtocol`].
+    shutdown_tx: Sender<PeerId>,
+
+    /// RX channel for receiving shutdown notifications from the connection handlers.
+    shutdown_rx: Receiver<PeerId>,
+
     /// RX channel passed to the protocol used for receiving commands.
     command_rx: Receiver<NotificationCommand>,
 
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
-
-    /// Open substreams.
-    substreams: SubstreamSet<PeerId>,
-
-    /// Receivers.
-    receivers: StreamMap<PeerId, Select<ReceiverStream<Vec<u8>>, ReceiverStream<Vec<u8>>>>,
 
     /// Pending outboudn substreams.
     pending_outbound: HashMap<SubstreamId, PeerId>,
@@ -219,15 +223,18 @@ pub(crate) struct NotificationProtocol {
 
 impl NotificationProtocol {
     pub(crate) fn new(service: TransportService, config: Config) -> Self {
+        let (shutdown_tx, shutdown_rx) = channel(DEFAULT_CHANNEL_SIZE);
+
         Self {
             service,
+            shutdown_tx,
+            shutdown_rx,
             peers: HashMap::new(),
             handshake: config.handshake.clone(),
             auto_accept: config.auto_accept,
             event_handle: NotificationEventHandle::new(config.event_tx),
+            notif_tx: config.notif_tx,
             command_rx: config.command_rx,
-            substreams: SubstreamSet::new(),
-            receivers: StreamMap::new(),
             pending_outbound: HashMap::new(),
             negotiation: HandshakeService::new(config.handshake),
         }
@@ -276,8 +283,6 @@ impl NotificationProtocol {
         };
 
         // clean up all pending state for the peer
-        self.substreams.remove(&peer);
-        self.receivers.remove(&peer);
         self.negotiation.remove_outbound(&peer);
         self.negotiation.remove_inbound(&peer);
 
@@ -289,7 +294,8 @@ impl NotificationProtocol {
                     .await;
             }
             // substream fully open, report that the notification stream is closed
-            PeerState::Open { .. } => {
+            PeerState::Open { shutdown } => {
+                let _ = shutdown.send(());
                 self.event_handle.report_notification_stream_closed(peer).await;
             }
             // if the substream was being validated, notify user only if the outbound state is not
@@ -645,23 +651,12 @@ impl NotificationProtocol {
         };
 
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
-            PeerState::Open { mut outbound } => match self.substreams.remove(&peer) {
-                Some(mut inbound) => {
-                    self.receivers.remove(&peer);
-                    let _ = outbound.close().await;
-                    let _ = inbound.close().await;
+            PeerState::Open { shutdown } => {
+                let _ = shutdown.send(());
+                context.state = PeerState::Closed { pending_open: None };
 
-                    context.state = PeerState::Closed { pending_open: None };
-                    self.event_handle.report_notification_stream_closed(peer).await;
-                }
-                None => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        "invalid state: inbound substream doesn't exist"
-                    );
-                }
-            },
+                self.event_handle.report_notification_stream_closed(peer).await;
+            }
             _ => unreachable!(),
         }
     }
@@ -774,29 +769,6 @@ impl NotificationProtocol {
                 Ok(())
             }
         }
-    }
-
-    /// Handle substream event.
-    ///
-    /// If the substream was closed, remove all state, set peer state to `Closed` and notify user
-    /// that the notification stream was closed.
-    async fn on_substream_event(&mut self, peer: PeerId, message: crate::Result<BytesMut>) {
-        tracing::trace!(target: LOG_TARGET, ?peer, is_ok = ?message.is_ok(), "handle substream event");
-
-        if let Ok(message) = message {
-            return self
-                .event_handle
-                .report_notification_received(peer, message.freeze().into())
-                .await;
-        };
-
-        self.substreams.remove(&peer);
-        self.receivers.remove(&peer);
-        self.peers
-            .get_mut(&peer)
-            .expect("peer to exist since an event was received")
-            .state = PeerState::Closed { pending_open: None };
-        self.event_handle.report_notification_stream_closed(peer).await;
     }
 
     /// Handle handshake event.
@@ -1009,14 +981,24 @@ impl NotificationProtocol {
 
                 let (async_tx, async_rx) = channel(ASYNC_CHANNEL_SIZE);
                 let (sync_tx, sync_rx) = channel(SYNC_CHANNEL_SIZE);
-                let notif_stream =
-                    select(ReceiverStream::new(async_rx), ReceiverStream::new(sync_rx));
                 let sink = NotificationSink::new(peer, sync_tx, async_tx);
 
-                context.state = PeerState::Open { outbound };
+                // start connection handler for the peer which only deals with sending/receiving
+                // notifications
+                let shutdown_tx = self.shutdown_tx.clone();
+                let notif_tx = self.notif_tx.clone();
+                let (connection, shutdown) = Connection::new(
+                    peer,
+                    inbound,
+                    outbound,
+                    notif_tx.clone(),
+                    shutdown_tx.clone(),
+                    async_rx,
+                    sync_rx,
+                );
+                tokio::spawn(connection.start());
 
-                self.substreams.insert(peer, inbound);
-                self.receivers.insert(peer, notif_stream);
+                context.state = PeerState::Open { shutdown };
                 self.event_handle
                     .report_notification_stream_opened(
                         protocol,
@@ -1041,32 +1023,18 @@ impl NotificationProtocol {
         tokio::select! {
             biased;
 
-            event = self.substreams.next(), if !self.substreams.is_empty() => {
-                let (peer, event) = event.expect("`SubstreamSet` to return `Some(..)`");
-                self.on_substream_event(peer, event).await;
-            }
             event = self.negotiation.next(), if !self.negotiation.is_empty() => {
                 let (peer, event) = event.expect("`HandshakeService` to return `Some(..)`");
-
                 self.on_handshake_event(peer, event).await;
             }
-            event = self.receivers.next(), if !self.receivers.is_empty() => match event {
-                Some((peer, notification)) => {
-                    tracing::info!(target: LOG_TARGET, ?peer, "send notification to peer");
-
-                    match self.peers.get_mut(&peer) {
-                        Some(context) => match &mut context.state {
-                            PeerState::Open { outbound } => {
-                                // TODO: handle error
-                                let _result = outbound.send(notification.into()).await;
-                            }
-                            state => tracing::error!(target: LOG_TARGET, ?state, "invalid state for peer"),
-                        }
-                        None => {} // TODO: handle error
-                    }
-                }
-                None => {
-                    tracing::info!(target: LOG_TARGET, "here");
+            event = self.shutdown_rx.recv() => match event {
+                None => return,
+                Some(peer) => {
+                    self.peers
+                        .get_mut(&peer)
+                        .expect("peer to exist since an event was received")
+                        .state = PeerState::Closed { pending_open: None };
+                    self.event_handle.report_notification_stream_closed(peer).await;
                 }
             },
             event = self.service.next_event() => match event {

@@ -101,15 +101,6 @@ pub(crate) enum InnerNotificationEvent {
         /// Error.
         error: NotificationError,
     },
-
-    /// Notification received.
-    NotificationReceived {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Notification.
-        notification: Vec<u8>,
-    },
 }
 
 /// Notification events.
@@ -198,4 +189,38 @@ pub(crate) enum NotificationCommand {
         /// Validation result.
         result: ValidationResult,
     },
+}
+
+impl From<InnerNotificationEvent> for NotificationEvent {
+    fn from(event: InnerNotificationEvent) -> Self {
+        match event {
+            InnerNotificationEvent::ValidateSubstream {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+            } => NotificationEvent::ValidateSubstream {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+            },
+            InnerNotificationEvent::NotificationStreamOpened {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+                ..
+            } => NotificationEvent::NotificationStreamOpened {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+            },
+            InnerNotificationEvent::NotificationStreamClosed { peer } =>
+                NotificationEvent::NotificationStreamClosed { peer },
+            InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
+                NotificationEvent::NotificationStreamOpenFailure { peer, error },
+        }
+    }
 }

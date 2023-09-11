@@ -38,7 +38,7 @@ use crate::{
 use bytes::BytesMut;
 use futures::StreamExt;
 use multiaddr::Multiaddr;
-use tokio::sync::mpsc::channel;
+use tokio::sync::{mpsc::channel, oneshot};
 
 use std::task::Poll;
 
@@ -397,14 +397,16 @@ async fn accept_fails_due_to_closed_connection() {
 #[should_panic]
 #[cfg(debug_assertions)]
 async fn open_substream_accepted() {
+    use tokio::sync::oneshot;
+
     let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
     let (peer, _service, _receiver) = add_peer();
-    let outbound = Box::new(MockSubstream::new());
+    let (shutdown, _rx) = oneshot::channel();
 
     notif.peers.insert(
         peer,
         PeerContext {
-            state: PeerState::Open { outbound },
+            state: PeerState::Open { shutdown },
         },
     );
 
@@ -420,12 +422,12 @@ async fn open_substream_accepted() {
 async fn open_substream_rejected() {
     let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
     let (peer, _service, _receiver) = add_peer();
-    let outbound = Box::new(MockSubstream::new());
+    let (shutdown, _rx) = oneshot::channel();
 
     notif.peers.insert(
         peer,
         PeerContext {
-            state: PeerState::Open { outbound },
+            state: PeerState::Open { shutdown },
         },
     );
 

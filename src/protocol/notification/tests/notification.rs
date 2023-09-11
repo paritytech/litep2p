@@ -37,7 +37,10 @@ use crate::{
 
 use futures::StreamExt;
 use multiaddr::Multiaddr;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    oneshot,
+};
 
 use std::{task::Poll, time::Duration};
 
@@ -145,12 +148,11 @@ async fn connection_closed_for_outbound_negotiated_substream() {
 #[tokio::test]
 async fn connection_closed_for_open_notification_stream() {
     let peer = PeerId::random();
+    let (tx, _rx) = oneshot::channel();
 
     connection_closed(
         peer,
-        PeerState::Open {
-            outbound: Box::new(MockSubstream::new()),
-        },
+        PeerState::Open { shutdown: tx },
         Some(NotificationEvent::NotificationStreamClosed { peer }),
     )
     .await;
@@ -239,13 +241,8 @@ async fn open_substream_already_initiated() {
 
 #[tokio::test]
 async fn open_substream_already_open() {
-    open_substream(
-        PeerState::Open {
-            outbound: Box::new(MockSubstream::new()),
-        },
-        false,
-    )
-    .await;
+    let (shutdown, _rx) = oneshot::channel();
+    open_substream(PeerState::Open { shutdown }, false).await;
 }
 
 #[tokio::test]
