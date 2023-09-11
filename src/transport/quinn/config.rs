@@ -18,36 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-//! Transport protocol implementations provided by [`Litep2p`](`crate::Litep2p`).
-
-use crate::transport::manager::TransportHandle;
+//! QUIC transport configuration.
 
 use multiaddr::Multiaddr;
 
-use std::fmt::Debug;
-
-pub mod quic;
-pub mod quinn;
-pub mod tcp;
-pub mod webrtc;
-pub mod websocket;
-
-pub(crate) mod manager;
-
-mod substream;
-
-#[async_trait::async_trait]
-pub(crate) trait Transport {
-    type Config: Debug;
-
-    /// Create new [`Transport`] object.
-    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
-    where
-        Self: Sized;
-
-    /// Get assigned listen address.
-    fn listen_address(&self) -> Multiaddr;
-
-    /// Start transport event loop.
-    async fn start(mut self) -> crate::Result<()>;
+/// QUIC transport configuration.
+#[derive(Debug, Clone)]
+pub struct TransportConfig {
+    /// Listen address for the transport.
+    pub listen_address: Multiaddr,
 }

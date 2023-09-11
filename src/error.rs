@@ -110,6 +110,10 @@ pub enum Error {
     NoAddressAvailable(PeerId),
     #[error("Connection closed")]
     ConnectionClosed,
+    #[error("Quinn error: `{0}`")]
+    Quinn(quinn::ConnectionError),
+    #[error("Invalid certificate")]
+    InvalidCertificate,
 }
 
 #[derive(Debug, thiserror::Error)]

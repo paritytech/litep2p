@@ -25,6 +25,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+use crate::crypto::ed25519::Keypair;
 use crate::PeerId;
 use rustls::{ClientConfig, ServerConfig};
 use s2n_quic::provider::tls::{
@@ -112,4 +113,45 @@ impl Provider for TlsProvider {
         cfg.alpn_protocols = vec![P2P_ALPN.to_vec()];
         Ok(cfg.into())
     }
+}
+
+/// Create a TLS server configuration for litep2p.
+pub fn make_server_config(
+    keypair: &Keypair,
+) -> Result<rustls::ServerConfig, certificate::GenError> {
+    let (certificate, private_key) = certificate::generate(keypair)?;
+
+    let mut crypto = rustls::ServerConfig::builder()
+        .with_cipher_suites(verifier::CIPHERSUITES)
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+        .expect("Cipher suites and kx groups are configured; qed")
+        .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
+        .with_single_cert(vec![certificate], private_key)
+        .expect("Server cert key DER is valid; qed");
+    crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
+
+    Ok(crypto)
+}
+
+/// Create a TLS client configuration for libp2p.
+pub fn make_client_config(
+    keypair: &Keypair,
+    remote_peer_id: Option<PeerId>,
+) -> Result<rustls::ClientConfig, certificate::GenError> {
+    let (certificate, private_key) = certificate::generate(keypair)?;
+
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_cipher_suites(verifier::CIPHERSUITES)
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+        .expect("Cipher suites and kx groups are configured; qed")
+        .with_custom_certificate_verifier(Arc::new(
+            verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
+        ))
+        .with_single_cert(vec![certificate], private_key)
+        .expect("Client cert key DER is valid; qed");
+    crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
+
+    Ok(crypto)
 }
