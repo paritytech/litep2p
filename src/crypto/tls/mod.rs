@@ -62,6 +62,7 @@ pub(crate) struct TlsProvider {
 
 impl TlsProvider {
     /// Create new [`TlsProvider`].
+    #[allow(unused)]
     pub(crate) fn new(
         private_key: rustls::PrivateKey,
         certificate: rustls::Certificate,

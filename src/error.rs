@@ -226,6 +226,15 @@ impl From<s2n_quic::provider::StartError> for Error {
     }
 }
 
+impl From<quinn::ConnectionError> for Error {
+    fn from(error: quinn::ConnectionError) -> Self {
+        match error {
+            quinn::ConnectionError::TimedOut => Error::Timeout,
+            error => Error::Quinn(error),
+        }
+    }
+}
+
 /// An error during decoding of key material.
 #[derive(Debug)]
 pub struct DecodingError {

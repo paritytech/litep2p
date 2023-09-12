@@ -25,6 +25,6 @@ use multiaddr::Multiaddr;
 /// QUIC transport configuration.
 #[derive(Debug, Clone)]
 pub struct TransportConfig {
-    /// Listen address address for the transport.
+    /// Listen address for the transport.
     pub listen_address: Multiaddr,
 }

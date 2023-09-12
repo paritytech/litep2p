@@ -27,7 +27,6 @@ use multiaddr::Multiaddr;
 use std::fmt::Debug;
 
 pub mod quic;
-pub mod quinn;
 pub mod tcp;
 pub mod webrtc;
 pub mod websocket;
