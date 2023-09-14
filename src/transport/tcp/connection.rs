@@ -29,7 +29,7 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
-    transport::{substream::Substream, tcp::AddressType},
+    transport::tcp::{substream::Substream, AddressType},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };

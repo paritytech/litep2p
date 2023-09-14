@@ -26,7 +26,7 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream as SubstreamT,
-    transport::{substream::Substream, websocket::stream::BufferedStream},
+    transport::websocket::{stream::BufferedStream, substream::Substream},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };

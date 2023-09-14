@@ -44,6 +44,7 @@ use std::{
 
 mod connection;
 mod stream;
+mod substream;
 
 pub mod config;
 
