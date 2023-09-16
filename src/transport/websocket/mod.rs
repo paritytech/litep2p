@@ -42,6 +42,8 @@ use std::{
     time::Duration,
 };
 
+pub(crate) use substream::Substream;
+
 mod connection;
 mod stream;
 mod substream;

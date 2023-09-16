@@ -60,7 +60,7 @@ pub enum HandshakeEvent {
         handshake: Vec<u8>,
 
         /// Substream.
-        substream: Box<dyn Substream>,
+        substream: Substream,
     },
 
     /// Outbound substream has been negotiated.
@@ -81,7 +81,7 @@ pub enum HandshakeEvent {
         handshake: Vec<u8>,
 
         /// Substream.
-        substream: Box<dyn Substream>,
+        substream: Substream,
     },
 }
 
@@ -109,7 +109,7 @@ pub(crate) struct HandshakeService {
 
     /// Pending outbound substreams.
     /// Substreams:
-    substreams: HashMap<(PeerId, Direction), (Box<dyn Substream>, Delay, HandshakeState)>,
+    substreams: HashMap<(PeerId, Direction), (Substream, Delay, HandshakeState)>,
 
     /// Ready substreams.
     ready: VecDeque<(PeerId, Direction, Vec<u8>)>,
@@ -131,21 +131,21 @@ impl HandshakeService {
     }
 
     /// Remove outbound substream from [`HandshakeService`].
-    pub fn remove_outbound(&mut self, peer: &PeerId) -> Option<Box<dyn Substream>> {
+    pub fn remove_outbound(&mut self, peer: &PeerId) -> Option<Substream> {
         self.substreams
             .remove(&(*peer, Direction::Outbound))
             .map(|(substream, _, _)| substream)
     }
 
     /// Remove inbound substream from [`HandshakeService`].
-    pub fn remove_inbound(&mut self, peer: &PeerId) -> Option<Box<dyn Substream>> {
+    pub fn remove_inbound(&mut self, peer: &PeerId) -> Option<Substream> {
         self.substreams
             .remove(&(*peer, Direction::Inbound))
             .map(|(substream, _, _)| substream)
     }
 
     /// Negotiate outbound handshake.
-    pub fn negotiate_outbound(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
+    pub fn negotiate_outbound(&mut self, peer: PeerId, substream: Substream) {
         tracing::trace!(target: LOG_TARGET, ?peer, "negotiate outbound");
 
         self.substreams.insert(
@@ -159,7 +159,7 @@ impl HandshakeService {
     }
 
     /// Read handshake from remote peer.
-    pub fn read_handshake(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
+    pub fn read_handshake(&mut self, peer: PeerId, substream: Substream) {
         tracing::trace!(target: LOG_TARGET, ?peer, "read handshake");
 
         self.substreams.insert(
@@ -173,7 +173,7 @@ impl HandshakeService {
     }
 
     /// Write handshake to remote peer.
-    pub fn send_handshake(&mut self, peer: PeerId, substream: Box<dyn Substream>) {
+    pub fn send_handshake(&mut self, peer: PeerId, substream: Substream) {
         tracing::trace!(target: LOG_TARGET, ?peer, "send handshake");
 
         self.substreams.insert(

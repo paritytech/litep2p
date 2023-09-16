@@ -28,7 +28,7 @@ use crate::{
     PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use tokio::sync::mpsc::Sender;
 
 use std::{
@@ -79,7 +79,7 @@ pub(crate) struct Ping {
     pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Duration)>>>,
 
     /// Pending inbound substreams.
-    pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
+    pending_inbound: FuturesUnordered<BoxFuture<'static, crate::Result<()>>>,
 }
 
 impl Ping {
@@ -119,18 +119,17 @@ impl Ping {
         &mut self,
         peer: PeerId,
         substream_id: SubstreamId,
-        mut substream: Box<dyn Substream>,
+        mut substream: Substream,
     ) {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle outbound substream");
 
         self.pending_outbound.push(Box::pin(async move {
             // TODO: generate random payload and verify it
-            let _ = substream.send(vec![0u8; 32].into()).await?;
+            let _ = substream.send_framed(vec![0u8; 32].into()).await?;
             let now = Instant::now();
-
             let _ = substream.next().await.ok_or(Error::SubstreamError(
                 SubstreamError::ReadFailure(Some(substream_id)),
-            ))??;
+            ))?;
             let _ = substream.close().await;
 
             Ok((peer, now.elapsed()))
@@ -138,13 +137,18 @@ impl Ping {
     }
 
     /// Substream opened to remote peer.
-    fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
+    fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Substream) {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
         self.pending_inbound.push(Box::pin(async move {
-            let payload = substream.next().await.unwrap().unwrap();
-            substream.send(payload.freeze()).await.unwrap();
-            let _ = substream.next();
+            let payload = substream
+                .next()
+                .await
+                .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(None)))??;
+            substream.send_framed(payload.freeze()).await?;
+            let _ = substream.next().await.map(|_| ());
+
+            Ok(())
         }));
     }
 

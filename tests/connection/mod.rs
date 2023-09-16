@@ -610,9 +610,11 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
                 _ => {}
             },
             _event = ping_event_stream1.next() => {
+                tracing::warn!("ping1 received");
                 litep2p1_ping = true;
             }
             _event = ping_event_stream2.next() => {
+                tracing::warn!("ping2 received");
                 litep2p2_ping = true;
             }
         }

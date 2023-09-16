@@ -18,6 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use crate::error::{Error, SubstreamError};
+
+use bytes::Bytes;
 use futures::{AsyncRead, AsyncWrite};
 use quinn::{RecvStream, SendStream};
 use tokio::io::{AsyncRead as TokioAsyncRead, AsyncWrite as TokioAsyncWrite};
@@ -47,6 +50,22 @@ impl Substream {
             send_stream,
             recv_stream,
         }
+    }
+
+    /// Write `bytes` to the underlying socket.
+    pub async fn write_all(&mut self, bytes: Bytes) -> crate::Result<()> {
+        self.send_stream
+            .write_all(&bytes)
+            .await
+            .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
+    }
+
+    /// Write `buffers` to the underlying socket.
+    pub async fn write_all_chunks(&mut self, buffers: &mut [Bytes]) -> crate::Result<()> {
+        self.send_stream
+            .write_all_chunks(buffers)
+            .await
+            .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
     }
 }
 

@@ -32,7 +32,7 @@ use crate::{
 };
 
 use cid::{multihash::Code, Cid, Version};
-use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -126,7 +126,7 @@ impl Bitswap {
     }
 
     /// Substream opened to remote peer.
-    fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Box<dyn Substream>) {
+    fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Substream) {
         tracing::debug!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
         self.pending_inbound.push(Box::pin(async move {
@@ -167,7 +167,7 @@ impl Bitswap {
         &mut self,
         peer: PeerId,
         substream_id: SubstreamId,
-        mut substream: Box<dyn Substream>,
+        mut substream: Substream,
     ) {
         let Some(entries) = self.pending_outbound.remove(&substream_id) else {
             tracing::warn!(target: LOG_TARGET, ?peer, ?substream_id, "pending outbound entry doesn't exist");
@@ -201,7 +201,7 @@ impl Bitswap {
             }
         }
 
-        let _ = substream.send(response.encode_to_vec().into()).await;
+        let _ = substream.send_framed(response.encode_to_vec().into()).await;
     }
 
     /// Handle bitswap response.

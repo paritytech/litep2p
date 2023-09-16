@@ -72,7 +72,7 @@ enum InboundState {
     /// Substream and its handshake are being validated by the user protocol.
     Validating {
         /// Inbound substream.
-        inbound: Box<dyn Substream>,
+        inbound: Substream,
     },
 
     /// Handshake is being sent to the remote node.
@@ -81,7 +81,7 @@ enum InboundState {
     /// Substream is open.
     Open {
         /// Inbound substream.
-        inbound: Box<dyn Substream>,
+        inbound: Substream,
     },
 }
 
@@ -110,7 +110,7 @@ enum OutboundState {
         handshake: Vec<u8>,
 
         /// Outbound substream.
-        outbound: Box<dyn Substream>,
+        outbound: Substream,
     },
 }
 
@@ -344,7 +344,7 @@ impl NotificationProtocol {
         fallback: Option<ProtocolName>,
         peer: PeerId,
         substream_id: SubstreamId,
-        mut outbound: Box<dyn Substream>,
+        mut outbound: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -460,7 +460,7 @@ impl NotificationProtocol {
         protocol: ProtocolName,
         fallback: Option<ProtocolName>,
         peer: PeerId,
-        mut substream: Box<dyn Substream>,
+        mut substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,

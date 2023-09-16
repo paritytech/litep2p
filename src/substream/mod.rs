@@ -24,18 +24,21 @@
 use crate::{
     codec::ProtocolCodec,
     error::{Error, SubstreamError},
+    mock::substream::Substream as MockSubstream,
     transport::{quic, tcp, websocket},
+    PeerId,
 };
 
 use bytes::{Buf, Bytes, BytesMut};
-use futures::{Sink, Stream};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use futures::{Sink, SinkExt, Stream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use unsigned_varint::{decode, encode};
 
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, HashMap, VecDeque},
     fmt::Debug,
     hash::Hash,
+    io::ErrorKind,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -43,32 +46,91 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "substream";
 
-/// Raw substream received from one of the enabled transports.
-// TODO: remove
-pub trait RawSubstream: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static {}
-
-/// Blanket implementation for [`RawSubstream`].
-// TODO: remove
-impl<T: AsyncRead + AsyncWrite + Unpin + Send + Debug + 'static> RawSubstream for T {}
-
-/// Trait which describes the behavior of a substream.
-// TODO: remove
-pub trait Substream:
-    Debug + Stream<Item = crate::Result<BytesMut>> + Sink<Bytes, Error = Error> + Send + Unpin + 'static
-{
+macro_rules! poll_flush {
+    ($substream:expr, $cx:ident) => {{
+        match $substream {
+            SubstreamType::Tcp(substream) => Pin::new(substream).poll_flush($cx),
+            SubstreamType::WebSocket(substream) => Pin::new(substream).poll_flush($cx),
+            SubstreamType::Quic(substream) => Pin::new(substream).poll_flush($cx),
+            #[cfg(test)]
+            SubstreamType::Mock(_) => unreachable!(),
+        }
+    }};
 }
 
-/// Blanket implementation for [`Substream`].
-// TODO: remove
-impl<
-        T: Debug
-            + Stream<Item = crate::Result<BytesMut>>
-            + Sink<Bytes, Error = Error>
-            + Send
-            + Unpin
-            + 'static,
-    > Substream for T
-{
+macro_rules! poll_write {
+    ($substream:expr, $cx:ident, $frame:expr) => {{
+        match $substream {
+            SubstreamType::Tcp(substream) => Pin::new(substream).poll_write($cx, $frame),
+            SubstreamType::WebSocket(substream) => Pin::new(substream).poll_write($cx, $frame),
+            SubstreamType::Quic(substream) => Pin::new(substream).poll_write($cx, $frame),
+            #[cfg(test)]
+            SubstreamType::Mock(_) => unreachable!(),
+        }
+    }};
+}
+
+macro_rules! poll_read {
+    ($substream:expr, $cx:ident, $buffer:expr) => {{
+        match $substream {
+            SubstreamType::Tcp(substream) => Pin::new(substream).poll_read($cx, $buffer),
+            SubstreamType::WebSocket(substream) => Pin::new(substream).poll_read($cx, $buffer),
+            SubstreamType::Quic(substream) => Pin::new(substream).poll_read($cx, $buffer),
+            #[cfg(test)]
+            SubstreamType::Mock(_) => unreachable!(),
+        }
+    }};
+}
+
+macro_rules! poll_shutdown {
+    ($substream:expr, $cx:ident) => {{
+        match $substream {
+            SubstreamType::Tcp(substream) => Pin::new(substream).poll_shutdown($cx),
+            SubstreamType::WebSocket(substream) => Pin::new(substream).poll_shutdown($cx),
+            SubstreamType::Quic(substream) => Pin::new(substream).poll_shutdown($cx),
+            #[cfg(test)]
+            SubstreamType::Mock(substream) => {
+                let _ = Pin::new(substream).poll_close($cx);
+                todo!();
+            }
+        }
+    }};
+}
+
+macro_rules! delegate_poll_next {
+    ($substream:expr, $cx:ident) => {{
+        #[cfg(test)]
+        if let SubstreamType::Mock(inner) = $substream {
+            return Pin::new(inner).poll_next($cx);
+        }
+    }};
+}
+
+macro_rules! delegate_poll_ready {
+    ($substream:expr, $cx:ident) => {{
+        #[cfg(test)]
+        if let SubstreamType::Mock(inner) = $substream {
+            return Pin::new(inner).poll_ready($cx);
+        }
+    }};
+}
+
+macro_rules! delegate_start_send {
+    ($substream:expr, $item:ident) => {{
+        #[cfg(test)]
+        if let SubstreamType::Mock(inner) = $substream {
+            return Pin::new(inner).start_send($item);
+        }
+    }};
+}
+
+macro_rules! delegate_poll_flush {
+    ($substream:expr, $cx:ident) => {{
+        #[cfg(test)]
+        if let SubstreamType::Mock(inner) = $substream {
+            return Pin::new(inner).poll_flush($cx);
+        }
+    }};
 }
 
 /// Substream type.
@@ -77,7 +139,12 @@ enum SubstreamType {
     Tcp(tcp::Substream),
     WebSocket(websocket::Substream),
     Quic(quic::Substream),
+    #[cfg(test)]
+    Mock(Box<dyn MockSubstream>),
 }
+
+/// Backpressure boundary for `Sink`.
+const BACKPRESSURE_BOUNDARY: usize = 65536;
 
 /// `Litep2p` substream type.
 ///
@@ -88,264 +155,259 @@ enum SubstreamType {
 /// are also provided which implement the necessary framing to read/write codec-encoded messages
 /// from the underlying socket.
 #[derive(Debug)]
-pub struct NewSubstream {
+pub struct Substream {
+    /// Remote peer ID.
+    peer: PeerId,
+
     // Inner substream.
     substream: SubstreamType,
 
     /// Protocol codec.
     codec: ProtocolCodec,
+
+    pending_out_frames: VecDeque<Bytes>,
+    pending_out_bytes: usize,
+    pending_out_frame: Option<Bytes>,
+
+    read_buffer: BytesMut,
+    offset: usize,
+    pending_frames: VecDeque<BytesMut>,
+    current_frame_size: Option<usize>,
 }
 
-impl NewSubstream {
+impl Substream {
     /// Create new [`Substream`] for TCP.
-    pub(crate) fn new_tcp(substream: tcp::Substream, codec: ProtocolCodec) -> Self {
-        tracing::trace!(target: LOG_TARGET, ?codec, "create new substream for tcp");
+    pub(crate) fn new_tcp(peer: PeerId, substream: tcp::Substream, codec: ProtocolCodec) -> Self {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for tcp");
 
         Self {
+            peer,
             codec,
             substream: SubstreamType::Tcp(substream),
+            read_buffer: BytesMut::zeroed(1024),
+            offset: 0usize,
+            pending_frames: VecDeque::new(),
+            current_frame_size: None,
+            pending_out_bytes: 0usize,
+            pending_out_frames: VecDeque::new(),
+            pending_out_frame: None,
         }
     }
     /// Create new [`Substream`] for WebSocket.
-    pub(crate) fn new_websocket(substream: websocket::Substream, codec: ProtocolCodec) -> Self {
-        tracing::trace!(target: LOG_TARGET, ?codec, "create new substream for websocket");
+    pub(crate) fn new_websocket(
+        peer: PeerId,
+        substream: websocket::Substream,
+        codec: ProtocolCodec,
+    ) -> Self {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for websocket");
 
         Self {
+            peer,
             codec,
             substream: SubstreamType::WebSocket(substream),
+            read_buffer: BytesMut::zeroed(1024),
+            offset: 0usize,
+            pending_frames: VecDeque::new(),
+            current_frame_size: None,
+            pending_out_bytes: 0usize,
+            pending_out_frames: VecDeque::new(),
+            pending_out_frame: None,
         }
     }
     /// Create new [`Substream`] for QUIC.
-    pub(crate) fn new_quic(substream: quic::Substream, codec: ProtocolCodec) -> Self {
-        tracing::trace!(target: LOG_TARGET, ?codec, "create new substream for quic");
+    pub(crate) fn new_quic(peer: PeerId, substream: quic::Substream, codec: ProtocolCodec) -> Self {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for quic");
 
         Self {
+            peer,
             codec,
             substream: SubstreamType::Quic(substream),
+            read_buffer: BytesMut::zeroed(1024),
+            offset: 0usize,
+            pending_frames: VecDeque::new(),
+            current_frame_size: None,
+            pending_out_bytes: 0usize,
+            pending_out_frames: VecDeque::new(),
+            pending_out_frame: None,
         }
+    }
+
+    /// Create new [`Substream`] for mocking.
+    #[cfg(test)]
+    pub(crate) fn new_mock(peer: PeerId, substream: Box<dyn MockSubstream>) -> Self {
+        tracing::trace!(target: LOG_TARGET, ?peer, "create new substream for mocking");
+
+        Self {
+            peer,
+            codec: ProtocolCodec::Generic,
+            substream: SubstreamType::Mock(substream),
+            read_buffer: BytesMut::new(),
+            offset: 0usize,
+            pending_frames: VecDeque::new(),
+            current_frame_size: None,
+            pending_out_bytes: 0usize,
+            pending_out_frames: VecDeque::new(),
+            pending_out_frame: None,
+        }
+    }
+
+    /// Close the substream.
+    pub async fn close(self) {
+        let _ = match self.substream {
+            SubstreamType::Tcp(mut substream) => substream.shutdown().await,
+            SubstreamType::WebSocket(mut substream) => substream.shutdown().await,
+            SubstreamType::Quic(mut substream) => substream.shutdown().await,
+            #[cfg(test)]
+            SubstreamType::Mock(mut substream) => {
+                let _ = substream.close().await;
+                Ok(())
+            }
+        };
+    }
+
+    /// Send identity payload to remote peer.
+    async fn send_identity_payload<T: AsyncWrite + Unpin>(
+        io: &mut T,
+        payload_size: usize,
+        payload: Bytes,
+    ) -> crate::Result<()> {
+        if payload.len() != payload_size {
+            tracing::warn!(target: LOG_TARGET, "{} vs {}", payload.len(), payload_size);
+            return Err(Error::InvalidData);
+        }
+
+        io.write_all(&payload)
+            .await
+            .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
     }
 
     /// Send framed data to remote peer.
     ///
-    /// Panics if no codec is provided.
-    pub async fn send(&mut self, bytes: Bytes) -> crate::Result<()> {
-        match &mut self.substream {
-            SubstreamType::Tcp(ref mut substream) => match self.codec {
-                ProtocolCodec::Generic => todo!(),
-                ProtocolCodec::Identity(payload_size) => {
-                    if bytes.len() != payload_size {
-                        return Err(Error::InvalidData);
-                    }
-
-                    substream
-                        .write_all(&bytes)
-                        .await
-                        .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
-                }
-                ProtocolCodec::UnsignedVarint(max_size) => {
-                    if let Some(max_size) = max_size {
-                        if bytes.len() > max_size {
-                            return Err(Error::InvalidData);
-                        }
-                    }
-
-                    let len_bytes = BytesMut::zeroed(10);
-                    let mut buffer: [u8; 10] = len_bytes.as_ref().try_into().expect("to succeed");
-                    unsigned_varint::encode::usize(bytes.len(), &mut buffer);
-
-                    let size = len_bytes.len() + bytes.len();
-                    let mut len_bytes = len_bytes.chain(bytes).copy_to_bytes(size);
-
-                    substream
-                        .write_all_buf(&mut len_bytes)
-                        .await
-                        .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
-                }
-            },
-            SubstreamType::WebSocket(ref mut substream) => match self.codec {
-                ProtocolCodec::Generic => todo!(),
-                ProtocolCodec::Identity(payload_size) => {
-                    if bytes.len() != payload_size {
-                        return Err(Error::InvalidData);
-                    }
-
-                    substream
-                        .write_all(&bytes)
-                        .await
-                        .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
-                }
-                ProtocolCodec::UnsignedVarint(max_size) => {
-                    if let Some(max_size) = max_size {
-                        if bytes.len() > max_size {
-                            return Err(Error::InvalidData);
-                        }
-                    }
-
-                    let len_bytes = BytesMut::zeroed(10);
-                    let mut buffer: [u8; 10] = len_bytes.as_ref().try_into().expect("to succeed");
-                    unsigned_varint::encode::usize(bytes.len(), &mut buffer);
-
-                    let size = len_bytes.len() + bytes.len();
-                    let mut len_bytes = len_bytes.chain(bytes).copy_to_bytes(size);
-
-                    substream
-                        .write_all_buf(&mut len_bytes)
-                        .await
-                        .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
-                }
-            },
-            SubstreamType::Quic(ref mut substream) => match self.codec {
-                ProtocolCodec::Generic => todo!(),
-                ProtocolCodec::Identity(payload_size) => {
-                    if bytes.len() != payload_size {
-                        return Err(Error::InvalidData);
-                    }
-
-                    substream.write_all(bytes).await
-                }
-                ProtocolCodec::UnsignedVarint(max_size) => {
-                    if let Some(max_size) = max_size {
-                        if bytes.len() > max_size {
-                            return Err(Error::InvalidData);
-                        }
-                    }
-
-                    let len_bytes = BytesMut::zeroed(10);
-                    let mut buffer: [u8; 10] = len_bytes.as_ref().try_into().expect("to succeed");
-                    unsigned_varint::encode::usize(bytes.len(), &mut buffer);
-
-                    substream.write_all_chunks(&mut [len_bytes.freeze(), bytes]).await
-                }
-            },
-        }
-    }
-
-    /// Read `unsigned-varint` payload size from `io`.
-    async fn read_unsigned_varint_payload_size<T: AsyncRead + Unpin>(io: &mut T) -> Option<usize> {
-        let mut b = encode::usize_buffer();
-        for i in 0..b.len() {
-            let n = io.read(&mut b[i..i + 1]).await.ok()?;
-            if n == 0 {
-                tracing::trace!(target: LOG_TARGET, "substream closed while reading `unsigned-varint` payload size");
-                return None;
-            }
-
-            if decode::is_last(b[i]) {
-                return Some(decode::usize(&b[..=i]).ok()?.0);
-            }
-        }
-
-        tracing::debug!(target: LOG_TARGET, "overflow in `unsigned-varint` payload size");
-        None
-    }
-
-    /// Read `unsigned-varint` payload from `io`.
-    async fn read_unsigned_varint_payload<T: AsyncRead + Unpin>(
-        io: &mut T,
-        max_size: Option<usize>,
-    ) -> Option<Bytes> {
-        let payload_size = Self::read_unsigned_varint_payload_size(io).await?;
-
-        if let Some(max_size) = max_size {
-            if payload_size > max_size {
-                tracing::debug!(target: LOG_TARGET, ?payload_size, ?max_size, "too big payload");
-                return None;
-            }
-        }
-
-        let mut payload = BytesMut::zeroed(payload_size);
-        io.read_exact(&mut payload).await.ok()?;
-
-        Some(payload.freeze())
-    }
-
-    /// Read `Identity` payload from `io`.
-    async fn read_identity_payload<T: AsyncRead + Unpin>(
-        io: &mut T,
-        payload_size: usize,
-    ) -> Option<Bytes> {
-        let mut bytes = BytesMut::zeroed(payload_size);
-        io.read_exact(&mut bytes).await.ok()?;
-        Some(bytes.freeze())
-    }
-
-    /// Read next frame from the underlying socket.
+    /// This function may be faster than the provided [`futures::Sink`] implementation for
+    /// [`Substream`] as it has direct access to the API of the underlying socket as opposed
+    /// to going through [`tokio::io::AsyncWrite`].
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is not cancellation safe. If that is required, use the provided
+    /// [`futures::Sink`] implementation.
+    ///
+    /// # Panics
     ///
     /// Panics if no codec is provided.
-    pub async fn next(&mut self) -> Option<Bytes> {
+    pub async fn send_framed(&mut self, bytes: Bytes) -> crate::Result<()> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            peer = ?self.peer,
+            codec = ?self.codec,
+            frame_len = ?bytes.len(),
+            "send framed"
+        );
+
         match &mut self.substream {
+            #[cfg(test)]
+            SubstreamType::Mock(ref mut substream) => substream.send(bytes).await,
             SubstreamType::Tcp(ref mut substream) => match self.codec {
                 ProtocolCodec::Generic => todo!(),
                 ProtocolCodec::Identity(payload_size) =>
-                    Self::read_identity_payload(substream, payload_size).await,
-                ProtocolCodec::UnsignedVarint(max_size) =>
-                    Self::read_unsigned_varint_payload(substream, max_size).await,
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
+                ProtocolCodec::UnsignedVarint(max_size) => {
+                    if let Some(max_size) = max_size {
+                        if bytes.len() > max_size {
+                            return Err(Error::IoError(ErrorKind::PermissionDenied));
+                        }
+                    }
+
+                    let mut buffer = [0u8; 10];
+                    let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
+                    let len = BytesMut::from(len);
+
+                    let size = len.len() + bytes.len();
+                    let mut len_bytes = len.chain(bytes).copy_to_bytes(size);
+
+                    substream
+                        .write_all_buf(&mut len_bytes)
+                        .await
+                        .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
+                }
             },
             SubstreamType::WebSocket(ref mut substream) => match self.codec {
                 ProtocolCodec::Generic => todo!(),
                 ProtocolCodec::Identity(payload_size) =>
-                    Self::read_identity_payload(substream, payload_size).await,
-                ProtocolCodec::UnsignedVarint(max_size) =>
-                    Self::read_unsigned_varint_payload(substream, max_size).await,
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
+                ProtocolCodec::UnsignedVarint(max_size) => {
+                    if let Some(max_size) = max_size {
+                        if bytes.len() > max_size {
+                            return Err(Error::IoError(ErrorKind::PermissionDenied));
+                        }
+                    }
+
+                    let mut buffer = [0u8; 10];
+                    let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
+                    let len = BytesMut::from(len);
+
+                    let size = len.len() + bytes.len();
+                    let mut len_bytes = len.chain(bytes).copy_to_bytes(size);
+
+                    substream
+                        .write_all_buf(&mut len_bytes)
+                        .await
+                        .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
+                }
             },
             SubstreamType::Quic(ref mut substream) => match self.codec {
                 ProtocolCodec::Generic => todo!(),
                 ProtocolCodec::Identity(payload_size) =>
-                    Self::read_identity_payload(substream, payload_size).await,
-                ProtocolCodec::UnsignedVarint(max_size) =>
-                    Self::read_unsigned_varint_payload(substream, max_size).await,
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
+                ProtocolCodec::UnsignedVarint(max_size) => {
+                    if let Some(max_size) = max_size {
+                        if bytes.len() > max_size {
+                            return Err(Error::IoError(ErrorKind::PermissionDenied));
+                        }
+                    }
+
+                    let mut buffer = [0u8; 10];
+                    let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
+                    let len = BytesMut::from(len);
+
+                    substream.write_all_chunks(&mut [len.freeze(), bytes]).await
+                }
             },
         }
     }
 }
 
-impl tokio::io::AsyncRead for NewSubstream {
+impl tokio::io::AsyncRead for Substream {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        match &mut self.substream {
-            SubstreamType::Tcp(ref mut substream) => Pin::new(substream).poll_read(cx, buf),
-            SubstreamType::WebSocket(ref mut substream) => Pin::new(substream).poll_read(cx, buf),
-            SubstreamType::Quic(ref mut substream) => Pin::new(substream).poll_read(cx, buf),
-        }
+        poll_read!(&mut self.substream, cx, buf)
     }
 }
 
-impl tokio::io::AsyncWrite for NewSubstream {
+impl tokio::io::AsyncWrite for Substream {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        match &mut self.substream {
-            SubstreamType::Tcp(ref mut substream) => Pin::new(substream).poll_write(cx, buf),
-            SubstreamType::WebSocket(ref mut substream) => Pin::new(substream).poll_write(cx, buf),
-            SubstreamType::Quic(ref mut substream) => Pin::new(substream).poll_write(cx, buf),
-        }
+        poll_write!(&mut self.substream, cx, buf)
     }
 
     fn poll_flush(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        match &mut self.substream {
-            SubstreamType::Tcp(ref mut substream) => Pin::new(substream).poll_flush(cx),
-            SubstreamType::WebSocket(ref mut substream) => Pin::new(substream).poll_flush(cx),
-            SubstreamType::Quic(ref mut substream) => Pin::new(substream).poll_flush(cx),
-        }
+        poll_flush!(&mut self.substream, cx)
     }
 
     fn poll_shutdown(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        match &mut self.substream {
-            SubstreamType::Tcp(ref mut substream) => Pin::new(substream).poll_shutdown(cx),
-            SubstreamType::WebSocket(ref mut substream) => Pin::new(substream).poll_shutdown(cx),
-            SubstreamType::Quic(ref mut substream) => Pin::new(substream).poll_shutdown(cx),
-        }
+        poll_shutdown!(&mut self.substream, cx)
     }
 
     fn poll_write_vectored(
@@ -354,21 +416,243 @@ impl tokio::io::AsyncWrite for NewSubstream {
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
         match &mut self.substream {
-            SubstreamType::Tcp(ref mut substream) =>
+            #[cfg(test)]
+            SubstreamType::Mock(_) => unreachable!(),
+            SubstreamType::Tcp(substream) => Pin::new(substream).poll_write_vectored(cx, bufs),
+            SubstreamType::WebSocket(substream) =>
                 Pin::new(substream).poll_write_vectored(cx, bufs),
-            SubstreamType::WebSocket(ref mut substream) =>
-                Pin::new(substream).poll_write_vectored(cx, bufs),
-            SubstreamType::Quic(ref mut substream) =>
-                Pin::new(substream).poll_write_vectored(cx, bufs),
+            SubstreamType::Quic(substream) => Pin::new(substream).poll_write_vectored(cx, bufs),
         }
     }
 
     fn is_write_vectored(&self) -> bool {
         match &self.substream {
+            #[cfg(test)]
+            SubstreamType::Mock(_) => unreachable!(),
             SubstreamType::Tcp(substream) => substream.is_write_vectored(),
             SubstreamType::WebSocket(substream) => substream.is_write_vectored(),
             SubstreamType::Quic(substream) => substream.is_write_vectored(),
         }
+    }
+}
+
+enum ReadError {
+    Overflow,
+    NotEnoughBytes,
+    DecodeError,
+}
+
+// Return the payload size and the number of bytes it took to encode it
+fn read_payload_size(buffer: &[u8]) -> Result<(usize, usize), ReadError> {
+    let max_len = encode::usize_buffer().len();
+
+    for i in 0..std::cmp::min(buffer.len(), max_len) {
+        if decode::is_last(buffer[i]) {
+            match decode::usize(&buffer[..=i]) {
+                Err(_) => return Err(ReadError::DecodeError),
+                Ok(size) => return Ok((size.0, i + 1)),
+            }
+        }
+    }
+
+    match buffer.len() < max_len {
+        true => Err(ReadError::NotEnoughBytes),
+        false => Err(ReadError::Overflow),
+    }
+}
+
+impl Stream for Substream {
+    // TODO: change to `type Item = BytesMut;`
+    type Item = crate::Result<BytesMut>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = Pin::into_inner(self);
+
+        // `MockSubstream` implements `Stream` so calls to `poll_next()` must be delegated
+        delegate_poll_next!(&mut this.substream, cx);
+
+        loop {
+            match this.codec {
+                ProtocolCodec::Identity(payload_size) => {
+                    let mut read_buf =
+                        ReadBuf::new(&mut this.read_buffer[this.offset..payload_size]);
+
+                    match futures::ready!(poll_read!(&mut this.substream, cx, &mut read_buf)) {
+                        Ok(_) => {
+                            let nread = read_buf.filled().len();
+                            if nread == 0 {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    peer = ?this.peer,
+                                    "read zero bytes, substream closed"
+                                );
+                                return Poll::Ready(None);
+                            }
+
+                            if nread == payload_size {
+                                let mut payload = std::mem::replace(
+                                    &mut this.read_buffer,
+                                    BytesMut::zeroed(payload_size),
+                                );
+                                payload.truncate(payload_size);
+                                this.offset = 0usize;
+
+                                return Poll::Ready(Some(Ok(payload)));
+                            } else {
+                                this.offset += read_buf.filled().len();
+                            }
+                        }
+                        Err(error) => return Poll::Ready(Some(Err(error.into()))),
+                    }
+                }
+                ProtocolCodec::UnsignedVarint(max_size) => {
+                    loop {
+                        // return all pending frames first
+                        if let Some(frame) = this.pending_frames.pop_front() {
+                            return Poll::Ready(Some(Ok(frame)));
+                        }
+
+                        // if there are no pending frames, read more data from the underlying socket
+                        let mut read_buf = ReadBuf::new(&mut this.read_buffer[this.offset..]);
+
+                        let nread = match futures::ready!(poll_read!(
+                            &mut this.substream,
+                            cx,
+                            &mut read_buf
+                        )) {
+                            Err(error) => return Poll::Ready(None),
+                            Ok(_) => match read_buf.filled().len() {
+                                0 => {
+                                    tracing::trace!(
+                                        target: LOG_TARGET,
+                                        peer = ?this.peer,
+                                        "read zero bytes, substream closed"
+                                    );
+                                    return Poll::Ready(None);
+                                }
+                                nread => nread,
+                            },
+                        };
+
+                        this.offset += nread;
+                        this.read_buffer.truncate(this.offset);
+
+                        let size_hint = loop {
+                            // get frame size, either from current or previous iteration
+                            let frame_size = match this.current_frame_size.take() {
+                                Some(frame_size) => frame_size,
+                                None => match read_payload_size(&this.read_buffer) {
+                                    Ok((size, num_bytes)) => {
+                                        // TODO: verify `size`
+                                        this.offset -= num_bytes;
+                                        this.read_buffer.advance(num_bytes);
+                                        size
+                                    }
+                                    Err(ReadError::Overflow | ReadError::DecodeError) =>
+                                        return Poll::Ready(None),
+                                    Err(ReadError::NotEnoughBytes) => break None,
+                                },
+                            };
+
+                            if this.read_buffer.len() < frame_size {
+                                this.current_frame_size = Some(frame_size);
+                                break Some(frame_size);
+                            }
+
+                            let frame = this.read_buffer.split_to(frame_size);
+                            this.offset -= frame.len();
+                            this.pending_frames.push_back(frame);
+                        };
+
+                        // TODO: can this be optimized?
+                        this.read_buffer
+                            .resize(this.read_buffer.len() + size_hint.unwrap_or(1024), 0u8);
+                    }
+                }
+                _ => todo!(),
+            }
+        }
+    }
+}
+
+// TODO: this code can definitely be optimized
+impl Sink<Bytes> for Substream {
+    type Error = Error;
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // `MockSubstream` implements `Sink` so calls to `poll_ready()` must be delegated
+        delegate_poll_ready!(&mut self.substream, cx);
+
+        if self.pending_out_bytes >= BACKPRESSURE_BOUNDARY {
+            return poll_flush!(&mut self.substream, cx).map_err(From::from);
+        }
+
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+        // `MockSubstream` implements `Sink` so calls to `start_send()` must be delegated
+        delegate_start_send!(&mut self.substream, item);
+
+        match self.codec {
+            ProtocolCodec::Identity(payload_size) => {
+                if item.len() != payload_size {
+                    return Err(Error::InvalidData);
+                }
+
+                self.pending_out_bytes += item.len();
+                self.pending_out_frames.push_back(item);
+            }
+            ProtocolCodec::UnsignedVarint(max_size) => {
+                let len = {
+                    let mut buffer = [0u8; 10];
+                    let len = unsigned_varint::encode::usize(item.len(), &mut buffer);
+                    BytesMut::from(len)
+                };
+
+                self.pending_out_bytes += len.len() + item.len();
+                self.pending_out_frames.push_back(len.freeze());
+                self.pending_out_frames.push_back(item);
+            }
+            _ => todo!(),
+        }
+
+        return Ok(());
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // `MockSubstream` implements `Sink` so calls to `poll_flush()` must be delegated
+        delegate_poll_flush!(&mut self.substream, cx);
+
+        loop {
+            let mut pending_frame = match self.pending_out_frame.take() {
+                Some(frame) => frame,
+                None => match self.pending_out_frames.pop_front() {
+                    Some(frame) => frame,
+                    None => break,
+                },
+            };
+
+            match poll_write!(&mut self.substream, cx, &pending_frame) {
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error.into())),
+                Poll::Pending => {
+                    self.pending_out_frame = Some(pending_frame);
+                }
+                Poll::Ready(Ok(nwritten)) => {
+                    pending_frame.advance(nwritten);
+
+                    if !pending_frame.is_empty() {
+                        self.pending_out_frame = Some(pending_frame);
+                    }
+                }
+            }
+        }
+
+        poll_flush!(&mut self.substream, cx).map_err(From::from)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        poll_shutdown!(&mut self.substream, cx).map_err(From::from)
     }
 }
 
@@ -379,11 +663,19 @@ impl<K: Hash + Unpin + Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
 
 /// Substream set.
 #[derive(Debug, Default)]
-pub struct SubstreamSet<K: SubstreamSetKey> {
-    substreams: HashMap<K, Box<dyn Substream>>,
+pub struct SubstreamSet<K, S>
+where
+    K: SubstreamSetKey,
+    S: Stream<Item = crate::Result<BytesMut>> + Unpin,
+{
+    substreams: HashMap<K, S>,
 }
 
-impl<K: SubstreamSetKey> SubstreamSet<K> {
+impl<K, S> SubstreamSet<K, S>
+where
+    K: SubstreamSetKey,
+    S: Stream<Item = crate::Result<BytesMut>> + Unpin,
+{
     /// Create new [`SubstreamSet`].
     pub fn new() -> Self {
         Self {
@@ -392,7 +684,7 @@ impl<K: SubstreamSetKey> SubstreamSet<K> {
     }
 
     /// Add new substream to the set.
-    pub fn insert(&mut self, key: K, substream: Box<dyn Substream>) {
+    pub fn insert(&mut self, key: K, substream: S) {
         match self.substreams.entry(key) {
             Entry::Vacant(entry) => {
                 entry.insert(substream);
@@ -405,18 +697,22 @@ impl<K: SubstreamSetKey> SubstreamSet<K> {
     }
 
     /// Remove substream from the set.
-    pub fn remove(&mut self, key: &K) -> Option<Box<dyn Substream>> {
+    pub fn remove(&mut self, key: &K) -> Option<S> {
         self.substreams.remove(key)
     }
 
     /// Get mutable reference to stored substream.
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut Box<dyn Substream>> {
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut S> {
         self.substreams.get_mut(key)
     }
 }
 
-impl<K: SubstreamSetKey> Stream for SubstreamSet<K> {
-    type Item = (K, <Box<dyn Substream> as Stream>::Item);
+impl<K, S> Stream for SubstreamSet<K, S>
+where
+    K: SubstreamSetKey,
+    S: Stream<Item = crate::Result<BytesMut>> + Unpin,
+{
+    type Item = (K, <S as Stream>::Item);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inner = Pin::into_inner(self);
@@ -446,14 +742,14 @@ mod tests {
 
     #[test]
     fn add_substream() {
-        let mut set = SubstreamSet::<PeerId>::new();
+        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
 
         let peer = PeerId::random();
-        let substream = Box::new(MockSubstream::new());
+        let substream = MockSubstream::new();
         set.insert(peer, substream);
 
         let peer = PeerId::random();
-        let substream = Box::new(MockSubstream::new());
+        let substream = MockSubstream::new();
         set.insert(peer, substream);
     }
 
@@ -461,11 +757,11 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn add_same_peer_twice() {
-        let mut set = SubstreamSet::<PeerId>::new();
+        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
 
         let peer = PeerId::random();
-        let substream1 = Box::new(MockSubstream::new());
-        let substream2 = Box::new(MockSubstream::new());
+        let substream1 = MockSubstream::new();
+        let substream2 = MockSubstream::new();
 
         set.insert(peer, substream1);
         set.insert(peer, substream2);
@@ -473,14 +769,14 @@ mod tests {
 
     #[test]
     fn remove_substream() {
-        let mut set = SubstreamSet::<PeerId>::new();
+        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
 
         let peer1 = PeerId::random();
-        let substream1 = Box::new(MockSubstream::new());
+        let substream1 = MockSubstream::new();
         set.insert(peer1, substream1);
 
         let peer2 = PeerId::random();
-        let substream2 = Box::new(MockSubstream::new());
+        let substream2 = MockSubstream::new();
         set.insert(peer2, substream2);
 
         assert!(set.remove(&peer1).is_some());
@@ -490,7 +786,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_data_from_substream() {
-        let mut set = SubstreamSet::<PeerId>::new();
+        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
 
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
@@ -503,7 +799,6 @@ mod tests {
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"world"[..])))));
         substream.expect_poll_next().returning(|_| Poll::Pending);
-        let substream = Box::new(substream);
         set.insert(peer, substream);
 
         let value = set.next().await.unwrap();
@@ -519,7 +814,7 @@ mod tests {
 
     #[tokio::test]
     async fn substream_closed() {
-        let mut set = SubstreamSet::<PeerId>::new();
+        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
 
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
@@ -529,7 +824,6 @@ mod tests {
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
         substream.expect_poll_next().times(1).return_once(|_| Poll::Ready(None));
         substream.expect_poll_next().returning(|_| Poll::Pending);
-        let substream = Box::new(substream);
         set.insert(peer, substream);
 
         let value = set.next().await.unwrap();
@@ -550,7 +844,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let mut set = SubstreamSet::<PeerId>::new();
+        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
 
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
@@ -566,7 +860,6 @@ mod tests {
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"world"[..])))));
         substream.expect_poll_next().returning(|_| Poll::Pending);
-        let substream = Box::new(substream);
         set.insert(peer, substream);
 
         let value = set.next().await.unwrap();
@@ -586,7 +879,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_data_from_two_substreams() {
-        let mut set = SubstreamSet::<PeerId>::new();
+        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
 
         // prepare first substream
         let peer1 = PeerId::random();
@@ -600,7 +893,6 @@ mod tests {
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"world"[..])))));
         substream1.expect_poll_next().returning(|_| Poll::Pending);
-        let substream1 = Box::new(substream1);
         set.insert(peer1, substream1);
 
         // prepare second substream
@@ -615,7 +907,6 @@ mod tests {
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"huup"[..])))));
         substream2.expect_poll_next().returning(|_| Poll::Pending);
-        let substream2 = Box::new(substream2);
         set.insert(peer2, substream2);
 
         let expected: Vec<Vec<(PeerId, BytesMut)>> = vec![

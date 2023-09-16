@@ -20,7 +20,9 @@
 
 //! Protocol codecs.
 
+// TODO: remove
 pub mod generic;
+
 pub mod identity;
 pub mod unsigned_varint;
 
@@ -33,6 +35,7 @@ pub enum ProtocolCodec {
     /// Unsigned varint where the argument denotes the maximum message size, if specified.
     UnsignedVarint(Option<usize>),
 
+    // TODO: rename to `Unspecified`
     /// Generic codec which is akin to [`ProtocolCodec::Identity`] but doesn't impose
     /// a fixed message size.
     Generic,

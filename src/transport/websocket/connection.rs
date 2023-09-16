@@ -25,7 +25,7 @@ use crate::{
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
-    substream::Substream as SubstreamT,
+    substream,
     transport::websocket::{stream::BufferedStream, substream::Substream},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
@@ -420,19 +420,11 @@ impl WebSocketConnection {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
                             let socket = FuturesAsyncReadCompatExt::compat(substream.io);
-                            let substream = Substream::new(socket, substream.permit);
-
-                            let substream: Box<dyn SubstreamT> = match self.protocol_set.protocol_codec(&protocol) {
-                                ProtocolCodec::Identity(payload_size) => {
-                                    Box::new(Framed::new(substream, Identity::new(payload_size)))
-                                }
-                                ProtocolCodec::UnsignedVarint(max_size) => {
-                                    Box::new(Framed::new(substream, UnsignedVarint::new(max_size)))
-                                }
-                                ProtocolCodec::Generic => {
-                                    Box::new(Framed::new(substream, Generic::new()))
-                                }
-                            };
+                            let substream = substream::Substream::new_websocket(
+                                self.peer,
+                                Substream::new(socket, substream.permit),
+                                self.protocol_set.protocol_codec(&protocol)
+                            );
 
                             if let Err(error) = self.protocol_set
                                 .report_substream_open(self.peer, protocol, direction, substream)
