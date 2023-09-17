@@ -100,7 +100,7 @@ impl Connection {
     ///
     /// If [`NotificationProtocol`](super::NotificationProtocol) was the one that initiated
     /// shut down, it's not notified of connection getting closed.
-    async fn close_connection(mut self, notify_protocol: NotifyProtocol) {
+    async fn close_connection(self, notify_protocol: NotifyProtocol) {
         let _ = self.inbound.close().await;
         let _ = self.outbound.close().await;
 
@@ -140,7 +140,7 @@ impl Connection {
                     }
                 },
                 notification = self.async_rx.recv() => match notification {
-                    Some(notification) => if let Err(_) = self.outbound.send(notification.into()).await {
+                    Some(notification) => if let Err(_) = self.outbound.send_framed(notification.into()).await {
                         return self.close_connection(NotifyProtocol::Yes).await;
                     },
                     None => {
@@ -149,7 +149,7 @@ impl Connection {
                     }
                 },
                 notification = self.sync_rx.recv() => match notification {
-                    Some(notification) => if let Err(_) = self.outbound.send(notification.into()).await {
+                    Some(notification) => if let Err(_) = self.outbound.send_framed(notification.into()).await {
                         return self.close_connection(NotifyProtocol::Yes).await;
                     },
                     None => {
