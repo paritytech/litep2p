@@ -110,6 +110,10 @@ pub enum Error {
     NoAddressAvailable(PeerId),
     #[error("Connection closed")]
     ConnectionClosed,
+    #[error("Quinn error: `{0}`")]
+    Quinn(quinn::ConnectionError),
+    #[error("Invalid certificate")]
+    InvalidCertificate,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -219,6 +223,15 @@ impl From<DecodingError> for Error {
 impl From<s2n_quic::provider::StartError> for Error {
     fn from(error: s2n_quic::provider::StartError) -> Self {
         Error::TransportError(error.to_string())
+    }
+}
+
+impl From<quinn::ConnectionError> for Error {
+    fn from(error: quinn::ConnectionError) -> Self {
+        match error {
+            quinn::ConnectionError::TimedOut => Error::Timeout,
+            error => Error::Quinn(error),
+        }
     }
 }
 
