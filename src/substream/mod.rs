@@ -239,7 +239,7 @@ impl Substream {
 
         Self {
             peer,
-            codec: ProtocolCodec::Generic,
+            codec: ProtocolCodec::Unspecified,
             substream: SubstreamType::Mock(substream),
             read_buffer: BytesMut::new(),
             offset: 0usize,
@@ -308,7 +308,7 @@ impl Substream {
             #[cfg(test)]
             SubstreamType::Mock(ref mut substream) => substream.send(bytes).await,
             SubstreamType::Tcp(ref mut substream) => match self.codec {
-                ProtocolCodec::Generic => todo!(),
+                ProtocolCodec::Unspecified => panic!("codec is unspecified"),
                 ProtocolCodec::Identity(payload_size) =>
                     Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
@@ -332,7 +332,7 @@ impl Substream {
                 }
             },
             SubstreamType::WebSocket(ref mut substream) => match self.codec {
-                ProtocolCodec::Generic => todo!(),
+                ProtocolCodec::Unspecified => panic!("codec is unspecified"),
                 ProtocolCodec::Identity(payload_size) =>
                     Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
@@ -356,7 +356,7 @@ impl Substream {
                 }
             },
             SubstreamType::Quic(ref mut substream) => match self.codec {
-                ProtocolCodec::Generic => todo!(),
+                ProtocolCodec::Unspecified => panic!("codec is unspecified"),
                 ProtocolCodec::Identity(payload_size) =>
                     Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
@@ -569,7 +569,7 @@ impl Stream for Substream {
                             .resize(this.read_buffer.len() + size_hint.unwrap_or(1024), 0u8);
                     }
                 }
-                _ => todo!(),
+                ProtocolCodec::Unspecified => panic!("codec is unspecified"),
             }
         }
     }
@@ -614,7 +614,7 @@ impl Sink<Bytes> for Substream {
                 self.pending_out_frames.push_back(len.freeze());
                 self.pending_out_frames.push_back(item);
             }
-            _ => todo!(),
+            ProtocolCodec::Unspecified => panic!("codec is unspecified"),
         }
 
         return Ok(());
