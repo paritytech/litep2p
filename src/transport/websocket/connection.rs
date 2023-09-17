@@ -21,7 +21,7 @@
 use crate::{
     codec::{generic::Generic, identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
-    crypto::noise::{self, Encrypted, NoiseConfiguration},
+    crypto::noise::{self, NoiseSocket},
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
@@ -95,7 +95,7 @@ pub(crate) struct WebSocketConnection {
     protocol_set: ProtocolSet,
 
     /// Yamux connection.
-    connection: yamux::ControlledConnection<Encrypted<BufferedStream<MaybeTlsStream<TcpStream>>>>,
+    connection: yamux::ControlledConnection<NoiseSocket<BufferedStream<MaybeTlsStream<TcpStream>>>>,
 
     /// Yamux control.
     control: yamux::Control,
@@ -163,9 +163,7 @@ impl WebSocketConnection {
         );
 
         // negotiate `noise`
-        let noise_config = NoiseConfiguration::new(&protocol_set.keypair, Role::Dialer);
-        let (stream, _) =
-            Self::negotiate_protocol(stream, &noise_config.role, vec!["/noise"]).await?;
+        let (stream, _) = Self::negotiate_protocol(stream, &Role::Dialer, vec!["/noise"]).await?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -173,9 +171,11 @@ impl WebSocketConnection {
         );
 
         // perform noise handshake
-        let (stream, peer) = noise::handshake(stream.inner(), noise_config).await?;
+        let (stream, peer) =
+            noise::handshake(stream.inner(), &protocol_set.keypair, Role::Dialer).await?;
+        let stream: NoiseSocket<BufferedStream<_>> = stream;
+
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
-        let stream: Encrypted<BufferedStream<_>> = stream;
 
         // negotiate `yamux`
         let (stream, _) =
@@ -218,9 +218,7 @@ impl WebSocketConnection {
         );
 
         // negotiate `noise`
-        let noise_config = NoiseConfiguration::new(&protocol_set.keypair, Role::Listener);
-        let (stream, _) =
-            Self::negotiate_protocol(stream, &noise_config.role, vec!["/noise"]).await?;
+        let (stream, _) = Self::negotiate_protocol(stream, &Role::Dialer, vec!["/noise"]).await?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -228,9 +226,11 @@ impl WebSocketConnection {
         );
 
         // perform noise handshake
-        let (stream, peer) = noise::handshake(stream.inner(), noise_config).await?;
+        let (stream, peer) =
+            noise::handshake(stream.inner(), &protocol_set.keypair, Role::Listener).await?;
+        let stream: NoiseSocket<BufferedStream<_>> = stream;
+
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
-        let stream: Encrypted<BufferedStream<_>> = stream;
 
         // negotiate `yamux`
         let (stream, _) =

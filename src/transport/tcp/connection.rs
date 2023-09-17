@@ -21,7 +21,10 @@
 use crate::{
     codec::{generic::Generic, identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
-    crypto::noise::{self, Encrypted, NoiseConfiguration},
+    crypto::{
+        ed25519::Keypair,
+        noise::{self, NoiseSocket},
+    },
     error::{Error, NegotiationError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
@@ -100,7 +103,7 @@ pub struct TcpConnection {
     protocol_set: ProtocolSet,
 
     /// Yamux connection.
-    connection: yamux::ControlledConnection<Encrypted<Compat<TcpStream>>>,
+    connection: yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
 
     /// Yamux control.
     control: yamux::Control,
@@ -144,8 +147,7 @@ impl TcpConnection {
             "open connection to remote peer",
         );
 
-        let noise_config = NoiseConfiguration::new(&context.keypair, Role::Dialer);
-
+        let keypair = context.keypair.clone();
         match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             let stream = match &address {
                 AddressType::Socket(socket_address) => TcpStream::connect(socket_address).await?,
@@ -157,7 +159,8 @@ impl TcpConnection {
                 stream,
                 connection_id,
                 context,
-                noise_config,
+                keypair,
+                Role::Dialer,
                 address,
                 yamux_config,
             )
@@ -222,13 +225,15 @@ impl TcpConnection {
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
-        let noise_config = NoiseConfiguration::new(&context.keypair, Role::Listener);
+        let keypair = context.keypair.clone();
         match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             Self::negotiate_connection(
                 stream,
                 connection_id,
                 context,
-                noise_config,
+                // noise_config,
+                keypair,
+                Role::Listener,
                 AddressType::Socket(address),
                 yamux_config,
             )
@@ -304,23 +309,22 @@ impl TcpConnection {
         stream: TcpStream,
         connection_id: ConnectionId,
         mut protocol_set: ProtocolSet,
-        noise_config: NoiseConfiguration,
+        keypair: Keypair,
+        role: Role,
         address: AddressType,
         yamux_config: yamux::Config,
     ) -> crate::Result<Self> {
         tracing::trace!(
             target: LOG_TARGET,
-            role = ?noise_config.role,
+            ?role,
             "negotiate connection",
         );
 
         let stream = TokioAsyncReadCompatExt::compat(stream).into_inner();
         let stream = TokioAsyncWriteCompatExt::compat_write(stream);
-        let role = noise_config.role;
 
         // negotiate `noise`
-        let (stream, _) =
-            Self::negotiate_protocol(stream, &noise_config.role, vec!["/noise"]).await?;
+        let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/noise"]).await?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -328,9 +332,9 @@ impl TcpConnection {
         );
 
         // perform noise handshake
-        let (stream, peer) = noise::handshake(stream.inner(), noise_config).await?;
+        let (stream, peer) = noise::handshake(stream.inner(), &keypair, role).await?;
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
-        let stream: Encrypted<Compat<TcpStream>> = stream;
+        let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // negotiate `yamux`
         let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"]).await?;
@@ -1052,11 +1056,12 @@ mod tests {
             dialer_select_proto(dialer, vec!["/noise"], Version::V1).await.unwrap();
 
         let keypair = Keypair::generate();
-        let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer);
+        // let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer);
 
         // do a noise handshake
-        let (stream, _peer) = noise::handshake(stream.inner(), noise_config).await.unwrap();
-        let stream: Encrypted<Compat<TcpStream>> = stream;
+        let (stream, _peer) =
+            noise::handshake(stream.inner(), &keypair, Role::Dialer).await.unwrap();
+        let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // after the handshake, try to negotiate some random protocol instead of yamux
         assert!(dialer_select_proto(stream, vec!["/unsupported/1"], Version::V1).await.is_err());
@@ -1118,12 +1123,11 @@ mod tests {
         // negotiate noise
         let (_protocol, stream) = listener_select_proto(stream, vec!["/noise"]).await.unwrap();
 
-        let keypair = Keypair::generate();
-        let noise_config = NoiseConfiguration::new(&keypair, Role::Listener);
-
         // do a noise handshake
-        let (stream, _peer) = noise::handshake(stream.inner(), noise_config).await.unwrap();
-        let stream: Encrypted<Compat<TcpStream>> = stream;
+        let keypair = Keypair::generate();
+        let (stream, _peer) =
+            noise::handshake(stream.inner(), &keypair, Role::Listener).await.unwrap();
+        let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // after the handshake, try to negotiate some random protocol instead of yamux
         assert!(listener_select_proto(stream, vec!["/unsupported/1"]).await.is_err());
@@ -1191,12 +1195,11 @@ mod tests {
         let (_protocol, stream) =
             dialer_select_proto(dialer, vec!["/noise"], Version::V1).await.unwrap();
 
-        let keypair = Keypair::generate();
-        let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer);
-
         // do a noise handshake
-        let (stream, _peer) = noise::handshake(stream.inner(), noise_config).await.unwrap();
-        let _stream: Encrypted<Compat<TcpStream>> = stream;
+        let keypair = Keypair::generate();
+        let (stream, _peer) =
+            noise::handshake(stream.inner(), &keypair, Role::Dialer).await.unwrap();
+        let _stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // after noise handshake, don't negotiate anything and wait for the substream to time out
         assert!(std::matches!(
@@ -1256,12 +1259,11 @@ mod tests {
         // negotiate noise
         let (_protocol, stream) = listener_select_proto(stream, vec!["/noise"]).await.unwrap();
 
-        let keypair = Keypair::generate();
-        let noise_config = NoiseConfiguration::new(&keypair, Role::Listener);
-
         // do a noise handshake
-        let (stream, _peer) = noise::handshake(stream.inner(), noise_config).await.unwrap();
-        let _stream: Encrypted<Compat<TcpStream>> = stream;
+        let keypair = Keypair::generate();
+        let (stream, _peer) =
+            noise::handshake(stream.inner(), &keypair, Role::Listener).await.unwrap();
+        let _stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // after noise handshake, don't negotiate anything and wait for the substream to time out
         assert!(std::matches!(

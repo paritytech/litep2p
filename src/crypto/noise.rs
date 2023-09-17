@@ -27,14 +27,18 @@ use crate::{
     error, PeerId,
 };
 
-use futures::{
-    io::{AsyncRead, AsyncWrite},
-    ready, AsyncReadExt, AsyncWriteExt, FutureExt,
-};
+use bytes::{Buf, Bytes, BytesMut};
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use prost::Message;
-use snow::{Builder, Error, HandshakeState, TransportState};
+use snow::{Builder, HandshakeState, TransportState};
 
-use std::{fmt, io, pin::Pin, task::Poll};
+use std::{
+    collections::VecDeque,
+    fmt,
+    io::{self, IoSlice},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 mod handshake_schema {
     include!(concat!(env!("OUT_DIR"), "/noise.rs"));
@@ -46,645 +50,35 @@ const NOISE_PARAMETERS: &str = "Noise_XX_25519_ChaChaPoly_SHA256";
 /// Prefix of static key signatures for domain separation.
 pub(crate) const STATIC_KEY_DOMAIN: &str = "noise-libp2p-static-key:";
 
-/// Noise decrypt buffer size.
-const NOISE_DECRYPT_BUFFER_SIZE: usize = 65536;
+/// Maximum Noise message size.
+const MAX_NOISE_MSG_LEN: usize = 65536;
 
-/// Noise decrypt buffer extra allocation size.
-const NOISE_DECRYPT_EXTRA_ALLOC: usize = 1024;
+/// Space given to the encryption buffer to hold key material.
+const NOISE_EXTRA_ENCRYPT_SPACE: usize = 1024;
+
+/// Max read ahead factor for the noise socket.
+///
+/// Specifies how many multiples of `MAX_NOISE_MESSAGE_LEN` are read from the socket
+/// using one call to `poll_read()`.
+const MAX_READ_AHEAD_FACTOR: usize = 50;
+
+/// Max. length for Noise protocol message payloads.
+pub const MAX_FRAME_LEN: usize = MAX_NOISE_MSG_LEN - NOISE_EXTRA_ENCRYPT_SPACE;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "crypto::noise";
 
-/// Logging target for the messages.
-const LOG_TARGET_MSG: &str = "crypto::noise::message";
-
 #[derive(Debug)]
-pub struct NoiseConfiguration {
-    /// Noise handshake state.
-    pub noise: HandshakeState,
-
-    /// Role of the node.
-    pub role: Role,
-
-    /// Payload that's sent as part of the libp2p Noise handshake.
-    pub payload: Vec<u8>,
+enum NoiseState {
+    Handshake(HandshakeState),
+    Transport(TransportState),
 }
 
-impl NoiseConfiguration {
-    /// Create new Noise configuration.
-    pub fn new(keypair: &Keypair, role: Role) -> Self {
-        tracing::trace!(target: LOG_TARGET, ?role, "create new noise configuration");
-
-        let builder: Builder<'_> =
-            Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise pattern"));
-        let dh_keypair = builder.generate_keypair().expect("keypair generation to succeed");
-        let static_key = dh_keypair.private;
-
-        let noise = match role {
-            Role::Dialer => builder
-                .local_private_key(&static_key)
-                .build_initiator()
-                .expect("initialization to succeed"),
-            Role::Listener => builder
-                .local_private_key(&static_key)
-                .build_responder()
-                .expect("initialization to succeed"),
-        };
-
-        let noise_payload = handshake_schema::NoiseHandshakePayload {
-            identity_key: Some(PublicKey::Ed25519(keypair.public()).to_protobuf_encoding()),
-            identity_sig: Some(
-                keypair.sign(&[STATIC_KEY_DOMAIN.as_bytes(), dh_keypair.public.as_ref()].concat()),
-            ),
-            ..Default::default()
-        };
-        let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-        noise_payload.encode(&mut payload).expect("Vec<u8> provides capacity as needed");
-
-        Self {
-            payload,
-            noise,
-            role,
-        }
-    }
-}
-
-trait Noise {
-    fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error>;
-    fn read_message(&mut self, message: &[u8], payload: &mut [u8]) -> Result<usize, Error>;
-    fn into_transport_mode(self) -> Result<TransportState, Error>;
-}
-
-#[derive(Debug)]
-struct NoiseHandshakeState(HandshakeState);
-
-#[derive(Debug)]
-struct NoiseTransportState(TransportState);
-
-impl Noise for NoiseHandshakeState {
-    fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
-        tracing::trace!(
-            target: LOG_TARGET_MSG,
-            payload_length = payload.len(),
-            "handshake: write noise message",
-        );
-
-        self.0.write_message(payload, message)
-    }
-
-    fn read_message(&mut self, message: &[u8], payload: &mut [u8]) -> Result<usize, Error> {
-        tracing::trace!(
-            target: LOG_TARGET_MSG,
-            message_length = message.len(),
-            "handshake: read noise message",
-        );
-
-        self.0.read_message(message, payload)
-    }
-
-    fn into_transport_mode(self) -> Result<TransportState, Error> {
-        self.0.into_transport_mode()
-    }
-}
-
-impl Noise for NoiseTransportState {
-    fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
-        tracing::trace!(
-            target: LOG_TARGET_MSG,
-            payload_length = payload.len(),
-            "transport: write noise message",
-        );
-
-        self.0.write_message(payload, message)
-    }
-
-    fn read_message(&mut self, message: &[u8], payload: &mut [u8]) -> Result<usize, Error> {
-        tracing::trace!(
-            target: LOG_TARGET_MSG,
-            message_length = message.len(),
-            "transport: read noise message",
-        );
-
-        self.0.read_message(message, payload)
-    }
-
-    fn into_transport_mode(self) -> Result<TransportState, Error> {
-        unimplemented!("`TransportState` does not implement `into_transport_mode()`");
-    }
-}
-
-#[derive(Debug)]
-enum ReadState {
-    Ready,
-    ReadLen {
-        buf: [u8; 2],
-        off: usize,
-    },
-    ReadData {
-        len: usize,
-        off: usize,
-    },
-    ReadBuffered {
-        unread: Vec<u8>,
-    },
-    /// EOF has been reached (terminal state).
-    ///
-    /// The associated result signals if the EOF was unexpected or not.
-    Eof(Result<(), ()>),
-    /// A decryption error occurred (terminal state).
-    DecErr,
-}
-
-// TODO: remove maybe?
-#[derive(Debug)]
-enum WriteState {
-    _Ready,
-    _WriteLen { buf: [u8; 2], off: usize },
-    _WriteData { len: usize, off: usize },
-}
-
-// TODO: documentation
-#[derive(Debug)]
-struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin, T: Unpin> {
-    io: S,
-
-    /// Noise state.
-    noise: T,
-
-    /// Buffer used by `snow` as destination for encrypted data.
-    write_buffer: Vec<u8>,
-
-    /// Buffer used by `snow` as destination for decrypted data.
-    read_buffer: Vec<u8>,
-
-    /// Buffer used by `snow` as destination for decrypted data.
-    decrypt_buffer: Vec<u8>,
-
-    /// Read state of the stream.
-    read_state: ReadState,
-}
-
-impl<S: AsyncRead + AsyncWrite + Unpin, T: Unpin> NoiseSocket<S, T> {
-    fn new(io: S, noise: T) -> Self {
-        Self {
-            io,
-            noise,
-            write_buffer: Vec::new(),
-            read_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
-            decrypt_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
-            read_state: ReadState::Ready,
-        }
-    }
-}
-
-/// Read 2 bytes as frame length from the given source into the given buffer.
-///
-/// Panics if `off >= 2`.
-///
-/// When [`Poll::Pending`] is returned, the given buffer and offset
-/// may have been updated (i.e. a byte may have been read) and must be preserved
-/// for the next invocation.
-///
-/// Returns `None` if EOF has been encountered.
-fn read_frame_len<R: AsyncRead + Unpin>(
-    mut io: &mut R,
-    cx: &mut std::task::Context<'_>,
-    buf: &mut [u8; 2],
-    off: &mut usize,
-) -> Poll<io::Result<Option<u16>>> {
-    loop {
-        match ready!(Pin::new(&mut io).poll_read(cx, &mut buf[*off..])) {
-            Ok(n) => {
-                if n == 0 {
-                    return Poll::Ready(Ok(None));
-                }
-                *off += n;
-                if *off == 2 {
-                    return Poll::Ready(Ok(Some(u16::from_be_bytes(*buf))));
-                }
-            }
-            Err(e) => {
-                return Poll::Ready(Err(e));
-            }
-        }
-    }
-}
-
-impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncRead for NoiseSocket<S, T> {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        let this = Pin::into_inner(self);
-
-        loop {
-            match this.read_state {
-                ReadState::Ready => {
-                    this.read_state = ReadState::ReadLen {
-                        buf: [0, 0],
-                        off: 0,
-                    };
-                }
-                ReadState::ReadLen { mut buf, mut off } => {
-                    let n = match read_frame_len(&mut this.io, cx, &mut buf, &mut off) {
-                        Poll::Ready(Ok(Some(n))) => n,
-                        Poll::Ready(Ok(None)) => {
-                            this.read_state = ReadState::Eof(Ok(()));
-                            return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
-                        }
-                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                        Poll::Pending => {
-                            this.read_state = ReadState::ReadLen { buf, off };
-                            return Poll::Pending;
-                        }
-                    };
-
-                    if n == 0 {
-                        this.read_state = ReadState::Ready;
-                        continue;
-                    }
-
-                    this.read_buffer.resize(usize::from(n), 0u8);
-                    this.read_state = ReadState::ReadData {
-                        len: usize::from(n),
-                        off: 0,
-                    }
-                }
-                ReadState::ReadData { len, ref mut off } => {
-                    let n = {
-                        let f =
-                            Pin::new(&mut this.io).poll_read(cx, &mut this.read_buffer[*off..len]);
-                        match ready!(f) {
-                            Ok(n) => n,
-                            Err(e) => return Poll::Ready(Err(e)),
-                        }
-                    };
-                    tracing::trace!(target: LOG_TARGET, "read: {}/{} bytes", *off + n, len);
-                    if n == 0 {
-                        tracing::trace!(target: LOG_TARGET, "read: eof");
-                        this.read_state = ReadState::Eof(Err(()));
-                        return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
-                    }
-                    *off += n;
-                    if len == *off {
-                        tracing::trace!(target: LOG_TARGET, "read: decrypting {} bytes", len,);
-                        this.decrypt_buffer.resize(len, 0u8);
-
-                        match this.noise.read_message(&this.read_buffer, &mut this.decrypt_buffer) {
-                            Ok(nread) => {
-                                this.decrypt_buffer.resize(nread, 0u8);
-                                let amount = std::cmp::min(buf.len(), nread);
-                                let new = this.decrypt_buffer.split_off(amount);
-                                buf[..amount].copy_from_slice(&this.decrypt_buffer);
-
-                                if amount >= nread {
-                                    this.read_state = ReadState::Ready
-                                } else {
-                                    this.read_state = ReadState::ReadBuffered { unread: new };
-                                }
-
-                                return Poll::Ready(Ok(amount));
-                            }
-                            Err(error) => {
-                                tracing::error!(
-                                    target: LOG_TARGET,
-                                    ?error,
-                                    "read: decryption error",
-                                );
-                                this.read_state = ReadState::DecErr;
-                                return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
-                            }
-                        }
-                    }
-                }
-                ReadState::ReadBuffered { ref mut unread } => {
-                    let amount = std::cmp::min(buf.len(), unread.len());
-                    let new = unread.split_off(amount);
-                    buf[..amount].copy_from_slice(unread);
-
-                    if new.is_empty() {
-                        this.read_state = ReadState::Ready
-                    } else {
-                        this.read_state = ReadState::ReadBuffered { unread: new };
-                    }
-
-                    return Poll::Ready(Ok(amount));
-                }
-                ReadState::Eof(_res) => {
-                    tracing::trace!(target: LOG_TARGET, "read: eof");
-                    return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
-                }
-                ReadState::DecErr => {
-                    tracing::trace!(target: LOG_TARGET, "read: decryption error");
-                    return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
-                }
-            }
-        }
-    }
-}
-
-impl<S: AsyncRead + AsyncWrite + Unpin, T: Noise + Unpin> AsyncWrite for NoiseSocket<S, T> {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        let this = Pin::into_inner(self);
-        this.write_buffer.resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
-
-        match this.noise.write_message(buf, &mut this.write_buffer) {
-            Ok(nwritten) => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    size = ?nwritten,
-                    "write: send message",
-                );
-                tracing::event!(
-                    target: LOG_TARGET_MSG,
-                    tracing::Level::TRACE,
-                    buffer =? this.write_buffer[..nwritten],
-                );
-
-                let _ = Pin::new(&mut this.io).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
-                let _ = Pin::new(&mut this.io).poll_write(cx, &this.write_buffer[..nwritten]);
-
-                Poll::Ready(Ok(buf.len()))
-            }
-            Err(error) => {
-                tracing::error!(target: LOG_TARGET, ?error, "write: encryption error");
-                Poll::Ready(Err(io::ErrorKind::InvalidData.into()))
-            }
-        }
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        Pin::into_inner(self).io.flush().poll_unpin(cx)
-    }
-
-    fn poll_close(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        Pin::into_inner(self).io.close().poll_unpin(cx)
-    }
-}
-
-/// Try to parse `PeerId` from received `NoiseHandshakePayload`
-fn parse_peer_id(buf: &[u8]) -> crate::Result<PeerId> {
-    match handshake_schema::NoiseHandshakePayload::decode(buf) {
-        Ok(payload) => {
-            let public_key = PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
-                error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
-            )?)?;
-            Ok(PeerId::from_public_key(&public_key))
-        }
-        Err(err) => Err(From::from(err)),
-    }
-}
-
-/// Noise-encrypted connection.
-#[derive(Debug)]
-pub struct Encrypted<S: AsyncRead + AsyncWrite + Unpin> {
-    /// Underlying socket.
-    socket: S,
-
-    /// Noise transport state.
-    noise: TransportState,
-
-    /// Buffer used by `snow` as destination for encrypted data.
-    write_buffer: Vec<u8>,
-
-    /// Buffer used by `snow` as destination for decrypted data.
-    read_buffer: Vec<u8>,
-
-    /// Buffer used by `snow` as destination for decrypted data.
-    decrypt_buffer: Vec<u8>,
-
-    /// Read state of the stream.
-    read_state: ReadState,
-}
-
-// TODO: optimize
-impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Encrypted<S> {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        let this = Pin::into_inner(self);
-
-        loop {
-            match this.read_state {
-                ReadState::Ready => {
-                    this.read_state = ReadState::ReadLen {
-                        buf: [0, 0],
-                        off: 0,
-                    };
-                }
-                ReadState::ReadLen { mut buf, mut off } => {
-                    let n = match read_frame_len(&mut this.socket, cx, &mut buf, &mut off) {
-                        Poll::Ready(Ok(Some(n))) => n,
-                        Poll::Ready(Ok(None)) => {
-                            this.read_state = ReadState::Eof(Ok(()));
-                            return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
-                        }
-                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                        Poll::Pending => {
-                            this.read_state = ReadState::ReadLen { buf, off };
-                            return Poll::Pending;
-                        }
-                    };
-
-                    if n == 0 {
-                        this.read_state = ReadState::Ready;
-                        continue;
-                    }
-
-                    this.read_buffer.resize(usize::from(n), 0u8);
-                    this.read_state = ReadState::ReadData {
-                        len: usize::from(n),
-                        off: 0,
-                    }
-                }
-                ReadState::ReadData { len, ref mut off } => {
-                    let n = {
-                        let f = Pin::new(&mut this.socket)
-                            .poll_read(cx, &mut this.read_buffer[*off..len]);
-                        match ready!(f) {
-                            Ok(n) => n,
-                            Err(e) => return Poll::Ready(Err(e)),
-                        }
-                    };
-                    tracing::trace!(target: LOG_TARGET, "read: {}/{} bytes", *off + n, len);
-                    if n == 0 {
-                        tracing::trace!(target: LOG_TARGET, "read: eof");
-                        this.read_state = ReadState::Eof(Err(()));
-                        return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
-                    }
-                    *off += n;
-                    if len == *off {
-                        tracing::trace!(target: LOG_TARGET, "read: decrypting {} bytes", len,);
-                        this.decrypt_buffer.resize(len, 0u8);
-
-                        match this.noise.read_message(&this.read_buffer, &mut this.decrypt_buffer) {
-                            Ok(nread) => {
-                                this.decrypt_buffer.resize(nread, 0u8);
-                                let amount = std::cmp::min(buf.len(), nread);
-                                let new = this.decrypt_buffer.split_off(amount);
-                                buf[..amount].copy_from_slice(&this.decrypt_buffer);
-
-                                if amount >= nread {
-                                    this.read_state = ReadState::Ready
-                                } else {
-                                    this.read_state = ReadState::ReadBuffered { unread: new };
-                                }
-
-                                return Poll::Ready(Ok(amount));
-                            }
-                            Err(error) => {
-                                tracing::error!(
-                                    target: LOG_TARGET,
-                                    ?error,
-                                    "read: decryption error",
-                                );
-                                this.read_state = ReadState::DecErr;
-                                return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
-                            }
-                        }
-                    }
-                }
-                ReadState::ReadBuffered { ref mut unread } => {
-                    let amount = std::cmp::min(buf.len(), unread.len());
-                    let new = unread.split_off(amount);
-                    buf[..amount].copy_from_slice(unread);
-
-                    if new.is_empty() {
-                        this.read_state = ReadState::Ready
-                    } else {
-                        this.read_state = ReadState::ReadBuffered { unread: new };
-                    }
-
-                    return Poll::Ready(Ok(amount));
-                }
-                ReadState::Eof(_res) => {
-                    tracing::trace!(target: LOG_TARGET, "read: eof");
-                    return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
-                }
-                ReadState::DecErr => {
-                    tracing::trace!(target: LOG_TARGET, "read: decryption error");
-                    return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into()));
-                }
-            }
-        }
-    }
-}
-
-// TODO: optimize
-impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Encrypted<S> {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        let this = Pin::into_inner(self);
-        this.write_buffer.resize(buf.len() + NOISE_DECRYPT_EXTRA_ALLOC, 0u8);
-
-        match this.noise.write_message(buf, &mut this.write_buffer) {
-            Ok(nwritten) => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    size = ?nwritten,
-                    "write: send message",
-                );
-                tracing::trace!(
-                    target: LOG_TARGET_MSG,
-                    buffer =? this.write_buffer[..nwritten],
-                );
-
-                let _ =
-                    Pin::new(&mut this.socket).poll_write(cx, &u16::to_be_bytes(nwritten as u16));
-                let _ = Pin::new(&mut this.socket).poll_write(cx, &this.write_buffer[..nwritten]);
-
-                Poll::Ready(Ok(buf.len()))
-            }
-            Err(error) => {
-                tracing::error!(target: LOG_TARGET, ?error, "write: encryption error");
-                Poll::Ready(Err(io::ErrorKind::InvalidData.into()))
-            }
-        }
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        Pin::into_inner(self).socket.flush().poll_unpin(cx)
-    }
-
-    fn poll_close(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        Pin::into_inner(self).socket.close().poll_unpin(cx)
-    }
-}
-
-/// Perform Noise handshake.
-pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
-    io: S,
-    config: NoiseConfiguration,
-) -> crate::Result<(Encrypted<S>, PeerId)> {
-    tracing::trace!(target: LOG_TARGET, ?config, "start noise handshake");
-
-    let role = config.role;
-    let mut socket = NoiseSocket::new(io, NoiseHandshakeState(config.noise));
-    let mut buf = vec![0u8; 2048];
-
-    let peer = match role {
-        Role::Dialer => {
-            let _ = socket.write(&[]).await?;
-            let _ = socket.flush().await?;
-            let read = socket.read(&mut buf).await?;
-            let _ = socket.write(&config.payload).await?;
-            let _ = socket.flush().await?;
-            parse_peer_id(&buf[..read])?
-        }
-        Role::Listener => {
-            let _ = socket.read(&mut buf).await?;
-            let _ = socket.write(&config.payload).await?;
-            let _ = socket.flush().await?;
-            let read = socket.read(&mut buf).await?;
-            parse_peer_id(&buf[..read])?
-        }
-    };
-
-    Ok((
-        Encrypted {
-            socket: socket.io,
-            noise: socket.noise.into_transport_mode()?,
-            write_buffer: Vec::new(),
-            read_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
-            decrypt_buffer: Vec::with_capacity(NOISE_DECRYPT_BUFFER_SIZE),
-            read_state: ReadState::Ready,
-        },
-        peer,
-    ))
-}
-
-/// Noise handshaker.
 pub struct NoiseContext {
-    /// Noise handshake state.
-    noise: snow::HandshakeState,
-
-    /// Noise keypair.
-    _keypair: snow::Keypair,
-
-    /// Noise payload.
-    payload: Vec<u8>,
+    keypair: snow::Keypair,
+    noise: NoiseState,
+    role: Role,
+    pub payload: Vec<u8>,
 }
 
 impl fmt::Debug for NoiseContext {
@@ -692,30 +86,18 @@ impl fmt::Debug for NoiseContext {
         f.debug_struct("NoiseContext")
             .field("public", &self.noise)
             .field("payload", &self.payload)
+            .field("role", &self.role)
             .finish()
     }
 }
 
 impl NoiseContext {
-    /// Create new [`NoiseContext`] with prologue.
-    pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> Self {
-        let noise = snow::Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise patterns"));
-        let keypair = noise.generate_keypair().unwrap();
-
-        let noise = noise
-            .local_private_key(&keypair.private)
-            .prologue(&prologue)
-            .build_initiator()
-            .expect("to succeed");
-
-        NoiseContext::make_noise_and_payload(noise, keypair, id_keys)
-    }
-
     /// Assemble Noise payload and return [`NoiseContext`].
-    fn make_noise_and_payload(
+    fn assemble(
         noise: snow::HandshakeState,
         keypair: snow::Keypair,
         id_keys: &Keypair,
+        role: Role,
     ) -> Self {
         let noise_payload = handshake_schema::NoiseHandshakePayload {
             identity_key: Some(PublicKey::Ed25519(id_keys.public()).to_protobuf_encoding()),
@@ -729,13 +111,52 @@ impl NoiseContext {
         noise_payload.encode(&mut payload).expect("Vec<u8> to provide needed capacity");
 
         Self {
-            noise,
-            _keypair: keypair,
+            noise: NoiseState::Handshake(noise),
+            keypair,
             payload,
+            role,
         }
     }
 
+    // fn new(role: Role) -> Self {
+    pub fn new(keypair: &Keypair, role: Role) -> Self {
+        tracing::trace!(target: LOG_TARGET, ?role, "create new noise configuration");
+
+        let builder: Builder<'_> =
+            Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise pattern"));
+        let dh_keypair = builder.generate_keypair().expect("keypair generation to succeed");
+        let static_key = &dh_keypair.private;
+
+        let noise = match role {
+            Role::Dialer => builder
+                .local_private_key(static_key)
+                .build_initiator()
+                .expect("initialization to succeed"),
+            Role::Listener => builder
+                .local_private_key(static_key)
+                .build_responder()
+                .expect("initialization to succeed"),
+        };
+
+        Self::assemble(noise, dh_keypair, keypair, role)
+    }
+
+    /// Create new [`NoiseContext`] with prologue.
+    pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> Self {
+        let noise = snow::Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise patterns"));
+        let keypair = noise.generate_keypair().unwrap();
+
+        let noise = noise
+            .local_private_key(&keypair.private)
+            .prologue(&prologue)
+            .build_initiator()
+            .expect("to succeed");
+
+        Self::assemble(noise, keypair, id_keys, Role::Dialer)
+    }
+
     /// Get remote public key from the received Noise payload.
+    // TODO: refactor
     pub fn get_remote_public_key(&mut self, reply: &Vec<u8>) -> crate::Result<PublicKey> {
         if reply.len() <= 2 {
             return Err(error::Error::InvalidData);
@@ -748,7 +169,11 @@ impl NoiseContext {
         // TODO: buffer size
         let mut inner = vec![0u8; 1024];
 
-        let res = self.noise.read_message(&reply[2..], &mut inner)?;
+        let NoiseState::Handshake(ref mut noise) = self.noise else {
+            panic!("invalid state to read the second handshake message");
+        };
+
+        let res = noise.read_message(&reply[2..], &mut inner)?;
         inner.truncate(res);
 
         let payload = handshake_schema::NoiseHandshakePayload::decode(inner.as_slice())?;
@@ -768,9 +193,12 @@ impl NoiseContext {
             Role::Dialer => {
                 tracing::trace!(target: LOG_TARGET, "get noise dialer first message");
 
-                let mut buffer = vec![0u8; 256];
+                let NoiseState::Handshake(ref mut noise) = self.noise else {
+                    panic!("invalid state to read the second handshake message");
+                };
 
-                let nwritten = self.noise.write_message(&[], &mut buffer).expect("to succeed");
+                let mut buffer = vec![0u8; 256];
+                let nwritten = noise.write_message(&[], &mut buffer).expect("to succeed");
                 buffer.truncate(nwritten);
 
                 let size = nwritten as u16;
@@ -789,9 +217,12 @@ impl NoiseContext {
     pub fn second_message(&mut self) -> Vec<u8> {
         tracing::trace!(target: LOG_TARGET, "get noise paylod message");
 
-        let mut buffer = vec![0u8; 2048];
+        let NoiseState::Handshake(ref mut noise) = self.noise else {
+            panic!("invalid state to read the second handshake message");
+        };
 
-        let nwritten = self.noise.write_message(&self.payload, &mut buffer).expect("to succeed");
+        let mut buffer = vec![0u8; 2048];
+        let nwritten = noise.write_message(&self.payload, &mut buffer).expect("to succeed");
         buffer.truncate(nwritten);
 
         let size = nwritten as u16;
@@ -800,6 +231,331 @@ impl NoiseContext {
 
         size
     }
+
+    /// Read handshake message.
+    async fn read_handshake_message<T: AsyncRead + AsyncWrite + Unpin>(
+        &mut self,
+        io: &mut T,
+    ) -> crate::Result<Bytes> {
+        let mut size = BytesMut::zeroed(2);
+        io.read_exact(&mut size).await?;
+        let size = size.get_u16();
+
+        let mut message = BytesMut::zeroed(size as usize);
+        io.read_exact(&mut message).await?;
+
+        let mut out = BytesMut::new();
+        out.resize(message.len() + 200, 0u8); // TODO: correct overhead
+
+        let NoiseState::Handshake(ref mut noise) = self.noise else {
+            panic!("invalid state to read handshake message");
+        };
+
+        let nread = noise.read_message(&message, &mut out)?;
+        out.truncate(nread);
+
+        Ok(out.freeze())
+    }
+
+    /// Read Noise message
+    fn read_message(&mut self, message: &[u8]) -> Result<BytesMut, snow::Error> {
+        let mut out = BytesMut::new();
+        out.resize(message.len() + 200, 0u8); // TODO: correct overhead
+
+        let nread = match self.noise {
+            NoiseState::Handshake(ref mut noise) => noise.read_message(message, &mut out)?,
+            NoiseState::Transport(ref mut noise) => noise.read_message(message, &mut out)?,
+        };
+
+        out.truncate(nread);
+        Ok(out)
+    }
+
+    /// Write Noise message.
+    fn write_message(&mut self, message: &[u8]) -> Result<BytesMut, snow::Error> {
+        let mut out = BytesMut::new();
+        out.resize(message.len() + 256, 0u8); // TODO: correct overhead
+
+        let nread = match self.noise {
+            NoiseState::Handshake(ref mut noise) => noise.write_message(message, &mut out)?,
+            NoiseState::Transport(ref mut noise) => noise.write_message(message, &mut out)?,
+        };
+
+        out.truncate(nread);
+        Ok(out)
+    }
+
+    /// Convert Noise into transport mode.
+    fn into_transport(self) -> NoiseContext {
+        let transport = match self.noise {
+            NoiseState::Handshake(noise) => noise.into_transport_mode().unwrap(),
+            NoiseState::Transport(_) => panic!("invalid state"),
+        };
+
+        NoiseContext {
+            keypair: self.keypair,
+            payload: self.payload,
+            role: self.role,
+            noise: NoiseState::Transport(transport),
+        }
+    }
+}
+
+pub struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin> {
+    io: S,
+    noise: NoiseContext,
+    read_buffer: BytesMut,
+    offset: usize,
+    pending_frame: Option<BytesMut>,
+    pending_frames: VecDeque<BytesMut>,
+    current_frame_size: Option<usize>,
+    write_state: WriteState,
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
+    fn new(io: S, noise: NoiseContext) -> Self {
+        let mut read_buffer = BytesMut::new();
+        read_buffer.resize(MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN, 0u8);
+
+        Self {
+            io,
+            noise,
+            read_buffer,
+            offset: 0usize,
+            pending_frame: None,
+            pending_frames: VecDeque::new(),
+            current_frame_size: None,
+            write_state: WriteState::Ready,
+        }
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = Pin::into_inner(self);
+
+        loop {
+            if let None = this.pending_frame {
+                this.pending_frame = this.pending_frames.pop_front();
+            }
+
+            // if there is already a pending frame, try returning that first
+            if let Some(ref mut pending) = this.pending_frame {
+                tracing::trace!(target: LOG_TARGET, pending_len = ?pending.len(), "process pending frame");
+
+                let (len, remaining) = match pending.len() <= buf.len() {
+                    true => (pending.len(), None),
+                    false => (buf.len(), Some(pending.split_off(buf.len()))),
+                };
+
+                buf[..len].copy_from_slice(pending.as_ref());
+                this.pending_frame = remaining;
+                return Poll::Ready(Ok(len));
+            }
+
+            tracing::trace!(target: LOG_TARGET, "try to read bytes from socket");
+
+            // if there is no pending frame, try to read data from the socket
+            let nread =
+                match Pin::new(&mut this.io).poll_read(cx, &mut this.read_buffer[this.offset..]) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(nread)) => match nread == 0 {
+                        true => return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into())),
+                        false => nread,
+                    },
+                };
+
+            tracing::trace!(target: LOG_TARGET, ?nread, "read bytes from socket");
+
+            this.offset += nread;
+            this.read_buffer.truncate(this.offset);
+
+            // try to split the read bytes into noise frames and decrypt them
+            loop {
+                if this.read_buffer.len() < 2 {
+                    break;
+                }
+
+                // get frame size, either from current or previous iteration
+                let frame_size = match this.current_frame_size.take() {
+                    Some(frame_size) => frame_size,
+                    None => {
+                        this.offset -= 2;
+                        this.read_buffer.get_u16() as usize
+                    }
+                };
+
+                if this.read_buffer.len() < frame_size {
+                    this.current_frame_size = Some(frame_size);
+                    break;
+                }
+
+                let frame = this.read_buffer.split_to(frame_size);
+                this.offset -= frame.len();
+
+                match this.noise.read_message(&frame) {
+                    Ok(message) => this.pending_frames.push_back(message),
+                    Err(error) => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?error,
+                            role = ?this.noise.role,
+                            "failed to read noise message"
+                        );
+                        return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                    }
+                }
+            }
+            this.read_buffer.resize(
+                this.read_buffer.len() + MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN,
+                0u8,
+            );
+
+            continue;
+        }
+    }
+}
+
+enum WriteState {
+    Ready,
+    WriteFrame {
+        size: usize,
+        frame: bytes::buf::Chain<Bytes, Bytes>,
+    },
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = Pin::into_inner(self);
+
+        tracing::info!("send data");
+
+        loop {
+            match &mut this.write_state {
+                WriteState::Ready => {
+                    let (frame, size): (bytes::buf::Chain<Bytes, Bytes>, usize) =
+                        match buf.chunks(MAX_FRAME_LEN).next() {
+                            None => return Poll::Ready(Ok(0usize)),
+                            Some(chunk) => match this.noise.write_message(chunk) {
+                                Ok(frame) => {
+                                    let original_size = chunk.len();
+                                    // TODO: `#![feature(slice_flatten)]`
+                                    let size: Vec<u8> = u16::to_be_bytes(frame.len() as u16)
+                                        .try_into()
+                                        .expect("to succeed");
+                                    let size: Bytes = size.into();
+                                    (size.chain(frame.freeze().into()), original_size)
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        target: LOG_TARGET,
+                                        ?error,
+                                        role = ?this.noise.role,
+                                        "failed to write noise message"
+                                    );
+                                    return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                                }
+                            },
+                        };
+
+                    this.write_state = WriteState::WriteFrame { frame, size };
+                }
+                WriteState::WriteFrame { frame, size } => {
+                    let mut bufs = [IoSlice::new(&[]); 2];
+                    frame.chunks_vectored(&mut bufs);
+
+                    match futures::ready!(Pin::new(&mut this.io).poll_write_vectored(cx, &bufs)) {
+                        Ok(nwritten) => {
+                            frame.advance(nwritten);
+
+                            tracing::trace!(target: LOG_TARGET, ?nwritten, "wrote noise message");
+
+                            if frame.remaining() == 0 {
+                                let original_len = *size;
+                                this.write_state = WriteState::Ready;
+                                return Poll::Ready(Ok(original_len));
+                            }
+                        }
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                }
+            }
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_flush(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_close(cx)
+    }
+}
+
+/// Try to parse `PeerId` from received `NoiseHandshakePayload`
+fn parse_peer_id(buf: &[u8]) -> crate::Result<PeerId> {
+    match handshake_schema::NoiseHandshakePayload::decode(buf) {
+        Ok(payload) => {
+            let public_key = PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
+                error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
+            )?)?;
+            Ok(PeerId::from_public_key(&public_key))
+        }
+        Err(err) => Err(From::from(err)),
+    }
+}
+
+/// Perform Noise handshake.
+pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
+    mut io: S,
+    keypair: &Keypair,
+    role: Role,
+) -> crate::Result<(NoiseSocket<S>, PeerId)> {
+    tracing::debug!(target: LOG_TARGET, ?role, "start noise handshake");
+
+    let mut noise = NoiseContext::new(keypair, role);
+    let peer = match role {
+        Role::Dialer => {
+            // write initial message
+            let first_message = noise.first_message(Role::Dialer);
+            let _ = io.write(&first_message).await?;
+            let _ = io.flush().await?;
+
+            // read back response which contains the remote peer id
+            let message = noise.read_handshake_message(&mut io).await?;
+
+            // send the final message which contains local peer id
+            let second_message = noise.second_message();
+            let _ = io.write(&second_message).await?;
+            let _ = io.flush().await?;
+
+            parse_peer_id(&message)?
+        }
+        Role::Listener => {
+            // read remote's first message
+            let _ = noise.read_handshake_message(&mut io).await?;
+
+            // send local peer id.
+            let second_message = noise.second_message();
+            let _ = io.write(&second_message).await?;
+            let _ = io.flush().await?;
+
+            // read remote's second message which contains their peer id
+            let message = noise.read_handshake_message(&mut io).await?;
+            parse_peer_id(&message)?
+        }
+    };
+
+    Ok((NoiseSocket::new(io, noise.into_transport()), peer))
 }
 
 // TODO: add more tests
@@ -817,7 +573,10 @@ mod tests {
             .try_init();
 
         let keypair1 = Keypair::generate();
-        let _keypair2 = Keypair::generate();
+        let keypair2 = Keypair::generate();
+
+        let peer1_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
+        let peer2_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
 
         let listener = TcpListener::bind("[::1]:0".parse::<SocketAddr>().unwrap()).await.unwrap();
 
@@ -834,11 +593,14 @@ mod tests {
             (io1, io2)
         };
 
-        let config1 = NoiseConfiguration::new(&keypair1, Role::Dialer);
-        let config2 = NoiseConfiguration::new(&keypair1, Role::Listener);
-
-        let (res1, res2) = tokio::join!(handshake(io1, config1), handshake(io2, config2));
+        let (res1, res2) = tokio::join!(
+            handshake(io1, &keypair1, Role::Dialer),
+            handshake(io2, &keypair2, Role::Listener)
+        );
         let (mut res1, mut res2) = (res1.unwrap(), res2.unwrap());
+
+        assert_eq!(res1.1, peer2_id);
+        assert_eq!(res2.1, peer1_id);
 
         // verify the connection works by reading a string
         let mut buf = vec![0u8; 512];
