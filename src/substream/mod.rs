@@ -295,7 +295,7 @@ impl Substream {
     /// # Panics
     ///
     /// Panics if no codec is provided.
-    pub async fn send_framed(&mut self, bytes: Bytes) -> crate::Result<()> {
+    pub async fn send_framed(&mut self, mut bytes: Bytes) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
@@ -320,15 +320,18 @@ impl Substream {
 
                     let mut buffer = [0u8; 10];
                     let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
-                    let len = BytesMut::from(len);
+                    let mut offset = 0;
 
-                    let size = len.len() + bytes.len();
-                    let mut len_bytes = len.chain(bytes).copy_to_bytes(size);
+                    while offset < len.len() {
+                        offset += substream.write(&len[offset..]).await?;
+                    }
 
-                    substream
-                        .write_all_buf(&mut len_bytes)
-                        .await
-                        .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
+                    while bytes.has_remaining() {
+                        let nwritten = substream.write(&bytes).await?;
+                        bytes.advance(nwritten);
+                    }
+
+                    substream.flush().await.map_err(From::from)
                 }
             },
             SubstreamType::WebSocket(ref mut substream) => match self.codec {
@@ -344,15 +347,18 @@ impl Substream {
 
                     let mut buffer = [0u8; 10];
                     let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
-                    let len = BytesMut::from(len);
+                    let mut offset = 0;
 
-                    let size = len.len() + bytes.len();
-                    let mut len_bytes = len.chain(bytes).copy_to_bytes(size);
+                    while offset < len.len() {
+                        offset += substream.write(&len[offset..]).await?;
+                    }
 
-                    substream
-                        .write_all_buf(&mut len_bytes)
-                        .await
-                        .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
+                    while bytes.has_remaining() {
+                        let nwritten = substream.write(&bytes).await?;
+                        bytes.advance(nwritten);
+                    }
+
+                    substream.flush().await.map_err(From::from)
                 }
             },
             SubstreamType::Quic(ref mut substream) => match self.codec {
