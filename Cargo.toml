@@ -32,7 +32,6 @@ quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls",
 rand = { version = "0.8.0", features = ["getrandom"] }
 rcgen = "0.10.0"
 ring = "0.16.20"
-s2n-quic = { version = "1.22.0", features = ["provider-tls-rustls"] }
 serde = "1.0.158"
 sha2 = "0.10.7"
 simple-dns = "0.5.3"
