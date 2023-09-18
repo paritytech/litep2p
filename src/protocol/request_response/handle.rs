@@ -96,6 +96,22 @@ pub enum RequestResponseEvent {
     },
 }
 
+/// Dial behavior when sending requests.
+#[derive(Debug)]
+pub enum DialOptions {
+    /// If the peer is not currently connected, attempt to dial them before sending a request.
+    ///
+    /// If the dial succeeds, then request is sent to the peer once the peer has been registered
+    /// to the protocol.
+    ///
+    /// If the dial fails, [`RequestResponseError::Rejected`] is returned.
+    Dial,
+
+    /// If the peer is not connected, immediately reject the request and return
+    /// [`RequestResponseError::NotConnected`].
+    Reject,
+}
+
 /// Request-response commands.
 pub(crate) enum RequestResponseCommand {
     /// Send request to remote peer.
@@ -114,6 +130,9 @@ pub(crate) enum RequestResponseCommand {
 
         /// Request.
         request: Vec<u8>,
+
+        /// Dial options, see [`DialOptions`] for more details.
+        dial_options: DialOptions,
     },
 
     /// Send response.
@@ -179,6 +198,7 @@ impl RequestResponseHandle {
         &mut self,
         peer: PeerId,
         request: Vec<u8>,
+        dial_options: DialOptions,
     ) -> crate::Result<RequestId> {
         tracing::trace!(target: LOG_TARGET, ?peer, "send request to peer");
 
@@ -188,6 +208,7 @@ impl RequestResponseHandle {
                 peer,
                 request_id,
                 request,
+                dial_options,
             })
             .await
             .map(|_| request_id)

@@ -48,7 +48,7 @@ use std::{
 };
 
 pub use config::{Config, ConfigBuilder};
-pub use handle::{RequestResponseError, RequestResponseEvent, RequestResponseHandle};
+pub use handle::{RequestResponseError, RequestResponseEvent, RequestResponseHandle, DialOptions};
 
 mod config;
 mod handle;
@@ -117,6 +117,9 @@ pub(crate) struct RequestResponseProtocol {
     /// Pending inbound responses.
     pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
 
+    /// Pending dials for outbound requests.
+    pending_dials: HashMap<PeerId, RequestContext>,
+
     /// TX channel for sending events to the user protocol.
     event_tx: Sender<RequestResponseEvent>,
 
@@ -138,6 +141,7 @@ impl RequestResponseProtocol {
             next_request_id: config.next_request_id,
             event_tx: config.event_tx,
             command_rx: config.command_rx,
+            pending_dials: HashMap::new(),
             pending_outbound: HashMap::new(),
             pending_outbound_responses: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
@@ -153,20 +157,32 @@ impl RequestResponseProtocol {
     async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
 
-        match self.peers.entry(peer) {
-            Entry::Vacant(entry) => {
+        let Entry::Vacant(entry) = self.peers.entry(peer) else {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?peer,
+                "state mismatch: peer already exists"
+            );
+            debug_assert!(false);
+            return Err(Error::PeerAlreadyExists(peer))
+        };
+
+        match self.pending_dials.remove(&peer) {
+            None => {
                 entry.insert(PeerContext::new());
                 Ok(())
             }
-            Entry::Occupied(_) => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    "state mismatch: peer already exists"
-                );
-                debug_assert!(false);
-                Err(Error::PeerAlreadyExists(peer))
-            }
+            Some(context) => match self.service.open_substream(peer).await {
+                Ok(substream_id) => {
+                    self.pending_outbound
+                        .insert(substream_id, RequestContext::new(peer, context.request_id, context.request));
+                    Ok(())
+                }
+                Err(error) => {
+                    tracing::debug!(target: LOG_TARGET, ?peer, request_id = ?context.request_id, ?error, "failed to open substream");
+                    self.report_request_failure(peer, context.request_id, RequestResponseError::Rejected).await
+                }
+            },
         }
     }
 
@@ -305,6 +321,14 @@ impl RequestResponseProtocol {
         }
     }
 
+    async fn on_dial_failure(&mut self, peer: PeerId) {
+        if let Some(context) = self.pending_dials.remove(&peer) {
+            tracing::debug!(target: LOG_TARGET, ?peer, "failed to dial peer");
+
+            let _ = self.report_request_failure(peer, context.request_id, RequestResponseError::Rejected).await;
+        }
+    }
+
     /// Failed to open substream to remote peer.
     async fn on_substream_open_failure(
         &mut self,
@@ -342,31 +366,58 @@ impl RequestResponseProtocol {
             .map_err(From::from)
     }
 
+    /// Report request send failure to user.
+    async fn report_request_failure(&mut self, peer: PeerId, request_id: RequestId, error: RequestResponseError) -> crate::Result<()> {
+        self
+            .event_tx
+            .send(RequestResponseEvent::RequestFailed {
+                peer,
+                request_id,
+                error,
+            })
+            .await
+            .map_err(From::from)
+    }
+
     /// Send request to remote peer.
     async fn on_send_request(
         &mut self,
         peer: PeerId,
         request_id: RequestId,
         request: Vec<u8>,
+        dial_options: DialOptions,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
             ?request_id,
+            ?dial_options,
             "send request to remote peer"
         );
 
         let Some(context) = self.peers.get_mut(&peer) else {
-            let _ = self
-                .event_tx
-                .send(RequestResponseEvent::RequestFailed {
-                    peer,
-                    request_id,
-                    error: RequestResponseError::NotConnected,
-                })
-                .await;
-
-            return Err(Error::PeerDoesntExist(peer));
+            match dial_options {
+                DialOptions::Reject => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?request_id,
+                        ?dial_options,
+                        "peer not connected and should not dial"
+                    );
+                    return self.report_request_failure(peer, request_id, RequestResponseError::NotConnected).await;
+                }
+                DialOptions::Dial => match self.service.dial(&peer).await {
+                    Ok(_) => {
+                        self.pending_dials.insert(peer, RequestContext::new(peer, request_id, request));
+                        return Ok(())
+                    }
+                    Err(error) => {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
+                        return self.report_request_failure(peer, request_id, RequestResponseError::Rejected).await;
+                    }
+                }
+            }
         };
 
         if !context.active.insert(request_id) {
@@ -380,11 +431,17 @@ impl RequestResponseProtocol {
 
         // open substream and push it pending outbound substreams
         // once the substream is opened, send the request.
-        let substream_id = self.service.open_substream(peer).await?;
-        self.pending_outbound
-            .insert(substream_id, RequestContext::new(peer, request_id, request));
-
-        Ok(())
+        match self.service.open_substream(peer).await {
+            Ok(substream_id) => {
+                self.pending_outbound
+                    .insert(substream_id, RequestContext::new(peer, request_id, request));
+                Ok(())
+            }
+            Err(error) => {
+                tracing::debug!(target: LOG_TARGET, ?peer, ?request_id, ?error, "failed to open substream");
+                self.report_request_failure(peer, request_id, RequestResponseError::Rejected).await
+            }
+        }
     }
 
     /// Send response to remote peer.
@@ -492,7 +549,7 @@ impl RequestResponseProtocol {
                             tracing::warn!(target: LOG_TARGET, ?error, "failed to handle substream open failure");
                         }
                     }
-                    Some(TransportEvent::DialFailure { .. }) => todo!(),
+                    Some(TransportEvent::DialFailure { peer, .. }) => self.on_dial_failure(peer).await,
                     None => return,
                 },
                 command = self.command_rx.recv() => match command {
@@ -501,8 +558,8 @@ impl RequestResponseProtocol {
                         return
                     }
                     Some(command) => match command {
-                        RequestResponseCommand::SendRequest { peer, request_id, request } => {
-                            if let Err(error) = self.on_send_request(peer, request_id, request).await {
+                        RequestResponseCommand::SendRequest { peer, request_id, request, dial_options } => {
+                            if let Err(error) = self.on_send_request(peer, request_id, request, dial_options).await {
                                 tracing::debug!(
                                     target: LOG_TARGET,
                                     ?peer,

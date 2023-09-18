@@ -23,6 +23,7 @@ use litep2p::{
     crypto::ed25519::Keypair,
     protocol::request_response::{
         Config as RequestResponseConfig, RequestResponseError, RequestResponseEvent,
+        DialOptions,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
@@ -171,7 +172,7 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap();
     assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
@@ -287,7 +288,7 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap();
     if let RequestResponseEvent::RequestReceived {
         peer,
         fallback: None,
@@ -405,10 +406,10 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
     });
 
     // send multiple requests to remote peer
-    let request_id1 = handle1.send_request(peer2, vec![1, 3, 3, 6]).await.unwrap();
-    let request_id2 = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
-    let request_id3 = handle1.send_request(peer2, vec![1, 3, 3, 8]).await.unwrap();
-    let request_id4 = handle1.send_request(peer2, vec![1, 3, 3, 9]).await.unwrap();
+    let request_id1 = handle1.send_request(peer2, vec![1, 3, 3, 6], DialOptions::Reject).await.unwrap();
+    let request_id2 = handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap();
+    let request_id3 = handle1.send_request(peer2, vec![1, 3, 3, 8], DialOptions::Reject).await.unwrap();
+    let request_id4 = handle1.send_request(peer2, vec![1, 3, 3, 9], DialOptions::Reject).await.unwrap();
     let expected: HashMap<RequestId, Vec<u8>> = HashMap::from_iter([
         (request_id1, vec![2, 3, 3, 6]),
         (request_id2, vec![2, 3, 3, 7]),
@@ -540,7 +541,7 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
     });
 
     // send request to remote peer and wait until the requet timeout occurs
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap();
 
     sleep(Duration::from_secs(7)).await;
 
@@ -647,7 +648,7 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
     });
 
     // send request to remote peer and wait until the requet timeout occurs
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap();
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -748,7 +749,7 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
     });
 
     // send request to remote peer and wait until the requet timeout occurs
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap();
 
     drop(handle2);
     drop(litep2p2);
@@ -854,7 +855,7 @@ async fn request_too_big(transport1: Transport, transport2: Transport) {
     });
 
     // try to send too large request to remote peer
-    let request_id = handle1.send_request(peer2, vec![0u8; 257]).await.unwrap();
+    let request_id = handle1.send_request(peer2, vec![0u8; 257], DialOptions::Reject).await.unwrap();
     assert_eq!(
         handle1.next().await.unwrap(),
         RequestResponseEvent::RequestFailed {
@@ -957,7 +958,7 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![0u8; 256]).await.unwrap();
+    let request_id = handle1.send_request(peer2, vec![0u8; 256], DialOptions::Reject).await.unwrap();
     assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
@@ -1025,11 +1026,11 @@ async fn too_many_pending_requests() {
     // send one over the max requests to remote peer
     let mut request_ids = HashSet::new();
 
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 6]).await.unwrap());
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap());
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 8]).await.unwrap());
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 9]).await.unwrap());
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 9]).await.unwrap());
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 6], DialOptions::Reject).await.unwrap());
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap());
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 8], DialOptions::Reject).await.unwrap());
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 9], DialOptions::Reject).await.unwrap());
+    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 9], DialOptions::Reject).await.unwrap());
 
     let mut litep2p1_closed = false;
     let mut litep2p2_closed = false;
@@ -1156,7 +1157,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap();
     assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
@@ -1274,7 +1275,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap();
     assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
