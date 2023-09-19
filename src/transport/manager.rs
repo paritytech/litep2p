@@ -154,7 +154,7 @@ impl TransportManagerHandle {
     /// Add one or more known addresses for peer.
     ///
     /// If peer doesn't exist, it will be added to known peers.
-    pub fn add_know_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
+    pub fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
         let mut peers = self.peers.write();
 
         match peers.get_mut(&peer) {
@@ -277,7 +277,7 @@ impl TransportHandle {
 
         match address.iter().last() {
             Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                Ok(peer) =>
+                Ok(peer) => {
                     for (_, context) in &self.protocols {
                         let _ = context
                             .tx
@@ -286,7 +286,8 @@ impl TransportHandle {
                                 address: address.clone(),
                             })
                             .await;
-                    },
+                    }
+                }
                 Err(error) => {
                     tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
                     debug_assert!(false);
@@ -517,6 +518,11 @@ impl TransportManager {
         self.listen_addresses.insert(address.with(Protocol::P2p(
             Multihash::from_bytes(&self.local_peer_id.to_bytes()).unwrap(),
         )));
+    }
+
+    /// Add one or more known addresses for `peer`.
+    pub fn add_known_address(&mut self, peer: PeerId, address: impl Iterator<Item = Multiaddr>) {
+        self.transport_manager_handle.add_known_address(&peer, address);
     }
 
     /// Dial peer using `PeerId`.

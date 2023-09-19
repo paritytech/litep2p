@@ -354,15 +354,22 @@ impl Litep2p {
         self.transport_manager.dial_address(address).await
     }
 
+    pub fn add_known_address(&mut self, peer: PeerId, address: Multiaddr) {
+        self.transport_manager.add_known_address(peer, std::iter::once(address));
+    }
+
     /// Poll next event.
     pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
         match self.transport_manager.next().await? {
-            TransportManagerEvent::ConnectionEstablished { peer, address, .. } =>
-                Some(Litep2pEvent::ConnectionEstablished { peer, address }),
-            TransportManagerEvent::ConnectionClosed { peer, .. } =>
-                Some(Litep2pEvent::ConnectionClosed { peer }),
-            TransportManagerEvent::DialFailure { address, error, .. } =>
-                Some(Litep2pEvent::DialFailure { address, error }),
+            TransportManagerEvent::ConnectionEstablished { peer, address, .. } => {
+                Some(Litep2pEvent::ConnectionEstablished { peer, address })
+            }
+            TransportManagerEvent::ConnectionClosed { peer, .. } => {
+                Some(Litep2pEvent::ConnectionClosed { peer })
+            }
+            TransportManagerEvent::DialFailure { address, error, .. } => {
+                Some(Litep2pEvent::DialFailure { address, error })
+            }
         }
     }
 }
