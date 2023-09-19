@@ -48,7 +48,7 @@ use std::{
 };
 
 pub use config::{Config, ConfigBuilder};
-pub use handle::{RequestResponseError, RequestResponseEvent, RequestResponseHandle, DialOptions};
+pub use handle::{DialOptions, RequestResponseError, RequestResponseEvent, RequestResponseHandle};
 
 mod config;
 mod handle;
@@ -174,13 +174,20 @@ impl RequestResponseProtocol {
             }
             Some(context) => match self.service.open_substream(peer).await {
                 Ok(substream_id) => {
-                    self.pending_outbound
-                        .insert(substream_id, RequestContext::new(peer, context.request_id, context.request));
+                    self.pending_outbound.insert(
+                        substream_id,
+                        RequestContext::new(peer, context.request_id, context.request),
+                    );
                     Ok(())
                 }
                 Err(error) => {
                     tracing::debug!(target: LOG_TARGET, ?peer, request_id = ?context.request_id, ?error, "failed to open substream");
-                    self.report_request_failure(peer, context.request_id, RequestResponseError::Rejected).await
+                    self.report_request_failure(
+                        peer,
+                        context.request_id,
+                        RequestResponseError::Rejected,
+                    )
+                    .await
                 }
             },
         }
@@ -325,7 +332,9 @@ impl RequestResponseProtocol {
         if let Some(context) = self.pending_dials.remove(&peer) {
             tracing::debug!(target: LOG_TARGET, ?peer, "failed to dial peer");
 
-            let _ = self.report_request_failure(peer, context.request_id, RequestResponseError::Rejected).await;
+            let _ = self
+                .report_request_failure(peer, context.request_id, RequestResponseError::Rejected)
+                .await;
         }
     }
 
@@ -367,9 +376,13 @@ impl RequestResponseProtocol {
     }
 
     /// Report request send failure to user.
-    async fn report_request_failure(&mut self, peer: PeerId, request_id: RequestId, error: RequestResponseError) -> crate::Result<()> {
-        self
-            .event_tx
+    async fn report_request_failure(
+        &mut self,
+        peer: PeerId,
+        request_id: RequestId,
+        error: RequestResponseError,
+    ) -> crate::Result<()> {
+        self.event_tx
             .send(RequestResponseEvent::RequestFailed {
                 peer,
                 request_id,
@@ -439,7 +452,8 @@ impl RequestResponseProtocol {
             }
             Err(error) => {
                 tracing::debug!(target: LOG_TARGET, ?peer, ?request_id, ?error, "failed to open substream");
-                self.report_request_failure(peer, request_id, RequestResponseError::Rejected).await
+                self.report_request_failure(peer, request_id, RequestResponseError::Rejected)
+                    .await
             }
         }
     }
