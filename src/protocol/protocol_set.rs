@@ -293,7 +293,7 @@ impl Transport for TransportService {
             })
             .collect();
 
-        self.transport_handle.add_know_address(peer, addresses.into_iter());
+        self.transport_handle.add_known_address(peer, addresses.into_iter());
     }
 
     async fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {

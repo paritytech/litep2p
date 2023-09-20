@@ -87,6 +87,7 @@ impl Libp2pCertificateVerifier {
         }
     }
 
+    #[allow(unused)]
     pub fn with_sender(sender: Option<Sender<PeerId>>) -> Self {
         Self {
             sender,
@@ -267,8 +268,9 @@ impl From<certificate::VerificationError> for rustls::Error {
         use webpki::Error::*;
         match e {
             InvalidSignatureForPublicKey => rustls::Error::InvalidCertificateSignature,
-            UnsupportedSignatureAlgorithm | UnsupportedSignatureAlgorithmForPublicKey =>
-                rustls::Error::InvalidCertificateSignatureType,
+            UnsupportedSignatureAlgorithm | UnsupportedSignatureAlgorithmForPublicKey => {
+                rustls::Error::InvalidCertificateSignatureType
+            }
             e => rustls::Error::InvalidCertificateData(format!("invalid peer certificate: {e}")),
         }
     }

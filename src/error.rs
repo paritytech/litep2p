@@ -220,12 +220,6 @@ impl From<DecodingError> for Error {
     }
 }
 
-impl From<s2n_quic::provider::StartError> for Error {
-    fn from(error: s2n_quic::provider::StartError) -> Self {
-        Error::TransportError(error.to_string())
-    }
-}
-
 impl From<quinn::ConnectionError> for Error {
     fn from(error: quinn::ConnectionError) -> Self {
         match error {

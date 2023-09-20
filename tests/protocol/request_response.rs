@@ -22,7 +22,7 @@ use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::request_response::{
-        Config as RequestResponseConfig, RequestResponseError, RequestResponseEvent,
+        Config as RequestResponseConfig, DialOptions, RequestResponseError, RequestResponseEvent,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
@@ -171,7 +171,10 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
     assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
@@ -287,7 +290,10 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
     if let RequestResponseEvent::RequestReceived {
         peer,
         fallback: None,
@@ -405,10 +411,22 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
     });
 
     // send multiple requests to remote peer
-    let request_id1 = handle1.send_request(peer2, vec![1, 3, 3, 6]).await.unwrap();
-    let request_id2 = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
-    let request_id3 = handle1.send_request(peer2, vec![1, 3, 3, 8]).await.unwrap();
-    let request_id4 = handle1.send_request(peer2, vec![1, 3, 3, 9]).await.unwrap();
+    let request_id1 = handle1
+        .send_request(peer2, vec![1, 3, 3, 6], DialOptions::Reject)
+        .await
+        .unwrap();
+    let request_id2 = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
+    let request_id3 = handle1
+        .send_request(peer2, vec![1, 3, 3, 8], DialOptions::Reject)
+        .await
+        .unwrap();
+    let request_id4 = handle1
+        .send_request(peer2, vec![1, 3, 3, 9], DialOptions::Reject)
+        .await
+        .unwrap();
     let expected: HashMap<RequestId, Vec<u8>> = HashMap::from_iter([
         (request_id1, vec![2, 3, 3, 6]),
         (request_id2, vec![2, 3, 3, 7]),
@@ -540,7 +558,10 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
     });
 
     // send request to remote peer and wait until the requet timeout occurs
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
 
     sleep(Duration::from_secs(7)).await;
 
@@ -647,7 +668,10 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
     });
 
     // send request to remote peer and wait until the requet timeout occurs
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -748,7 +772,10 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
     });
 
     // send request to remote peer and wait until the requet timeout occurs
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
 
     drop(handle2);
     drop(litep2p2);
@@ -854,7 +881,8 @@ async fn request_too_big(transport1: Transport, transport2: Transport) {
     });
 
     // try to send too large request to remote peer
-    let request_id = handle1.send_request(peer2, vec![0u8; 257]).await.unwrap();
+    let request_id =
+        handle1.send_request(peer2, vec![0u8; 257], DialOptions::Reject).await.unwrap();
     assert_eq!(
         handle1.next().await.unwrap(),
         RequestResponseEvent::RequestFailed {
@@ -957,7 +985,8 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![0u8; 256]).await.unwrap();
+    let request_id =
+        handle1.send_request(peer2, vec![0u8; 256], DialOptions::Reject).await.unwrap();
     assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
@@ -1025,11 +1054,36 @@ async fn too_many_pending_requests() {
     // send one over the max requests to remote peer
     let mut request_ids = HashSet::new();
 
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 6]).await.unwrap());
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap());
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 8]).await.unwrap());
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 9]).await.unwrap());
-    request_ids.insert(handle1.send_request(peer2, vec![1, 3, 3, 9]).await.unwrap());
+    request_ids.insert(
+        handle1
+            .send_request(peer2, vec![1, 3, 3, 6], DialOptions::Reject)
+            .await
+            .unwrap(),
+    );
+    request_ids.insert(
+        handle1
+            .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+            .await
+            .unwrap(),
+    );
+    request_ids.insert(
+        handle1
+            .send_request(peer2, vec![1, 3, 3, 8], DialOptions::Reject)
+            .await
+            .unwrap(),
+    );
+    request_ids.insert(
+        handle1
+            .send_request(peer2, vec![1, 3, 3, 9], DialOptions::Reject)
+            .await
+            .unwrap(),
+    );
+    request_ids.insert(
+        handle1
+            .send_request(peer2, vec![1, 3, 3, 9], DialOptions::Reject)
+            .await
+            .unwrap(),
+    );
 
     let mut litep2p1_closed = false;
     let mut litep2p2_closed = false;
@@ -1156,7 +1210,10 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
     assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
@@ -1274,7 +1331,10 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
     });
 
     // send request to remote peer
-    let request_id = handle1.send_request(peer2, vec![1, 3, 3, 7]).await.unwrap();
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
     assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
@@ -1293,6 +1353,231 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
             peer: peer2,
             request_id,
             response: vec![1, 3, 3, 8],
+        }
+    );
+}
+
+#[tokio::test]
+async fn dial_peer_when_sending_request_tcp() {
+    dial_peer_when_sending_request(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dial_peer_when_sending_request_quic() {
+    dial_peer_when_sending_request(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dial_peer_when_sending_request_websocket() {
+    dial_peer_when_sending_request(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+async fn dial_peer_when_sending_request(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1/improved"),
+        vec![ProtocolName::from("/protocol/1")],
+        1024,
+    );
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
+
+    // add known address for `peer2` and start event loop for both litep2ps
+    litep2p1.add_known_address(peer2, address);
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {}
+                _ = litep2p2.next_event() => {}
+            }
+        }
+    });
+
+    // send request to remote peer
+    let request_id =
+        handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Dial).await.unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer1,
+            fallback: Some(ProtocolName::from("/protocol/1")),
+            request_id,
+            request: vec![1, 3, 3, 7],
+        }
+    );
+
+    // send response to the received request
+    handle2.send_response(request_id, vec![1, 3, 3, 8]).await.unwrap();
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::ResponseReceived {
+            peer: peer2,
+            request_id,
+            response: vec![1, 3, 3, 8],
+        }
+    );
+}
+
+#[tokio::test]
+async fn dial_peer_but_no_known_address_tcp() {
+    dial_peer_but_no_known_address(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dial_peer_but_no_known_address_quic() {
+    dial_peer_but_no_known_address(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dial_peer_but_no_known_address_websocket() {
+    dial_peer_but_no_known_address(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            yamux_config: Default::default(),
+        }),
+    )
+    .await;
+}
+
+async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) =
+        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, _handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1/improved"),
+        vec![ProtocolName::from("/protocol/1")],
+        1024,
+    );
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer2 = *litep2p2.local_peer_id();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {}
+                _ = litep2p2.next_event() => {}
+            }
+        }
+    });
+
+    // send request to remote peer
+    let request_id =
+        handle1.send_request(peer2, vec![1, 3, 3, 7], DialOptions::Dial).await.unwrap();
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestFailed {
+            peer: peer2,
+            request_id,
+            error: RequestResponseError::Rejected,
         }
     );
 }
