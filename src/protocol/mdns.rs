@@ -233,9 +233,8 @@ impl Mdns {
                 }
 
                 match answer.rdata {
-                    RData::PTR(PTR(ref name)) if name != &Name::new_unchecked(&self.username) => {
-                        Some(name)
-                    }
+                    RData::PTR(PTR(ref name)) if name != &Name::new_unchecked(&self.username) =>
+                        Some(name),
                     _ => None,
                 }
             })

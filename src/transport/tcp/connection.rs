@@ -139,6 +139,8 @@ impl TcpConnection {
         address: AddressType,
         peer: Option<PeerId>,
         yamux_config: yamux::Config,
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
     ) -> crate::Result<Self> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -163,6 +165,8 @@ impl TcpConnection {
                 Role::Dialer,
                 address,
                 yamux_config,
+                max_read_ahead_factor,
+                max_write_buffer_size,
             )
             .await
         })
@@ -222,6 +226,8 @@ impl TcpConnection {
         connection_id: ConnectionId,
         address: SocketAddr,
         yamux_config: yamux::Config,
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
@@ -236,6 +242,8 @@ impl TcpConnection {
                 Role::Listener,
                 AddressType::Socket(address),
                 yamux_config,
+                max_read_ahead_factor,
+                max_write_buffer_size,
             )
             .await
         })
@@ -313,6 +321,8 @@ impl TcpConnection {
         role: Role,
         address: AddressType,
         yamux_config: yamux::Config,
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
     ) -> crate::Result<Self> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -332,7 +342,14 @@ impl TcpConnection {
         );
 
         // perform noise handshake
-        let (stream, peer) = noise::handshake(stream.inner(), &keypair, role).await?;
+        let (stream, peer) = noise::handshake(
+            stream.inner(),
+            &keypair,
+            role,
+            max_read_ahead_factor,
+            max_write_buffer_size,
+        )
+        .await?;
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
         let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
@@ -578,6 +595,8 @@ mod tests {
                 AddressType::Socket(address),
                 None,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -637,6 +656,8 @@ mod tests {
                 ConnectionId::from(0usize),
                 dialer_address,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -689,6 +710,8 @@ mod tests {
                 AddressType::Socket(address),
                 None,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -752,6 +775,8 @@ mod tests {
                 ConnectionId::from(0usize),
                 dialer_address,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -814,6 +839,8 @@ mod tests {
                 ConnectionId::from(0usize),
                 dialer_address,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -870,6 +897,8 @@ mod tests {
                 AddressType::Socket(address),
                 None,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -927,6 +956,8 @@ mod tests {
                 AddressType::Socket(address),
                 None,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -983,6 +1014,8 @@ mod tests {
                 ConnectionId::from(0usize),
                 dialer_address,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -1039,6 +1072,8 @@ mod tests {
                 ConnectionId::from(0usize),
                 dialer_address,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -1056,11 +1091,11 @@ mod tests {
             dialer_select_proto(dialer, vec!["/noise"], Version::V1).await.unwrap();
 
         let keypair = Keypair::generate();
-        // let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer);
+        // let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer, 5, 2);
 
         // do a noise handshake
         let (stream, _peer) =
-            noise::handshake(stream.inner(), &keypair, Role::Dialer).await.unwrap();
+            noise::handshake(stream.inner(), &keypair, Role::Dialer, 5, 2).await.unwrap();
         let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // after the handshake, try to negotiate some random protocol instead of yamux
@@ -1107,6 +1142,8 @@ mod tests {
                 AddressType::Socket(address),
                 None,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -1126,7 +1163,7 @@ mod tests {
         // do a noise handshake
         let keypair = Keypair::generate();
         let (stream, _peer) =
-            noise::handshake(stream.inner(), &keypair, Role::Listener).await.unwrap();
+            noise::handshake(stream.inner(), &keypair, Role::Listener, 5, 2).await.unwrap();
         let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // after the handshake, try to negotiate some random protocol instead of yamux
@@ -1179,6 +1216,8 @@ mod tests {
                 ConnectionId::from(0usize),
                 dialer_address,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -1198,7 +1237,7 @@ mod tests {
         // do a noise handshake
         let keypair = Keypair::generate();
         let (stream, _peer) =
-            noise::handshake(stream.inner(), &keypair, Role::Dialer).await.unwrap();
+            noise::handshake(stream.inner(), &keypair, Role::Dialer, 5, 2).await.unwrap();
         let _stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // after noise handshake, don't negotiate anything and wait for the substream to time out
@@ -1243,6 +1282,8 @@ mod tests {
                 AddressType::Socket(address),
                 None,
                 Default::default(),
+                5,
+                2,
             )
             .await
             {
@@ -1262,7 +1303,7 @@ mod tests {
         // do a noise handshake
         let keypair = Keypair::generate();
         let (stream, _peer) =
-            noise::handshake(stream.inner(), &keypair, Role::Listener).await.unwrap();
+            noise::handshake(stream.inner(), &keypair, Role::Listener, 5, 2).await.unwrap();
         let _stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // after noise handshake, don't negotiate anything and wait for the substream to time out

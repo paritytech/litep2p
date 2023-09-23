@@ -171,6 +171,8 @@ impl TcpTransport {
         let protocol_set = self.context.protocol_set();
         let connection_id = self.context.next_connection_id();
         let yamux_config = self.config.yamux_config.clone();
+        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+        let max_write_buffer_size = self.config.noise_write_buffer_size;
 
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::accept_connection(
@@ -179,6 +181,8 @@ impl TcpTransport {
                 connection_id,
                 address,
                 yamux_config,
+                max_read_ahead_factor,
+                max_write_buffer_size,
             )
             .await
             .map_err(|error| TcpError::new(error, Some(connection_id)))
@@ -228,6 +232,8 @@ impl TcpTransport {
         let protocol_set = self.context.protocol_set();
         let (socket_address, peer) = Self::get_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
+        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+        let max_write_buffer_size = self.config.noise_write_buffer_size;
 
         self.pending_dials.insert(connection, address);
         self.pending_connections.push(Box::pin(async move {
@@ -237,6 +243,8 @@ impl TcpTransport {
                 socket_address,
                 peer,
                 yamux_config,
+                max_read_ahead_factor,
+                max_write_buffer_size,
             )
             .await
             .map_err(|error| TcpError::new(error, Some(connection)))
@@ -402,7 +410,7 @@ mod tests {
         };
         let transport_config1 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         };
 
         let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
@@ -436,7 +444,7 @@ mod tests {
         };
         let transport_config2 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         };
 
         let transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
@@ -498,7 +506,7 @@ mod tests {
         };
         let transport_config1 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         };
 
         let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
@@ -529,7 +537,7 @@ mod tests {
         };
         let transport_config2 = TransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         };
 
         let transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
@@ -578,7 +586,7 @@ mod tests {
             handle,
             TransportConfig {
                 listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
-                yamux_config: Default::default(),
+                ..Default::default()
             },
         )
         .await

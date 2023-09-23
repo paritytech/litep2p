@@ -54,14 +54,14 @@ const MAX_NOISE_MSG_LEN: usize = 65536;
 /// Space given to the encryption buffer to hold key material.
 const NOISE_EXTRA_ENCRYPT_SPACE: usize = 16;
 
-/// Maximum read size.
-const CANONICAL_MAX_READ: usize = MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN;
-
 /// Max read ahead factor for the noise socket.
 ///
 /// Specifies how many multiples of `MAX_NOISE_MESSAGE_LEN` are read from the socket
 /// using one call to `poll_read()`.
-const MAX_READ_AHEAD_FACTOR: usize = 16;
+pub(crate) const MAX_READ_AHEAD_FACTOR: usize = 5;
+
+/// Maximum write buffer size.
+pub(crate) const MAX_WRITE_BUFFER_SIZE: usize = 2;
 
 /// Max. length for Noise protocol message payloads.
 pub const MAX_FRAME_LEN: usize = MAX_NOISE_MSG_LEN - NOISE_EXTRA_ENCRYPT_SPACE;
@@ -324,18 +324,23 @@ pub struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin> {
     nread: usize,
     read_state: ReadState,
     read_buffer: Vec<u8>,
-    canoncial_max_read: usize,
+    canonical_max_read: usize,
     decrypt_buffer: Option<Vec<u8>>,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
-    fn new(io: S, noise: NoiseContext) -> Self {
+    fn new(
+        io: S,
+        noise: NoiseContext,
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
+    ) -> Self {
         Self {
             io,
             noise,
             read_buffer: vec![
                 0u8;
-                MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN + (2 + MAX_NOISE_MSG_LEN)
+                max_read_ahead_factor * MAX_NOISE_MSG_LEN + (2 + MAX_NOISE_MSG_LEN)
             ],
             nread: 0usize,
             offset: 0usize,
@@ -345,12 +350,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
                 size: 0usize,
                 encrypted_size: 0usize,
             },
-            encrypt_buffer: vec![0u8; 5 * (MAX_NOISE_MSG_LEN + 2)],
+            encrypt_buffer: vec![0u8; max_write_buffer_size * (MAX_NOISE_MSG_LEN + 2)],
             decrypt_buffer: Some(vec![0u8; MAX_FRAME_LEN]),
             read_state: ReadState::ReadData {
-                max_read: CANONICAL_MAX_READ,
+                max_read: max_read_ahead_factor * MAX_NOISE_MSG_LEN,
             },
-            canoncial_max_read: MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN,
+            canonical_max_read: max_read_ahead_factor * MAX_NOISE_MSG_LEN,
         }
     }
 
@@ -368,7 +373,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
 
         self.offset = 0;
         self.read_state = ReadState::ReadData {
-            max_read: CANONICAL_MAX_READ,
+            max_read: self.canonical_max_read,
         };
     }
 }
@@ -431,17 +436,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
 
                     if remaining < frame_size {
                         // `read_buffer` can fit the full frame size.
-                        if this.nread + frame_size < this.canoncial_max_read {
+                        if this.nread + frame_size < this.canonical_max_read {
                             tracing::trace!(
                                 target: LOG_TARGET,
-                                max_size = ?this.canoncial_max_read,
+                                max_size = ?this.canonical_max_read,
                                 next_frame_size = ?(this.nread + frame_size),
                                 "read buffer can fit the full frame",
                             );
 
                             this.current_frame_size = Some(frame_size);
                             this.read_state = ReadState::ReadData {
-                                max_read: CANONICAL_MAX_READ,
+                                max_read: this.canonical_max_read,
                             };
                             continue;
                         }
@@ -664,6 +669,8 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     mut io: S,
     keypair: &Keypair,
     role: Role,
+    max_read_ahead_factor: usize,
+    max_write_buffer_size: usize,
 ) -> crate::Result<(NoiseSocket<S>, PeerId)> {
     tracing::debug!(target: LOG_TARGET, ?role, "start noise handshake");
 
@@ -700,7 +707,15 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
         }
     };
 
-    Ok((NoiseSocket::new(io, noise.into_transport()), peer))
+    Ok((
+        NoiseSocket::new(
+            io,
+            noise.into_transport(),
+            max_read_ahead_factor,
+            max_write_buffer_size,
+        ),
+        peer,
+    ))
 }
 
 // TODO: add more tests
@@ -739,8 +754,20 @@ mod tests {
         };
 
         let (res1, res2) = tokio::join!(
-            handshake(io1, &keypair1, Role::Dialer),
-            handshake(io2, &keypair2, Role::Listener)
+            handshake(
+                io1,
+                &keypair1,
+                Role::Dialer,
+                MAX_READ_AHEAD_FACTOR,
+                MAX_WRITE_BUFFER_SIZE
+            ),
+            handshake(
+                io2,
+                &keypair2,
+                Role::Listener,
+                MAX_READ_AHEAD_FACTOR,
+                MAX_WRITE_BUFFER_SIZE
+            )
         );
         let (mut res1, mut res2) = (res1.unwrap(), res2.unwrap());
 

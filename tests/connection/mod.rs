@@ -50,11 +50,11 @@ async fn two_litep2ps_work_tcp() {
     two_litep2ps_work(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await
@@ -78,11 +78,11 @@ async fn two_litep2ps_work_websocket() {
     two_litep2ps_work(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -140,11 +140,11 @@ async fn dial_failure_tcp() {
     dial_failure(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Multiaddr::empty()
             .with(Protocol::Ip6(std::net::Ipv6Addr::new(
@@ -179,11 +179,11 @@ async fn dial_failure_websocket() {
     dial_failure(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Multiaddr::empty()
             .with(Protocol::Ip6(std::net::Ipv6Addr::new(
@@ -258,7 +258,7 @@ async fn connect_over_dns() {
         .with_keypair(keypair1)
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config1)
         .build();
@@ -270,7 +270,7 @@ async fn connect_over_dns() {
         .with_keypair(keypair2)
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config2)
         .build();
@@ -317,7 +317,7 @@ async fn connection_timeout_tcp() {
     connection_timeout(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         address,
     )
@@ -362,7 +362,7 @@ async fn connection_timeout_websocket() {
     connection_timeout(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         address,
     )
@@ -438,7 +438,7 @@ async fn dial_quic_peer_id_missing() {
 async fn dial_self_tcp() {
     dial_self(Transport::Tcp(TcpTransportConfig {
         listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await
 }
@@ -455,7 +455,7 @@ async fn dial_self_quic() {
 async fn dial_self_websocket() {
     dial_self(Transport::WebSocket(WebSocketTransportConfig {
         listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await;
 }
@@ -521,11 +521,11 @@ async fn keep_alive_timeout_tcp() {
     keep_alive_timeout(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await
@@ -549,11 +549,11 @@ async fn keep_alive_timeout_websocket() {
     keep_alive_timeout(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -630,7 +630,7 @@ async fn simultaneous_dial_tcp() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config1)
         .build();
@@ -641,7 +641,7 @@ async fn simultaneous_dial_tcp() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config2)
         .build();
@@ -791,7 +791,7 @@ async fn websocket_over_ipv6() {
         .with_keypair(Keypair::generate())
         .with_websocket(WebSocketTransportConfig {
             listen_address: "/ip6/::1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config1)
         .build();
@@ -802,7 +802,7 @@ async fn websocket_over_ipv6() {
         .with_keypair(Keypair::generate())
         .with_websocket(WebSocketTransportConfig {
             listen_address: "/ip6/::1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config2)
         .build();
@@ -843,7 +843,7 @@ async fn tcp_dns_resolution() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config1)
         .build();
@@ -854,7 +854,7 @@ async fn tcp_dns_resolution() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config2)
         .build();
@@ -904,7 +904,7 @@ async fn websocket_dns_resolution() {
         .with_keypair(Keypair::generate())
         .with_websocket(WebSocketTransportConfig {
             listen_address: "/ip6/::1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config1)
         .build();
@@ -915,7 +915,7 @@ async fn websocket_dns_resolution() {
         .with_keypair(Keypair::generate())
         .with_websocket(WebSocketTransportConfig {
             listen_address: "/ip6/::1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config2)
         .build();

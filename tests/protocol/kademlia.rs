@@ -35,7 +35,7 @@ async fn spawn_litep2p(port: u16) {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: format!("/ip6/::1/tcp/{port}").parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_kademlia(kad_config1)
         .build();
@@ -59,7 +59,7 @@ async fn kademlia_supported() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_kademlia(kad_config1)
         .build();
@@ -94,7 +94,7 @@ async fn put_value() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_libp2p_kademlia(kad_config1)
         .build();

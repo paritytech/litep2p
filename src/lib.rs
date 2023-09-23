@@ -361,15 +361,12 @@ impl Litep2p {
     /// Poll next event.
     pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
         match self.transport_manager.next().await? {
-            TransportManagerEvent::ConnectionEstablished { peer, address, .. } => {
-                Some(Litep2pEvent::ConnectionEstablished { peer, address })
-            }
-            TransportManagerEvent::ConnectionClosed { peer, .. } => {
-                Some(Litep2pEvent::ConnectionClosed { peer })
-            }
-            TransportManagerEvent::DialFailure { address, error, .. } => {
-                Some(Litep2pEvent::DialFailure { address, error })
-            }
+            TransportManagerEvent::ConnectionEstablished { peer, address, .. } =>
+                Some(Litep2pEvent::ConnectionEstablished { peer, address }),
+            TransportManagerEvent::ConnectionClosed { peer, .. } =>
+                Some(Litep2pEvent::ConnectionClosed { peer }),
+            TransportManagerEvent::DialFailure { address, error, .. } =>
+                Some(Litep2pEvent::DialFailure { address, error }),
         }
     }
 }
@@ -412,7 +409,7 @@ mod tests {
         let config = Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-                yamux_config: Default::default(),
+                ..Default::default()
             })
             .with_quic(crate::transport::quic::config::TransportConfig {
                 listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
@@ -481,7 +478,7 @@ mod tests {
         let config = Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-                yamux_config: Default::default(),
+                ..Default::default()
             })
             .with_quic(crate::transport::quic::config::TransportConfig {
                 listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),

@@ -28,3 +28,11 @@ pub struct TransportConfig {
     /// Listen address for the transport.
     pub listen_address: Multiaddr,
 }
+
+impl Default for TransportConfig {
+    fn default() -> Self {
+        Self {
+            listen_address: "/ip6/::/udp/0/quic-v1".parse().expect("valid address"),
+        }
+    }
+}
