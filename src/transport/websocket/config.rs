@@ -20,6 +20,8 @@
 
 //! WebSocket transport configuration.
 
+use crate::crypto::noise::{MAX_READ_AHEAD_FACTOR, MAX_WRITE_BUFFER_SIZE};
+
 use multiaddr::Multiaddr;
 use yamux::Config;
 
@@ -31,6 +33,26 @@ pub struct TransportConfig {
 
     /// Yamux configuration.
     pub yamux_config: Config,
+
+    /// Noise read-ahead frame count.
+    ///
+    /// Specifies how many Noise frames are read per call to the underlying socket.
+    ///
+    /// By default this is configured to `5` so each call to the underlying socket can read up
+    /// to `5` Noise frame per call. Fewer frames may be read if there isn't enough data in the
+    /// socket. Each Noise frame is `65 KB` so the default setting allocates `65 KB * 5 = 325 KB`
+    /// per connection.
+    pub noise_read_ahead_frame_count: usize,
+
+    /// Noise write buffer size.
+    ///
+    /// Specifes how many Noise frames are tried to be coalesced into a single system call.
+    /// By default the value is set to `2` which means that the `NoiseSocket` will allocate
+    /// `130 KB` for each outgoing connection.
+    ///
+    /// The write buffer size is separate from  the read-ahead frame count so by default
+    /// the Noise code will allocate `2 * 65 KB + 5 * 65 KB = 455 KB` per connection.
+    pub noise_write_buffer_size: usize,
 }
 
 impl Default for TransportConfig {
@@ -38,6 +60,8 @@ impl Default for TransportConfig {
         Self {
             listen_address: "/ip6/::/tcp/0/ws".parse().expect("valid address"),
             yamux_config: Default::default(),
+            noise_read_ahead_frame_count: MAX_READ_AHEAD_FACTOR,
+            noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,
         }
     }
 }

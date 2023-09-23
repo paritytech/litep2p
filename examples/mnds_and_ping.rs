@@ -73,7 +73,7 @@ async fn make_litep2p() -> (
     let litep2p_config = Litep2pConfigBuilder::new()
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: yamux::Config::default(),
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config)
         .with_mdns(mdns_config)

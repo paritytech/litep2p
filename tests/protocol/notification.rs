@@ -81,11 +81,11 @@ async fn open_substreams_tcp() {
     open_substreams(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await
@@ -109,11 +109,11 @@ async fn open_substreams_websocket() {
     open_substreams(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -244,11 +244,11 @@ async fn reject_substream_tcp() {
     reject_substream(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -272,11 +272,11 @@ async fn reject_substream_websocket() {
     reject_substream(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -367,11 +367,11 @@ async fn notification_stream_closed_tcp() {
     notification_stream_closed(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await
@@ -395,11 +395,11 @@ async fn notification_stream_closed_websocket() {
     notification_stream_closed(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -537,11 +537,11 @@ async fn reconnect_after_disconnect_tcp() {
     reconnect_after_disconnect(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await
@@ -565,11 +565,11 @@ async fn reconnect_after_disconnect_websocket() {
     reconnect_after_disconnect(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -762,11 +762,11 @@ async fn set_new_handshake_tcp() {
     set_new_handshake(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await
@@ -790,11 +790,11 @@ async fn set_new_handshake_websocket() {
     set_new_handshake(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -972,11 +972,11 @@ async fn both_nodes_open_substreams_tcp() {
     both_nodes_open_substreams(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await
@@ -1000,11 +1000,11 @@ async fn both_nodes_open_substreams_websocket() {
     both_nodes_open_substreams(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -1140,11 +1140,11 @@ async fn both_nodes_open_substream_one_rejects_substreams_tcp() {
     both_nodes_open_substream_one_rejects_substreams(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await
@@ -1170,11 +1170,11 @@ async fn both_nodes_open_substream_one_rejects_substreams_websocket() {
     both_nodes_open_substream_one_rejects_substreams(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -1284,7 +1284,7 @@ async fn both_nodes_open_substream_one_rejects_substreams(
 async fn send_sync_notification_to_non_existent_peer_tcp() {
     send_sync_notification_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
         listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await
 }
@@ -1301,7 +1301,7 @@ async fn send_sync_notification_to_non_existent_peer_quic() {
 async fn send_sync_notification_to_non_existent_peer_websocket() {
     send_sync_notification_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
         listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await;
 }
@@ -1346,7 +1346,7 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport) {
 async fn send_async_notification_to_non_existent_peer_tcp() {
     send_async_notification_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
         listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await
 }
@@ -1363,7 +1363,7 @@ async fn send_async_notification_to_non_existent_peer_quic() {
 async fn send_async_notification_to_non_existent_peer_websocket() {
     send_async_notification_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
         listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await;
 }
@@ -1411,7 +1411,7 @@ async fn send_async_notification_to_non_existent_peer(transport1: Transport) {
 async fn try_to_connect_to_non_existent_peer_tcp() {
     try_to_connect_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
         listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await
 }
@@ -1428,7 +1428,7 @@ async fn try_to_connect_to_non_existent_peer_quic() {
 async fn try_to_connect_to_non_existent_peer_websocket() {
     try_to_connect_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
         listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await;
 }
@@ -1481,7 +1481,7 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
 async fn try_to_disconnect_non_existent_peer_tcp() {
     try_to_disconnect_non_existent_peer(Transport::Tcp(TcpTransportConfig {
         listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await
 }
@@ -1498,7 +1498,7 @@ async fn try_to_disconnect_non_existent_peer_quic() {
 async fn try_to_disconnect_non_existent_peer_websocket() {
     try_to_disconnect_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
         listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-        yamux_config: Default::default(),
+        ..Default::default()
     }))
     .await;
 }
@@ -1544,11 +1544,11 @@ async fn try_to_reopen_substream_tcp() {
     try_to_reopen_substream(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -1572,11 +1572,11 @@ async fn try_to_reopen_substream_websocket() {
     try_to_reopen_substream(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -1696,11 +1696,11 @@ async fn substream_validation_timeout_tcp() {
     substream_validation_timeout(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -1724,11 +1724,11 @@ async fn substream_validation_timeout_websocket() {
     substream_validation_timeout(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -1819,11 +1819,11 @@ async fn unsupported_protocol_tcp() {
     unsupported_protocol(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -1847,11 +1847,11 @@ async fn unsupported_protocol_websocket() {
     unsupported_protocol(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -1925,11 +1925,11 @@ async fn dialer_fallback_protocol_works_tcp() {
     dialer_fallback_protocol_works(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -1953,11 +1953,11 @@ async fn dialer_fallback_protocol_works_websocket() {
     dialer_fallback_protocol_works(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -2065,11 +2065,11 @@ async fn listener_fallback_protocol_works_tcp() {
     listener_fallback_protocol_works(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -2093,11 +2093,11 @@ async fn listener_fallback_protocol_works_websocket() {
     listener_fallback_protocol_works(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;
@@ -2205,11 +2205,11 @@ async fn enable_auto_accept_tcp() {
     enable_auto_accept(
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await
@@ -2233,11 +2233,11 @@ async fn enable_auto_accept_websocket() {
     enable_auto_accept(
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
             listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         }),
     )
     .await;

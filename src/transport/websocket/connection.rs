@@ -172,7 +172,7 @@ impl WebSocketConnection {
 
         // perform noise handshake
         let (stream, peer) =
-            noise::handshake(stream.inner(), &protocol_set.keypair, Role::Dialer).await?;
+            noise::handshake(stream.inner(), &protocol_set.keypair, Role::Dialer, 5, 2).await?;
         let stream: NoiseSocket<BufferedStream<_>> = stream;
 
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
@@ -227,7 +227,7 @@ impl WebSocketConnection {
 
         // perform noise handshake
         let (stream, peer) =
-            noise::handshake(stream.inner(), &protocol_set.keypair, Role::Listener).await?;
+            noise::handshake(stream.inner(), &protocol_set.keypair, Role::Listener, 5, 2).await?;
         let stream: NoiseSocket<BufferedStream<_>> = stream;
 
         tracing::trace!(target: LOG_TARGET, "noise handshake done");

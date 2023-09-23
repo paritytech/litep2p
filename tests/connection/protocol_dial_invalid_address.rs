@@ -103,7 +103,7 @@ async fn protocol_dial_invalid_dns_address() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_user_protocol(custom_protocol)
         .build();
@@ -136,7 +136,7 @@ async fn protocol_dial_peer_id_missing() {
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: Default::default(),
+            ..Default::default()
         })
         .with_user_protocol(custom_protocol)
         .build();

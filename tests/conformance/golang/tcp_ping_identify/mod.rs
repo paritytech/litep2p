@@ -53,7 +53,7 @@ async fn go_libp2p_dials() {
             .with_keypair(keypair)
             .with_tcp(TcpTransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-                yamux_config: Default::default(),
+                ..Default::default()
             })
             .with_libp2p_ping(ping_config)
             .with_libp2p_identify(identify_config)
