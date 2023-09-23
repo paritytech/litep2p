@@ -33,9 +33,7 @@ use prost::Message;
 use snow::{Builder, HandshakeState, TransportState};
 
 use std::{
-    collections::VecDeque,
-    fmt,
-    io::{self, IoSlice},
+    fmt, io,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -54,13 +52,16 @@ pub(crate) const STATIC_KEY_DOMAIN: &str = "noise-libp2p-static-key:";
 const MAX_NOISE_MSG_LEN: usize = 65536;
 
 /// Space given to the encryption buffer to hold key material.
-const NOISE_EXTRA_ENCRYPT_SPACE: usize = 1024;
+const NOISE_EXTRA_ENCRYPT_SPACE: usize = 16;
+
+/// Maximum read size.
+const CANONICAL_MAX_READ: usize = MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN;
 
 /// Max read ahead factor for the noise socket.
 ///
 /// Specifies how many multiples of `MAX_NOISE_MESSAGE_LEN` are read from the socket
 /// using one call to `poll_read()`.
-const MAX_READ_AHEAD_FACTOR: usize = 50;
+const MAX_READ_AHEAD_FACTOR: usize = 16;
 
 /// Max. length for Noise protocol message payloads.
 pub const MAX_FRAME_LEN: usize = MAX_NOISE_MSG_LEN - NOISE_EXTRA_ENCRYPT_SPACE;
@@ -257,32 +258,18 @@ impl NoiseContext {
         Ok(out.freeze())
     }
 
-    /// Read Noise message
-    fn read_message(&mut self, message: &[u8]) -> Result<BytesMut, snow::Error> {
-        let mut out = BytesMut::new();
-        out.resize(message.len() + 200, 0u8); // TODO: correct overhead
-
-        let nread = match self.noise {
-            NoiseState::Handshake(ref mut noise) => noise.read_message(message, &mut out)?,
-            NoiseState::Transport(ref mut noise) => noise.read_message(message, &mut out)?,
-        };
-
-        out.truncate(nread);
-        Ok(out)
+    fn read_message(&mut self, message: &[u8], out: &mut [u8]) -> Result<usize, snow::Error> {
+        match self.noise {
+            NoiseState::Handshake(ref mut noise) => noise.read_message(message, out),
+            NoiseState::Transport(ref mut noise) => noise.read_message(message, out),
+        }
     }
 
-    /// Write Noise message.
-    fn write_message(&mut self, message: &[u8]) -> Result<BytesMut, snow::Error> {
-        let mut out = BytesMut::new();
-        out.resize(message.len() + 256, 0u8); // TODO: correct overhead
-
-        let nread = match self.noise {
-            NoiseState::Handshake(ref mut noise) => noise.write_message(message, &mut out)?,
-            NoiseState::Transport(ref mut noise) => noise.write_message(message, &mut out)?,
-        };
-
-        out.truncate(nread);
-        Ok(out)
+    fn write_message(&mut self, message: &[u8], out: &mut [u8]) -> Result<usize, snow::Error> {
+        match self.noise {
+            NoiseState::Handshake(ref mut noise) => noise.write_message(message, out),
+            NoiseState::Transport(ref mut noise) => noise.write_message(message, out),
+        }
     }
 
     /// Convert Noise into transport mode.
@@ -301,32 +288,88 @@ impl NoiseContext {
     }
 }
 
+enum ReadState {
+    ReadData {
+        max_read: usize,
+    },
+    ReadFrameLen,
+    ProcessNextFrame {
+        pending: Option<Vec<u8>>,
+        offset: usize,
+        size: usize,
+        frame_size: usize,
+    },
+}
+
+enum WriteState {
+    Ready {
+        offset: usize,
+        size: usize,
+        encrypted_size: usize,
+    },
+    WriteFrame {
+        offset: usize,
+        size: usize,
+        encrypted_size: usize,
+    },
+}
+
 pub struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin> {
     io: S,
     noise: NoiseContext,
-    read_buffer: BytesMut,
-    offset: usize,
-    pending_frame: Option<BytesMut>,
-    pending_frames: VecDeque<BytesMut>,
     current_frame_size: Option<usize>,
     write_state: WriteState,
+    encrypt_buffer: Vec<u8>,
+    offset: usize,
+    nread: usize,
+    read_state: ReadState,
+    read_buffer: Vec<u8>,
+    canoncial_max_read: usize,
+    decrypt_buffer: Option<Vec<u8>>,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
     fn new(io: S, noise: NoiseContext) -> Self {
-        let mut read_buffer = BytesMut::new();
-        read_buffer.resize(MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN, 0u8);
-
         Self {
             io,
             noise,
-            read_buffer,
+            read_buffer: vec![
+                0u8;
+                MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN + (2 + MAX_NOISE_MSG_LEN)
+            ],
+            nread: 0usize,
             offset: 0usize,
-            pending_frame: None,
-            pending_frames: VecDeque::new(),
             current_frame_size: None,
-            write_state: WriteState::Ready,
+            write_state: WriteState::Ready {
+                offset: 0usize,
+                size: 0usize,
+                encrypted_size: 0usize,
+            },
+            encrypt_buffer: vec![0u8; 5 * (MAX_NOISE_MSG_LEN + 2)],
+            decrypt_buffer: Some(vec![0u8; MAX_FRAME_LEN]),
+            read_state: ReadState::ReadData {
+                max_read: CANONICAL_MAX_READ,
+            },
+            canoncial_max_read: MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN,
         }
+    }
+
+    fn reset_read_state(&mut self, remaining: usize) {
+        match remaining {
+            0 => {
+                self.nread = 0;
+            }
+            1 => {
+                self.read_buffer[0] = self.read_buffer[self.nread - 1];
+                self.nread = 1;
+            }
+            _ => panic!("invalid state"),
+        }
+
+        self.offset = 0;
+        self.read_state = ReadState::ReadData {
+            max_read: CANONICAL_MAX_READ,
+        };
     }
 }
 
@@ -339,94 +382,177 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
         let this = Pin::into_inner(self);
 
         loop {
-            if let None = this.pending_frame {
-                this.pending_frame = this.pending_frames.pop_front();
-            }
+            match this.read_state {
+                ReadState::ReadData { max_read } => {
+                    let nread = match Pin::new(&mut this.io)
+                        .poll_read(cx, &mut this.read_buffer[this.nread..max_read])
+                    {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Ready(Ok(nread)) => match nread == 0 {
+                            true => return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into())),
+                            false => nread,
+                        },
+                    };
 
-            // if there is already a pending frame, try returning that first
-            if let Some(ref mut pending) = this.pending_frame {
-                tracing::trace!(target: LOG_TARGET, pending_len = ?pending.len(), "process pending frame");
+                    tracing::trace!(target: LOG_TARGET, ?nread, "read data from socket");
 
-                let (len, remaining) = match pending.len() <= buf.len() {
-                    true => (pending.len(), None),
-                    false => (buf.len(), Some(pending.split_off(buf.len()))),
-                };
-
-                buf[..len].copy_from_slice(pending.as_ref());
-                this.pending_frame = remaining;
-                return Poll::Ready(Ok(len));
-            }
-
-            tracing::trace!(target: LOG_TARGET, "try to read bytes from socket");
-
-            // if there is no pending frame, try to read data from the socket
-            let nread =
-                match Pin::new(&mut this.io).poll_read(cx, &mut this.read_buffer[this.offset..]) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(nread)) => match nread == 0 {
-                        true => return Poll::Ready(Err(io::ErrorKind::UnexpectedEof.into())),
-                        false => nread,
-                    },
-                };
-
-            tracing::trace!(target: LOG_TARGET, ?nread, "read bytes from socket");
-
-            this.offset += nread;
-            this.read_buffer.truncate(this.offset);
-
-            // try to split the read bytes into noise frames and decrypt them
-            loop {
-                if this.read_buffer.len() < 2 {
-                    break;
+                    this.nread += nread;
+                    this.read_state = ReadState::ReadFrameLen;
                 }
+                ReadState::ReadFrameLen => {
+                    let mut remaining = match this.nread.checked_sub(this.offset) {
+                        Some(remaining) => remaining,
+                        None => {
+                            tracing::error!(target: LOG_TARGET, "offset is larger than the number of bytes read");
+                            return Poll::Ready(Err(io::ErrorKind::PermissionDenied.into()));
+                        }
+                    };
 
-                // get frame size, either from current or previous iteration
-                let frame_size = match this.current_frame_size.take() {
-                    Some(frame_size) => frame_size,
-                    None => {
-                        this.offset -= 2;
-                        this.read_buffer.get_u16() as usize
+                    if remaining < 2 {
+                        tracing::trace!(target: LOG_TARGET, "reset read buffer");
+                        this.reset_read_state(remaining);
+                        continue;
                     }
-                };
 
-                if this.read_buffer.len() < frame_size {
-                    this.current_frame_size = Some(frame_size);
-                    break;
-                }
+                    // get frame size, either from current or previous iteration
+                    let frame_size = match this.current_frame_size.take() {
+                        Some(frame_size) => frame_size,
+                        None => {
+                            let frame_size = (this.read_buffer[this.offset] as u16) << 8
+                                | this.read_buffer[this.offset + 1] as u16;
+                            this.offset += 2;
+                            remaining -= 2;
+                            frame_size as usize
+                        }
+                    };
 
-                let frame = this.read_buffer.split_to(frame_size);
-                this.offset -= frame.len();
+                    tracing::trace!(target: LOG_TARGET, "current frame size = {frame_size}");
 
-                match this.noise.read_message(&frame) {
-                    Ok(message) => this.pending_frames.push_back(message),
-                    Err(error) => {
-                        tracing::warn!(
+                    if remaining < frame_size {
+                        // `read_buffer` can fit the full frame size.
+                        if this.nread + frame_size < this.canoncial_max_read {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                max_size = ?this.canoncial_max_read,
+                                next_frame_size = ?(this.nread + frame_size),
+                                "read buffer can fit the full frame",
+                            );
+
+                            this.current_frame_size = Some(frame_size);
+                            this.read_state = ReadState::ReadData {
+                                max_read: CANONICAL_MAX_READ,
+                            };
+                            continue;
+                        }
+
+                        tracing::trace!(target: LOG_TARGET, "use auxiliary buffer extension");
+
+                        // use the auxiliary memory at the end of the read buffer for reading the
+                        // frame
+                        this.current_frame_size = Some(frame_size);
+                        this.read_state = ReadState::ReadData {
+                            max_read: this.nread + frame_size - remaining,
+                        };
+                        continue;
+                    }
+
+                    if frame_size <= NOISE_EXTRA_ENCRYPT_SPACE {
+                        tracing::error!(
                             target: LOG_TARGET,
-                            ?error,
-                            role = ?this.noise.role,
-                            "failed to read noise message"
+                            ?frame_size,
+                            max_size = ?NOISE_EXTRA_ENCRYPT_SPACE,
+                            "invalid frame size",
                         );
+                        println!("invalid frame size");
                         return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                     }
-                }
-            }
-            this.read_buffer.resize(
-                this.read_buffer.len() + MAX_READ_AHEAD_FACTOR * MAX_NOISE_MSG_LEN,
-                0u8,
-            );
 
-            continue;
+                    this.current_frame_size = Some(frame_size);
+                    this.read_state = ReadState::ProcessNextFrame {
+                        pending: None,
+                        offset: 0usize,
+                        size: 0usize,
+                        frame_size: 0usize,
+                    };
+                }
+                ReadState::ProcessNextFrame {
+                    ref mut pending,
+                    offset,
+                    size,
+                    frame_size,
+                } => match pending.take() {
+                    Some(pending) => match buf.len() >= pending[offset..size].len() {
+                        true => {
+                            let copy_size = pending[offset..size].len();
+                            buf[..copy_size].copy_from_slice(&pending[offset..copy_size + offset]);
+
+                            this.read_state = ReadState::ReadFrameLen;
+                            this.decrypt_buffer = Some(pending);
+                            this.offset += frame_size;
+                            return Poll::Ready(Ok(copy_size));
+                        }
+                        false => {
+                            buf.copy_from_slice(&pending[offset..buf.len() + offset]);
+
+                            this.read_state = ReadState::ProcessNextFrame {
+                                pending: Some(pending),
+                                offset: offset + buf.len(),
+                                size,
+                                frame_size,
+                            };
+                            return Poll::Ready(Ok(buf.len()));
+                        }
+                    },
+                    None => {
+                        let frame_size =
+                            this.current_frame_size.take().expect("`frame_size` to exist");
+
+                        match buf.len() >= frame_size - NOISE_EXTRA_ENCRYPT_SPACE {
+                            true => match this.noise.read_message(
+                                &this.read_buffer[this.offset..this.offset + frame_size],
+                                buf,
+                            ) {
+                                Err(error) => {
+                                    tracing::error!(target: LOG_TARGET, ?error, "failed to decrypt message");
+                                    return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                                }
+                                Ok(nread) => {
+                                    this.offset += frame_size;
+                                    this.read_state = ReadState::ReadFrameLen;
+                                    return Poll::Ready(Ok(nread));
+                                }
+                            },
+                            false => {
+                                let mut buffer =
+                                    this.decrypt_buffer.take().expect("buffer to exist");
+
+                                match this.noise.read_message(
+                                    &this.read_buffer[this.offset..this.offset + frame_size],
+                                    &mut buffer,
+                                ) {
+                                    Err(error) => {
+                                        tracing::error!(target: LOG_TARGET, ?error, "failed to decrypt message");
+                                        return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                                    }
+                                    Ok(nread) => {
+                                        buf.copy_from_slice(&buffer[..buf.len()]);
+                                        this.read_state = ReadState::ProcessNextFrame {
+                                            pending: Some(buffer),
+                                            offset: buf.len(),
+                                            size: nread,
+                                            frame_size,
+                                        };
+                                        return Poll::Ready(Ok(buf.len()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
         }
     }
-}
-
-enum WriteState {
-    Ready,
-    WriteFrame {
-        size: usize,
-        frame: bytes::buf::Chain<Bytes, Bytes>,
-    },
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
@@ -436,60 +562,79 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = Pin::into_inner(self);
+        let mut chunks = buf.chunks(MAX_FRAME_LEN).peekable();
 
-        tracing::info!("send data");
+        tracing::info!(target: LOG_TARGET, "write {} bytes", buf.len());
 
         loop {
-            match &mut this.write_state {
-                WriteState::Ready => {
-                    let (frame, size): (bytes::buf::Chain<Bytes, Bytes>, usize) =
-                        match buf.chunks(MAX_FRAME_LEN).next() {
-                            None => return Poll::Ready(Ok(0usize)),
-                            Some(chunk) => match this.noise.write_message(chunk) {
-                                Ok(frame) => {
-                                    let original_size = chunk.len();
-                                    // TODO: `#![feature(slice_flatten)]`
-                                    let size: Vec<u8> = u16::to_be_bytes(frame.len() as u16)
-                                        .try_into()
-                                        .expect("to succeed");
-                                    let size: Bytes = size.into();
-                                    (size.chain(frame.freeze().into()), original_size)
-                                }
-                                Err(error) => {
-                                    tracing::warn!(
-                                        target: LOG_TARGET,
-                                        ?error,
-                                        role = ?this.noise.role,
-                                        "failed to write noise message"
-                                    );
-                                    return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
-                                }
-                            },
-                        };
+            match this.write_state {
+                WriteState::Ready {
+                    offset,
+                    size,
+                    encrypted_size,
+                } => {
+                    let Some(chunk) = chunks.next() else {
+                        println!("no chunk");
+                        break;
+                    };
 
-                    this.write_state = WriteState::WriteFrame { frame, size };
-                }
-                WriteState::WriteFrame { frame, size } => {
-                    let mut bufs = [IoSlice::new(&[]); 2];
-                    frame.chunks_vectored(&mut bufs);
-
-                    match futures::ready!(Pin::new(&mut this.io).poll_write_vectored(cx, &bufs)) {
+                    match this.noise.write_message(chunk, &mut this.encrypt_buffer[offset + 2..]) {
+                        Err(error) => {
+                            tracing::error!(target: LOG_TARGET, ?error, "failed to encrypt message");
+                            return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                        }
                         Ok(nwritten) => {
-                            frame.advance(nwritten);
+                            this.encrypt_buffer[offset + 0] = (nwritten >> 8) as u8;
+                            this.encrypt_buffer[offset + 1] = (nwritten & 0xff) as u8;
 
-                            tracing::trace!(target: LOG_TARGET, ?nwritten, "wrote noise message");
+                            if let Some(next_chunk) = chunks.peek() {
+                                if next_chunk.len() + NOISE_EXTRA_ENCRYPT_SPACE + 2
+                                    <= this.encrypt_buffer[offset + nwritten + 2..].len()
+                                {
+                                    this.write_state = WriteState::Ready {
+                                        offset: offset + nwritten + 2,
+                                        size: size + chunk.len(),
+                                        encrypted_size: encrypted_size + nwritten + 2,
+                                    };
+                                    continue;
+                                }
+                            }
 
-                            if frame.remaining() == 0 {
-                                let original_len = *size;
-                                this.write_state = WriteState::Ready;
-                                return Poll::Ready(Ok(original_len));
+                            this.write_state = WriteState::WriteFrame {
+                                offset: 0usize,
+                                size: size + chunk.len(),
+                                encrypted_size: encrypted_size + nwritten + 2,
+                            };
+                        }
+                    }
+                }
+                WriteState::WriteFrame {
+                    ref mut offset,
+                    size,
+                    encrypted_size,
+                } => loop {
+                    match futures::ready!(Pin::new(&mut this.io)
+                        .poll_write(cx, &this.encrypt_buffer[*offset..encrypted_size]))
+                    {
+                        Ok(nwritten) => {
+                            *offset += nwritten;
+
+                            if offset == &encrypted_size {
+                                this.write_state = WriteState::Ready {
+                                    offset: 0usize,
+                                    size: 0usize,
+                                    encrypted_size: 0usize,
+                                };
+                                return Poll::Ready(Ok(size));
                             }
                         }
                         Err(error) => return Poll::Ready(Err(error)),
                     }
-                }
+                },
             }
         }
+
+        Poll::Ready(Ok(0))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -607,6 +752,6 @@ mod tests {
         let sent = res1.0.write(b"hello, world").await.unwrap();
         res2.0.read_exact(&mut buf[..sent]).await.unwrap();
 
-        assert_eq!(std::str::from_utf8(&buf[..sent]), Ok("hello, world"),);
+        assert_eq!(std::str::from_utf8(&buf[..sent]), Ok("hello, world"));
     }
 }
