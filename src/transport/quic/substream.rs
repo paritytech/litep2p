@@ -52,14 +52,6 @@ impl Substream {
         }
     }
 
-    /// Write `bytes` to the underlying socket.
-    pub async fn write_all(&mut self, bytes: Bytes) -> crate::Result<()> {
-        self.send_stream
-            .write_all(&bytes)
-            .await
-            .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
-    }
-
     /// Write `buffers` to the underlying socket.
     pub async fn write_all_chunks(&mut self, buffers: &mut [Bytes]) -> crate::Result<()> {
         self.send_stream

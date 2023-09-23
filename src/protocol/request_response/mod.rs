@@ -32,7 +32,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},

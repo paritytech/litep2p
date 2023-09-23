@@ -36,7 +36,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     oneshot,
@@ -344,7 +344,7 @@ impl NotificationProtocol {
         fallback: Option<ProtocolName>,
         peer: PeerId,
         substream_id: SubstreamId,
-        mut outbound: Substream,
+        outbound: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -460,7 +460,7 @@ impl NotificationProtocol {
         protocol: ProtocolName,
         fallback: Option<ProtocolName>,
         peer: PeerId,
-        mut substream: Substream,
+        substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -694,7 +694,7 @@ impl NotificationProtocol {
                 protocol,
                 fallback,
                 outbound,
-                inbound: InboundState::Validating { mut inbound },
+                inbound: InboundState::Validating { inbound },
             } => match result {
                 // substream was rejected by the local node, if an outbound substream was under
                 // negotation, discard that data and if an outbound substream was

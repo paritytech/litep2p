@@ -21,7 +21,6 @@
 //! QUIC connection.
 
 use crate::{
-    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
@@ -34,7 +33,6 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
 use quinn::{Connection as QuinnConnection, RecvStream, SendStream};
-use tokio_util::codec::Framed;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "quic::connection";

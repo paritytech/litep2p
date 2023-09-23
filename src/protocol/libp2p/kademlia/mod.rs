@@ -40,7 +40,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -202,7 +202,7 @@ impl Kademlia {
             self.engine.register_response_failure(query, peer);
         }
 
-        if let Some(mut substream) = self.substreams.remove(&peer) {
+        if let Some(substream) = self.substreams.remove(&peer) {
             let _ = substream.close().await;
         }
 

@@ -24,14 +24,13 @@
 use crate::{
     codec::ProtocolCodec,
     error::{Error, SubstreamError},
-    mock::substream::Substream as MockSubstream,
     transport::{quic, tcp, websocket},
     PeerId,
 };
 
 use bytes::{Buf, Bytes, BytesMut};
-use futures::{Sink, SinkExt, Stream};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use futures::{Sink, Stream};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use unsigned_varint::{decode, encode};
 
 use std::{
@@ -140,7 +139,7 @@ enum SubstreamType {
     WebSocket(websocket::Substream),
     Quic(quic::Substream),
     #[cfg(test)]
-    Mock(Box<dyn MockSubstream>),
+    Mock(Box<dyn crate::mock::substream::Substream>),
 }
 
 /// Backpressure boundary for `Sink`.
@@ -148,7 +147,7 @@ const BACKPRESSURE_BOUNDARY: usize = 65536;
 
 /// `Litep2p` substream type.
 ///
-/// Implements `tokio::io::AsyncRead`/`tokio::io::AsyncWrite` traits which can be wrapped
+/// Implements [`tokio::io::AsyncRead`]/[`tokio::io::AsyncWrite`] traits which can be wrapped
 /// in a `Framed` to implement a custom codec.
 ///
 /// In case a codec for the protocol was specified, `Substream::send()`/`Substream::next()`
@@ -234,7 +233,10 @@ impl Substream {
 
     /// Create new [`Substream`] for mocking.
     #[cfg(test)]
-    pub(crate) fn new_mock(peer: PeerId, substream: Box<dyn MockSubstream>) -> Self {
+    pub(crate) fn new_mock(
+        peer: PeerId,
+        substream: Box<dyn crate::mock::substream::Substream>,
+    ) -> Self {
         tracing::trace!(target: LOG_TARGET, ?peer, "create new substream for mocking");
 
         Self {
@@ -259,7 +261,7 @@ impl Substream {
             SubstreamType::Quic(mut substream) => substream.shutdown().await,
             #[cfg(test)]
             SubstreamType::Mock(mut substream) => {
-                let _ = substream.close().await;
+                let _ = futures::SinkExt::close(&mut substream).await;
                 Ok(())
             }
         };
@@ -306,7 +308,8 @@ impl Substream {
 
         match &mut self.substream {
             #[cfg(test)]
-            SubstreamType::Mock(ref mut substream) => substream.send(bytes).await,
+            SubstreamType::Mock(ref mut substream) =>
+                futures::SinkExt::send(substream, bytes).await,
             SubstreamType::Tcp(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
                 ProtocolCodec::Identity(payload_size) =>
@@ -511,7 +514,7 @@ impl Stream for Substream {
                         Err(error) => return Poll::Ready(Some(Err(error.into()))),
                     }
                 }
-                ProtocolCodec::UnsignedVarint(max_size) => {
+                ProtocolCodec::UnsignedVarint(_max_size) => {
                     loop {
                         // return all pending frames first
                         if let Some(frame) = this.pending_frames.pop_front() {
@@ -526,7 +529,7 @@ impl Stream for Substream {
                             cx,
                             &mut read_buf
                         )) {
-                            Err(error) => return Poll::Ready(None),
+                            Err(_error) => return Poll::Ready(None),
                             Ok(_) => match read_buf.filled().len() {
                                 0 => {
                                     tracing::trace!(
@@ -609,7 +612,7 @@ impl Sink<Bytes> for Substream {
                 self.pending_out_bytes += item.len();
                 self.pending_out_frames.push_back(item);
             }
-            ProtocolCodec::UnsignedVarint(max_size) => {
+            ProtocolCodec::UnsignedVarint(_max_size) => {
                 let len = {
                     let mut buffer = [0u8; 10];
                     let len = unsigned_varint::encode::usize(item.len(), &mut buffer);

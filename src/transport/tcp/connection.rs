@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
     crypto::{
         ed25519::Keypair,
@@ -41,11 +40,8 @@ use futures::{
 };
 use multiaddr::{Multiaddr, Protocol};
 use tokio::net::TcpStream;
-use tokio_util::{
-    codec::Framed,
-    compat::{
-        Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt,
-    },
+use tokio_util::compat::{
+    Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt,
 };
 
 use std::{borrow::Cow, fmt, net::SocketAddr, time::Duration};
@@ -546,6 +542,7 @@ impl TcpConnection {
 mod tests {
     use super::*;
     use crate::{
+        codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
         transport::manager::{SupportedTransport, TransportManager, TransportManagerEvent},
     };

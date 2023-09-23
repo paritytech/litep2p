@@ -20,7 +20,7 @@
 
 use crate::{substream::Substream, PeerId};
 
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use tokio::sync::{
     mpsc::{Receiver, Sender},
     oneshot,

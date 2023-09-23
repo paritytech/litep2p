@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
     crypto::noise::{self, NoiseSocket},
     error::Error,
@@ -35,7 +34,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use tokio::net::TcpStream;
 use tokio_tungstenite::MaybeTlsStream;
-use tokio_util::{codec::Framed, compat::FuturesAsyncReadCompatExt};
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 use url::Url;
 
 use std::net::SocketAddr;
