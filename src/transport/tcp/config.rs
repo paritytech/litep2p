@@ -32,3 +32,12 @@ pub struct TransportConfig {
     /// Yamux configuration.
     pub yamux_config: Config,
 }
+
+impl Default for TransportConfig {
+    fn default() -> Self {
+        Self {
+            listen_address: "/ip6/::/tcp/0".parse().expect("valid address"),
+            yamux_config: Default::default(),
+        }
+    }
+}

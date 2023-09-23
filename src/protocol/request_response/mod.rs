@@ -164,7 +164,7 @@ impl RequestResponseProtocol {
                 "state mismatch: peer already exists"
             );
             debug_assert!(false);
-            return Err(Error::PeerAlreadyExists(peer))
+            return Err(Error::PeerAlreadyExists(peer));
         };
 
         match self.pending_dials.remove(&peer) {
@@ -418,18 +418,31 @@ impl RequestResponseProtocol {
                         ?dial_options,
                         "peer not connected and should not dial"
                     );
-                    return self.report_request_failure(peer, request_id, RequestResponseError::NotConnected).await;
+                    return self
+                        .report_request_failure(
+                            peer,
+                            request_id,
+                            RequestResponseError::NotConnected,
+                        )
+                        .await;
                 }
                 DialOptions::Dial => match self.service.dial(&peer).await {
                     Ok(_) => {
-                        self.pending_dials.insert(peer, RequestContext::new(peer, request_id, request));
-                        return Ok(())
+                        self.pending_dials
+                            .insert(peer, RequestContext::new(peer, request_id, request));
+                        return Ok(());
                     }
                     Err(error) => {
                         tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
-                        return self.report_request_failure(peer, request_id, RequestResponseError::Rejected).await;
+                        return self
+                            .report_request_failure(
+                                peer,
+                                request_id,
+                                RequestResponseError::Rejected,
+                            )
+                            .await;
                     }
-                }
+                },
             }
         };
 
