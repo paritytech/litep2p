@@ -132,6 +132,16 @@ macro_rules! delegate_poll_flush {
     }};
 }
 
+macro_rules! check_size {
+    ($max_size:expr, $size:expr) => {{
+        if let Some(max_size) = $max_size {
+            if $size > max_size {
+                return Err(Error::IoError(ErrorKind::PermissionDenied));
+            }
+        }
+    }};
+}
+
 /// Substream type.
 #[derive(Debug)]
 enum SubstreamType {
@@ -274,8 +284,7 @@ impl Substream {
         payload: Bytes,
     ) -> crate::Result<()> {
         if payload.len() != payload_size {
-            tracing::warn!(target: LOG_TARGET, "{} vs {}", payload.len(), payload_size);
-            return Err(Error::InvalidData);
+            return Err(Error::IoError(ErrorKind::PermissionDenied));
         }
 
         io.write_all(&payload)
@@ -315,11 +324,7 @@ impl Substream {
                 ProtocolCodec::Identity(payload_size) =>
                     Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
-                    if let Some(max_size) = max_size {
-                        if bytes.len() > max_size {
-                            return Err(Error::IoError(ErrorKind::PermissionDenied));
-                        }
-                    }
+                    check_size!(max_size, bytes.len());
 
                     let mut buffer = [0u8; 10];
                     let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
@@ -342,11 +347,7 @@ impl Substream {
                 ProtocolCodec::Identity(payload_size) =>
                     Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
-                    if let Some(max_size) = max_size {
-                        if bytes.len() > max_size {
-                            return Err(Error::IoError(ErrorKind::PermissionDenied));
-                        }
-                    }
+                    check_size!(max_size, bytes.len());
 
                     let mut buffer = [0u8; 10];
                     let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
@@ -369,11 +370,7 @@ impl Substream {
                 ProtocolCodec::Identity(payload_size) =>
                     Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
-                    if let Some(max_size) = max_size {
-                        if bytes.len() > max_size {
-                            return Err(Error::IoError(ErrorKind::PermissionDenied));
-                        }
-                    }
+                    check_size!(max_size, bytes.len());
 
                     let mut buffer = [0u8; 10];
                     let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
@@ -514,7 +511,7 @@ impl Stream for Substream {
                         Err(error) => return Poll::Ready(Some(Err(error.into()))),
                     }
                 }
-                ProtocolCodec::UnsignedVarint(_max_size) => {
+                ProtocolCodec::UnsignedVarint(max_size) => {
                     loop {
                         // return all pending frames first
                         if let Some(frame) = this.pending_frames.pop_front() {
@@ -552,7 +549,12 @@ impl Stream for Substream {
                                 Some(frame_size) => frame_size,
                                 None => match read_payload_size(&this.read_buffer) {
                                     Ok((size, num_bytes)) => {
-                                        // TODO: verify `size`
+                                        if let Some(max_size) = max_size {
+                                            if max_size < num_bytes {
+                                                return Poll::Ready(None);
+                                            }
+                                        }
+
                                         this.offset -= num_bytes;
                                         this.read_buffer.advance(num_bytes);
                                         size
@@ -612,7 +614,9 @@ impl Sink<Bytes> for Substream {
                 self.pending_out_bytes += item.len();
                 self.pending_out_frames.push_back(item);
             }
-            ProtocolCodec::UnsignedVarint(_max_size) => {
+            ProtocolCodec::UnsignedVarint(max_size) => {
+                check_size!(max_size, item.len());
+
                 let len = {
                     let mut buffer = [0u8; 10];
                     let len = unsigned_varint::encode::usize(item.len(), &mut buffer);
