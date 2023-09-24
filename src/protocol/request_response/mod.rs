@@ -33,8 +33,11 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
 use tokio::{
-    sync::mpsc::{Receiver, Sender},
-    time::timeout,
+    sync::{
+        mpsc::{Receiver, Sender},
+        oneshot,
+    },
+    time::sleep,
 };
 
 use std::{
@@ -117,6 +120,9 @@ pub(crate) struct RequestResponseProtocol {
     /// Pending inbound responses.
     pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
 
+    /// Pending outbound cancellation handles.
+    pending_outbound_cancels: HashMap<RequestId, oneshot::Sender<()>>,
+
     /// Pending dials for outbound requests.
     pending_dials: HashMap<PeerId, RequestContext>,
 
@@ -147,8 +153,9 @@ impl RequestResponseProtocol {
             command_rx: config.command_rx,
             pending_dials: HashMap::new(),
             pending_outbound: HashMap::new(),
-            pending_outbound_responses: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
+            pending_outbound_cancels: HashMap::new(),
+            pending_outbound_responses: HashMap::new(),
         }
     }
 
@@ -255,15 +262,29 @@ impl RequestResponseProtocol {
             "substream opened, send request",
         );
 
+        let (tx, rx) = oneshot::channel();
+        self.pending_outbound_cancels.insert(request_id, tx);
+
         match substream.send(request.into()).await {
             Ok(_) => {
                 let request_timeout = self.timeout;
 
                 self.pending_inbound.push(Box::pin(async move {
-                    match timeout(request_timeout, substream.next()).await {
-                        Err(_) => (peer, request_id, Err(RequestResponseError::Timeout)),
-                        Ok(Some(Ok(response))) => (peer, request_id, Ok(response.freeze().into())),
-                        _ => (peer, request_id, Err(RequestResponseError::Rejected)),
+                    tokio::select! {
+                        _ = rx => {
+                            tracing::trace!(target: LOG_TARGET, ?peer, ?request_id, "request canceled");
+                            (peer, request_id, Err(RequestResponseError::Canceled))
+                        }
+                        _ = sleep(request_timeout) => {
+                            tracing::trace!(target: LOG_TARGET, ?peer, ?request_id, "request timed out");
+                            (peer, request_id, Err(RequestResponseError::Timeout))
+                        }
+                        event = substream.next() => match event {
+                            Some(Ok(response)) => {
+                                (peer, request_id, Ok(response.freeze().into()))
+                            }
+                            _ => (peer, request_id, Err(RequestResponseError::Rejected)),
+                        }
                     }
                 }));
 
@@ -526,14 +547,38 @@ impl RequestResponseProtocol {
                 request_id,
                 response,
             },
-            Err(error) => RequestResponseEvent::RequestFailed {
-                peer,
-                request_id,
-                error,
+            Err(error) => match error {
+                RequestResponseError::Canceled => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?request_id,
+                        "request canceled by local node"
+                    );
+                    return Ok(());
+                }
+                error => RequestResponseEvent::RequestFailed {
+                    peer,
+                    request_id,
+                    error,
+                },
             },
         };
 
         self.event_tx.send(event).await.map_err(From::from)
+    }
+
+    /// Cancel outbound request.
+    async fn on_cancel_request(&mut self, request_id: RequestId) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, ?request_id, "cancel outbound request");
+
+        match self.pending_outbound_cancels.remove(&request_id) {
+            Some(tx) => tx.send(()).map_err(|_| Error::SubstreamDoesntExist),
+            None => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "tried to cancel request which doesn't exist");
+                Ok(())
+            }
+        }
     }
 
     /// Start [`RequestResponseProtocol`] event loop.
@@ -627,6 +672,11 @@ impl RequestResponseProtocol {
 
                             if let Some(mut substream) = self.pending_outbound_responses.remove(&request_id) {
                                 let _ = substream.close().await;
+                            }
+                        }
+                        RequestResponseCommand::CancelRequest { request_id } => {
+                            if let Err(error) = self.on_cancel_request(request_id).await {
+                                tracing::debug!(target: LOG_TARGET, ?request_id, ?error, "failed to cancel reqeuest");
                             }
                         }
                     }
