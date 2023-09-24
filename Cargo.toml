@@ -50,7 +50,7 @@ trust-dns-resolver = { version = "0.22.0", features = ["tokio"] }
 uint = "0.9.5"
 unsigned-varint = { version = "0.7.2", features = ["codec"] }
 url = "2.4.0"
-webpki = "0.22.0"
+webpki = "0.22.1"
 x509-parser = "0.15.0"
 yamux = "0.11.0"
 yasna = "0.5.0"
