@@ -130,6 +130,9 @@ pub(crate) struct RequestResponseProtocol {
     ///
     /// Inbound requests are assigned an ephemeral ID TODO: finish
     next_request_id: Arc<AtomicUsize>,
+
+    /// Timeout for outbound requests.
+    timeout: Duration,
 }
 
 impl RequestResponseProtocol {
@@ -138,6 +141,7 @@ impl RequestResponseProtocol {
         Self {
             service,
             peers: HashMap::new(),
+            timeout: config.timeout,
             next_request_id: config.next_request_id,
             event_tx: config.event_tx,
             command_rx: config.command_rx,
@@ -253,8 +257,10 @@ impl RequestResponseProtocol {
 
         match substream.send(request.into()).await {
             Ok(_) => {
+                let request_timeout = self.timeout;
+
                 self.pending_inbound.push(Box::pin(async move {
-                    match timeout(REQUEST_TIMEOUT, substream.next()).await {
+                    match timeout(request_timeout, substream.next()).await {
                         Err(_) => (peer, request_id, Err(RequestResponseError::Timeout)),
                         Ok(Some(Ok(response))) => (peer, request_id, Ok(response.freeze().into())),
                         _ => (peer, request_id, Err(RequestResponseError::Rejected)),

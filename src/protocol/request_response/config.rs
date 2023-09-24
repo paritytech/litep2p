@@ -20,8 +20,9 @@
 
 use crate::{
     codec::ProtocolCodec,
-    protocol::request_response::handle::{
-        RequestResponseCommand, RequestResponseEvent, RequestResponseHandle,
+    protocol::request_response::{
+        handle::{RequestResponseCommand, RequestResponseEvent, RequestResponseHandle},
+        REQUEST_TIMEOUT,
     },
     types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE,
@@ -29,7 +30,10 @@ use crate::{
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::{
+    sync::{atomic::AtomicUsize, Arc},
+    time::Duration,
+};
 
 /// Request-response configuration.
 #[derive(Debug)]
@@ -39,6 +43,9 @@ pub struct Config {
 
     /// Fallback names for the main protocol name.
     pub(crate) fallback_names: Vec<ProtocolName>,
+
+    /// Timeout for outbound requests.
+    pub(crate) timeout: Duration,
 
     /// Codec used by the protocol.
     pub(crate) codec: ProtocolCodec,
@@ -59,6 +66,7 @@ impl Config {
         protocol_name: ProtocolName,
         fallback_names: Vec<ProtocolName>,
         max_message_size: usize,
+        timeout: Duration,
     ) -> (Self, RequestResponseHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -72,6 +80,7 @@ impl Config {
                 protocol_name,
                 fallback_names,
                 next_request_id,
+                timeout,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
             },
             handle,
@@ -94,6 +103,9 @@ pub struct ConfigBuilder {
 
     /// Maximum message size.
     max_message_size: Option<usize>,
+
+    /// Timeout for outbound requests.
+    timeout: Option<Duration>,
 }
 
 impl ConfigBuilder {
@@ -103,6 +115,7 @@ impl ConfigBuilder {
             protocol_name,
             fallback_names: Vec::new(),
             max_message_size: None,
+            timeout: Some(REQUEST_TIMEOUT),
         }
     }
 
@@ -118,12 +131,19 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set timeout for outbound requests.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
     /// Build [`Config`].
     pub fn build(mut self) -> (Config, RequestResponseHandle) {
         Config::new(
             self.protocol_name,
             self.fallback_names,
             self.max_message_size.take().expect("maximum message size to be set"),
+            self.timeout.take().expect("timeout to exist"),
         )
     }
 }
