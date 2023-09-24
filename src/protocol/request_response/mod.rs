@@ -185,6 +185,9 @@ impl RequestResponseProtocol {
             }
             Some(context) => match self.service.open_substream(peer).await {
                 Ok(substream_id) => {
+                    entry.insert(PeerContext {
+                        active: HashSet::from_iter([context.request_id]),
+                    });
                     self.pending_outbound.insert(
                         substream_id,
                         RequestContext::new(peer, context.request_id, context.request),
@@ -262,14 +265,13 @@ impl RequestResponseProtocol {
             "substream opened, send request",
         );
 
+        let request_timeout = self.timeout;
         let (tx, rx) = oneshot::channel();
         self.pending_outbound_cancels.insert(request_id, tx);
 
-        match substream.send(request.into()).await {
-            Ok(_) => {
-                let request_timeout = self.timeout;
-
-                self.pending_inbound.push(Box::pin(async move {
+        self.pending_inbound.push(Box::pin(async move {
+            match substream.send(request.into()).await {
+                Ok(_) => {
                     tokio::select! {
                         _ = rx => {
                             tracing::trace!(target: LOG_TARGET, ?peer, ?request_id, "request canceled");
@@ -286,32 +288,16 @@ impl RequestResponseProtocol {
                             _ => (peer, request_id, Err(RequestResponseError::Rejected)),
                         }
                     }
-                }));
-
-                Ok(())
+                }
+                Err(Error::IoError(ErrorKind::PermissionDenied)) => {
+                    tracing::warn!(target: LOG_TARGET, "tried to send too large request");
+                    (peer, request_id, Err(RequestResponseError::TooLargePayload))
+                }
+                Err(_error) => (peer, request_id, Err(RequestResponseError::NotConnected))
             }
-            Err(Error::IoError(ErrorKind::PermissionDenied)) => {
-                tracing::warn!(target: LOG_TARGET, "tried to send too large request");
+        }));
 
-                self.event_tx
-                    .send(RequestResponseEvent::RequestFailed {
-                        peer,
-                        request_id,
-                        error: RequestResponseError::TooLargePayload,
-                    })
-                    .await
-                    .map_err(From::from)
-            }
-            Err(_error) => self
-                .event_tx
-                .send(RequestResponseEvent::RequestFailed {
-                    peer,
-                    request_id,
-                    error: RequestResponseError::NotConnected,
-                })
-                .await
-                .map_err(From::from),
-        }
+        Ok(())
     }
 
     /// Remote opened a substream to local node.
