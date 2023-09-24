@@ -510,6 +510,16 @@ impl RequestResponseProtocol {
         request_id: RequestId,
         message: Result<Vec<u8>, RequestResponseError>,
     ) -> crate::Result<()> {
+        if !self
+            .peers
+            .get_mut(&peer)
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .active
+            .remove(&request_id)
+        {
+            return Err(Error::InvalidState);
+        }
+
         let event = match message {
             Ok(response) => RequestResponseEvent::ResponseReceived {
                 peer,
@@ -625,7 +635,7 @@ impl RequestResponseProtocol {
                     let (peer, request_id, event) = event;
 
                     if let Err(error) = self.on_substream_event(peer, request_id, event).await {
-                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to handle substream event");
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?request_id, ?error, "failed to handle substream event");
                     }
                 }
             }
