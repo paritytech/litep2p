@@ -29,7 +29,7 @@ use crate::{
 };
 
 use futures::{future::Either, pin_mut};
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 
 use std::{
     collections::HashMap,
@@ -112,9 +112,8 @@ impl NotificationEventHandle {
 /// Notification sink.
 ///
 /// Allows the user to send notifications both synchronously and asynchronously.
-// TODO: make this public at some point?
 #[derive(Debug, Clone)]
-pub(crate) struct NotificationSink {
+pub struct NotificationSink {
     /// Peer ID.
     peer: PeerId,
 
@@ -138,23 +137,24 @@ impl NotificationSink {
     /// Send notification to peer synchronously.
     ///
     /// If the channel is clogged, [`NotificationError::ChannelClogged`] is returned.
-    pub(crate) fn send_sync_notification(
+    pub fn send_sync_notification(
         &mut self,
         notification: Vec<u8>,
     ) -> Result<(), NotificationError> {
-        self.sync_tx
-            .try_send(notification)
-            .map_err(|_| NotificationError::ChannelClogged)
+        match self.sync_tx.try_send(notification) {
+            Ok(_) => Ok(()),
+            Err(error) => match error {
+                TrySendError::Closed(_) => Err(NotificationError::NoConnection),
+                TrySendError::Full(_) => Err(NotificationError::ChannelClogged),
+            },
+        }
     }
 
     /// Send notification to peer asynchronously.
     ///
-    /// Returns [Error::PeerDoesntExist(PeerId)](crate::error::Error::PeerDoesntExist) if the
-    /// connection has been closed.
-    pub(crate) async fn send_async_notification(
-        &mut self,
-        notification: Vec<u8>,
-    ) -> crate::Result<()> {
+    /// Returns [`Error::PeerDoesntExist(PeerId)`](crate::error::Error::PeerDoesntExist)
+    /// if the connection has been closed.
+    pub async fn send_async_notification(&mut self, notification: Vec<u8>) -> crate::Result<()> {
         self.async_tx
             .send(notification)
             .await
@@ -268,6 +268,11 @@ impl NotificationHandle {
             Some(sink) => sink.send_async_notification(notification).await,
             None => Err(Error::PeerDoesntExist(peer)),
         }
+    }
+
+    /// Get a copy of the underlying notification sink for the peer.
+    pub fn notification_sink(&self, peer: PeerId) -> Option<NotificationSink> {
+        self.peers.get(&peer).and_then(|sink| Some(sink.clone()))
     }
 }
 
