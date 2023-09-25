@@ -457,18 +457,28 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
         (request_id3, vec![2, 3, 3, 8]),
         (request_id4, vec![2, 3, 3, 9]),
     ]);
+    let expected_requests: Vec<Vec<u8>> = vec![
+        vec![1, 3, 3, 6],
+        vec![1, 3, 3, 7],
+        vec![1, 3, 3, 8],
+        vec![1, 3, 3, 9],
+    ];
 
-    for i in 0..4 {
+    for _ in 0..4 {
         if let RequestResponseEvent::RequestReceived {
             peer,
             fallback: None,
             request_id,
-            request,
+            mut request,
         } = handle2.next().await.unwrap()
         {
             assert_eq!(peer, peer1);
-            assert_eq!(request, vec![1, 3, 3, 6 + i]);
-            handle2.send_response(request_id, vec![2, 3, 3, 6 + i]).await.unwrap();
+            if expected_requests.iter().any(|req| req == &request) {
+                request[0] = 2;
+                handle2.send_response(request_id, request).await.unwrap();
+            } else {
+                panic!("invalid request received");
+            }
         } else {
             panic!("invalid event received");
         };

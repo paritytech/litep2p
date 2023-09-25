@@ -626,7 +626,7 @@ impl Kademlia {
                                 tracing::debug!(target: LOG_TARGET, ?peer, "message handled sucecssfully");
                             }
                         }
-                        Err(error) => return Err(error),
+                        Err(error) => return Err(error), // TODO: don't return error here
                     },
                     None => return Err(Error::EssentialTaskClosed),
                 }
