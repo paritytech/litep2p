@@ -569,8 +569,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
         let this = Pin::into_inner(self);
         let mut chunks = buf.chunks(MAX_FRAME_LEN).peekable();
 
-        tracing::info!(target: LOG_TARGET, "write {} bytes", buf.len());
-
         loop {
             match this.write_state {
                 WriteState::Ready {

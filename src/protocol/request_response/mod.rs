@@ -21,20 +21,24 @@
 //! Request-response protocol implementation.
 
 use crate::{
-    error::{Error, SubstreamError},
+    error::Error,
     protocol::{
         request_response::handle::RequestResponseCommand, Direction, Transport, TransportEvent,
         TransportService,
     },
-    substream::Substream,
+    substream::{Substream, SubstreamSet},
     types::{protocol::ProtocolName, RequestId, SubstreamId},
     PeerId,
 };
 
+use bytes::BytesMut;
 use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
 use tokio::{
-    sync::mpsc::{Receiver, Sender},
-    time::timeout,
+    sync::{
+        mpsc::{Receiver, Sender},
+        oneshot,
+    },
+    time::sleep,
 };
 
 use std::{
@@ -52,6 +56,8 @@ pub use handle::{DialOptions, RequestResponseError, RequestResponseEvent, Reques
 
 mod config;
 mod handle;
+
+// TODO: add ability to specify limit for inbound requests?
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "request-response::protocol";
@@ -89,6 +95,9 @@ impl RequestContext {
 struct PeerContext {
     /// Active requests.
     active: HashSet<RequestId>,
+
+    /// Active inbound requests and their fallback names.
+    active_inbound: HashMap<RequestId, Option<ProtocolName>>,
 }
 
 impl PeerContext {
@@ -96,6 +105,7 @@ impl PeerContext {
     fn new() -> Self {
         Self {
             active: HashSet::new(),
+            active_inbound: HashMap::new(),
         }
     }
 }
@@ -117,6 +127,12 @@ pub(crate) struct RequestResponseProtocol {
     /// Pending inbound responses.
     pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
 
+    /// Pending outbound cancellation handles.
+    pending_outbound_cancels: HashMap<RequestId, oneshot::Sender<()>>,
+
+    /// Pending inbound requests.
+    pending_inbound_requests: SubstreamSet<(PeerId, RequestId)>,
+
     /// Pending dials for outbound requests.
     pending_dials: HashMap<PeerId, RequestContext>,
 
@@ -130,6 +146,9 @@ pub(crate) struct RequestResponseProtocol {
     ///
     /// Inbound requests are assigned an ephemeral ID TODO: finish
     next_request_id: Arc<AtomicUsize>,
+
+    /// Timeout for outbound requests.
+    timeout: Duration,
 }
 
 impl RequestResponseProtocol {
@@ -138,13 +157,16 @@ impl RequestResponseProtocol {
         Self {
             service,
             peers: HashMap::new(),
+            timeout: config.timeout,
             next_request_id: config.next_request_id,
             event_tx: config.event_tx,
             command_rx: config.command_rx,
             pending_dials: HashMap::new(),
             pending_outbound: HashMap::new(),
-            pending_outbound_responses: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
+            pending_outbound_cancels: HashMap::new(),
+            pending_outbound_responses: HashMap::new(),
+            pending_inbound_requests: SubstreamSet::new(),
         }
     }
 
@@ -170,27 +192,38 @@ impl RequestResponseProtocol {
         match self.pending_dials.remove(&peer) {
             None => {
                 entry.insert(PeerContext::new());
-                Ok(())
             }
             Some(context) => match self.service.open_substream(peer).await {
                 Ok(substream_id) => {
+                    entry.insert(PeerContext {
+                        active: HashSet::from_iter([context.request_id]),
+                        active_inbound: HashMap::new(),
+                    });
                     self.pending_outbound.insert(
                         substream_id,
                         RequestContext::new(peer, context.request_id, context.request),
                     );
-                    Ok(())
                 }
                 Err(error) => {
-                    tracing::debug!(target: LOG_TARGET, ?peer, request_id = ?context.request_id, ?error, "failed to open substream");
-                    self.report_request_failure(
-                        peer,
-                        context.request_id,
-                        RequestResponseError::Rejected,
-                    )
-                    .await
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        request_id = ?context.request_id,
+                        ?error,
+                        "failed to open substream",
+                    );
+                    return self
+                        .report_request_failure(
+                            peer,
+                            context.request_id,
+                            RequestResponseError::Rejected,
+                        )
+                        .await;
                 }
             },
         }
+
+        Ok(())
     }
 
     /// Connection closed to remote peer.
@@ -251,40 +284,75 @@ impl RequestResponseProtocol {
             "substream opened, send request",
         );
 
-        match substream.send(request.into()).await {
-            Ok(_) => {
-                self.pending_inbound.push(Box::pin(async move {
-                    match timeout(REQUEST_TIMEOUT, substream.next()).await {
-                        Err(_) => (peer, request_id, Err(RequestResponseError::Timeout)),
-                        Ok(Some(Ok(response))) => (peer, request_id, Ok(response.freeze().into())),
-                        _ => (peer, request_id, Err(RequestResponseError::Rejected)),
+        let request_timeout = self.timeout;
+        let (tx, rx) = oneshot::channel();
+        self.pending_outbound_cancels.insert(request_id, tx);
+
+        self.pending_inbound.push(Box::pin(async move {
+            match substream.send(request.into()).await {
+                Ok(_) => {
+                    tokio::select! {
+                        _ = rx => {
+                            tracing::trace!(target: LOG_TARGET, ?peer, ?request_id, "request canceled");
+                            (peer, request_id, Err(RequestResponseError::Canceled))
+                        }
+                        _ = sleep(request_timeout) => {
+                            tracing::trace!(target: LOG_TARGET, ?peer, ?request_id, "request timed out");
+                            (peer, request_id, Err(RequestResponseError::Timeout))
+                        }
+                        event = substream.next() => match event {
+                            Some(Ok(response)) => {
+                                (peer, request_id, Ok(response.freeze().into()))
+                            }
+                            _ => (peer, request_id, Err(RequestResponseError::Rejected)),
+                        }
                     }
-                }));
-
-                Ok(())
+                }
+                Err(Error::IoError(ErrorKind::PermissionDenied)) => {
+                    tracing::warn!(target: LOG_TARGET, "tried to send too large request");
+                    (peer, request_id, Err(RequestResponseError::TooLargePayload))
+                }
+                Err(_error) => (peer, request_id, Err(RequestResponseError::NotConnected))
             }
-            Err(Error::IoError(ErrorKind::PermissionDenied)) => {
-                tracing::warn!(target: LOG_TARGET, "tried to send too large request");
+        }));
 
-                self.event_tx
-                    .send(RequestResponseEvent::RequestFailed {
-                        peer,
-                        request_id,
-                        error: RequestResponseError::TooLargePayload,
-                    })
-                    .await
-                    .map_err(From::from)
-            }
-            Err(_error) => self
+        Ok(())
+    }
+
+    /// Handle pending inbound response.
+    async fn on_inbound_request(
+        &mut self,
+        peer: PeerId,
+        request_id: RequestId,
+        request: crate::Result<BytesMut>,
+    ) -> crate::Result<()> {
+        let fallback = self
+            .peers
+            .get_mut(&peer)
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .active_inbound
+            .remove(&request_id)
+            .ok_or(Error::InvalidState)?;
+        let substream = self
+            .pending_inbound_requests
+            .remove(&(peer, request_id))
+            .ok_or(Error::InvalidState)?;
+
+        if let Ok(request) = request {
+            self.pending_outbound_responses.insert(request_id, substream);
+            return self
                 .event_tx
-                .send(RequestResponseEvent::RequestFailed {
+                .send(RequestResponseEvent::RequestReceived {
                     peer,
+                    fallback,
                     request_id,
-                    error: RequestResponseError::NotConnected,
+                    request: request.freeze().into(),
                 })
                 .await
-                .map_err(From::from),
+                .map_err(From::from);
         }
+
+        Ok(())
     }
 
     /// Remote opened a substream to local node.
@@ -292,40 +360,23 @@ impl RequestResponseProtocol {
         &mut self,
         peer: PeerId,
         fallback: Option<ProtocolName>,
-        mut substream: Box<dyn Substream>,
+        substream: Box<dyn Substream>,
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
-        // TODO: potential attack vector
-        let request = substream
-            .next()
-            .await
-            .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(None)))??
-            .freeze()
-            .to_vec();
-
-        // allocate ephemeral id for the inbound request and return it to the user protocol.
+        // allocate ephemeral id for the inbound request and return it to the user protocol
+        //
         // when user responds to the request, this is used to associate the response with the
         // correct substream.
         let request_id = self.next_request_id();
+        self.peers
+            .get_mut(&peer)
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .active_inbound
+            .insert(request_id, fallback);
+        self.pending_inbound_requests.insert((peer, request_id), substream);
 
-        match self
-            .event_tx
-            .send(RequestResponseEvent::RequestReceived {
-                peer,
-                fallback,
-                request_id,
-                request,
-            })
-            .await
-            .map_err(From::from)
-        {
-            Ok(_) => {
-                self.pending_outbound_responses.insert(request_id, substream);
-                Ok(())
-            }
-            Err(error) => Err(error),
-        }
+        Ok(())
     }
 
     async fn on_dial_failure(&mut self, peer: PeerId) {
@@ -504,20 +555,54 @@ impl RequestResponseProtocol {
         request_id: RequestId,
         message: Result<Vec<u8>, RequestResponseError>,
     ) -> crate::Result<()> {
+        if !self
+            .peers
+            .get_mut(&peer)
+            .ok_or(Error::PeerDoesntExist(peer))?
+            .active
+            .remove(&request_id)
+        {
+            return Err(Error::InvalidState);
+        }
+
         let event = match message {
             Ok(response) => RequestResponseEvent::ResponseReceived {
                 peer,
                 request_id,
                 response,
             },
-            Err(error) => RequestResponseEvent::RequestFailed {
-                peer,
-                request_id,
-                error,
+            Err(error) => match error {
+                RequestResponseError::Canceled => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?request_id,
+                        "request canceled by local node"
+                    );
+                    return Ok(());
+                }
+                error => RequestResponseEvent::RequestFailed {
+                    peer,
+                    request_id,
+                    error,
+                },
             },
         };
 
         self.event_tx.send(event).await.map_err(From::from)
+    }
+
+    /// Cancel outbound request.
+    async fn on_cancel_request(&mut self, request_id: RequestId) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, ?request_id, "cancel outbound request");
+
+        match self.pending_outbound_cancels.remove(&request_id) {
+            Some(tx) => tx.send(()).map_err(|_| Error::SubstreamDoesntExist),
+            None => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "tried to cancel request which doesn't exist");
+                Ok(())
+            }
+        }
     }
 
     /// Start [`RequestResponseProtocol`] event loop.
@@ -613,14 +698,33 @@ impl RequestResponseProtocol {
                                 let _ = substream.close().await;
                             }
                         }
+                        RequestResponseCommand::CancelRequest { request_id } => {
+                            if let Err(error) = self.on_cancel_request(request_id).await {
+                                tracing::debug!(target: LOG_TARGET, ?request_id, ?error, "failed to cancel reqeuest");
+                            }
+                        }
                     }
                 },
                 event = self.pending_inbound.select_next_some(), if !self.pending_inbound.is_empty() => {
                     let (peer, request_id, event) = event;
 
                     if let Err(error) = self.on_substream_event(peer, request_id, event).await {
-                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to handle substream event");
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?request_id, ?error, "failed to handle substream event");
                     }
+                }
+                event = self.pending_inbound_requests.next() => match event {
+                    Some(((peer, request_id), message)) => {
+                        if let Err(error) = self.on_inbound_request(peer, request_id, message).await {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?request_id,
+                                ?error,
+                                "failed to handle inbound request"
+                            );
+                        }
+                    }
+                    None => return,
                 }
             }
         }

@@ -43,6 +43,9 @@ pub enum RequestResponseError {
     /// Request was rejected.
     Rejected,
 
+    /// Request was canceled by the local node.
+    Canceled,
+
     /// Request timed out.
     Timeout,
 
@@ -146,8 +149,14 @@ pub(crate) enum RequestResponseCommand {
         response: Vec<u8>,
     },
 
-    /// Reject request.
+    /// Reject inbound request.
     RejectRequest {
+        /// Request ID.
+        request_id: RequestId,
+    },
+
+    /// Cancel outbound request.
+    CancelRequest {
         /// Request ID.
         request_id: RequestId,
     },
@@ -180,11 +189,26 @@ impl RequestResponseHandle {
         }
     }
 
-    /// Reject request.
+    /// Reject an inbound request.
+    ///
+    /// Reject request received from a remote peer. The substream is dropped which signals
+    /// to the remote peer that request was rejected.
     pub async fn reject_request(&mut self, request_id: RequestId) {
         tracing::trace!(target: LOG_TARGET, ?request_id, "reject request");
 
         let _ = self.command_tx.send(RequestResponseCommand::RejectRequest { request_id }).await;
+    }
+
+    /// Cancel an outbound request.
+    ///
+    /// Allows canceling an in-flight request if the local node is not interested in the answer
+    /// anymore. If the request was canceled, no event is reported to the user as the cancelation
+    /// always succeeds and it's assumed that the user does the necessary state clean up in their
+    /// end after calling [`RequestResponseHandle::cancel_request()`].
+    pub async fn cancel_request(&mut self, request_id: RequestId) {
+        tracing::trace!(target: LOG_TARGET, ?request_id, "cancel request");
+
+        let _ = self.command_tx.send(RequestResponseCommand::CancelRequest { request_id }).await;
     }
 
     /// Get next request ID.

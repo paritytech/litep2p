@@ -127,8 +127,12 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
@@ -140,8 +144,12 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
     }
     .build();
 
-    let (req_resp_config2, mut handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
@@ -245,8 +253,12 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
 
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -259,8 +271,12 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let (req_resp_config2, mut handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
@@ -366,8 +382,12 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
 
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -380,8 +400,12 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
     }
     .build();
 
-    let (req_resp_config2, mut handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
@@ -433,18 +457,28 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
         (request_id3, vec![2, 3, 3, 8]),
         (request_id4, vec![2, 3, 3, 9]),
     ]);
+    let expected_requests: Vec<Vec<u8>> = vec![
+        vec![1, 3, 3, 6],
+        vec![1, 3, 3, 7],
+        vec![1, 3, 3, 8],
+        vec![1, 3, 3, 9],
+    ];
 
-    for i in 0..4 {
+    for _ in 0..4 {
         if let RequestResponseEvent::RequestReceived {
             peer,
             fallback: None,
             request_id,
-            request,
+            mut request,
         } = handle2.next().await.unwrap()
         {
             assert_eq!(peer, peer1);
-            assert_eq!(request, vec![1, 3, 3, 6 + i]);
-            handle2.send_response(request_id, vec![2, 3, 3, 6 + i]).await.unwrap();
+            if expected_requests.iter().any(|req| req == &request) {
+                request[0] = 2;
+                handle2.send_response(request_id, request).await.unwrap();
+            } else {
+                panic!("invalid request received");
+            }
         } else {
             panic!("invalid event received");
         };
@@ -514,8 +548,12 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
@@ -527,8 +565,12 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let (req_resp_config2, _handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config2, _handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
@@ -623,8 +665,12 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
 
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -637,8 +683,12 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let (req_resp_config2, _handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/2"), Vec::new(), 1024);
+    let (req_resp_config2, _handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/2"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
@@ -731,8 +781,12 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
@@ -744,8 +798,12 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
     }
     .build();
 
-    let (req_resp_config2, handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config2, handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
@@ -838,8 +896,12 @@ async fn request_too_big(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 256);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        256,
+        Duration::from_secs(5),
+    );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
@@ -851,8 +913,12 @@ async fn request_too_big(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let (req_resp_config2, _handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config2, _handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
@@ -941,8 +1007,12 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 256);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        256,
+        Duration::from_secs(5),
+    );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
@@ -954,8 +1024,12 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let (req_resp_config2, mut handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 256);
+    let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        256,
+        Duration::from_secs(5),
+    );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
@@ -1016,8 +1090,12 @@ async fn too_many_pending_requests() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let mut yamux_config = yamux::Config::default();
     yamux_config.set_max_num_streams(4);
 
@@ -1030,8 +1108,12 @@ async fn too_many_pending_requests() {
         .with_request_response_protocol(req_resp_config1)
         .build();
 
-    let (req_resp_config2, _handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config2, _handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let mut yamux_config = yamux::Config::default();
     yamux_config.set_max_num_streams(4);
 
@@ -1167,6 +1249,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         ProtocolName::from("/protocol/1/improved"),
         vec![ProtocolName::from("/protocol/1")],
         1024,
+        Duration::from_secs(5),
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1179,8 +1262,12 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
     }
     .build();
 
-    let (req_resp_config2, mut handle2) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
@@ -1284,8 +1371,12 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
@@ -1301,6 +1392,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         ProtocolName::from("/protocol/1/improved"),
         vec![ProtocolName::from("/protocol/1")],
         1024,
+        Duration::from_secs(5),
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1405,8 +1497,12 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
@@ -1422,6 +1518,7 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
         ProtocolName::from("/protocol/1/improved"),
         vec![ProtocolName::from("/protocol/1")],
         1024,
+        Duration::from_secs(5),
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1526,8 +1623,12 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) =
-        RequestResponseConfig::new(ProtocolName::from("/protocol/1"), Vec::new(), 1024);
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
@@ -1543,6 +1644,7 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
         ProtocolName::from("/protocol/1/improved"),
         vec![ProtocolName::from("/protocol/1")],
         1024,
+        Duration::from_secs(5),
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1580,4 +1682,131 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
             error: RequestResponseError::Rejected,
         }
     );
+}
+
+#[tokio::test]
+async fn cancel_request_tcp() {
+    cancel_request(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn cancel_request_quic() {
+    cancel_request(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn cancel_request_websocket() {
+    cancel_request(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn cancel_request(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // send request to remote peer
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer1,
+            fallback: None,
+            request_id,
+            request: vec![1, 3, 3, 7],
+        }
+    );
+
+    // cancel request
+    handle1.cancel_request(request_id).await;
+
+    // try to send response to the canceled request
+    handle2.send_response(request_id, vec![1, 3, 3, 8]).await.unwrap();
+
+    // verify that nothing is receieved since the request was canceled
+    match tokio::time::timeout(Duration::from_secs(2), handle1.next()).await {
+        Err(_) => {}
+        Ok(event) => panic!("invalid event received: {event:?}"),
+    }
 }
