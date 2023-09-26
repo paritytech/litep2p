@@ -163,6 +163,7 @@ impl NotificationSink {
 }
 
 /// Handle allowing the user protocol to interact with the notification protocol.
+#[derive(Debug)]
 pub struct NotificationHandle {
     /// RX channel for receiving events from the notification protocol.
     event_rx: Receiver<InnerNotificationEvent>,
