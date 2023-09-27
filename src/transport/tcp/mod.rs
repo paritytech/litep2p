@@ -176,6 +176,7 @@ impl TcpTransport {
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let bandwidth_sink = self.context.bandwidth_sink.clone();
 
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::accept_connection(
@@ -186,6 +187,7 @@ impl TcpTransport {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                bandwidth_sink,
             )
             .await
             .map_err(|error| TcpError::new(error, Some(connection_id)))
@@ -237,6 +239,7 @@ impl TcpTransport {
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let bandwidth_sink = self.context.bandwidth_sink.clone();
 
         self.pending_dials.insert(connection, address);
         self.pending_connections.push(Box::pin(async move {
@@ -248,6 +251,7 @@ impl TcpTransport {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                bandwidth_sink,
             )
             .await
             .map_err(|error| TcpError::new(error, Some(connection)))
@@ -343,6 +347,7 @@ mod tests {
             TransportManagerEvent,
         },
         types::protocol::ProtocolName,
+        BandwidthSink,
     };
     use multihash::Multihash;
     use tokio::sync::mpsc::channel;
@@ -393,6 +398,7 @@ mod tests {
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
         let (_cmd_tx1, cmd_rx1) = channel(64);
+        let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
             protocol_names: Vec::new(),
@@ -401,6 +407,7 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             rx: cmd_rx1,
+            bandwidth_sink: bandwidth_sink.clone(),
 
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -435,6 +442,7 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             rx: cmd_rx2,
+            bandwidth_sink: bandwidth_sink.clone(),
 
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -489,6 +497,7 @@ mod tests {
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
         let (_cmd_tx1, cmd_rx1) = channel(64);
+        let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
             protocol_names: Vec::new(),
@@ -497,6 +506,7 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             rx: cmd_rx1,
+            bandwidth_sink: bandwidth_sink.clone(),
 
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -528,6 +538,7 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             rx: cmd_rx2,
+            bandwidth_sink: bandwidth_sink.clone(),
 
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -583,7 +594,8 @@ mod tests {
 
     #[tokio::test]
     async fn dial_error_reported_for_outbound_connections() {
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), BandwidthSink::new());
         let handle = manager.register_transport(SupportedTransport::Tcp);
         let mut transport = TcpTransport::new(
             handle,

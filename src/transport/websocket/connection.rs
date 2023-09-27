@@ -27,7 +27,7 @@ use crate::{
     substream,
     transport::websocket::{stream::BufferedStream, substream::Substream},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
-    PeerId,
+    BandwidthSink, PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
@@ -108,6 +108,9 @@ pub(crate) struct WebSocketConnection {
     /// Remote address.
     address: Multiaddr,
 
+    /// Bandwidth sink.
+    bandwidth_sink: BandwidthSink,
+
     /// Pending substreams.
     pending_substreams:
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
@@ -148,6 +151,7 @@ impl WebSocketConnection {
         ws_address: Url,
         connection_id: ConnectionId,
         yamux_config: yamux::Config,
+        bandwidth_sink: BandwidthSink,
         mut protocol_set: ProtocolSet,
     ) -> crate::Result<Self> {
         tracing::trace!(target: LOG_TARGET, ?address, ?ws_address, ?connection_id, "open connection to remote peer");
@@ -193,6 +197,7 @@ impl WebSocketConnection {
             connection,
             connection_id,
             protocol_set,
+            bandwidth_sink,
             pending_substreams: FuturesUnordered::new(),
             address,
         })
@@ -204,6 +209,7 @@ impl WebSocketConnection {
         address: SocketAddr,
         connection_id: ConnectionId,
         yamux_config: yamux::Config,
+        bandwidth_sink: BandwidthSink,
         mut protocol_set: ProtocolSet,
     ) -> crate::Result<Self> {
         let stream = MaybeTlsStream::Plain(stream);
@@ -257,6 +263,7 @@ impl WebSocketConnection {
             connection,
             connection_id,
             protocol_set,
+            bandwidth_sink,
             pending_substreams: FuturesUnordered::new(),
             address,
         })
@@ -419,9 +426,10 @@ impl WebSocketConnection {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
                             let socket = FuturesAsyncReadCompatExt::compat(substream.io);
+                            let bandwidth_sink = self.bandwidth_sink.clone();
                             let substream = substream::Substream::new_websocket(
                                 self.peer,
-                                Substream::new(socket, substream.permit),
+                                Substream::new(socket, bandwidth_sink, substream.permit),
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 

@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::protocol::Permit;
+use crate::{protocol::Permit, BandwidthSink};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::Compat;
@@ -36,14 +36,21 @@ pub struct Substream {
     /// Underlying socket.
     io: Compat<yamux::Stream>,
 
+    /// Bandwidth sink.
+    bandwidth_sink: BandwidthSink,
+
     /// Connection permit.
     _permit: Permit,
 }
 
 impl Substream {
     /// Create new [`Substream`].
-    pub fn new(io: Compat<yamux::Stream>, _permit: Permit) -> Self {
-        Self { io, _permit }
+    pub fn new(io: Compat<yamux::Stream>, bandwidth_sink: BandwidthSink, _permit: Permit) -> Self {
+        Self {
+            io,
+            bandwidth_sink,
+            _permit,
+        }
     }
 }
 
@@ -53,7 +60,13 @@ impl AsyncRead for Substream {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.io).poll_read(cx, buf)
+        match futures::ready!(Pin::new(&mut self.io).poll_read(cx, buf)) {
+            Err(error) => Poll::Ready(Err(error)),
+            Ok(res) => {
+                self.bandwidth_sink.increase_inbound(buf.filled().len());
+                Poll::Ready(Ok(res))
+            }
+        }
     }
 }
 
@@ -63,7 +76,13 @@ impl AsyncWrite for Substream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.io).poll_write(cx, buf)
+        match futures::ready!(Pin::new(&mut self.io).poll_write(cx, buf)) {
+            Err(error) => Poll::Ready(Err(error)),
+            Ok(nwritten) => {
+                self.bandwidth_sink.increase_outbound(nwritten);
+                Poll::Ready(Ok(nwritten))
+            }
+        }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
@@ -82,7 +101,13 @@ impl AsyncWrite for Substream {
         cx: &mut Context<'_>,
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
-        Pin::new(&mut self.io).poll_write_vectored(cx, bufs)
+        match futures::ready!(Pin::new(&mut self.io).poll_write_vectored(cx, bufs)) {
+            Err(error) => Poll::Ready(Err(error)),
+            Ok(nwritten) => {
+                self.bandwidth_sink.increase_outbound(nwritten);
+                Poll::Ready(Ok(nwritten))
+            }
+        }
     }
 
     fn is_write_vectored(&self) -> bool {
