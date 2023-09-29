@@ -43,7 +43,7 @@ use multihash::Multihash;
 
 pub use bandwidth::BandwidthSink;
 pub use peer_id::PeerId;
-pub use substream::Substream;
+pub use types::protocol::ProtocolName;
 
 pub use yamux;
 
