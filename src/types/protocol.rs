@@ -30,6 +30,7 @@ use std::{
 pub enum ProtocolName {
     Static(&'static str),
     Allocated(Arc<String>),
+    AllocatedStr(Arc<str>),
 }
 
 impl ProtocolName {
@@ -50,6 +51,12 @@ impl From<String> for ProtocolName {
     }
 }
 
+impl From<Arc<str>> for ProtocolName {
+    fn from(protocol: Arc<str>) -> Self {
+        Self::AllocatedStr(protocol)
+    }
+}
+
 impl std::ops::Deref for ProtocolName {
     type Target = str;
 
@@ -57,6 +64,7 @@ impl std::ops::Deref for ProtocolName {
         match self {
             Self::Static(protocol) => protocol,
             Self::Allocated(protocol) => protocol.as_str(),
+            Self::AllocatedStr(protocol) => protocol,
         }
     }
 }
