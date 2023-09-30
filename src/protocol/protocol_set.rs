@@ -229,6 +229,7 @@ impl TransportService {
     ) -> Option<TransportEvent> {
         tracing::debug!(
             target: LOG_TARGET,
+            protocol = ?self.protocol,
             ?peer,
             ?address,
             ?connection,

@@ -600,13 +600,19 @@ impl TransportManager {
                         SupportedTransport::WebSocket,
                         PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
                     ),
-                    _ => return Err(Error::TransportNotSupported(address.clone())),
+                    _ => {
+                        tracing::debug!(target: LOG_TARGET, ?address, "peer id missing");
+                        return Err(Error::TransportNotSupported(address.clone()));
+                    }
                 },
                 Some(Protocol::P2p(hash)) => (
                     SupportedTransport::Tcp,
                     PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
                 ),
-                _ => return Err(Error::TransportNotSupported(address.clone())),
+                _ => {
+                    tracing::debug!(target: LOG_TARGET, ?address, "peer id missing");
+                    return Err(Error::TransportNotSupported(address.clone()));
+                }
             },
             Protocol::Udp(_) => match protocol_stack
                 .next()
@@ -617,9 +623,15 @@ impl TransportManager {
                         SupportedTransport::Quic,
                         PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
                     ),
-                    _ => return Err(Error::AddressError(AddressError::PeerIdMissing)),
+                    _ => {
+                        tracing::debug!(target: LOG_TARGET, ?address, "peer id missing");
+                        return Err(Error::TransportNotSupported(address.clone()));
+                    }
                 },
-                _ => return Err(Error::TransportNotSupported(address.clone())),
+                _ => {
+                    tracing::debug!(target: LOG_TARGET, ?address, "expected `quic-v1`");
+                    return Err(Error::TransportNotSupported(address.clone()));
+                }
             },
             protocol => {
                 tracing::error!(

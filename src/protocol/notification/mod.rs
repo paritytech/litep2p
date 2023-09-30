@@ -265,10 +265,11 @@ impl NotificationProtocol {
                 context.state = PeerState::Closed { pending_open: None };
                 self.on_open_substream(peer).await
             }
-            _ => {
+            state => {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?peer,
+                    ?state,
                     "state mismatch: peer already exists"
                 );
                 debug_assert!(false);
