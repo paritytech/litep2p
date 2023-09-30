@@ -644,8 +644,7 @@ impl NotificationProtocol {
 
         // protocol can only request a new outbound substream to be opened if the state is `Closed`
         // other states imply that it's already open
-        if let PeerState::Closed { .. } = std::mem::replace(&mut context.state, PeerState::Poisoned)
-        {
+        if std::matches!(context.state, PeerState::Closed { .. }) {
             match self.service.open_substream(peer).await {
                 Ok(substream) => {
                     self.pending_outbound.insert(substream, peer);
