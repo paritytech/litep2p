@@ -27,7 +27,7 @@ use tokio::sync::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "notification::connection";
+const LOG_TARGET: &str = "litep2p::notification::connection";
 
 /// Bidirectional substream pair representing a connection to a remote peer.
 pub(crate) struct Connection {

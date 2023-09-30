@@ -60,7 +60,7 @@ mod handle;
 // TODO: add ability to specify limit for inbound requests?
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "request-response::protocol";
+const LOG_TARGET: &str = "litep2p::request-response::protocol";
 
 /// Default request timeout.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);

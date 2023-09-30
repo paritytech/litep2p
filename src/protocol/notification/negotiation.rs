@@ -33,7 +33,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "notification::negotiation";
+const LOG_TARGET: &str = "litep2p::notification::negotiation";
 
 /// Maximum timeout wait before for handshake before operation is considered failed.
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(10);

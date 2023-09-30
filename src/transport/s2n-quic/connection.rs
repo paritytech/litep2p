@@ -38,7 +38,7 @@ use s2n_quic::{
 use tokio_util::codec::Framed;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "quic::connection";
+const LOG_TARGET: &str = "litep2p::quic::connection";
 
 /// QUIC connection error.
 #[derive(Debug)]

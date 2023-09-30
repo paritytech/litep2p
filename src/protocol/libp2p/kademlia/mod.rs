@@ -53,7 +53,7 @@ pub use {
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "ipfs::kademlia";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
 
 /// Kademlia replication factor, `k`.
 const _REPLICATION_FACTOR: usize = 20;

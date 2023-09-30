@@ -69,7 +69,7 @@ impl WebSocketError {
 }
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "websocket";
+const LOG_TARGET: &str = "litep2p::websocket";
 
 /// WebSocket transport.
 pub(crate) struct WebSocketTransport {

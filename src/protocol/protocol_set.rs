@@ -48,7 +48,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "protocol-set";
+const LOG_TARGET: &str = "litep2p::protocol-set";
 
 /// Maximum connections per peer.
 const MAX_CONNECTIONS_PER_PEER: usize = 2;

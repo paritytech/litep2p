@@ -43,7 +43,7 @@ use std::{
 // TODO: store `Multiaddr` in `Arc`
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "transport-manager";
+const LOG_TARGET: &str = "litep2p::transport-manager";
 
 /// Supported protocols.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]

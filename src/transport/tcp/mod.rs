@@ -51,7 +51,7 @@ mod substream;
 pub mod config;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "tcp";
+const LOG_TARGET: &str = "litep2p::tcp";
 
 #[derive(Debug)]
 pub(super) struct TcpError {

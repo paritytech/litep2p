@@ -52,7 +52,7 @@ mod substream;
 pub mod config;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "quic";
+const LOG_TARGET: &str = "litep2p::quic";
 
 #[derive(Debug)]
 struct NegotiatedConnection {

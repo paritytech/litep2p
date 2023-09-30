@@ -34,7 +34,7 @@ use crate::{
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "ipfs::kademlia::query::get_value";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_value";
 
 #[derive(Debug)]
 pub struct GetRecordContext {

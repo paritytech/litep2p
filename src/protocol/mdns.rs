@@ -46,7 +46,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "mdns";
+const LOG_TARGET: &str = "litep2p::mdns";
 
 /// IPv4 multicast address.
 const IPV4_MULTICAST_ADDRESS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);

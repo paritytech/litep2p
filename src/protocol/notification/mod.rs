@@ -59,7 +59,7 @@ mod types;
 mod tests;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "notification::protocol";
+const LOG_TARGET: &str = "litep2p::notification::protocol";
 
 /// Inbound substream state.
 #[derive(Debug)]

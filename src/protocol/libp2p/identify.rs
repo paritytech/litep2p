@@ -39,7 +39,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use std::collections::{HashMap, HashSet};
 
 /// Log target for the file.
-const LOG_TARGET: &str = "ipfs::identify";
+const LOG_TARGET: &str = "litep2p::ipfs::identify";
 
 /// IPFS Identify protocol name
 const PROTOCOL_NAME: &str = "/ipfs/id/1.0.0";

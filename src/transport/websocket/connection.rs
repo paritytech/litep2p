@@ -46,7 +46,7 @@ mod schema {
 }
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "websocket::connection";
+const LOG_TARGET: &str = "litep2p::websocket::connection";
 
 #[derive(Debug)]
 pub struct NegotiatedSubstream {

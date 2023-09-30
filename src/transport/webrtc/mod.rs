@@ -68,7 +68,7 @@ mod schema {
 }
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "webrtc";
+const LOG_TARGET: &str = "litep2p::webrtc";
 
 /// Hardcoded remote fingerprint.
 const REMOTE_FINGERPRINT: &str =

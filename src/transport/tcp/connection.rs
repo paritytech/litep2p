@@ -48,7 +48,7 @@ use std::{borrow::Cow, fmt, net::SocketAddr, time::Duration};
 
 // TODO: introduce `NegotiatingConnection` to clean up this code a bit?
 /// Logging target for the file.
-const LOG_TARGET: &str = "tcp::connection";
+const LOG_TARGET: &str = "litep2p::tcp::connection";
 
 #[derive(Debug)]
 pub struct NegotiatedSubstream {

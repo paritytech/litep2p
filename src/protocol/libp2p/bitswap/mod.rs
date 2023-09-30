@@ -52,7 +52,7 @@ mod schema {
 }
 
 /// Log target for the file.
-const LOG_TARGET: &str = "ipfs::bitswap";
+const LOG_TARGET: &str = "litep2p::ipfs::bitswap";
 
 /// Bitswap metadata.
 #[derive(Debug)]

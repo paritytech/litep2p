@@ -67,7 +67,7 @@ pub(crate) const MAX_WRITE_BUFFER_SIZE: usize = 2;
 pub const MAX_FRAME_LEN: usize = MAX_NOISE_MSG_LEN - NOISE_EXTRA_ENCRYPT_SPACE;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "crypto::noise";
+const LOG_TARGET: &str = "litep2p::crypto::noise";
 
 #[derive(Debug)]
 enum NoiseState {

@@ -37,7 +37,7 @@ mod find_node;
 mod get_record;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "ipfs::kademlia::query";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
 
 // TODO: store record key instead of the actual record
 

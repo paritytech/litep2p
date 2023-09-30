@@ -31,7 +31,7 @@ use bytes::{Bytes, BytesMut};
 use prost::Message;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "ifps::kademlia::message";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::message";
 
 /// Kademlia message.
 #[derive(Debug, Clone)]

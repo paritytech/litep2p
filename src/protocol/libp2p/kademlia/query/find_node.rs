@@ -30,7 +30,7 @@ use crate::{
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "ipfs::kademlia::query::find_node";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_node";
 
 /// Context for `FIND_NODE` queries.
 #[derive(Debug)]

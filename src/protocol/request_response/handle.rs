@@ -35,7 +35,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "request-response::handle";
+const LOG_TARGET: &str = "litep2p::request-response::handle";
 
 /// Request-response error.
 #[derive(Debug, Clone, PartialEq, Eq)]

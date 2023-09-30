@@ -30,7 +30,7 @@ pub(crate) mod keys_proto {
     include!(concat!(env!("OUT_DIR"), "/keys_proto.rs"));
 }
 
-const LOG_TARGET: &str = "crypto";
+const LOG_TARGET: &str = "litep2p::crypto";
 
 /// The public key of a node's identity keypair.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

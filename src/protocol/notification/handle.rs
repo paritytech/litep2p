@@ -38,7 +38,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "notification::handle";
+const LOG_TARGET: &str = "litep2p::notification::handle";
 
 #[derive(Debug)]
 pub(crate) struct NotificationEventHandle {
