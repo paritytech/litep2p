@@ -34,7 +34,10 @@ use crate::{
         websocket::config::TransportConfig as WebSocketTransportConfig,
     },
     types::protocol::ProtocolName,
+    PeerId,
 };
+
+use multiaddr::Multiaddr;
 
 use std::collections::HashMap;
 
@@ -98,6 +101,9 @@ pub struct Litep2pConfigBuilder {
 
     /// mDNS configuration.
     mdns: Option<MdnsConfig>,
+
+    /// Known addresess.
+    known_addresses: Vec<(PeerId, Vec<Multiaddr>)>,
 }
 
 impl Default for Litep2pConfigBuilder {
@@ -123,6 +129,7 @@ impl Litep2pConfigBuilder {
             user_protocols: HashMap::new(),
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
+            known_addresses: Vec::new(),
         }
     }
 
@@ -204,6 +211,15 @@ impl Litep2pConfigBuilder {
         self
     }
 
+    /// Add known address(es) for one or more peers.
+    pub fn with_known_addresses(
+        mut self,
+        addresses: impl Iterator<Item = (PeerId, Vec<Multiaddr>)>,
+    ) -> Self {
+        self.known_addresses = addresses.collect();
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     ///
     /// Generates a default keypair if user didn't provide one.
@@ -227,6 +243,7 @@ impl Litep2pConfigBuilder {
             user_protocols: self.user_protocols,
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
+            known_addresses: self.known_addresses,
         }
     }
 }
@@ -272,4 +289,7 @@ pub struct Litep2pConfig {
 
     /// mDNS configuration.
     pub(crate) mdns: Option<MdnsConfig>,
+
+    /// Known addresses.
+    pub known_addresses: Vec<(PeerId, Vec<Multiaddr>)>,
 }

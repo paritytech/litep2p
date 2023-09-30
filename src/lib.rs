@@ -124,6 +124,13 @@ impl Litep2p {
         let (mut transport_manager, transport_handle) =
             TransportManager::new(config.keypair.clone(), bandwidth_sink.clone());
 
+        // add known addresses to `TransportManager`, if any exist
+        if !config.known_addresses.is_empty() {
+            for (peer, addresses) in config.known_addresses {
+                transport_manager.add_known_address(peer, addresses.iter().cloned());
+            }
+        }
+
         // start notification protocol event loops
         for (protocol, config) in config.notification_protocols.into_iter() {
             tracing::debug!(
