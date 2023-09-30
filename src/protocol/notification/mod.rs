@@ -36,13 +36,14 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
+use multiaddr::Multiaddr;
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     oneshot,
 };
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::HashMap;
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::NotificationHandle;
@@ -138,6 +139,9 @@ enum PeerState {
         /// case the substream ever opens.
         pending_open: Option<SubstreamId>,
     },
+
+    /// Peer is being dialed in order to open an outbound substream to them.
+    Dialing,
 
     /// Outbound substream initiated.
     OutboundInitiated {
@@ -241,15 +245,27 @@ impl NotificationProtocol {
     }
 
     /// Connection established to remote node.
+    ///
+    /// If the peer already exists, the only valid state for it is `Dialing` as it indicates that
+    /// the user tried to open a substream to a peer who was not connected to local node.
+    ///
+    /// Any other state indicates that there's an error in the state transition logic.
     async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
 
-        match self.peers.entry(peer) {
-            Entry::Vacant(entry) => {
-                entry.insert(PeerContext::new());
-                Ok(())
+        let Some(context) = self.peers.get_mut(&peer) else {
+            self.peers.insert(peer, PeerContext::new());
+            return Ok(());
+        };
+
+        match std::mem::replace(&mut context.state, PeerState::Poisoned) {
+            PeerState::Dialing => {
+                tracing::trace!(target: LOG_TARGET, ?peer, "dial succeeded, open substream to peer");
+
+                context.state = PeerState::Closed { pending_open: None };
+                self.on_open_substream(peer).await
             }
-            Entry::Occupied(_) => {
+            _ => {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?peer,
@@ -603,12 +619,27 @@ impl NotificationProtocol {
         tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
 
         let Some(context) = self.peers.get_mut(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "no open connection to peer");
-
-            self.event_handle
-                .report_notification_stream_open_failure(peer, NotificationError::NoConnection)
-                .await;
-            return Err(Error::PeerDoesntExist(peer));
+            match self.service.dial(&peer).await {
+                Err(error) => {
+                    tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
+                    self.event_handle
+                        .report_notification_stream_open_failure(
+                            peer,
+                            NotificationError::DialFailure,
+                        )
+                        .await;
+                    return Err(error);
+                }
+                Ok(()) => {
+                    self.peers.insert(
+                        peer,
+                        PeerContext {
+                            state: PeerState::Dialing,
+                        },
+                    );
+                    return Ok(());
+                }
+            }
         };
 
         // protocol can only request a new outbound substream to be opened if the state is `Closed`
@@ -1013,6 +1044,25 @@ impl NotificationProtocol {
         }
     }
 
+    /// Handle dial failure.
+    async fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
+        let Some(context) = self.peers.remove(&peer) else {
+            return;
+        };
+
+        match context.state {
+            PeerState::Dialing => {
+                tracing::debug!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
+                self.event_handle
+                    .report_notification_stream_open_failure(peer, NotificationError::DialFailure)
+                    .await;
+            }
+            state => {
+                self.peers.insert(peer, PeerContext { state });
+            }
+        }
+    }
+
     /// Handle next notification event.
     async fn next_event(&mut self) {
         // biased select is used because the substream events must be prioritized above other events
@@ -1092,7 +1142,7 @@ impl NotificationProtocol {
                 Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                     self.on_substream_open_failure(substream, error).await;
                 }
-                Some(TransportEvent::DialFailure { .. }) => {},
+                Some(TransportEvent::DialFailure { peer, address }) => self.on_dial_failure(peer, address).await,
                 None => return,
             },
             command = self.command_rx.recv() => match command {

@@ -49,6 +49,9 @@ pub enum NotificationError {
 
     /// Synchronous notification channel is clogged.
     ChannelClogged,
+
+    /// Failed to dial peer.
+    DialFailure,
 }
 
 /// Notification events.
