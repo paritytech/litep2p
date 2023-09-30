@@ -21,7 +21,6 @@
 use crate::{
     config::Litep2pConfig,
     crypto::PublicKey,
-    error::Error,
     protocol::{
         libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
         mdns::Mdns,
@@ -42,6 +41,7 @@ use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
 pub use bandwidth::BandwidthSink;
+pub use error::Error;
 pub use peer_id::PeerId;
 pub use types::protocol::ProtocolName;
 
