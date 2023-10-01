@@ -1016,6 +1016,14 @@ impl NotificationProtocol {
 
                 // start connection handler for the peer which only deals with sending/receiving
                 // notifications
+                //
+                // the connection handler must be started only after the newly opened notification
+                // substream is reported to user because the connection handler
+                // might exit immediately after being started if remote closed the connection.
+                //
+                // if the order of events (open & close) is not ensured to be correct, the code
+                // handling the connectivity logic on the `NotificationHandle` side
+                // might get confused about the current state of the connection.
                 let shutdown_tx = self.shutdown_tx.clone();
                 let notif_tx = self.notif_tx.clone();
                 let (connection, shutdown) = Connection::new(
@@ -1027,7 +1035,6 @@ impl NotificationProtocol {
                     async_rx,
                     sync_rx,
                 );
-                tokio::spawn(connection.start());
 
                 context.state = PeerState::Open { shutdown };
                 self.event_handle
@@ -1039,6 +1046,8 @@ impl NotificationProtocol {
                         sink,
                     )
                     .await;
+
+                tokio::spawn(connection.start());
             }
             state => context.state = state,
         }
