@@ -255,6 +255,13 @@ impl RequestResponseHandle {
             .await
             .map_err(From::from)
     }
+
+    /// Helper function for Polkadot SDK.
+    ///
+    /// This will be removed once the code on Polkadot SDK side has been refactored.
+    pub fn can_send(&self) -> bool {
+        self.command_tx.capacity() < self.command_tx.max_capacity()
+    }
 }
 
 impl futures::Stream for RequestResponseHandle {
