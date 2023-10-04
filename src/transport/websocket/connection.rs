@@ -187,6 +187,7 @@ impl WebSocketConnection {
 
         let connection = yamux::Connection::new(stream.inner(), yamux_config, Role::Dialer.into());
         let (control, connection) = yamux::Control::new(connection);
+
         protocol_set
             .report_connection_established(connection_id, peer, address.clone())
             .await?;

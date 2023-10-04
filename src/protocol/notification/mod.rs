@@ -192,6 +192,9 @@ pub(crate) struct NotificationProtocol {
     /// Transport service.
     service: TransportService,
 
+    /// Protocol.
+    protocol: ProtocolName,
+
     /// Handshake bytes.
     handshake: Vec<u8>,
 
@@ -234,6 +237,7 @@ impl NotificationProtocol {
             shutdown_tx,
             shutdown_rx,
             peers: HashMap::new(),
+            protocol: config.protocol_name,
             handshake: config.handshake.clone(),
             auto_accept: config.auto_accept,
             event_handle: NotificationEventHandle::new(config.event_tx),
@@ -617,7 +621,7 @@ impl NotificationProtocol {
     /// Other states either imply an invalid state transition ([`PeerState::Open`]) or that an
     /// inbound substream has already been received and its currently being validated by the user.
     async fn on_open_substream(&mut self, peer: PeerId) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
+        tracing::trace!(target: LOG_TARGET, ?peer, protocol = ?self.protocol, "open substream");
 
         let Some(context) = self.peers.get_mut(&peer) else {
             match self.service.dial(&peer).await {

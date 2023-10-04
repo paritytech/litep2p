@@ -115,6 +115,9 @@ pub(crate) struct RequestResponseProtocol {
     /// Transport service.
     service: TransportService,
 
+    /// Protocol.
+    protocol: ProtocolName,
+
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
 
@@ -161,6 +164,7 @@ impl RequestResponseProtocol {
             next_request_id: config.next_request_id,
             event_tx: config.event_tx,
             command_rx: config.command_rx,
+            protocol: config.protocol_name,
             pending_dials: HashMap::new(),
             pending_outbound: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
@@ -397,6 +401,7 @@ impl RequestResponseProtocol {
     ) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,
+            protocol = ?self.protocol,
             ?substream,
             ?error,
             "failed to open substream"
@@ -454,6 +459,7 @@ impl RequestResponseProtocol {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
+            protocol = ?self.protocol,
             ?request_id,
             ?dial_options,
             "send request to remote peer"
@@ -530,6 +536,7 @@ impl RequestResponseProtocol {
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
+            protocol = ?self.protocol,
             ?request_id,
             ?response,
             "send response to remote peer"
