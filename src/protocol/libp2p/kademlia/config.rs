@@ -22,10 +22,13 @@ use crate::{
     codec::ProtocolCodec,
     protocol::libp2p::kademlia::handle::{KademliaCommand, KademliaEvent, KademliaHandle},
     types::protocol::ProtocolName,
-    DEFAULT_CHANNEL_SIZE,
+    PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
+use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+use std::collections::HashMap;
 
 /// Protocol name.
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
@@ -46,6 +49,9 @@ pub struct Config {
     #[allow(unused)]
     pub(super) replication_factor: usize,
 
+    /// Known peers.
+    pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+
     /// TX channel for sending events to `KademliaHandle`.
     pub(super) event_tx: Sender<KademliaEvent>,
 
@@ -54,7 +60,10 @@ pub struct Config {
 }
 
 impl Config {
-    fn new(replication_factor: usize) -> (Self, KademliaHandle) {
+    fn new(
+        replication_factor: usize,
+        known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+    ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -63,6 +72,7 @@ impl Config {
                 protocol: ProtocolName::from(PROTOCOL_NAME),
                 codec: ProtocolCodec::UnsignedVarint(None),
                 replication_factor,
+                known_peers,
                 cmd_rx,
                 event_tx,
             },
@@ -72,7 +82,7 @@ impl Config {
 
     /// Build default Kademlia configuration.
     pub fn default() -> (Self, KademliaHandle) {
-        Self::new(REPLICATION_FACTOR)
+        Self::new(REPLICATION_FACTOR, HashMap::new())
     }
 }
 
@@ -81,6 +91,9 @@ impl Config {
 pub struct ConfigBuilder {
     /// Replication factor.
     pub(super) replication_factor: usize,
+
+    /// Known peers.
+    pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
 }
 
 impl ConfigBuilder {
@@ -88,6 +101,7 @@ impl ConfigBuilder {
     pub fn new() -> Self {
         Self {
             replication_factor: REPLICATION_FACTOR,
+            known_peers: HashMap::new(),
         }
     }
 
@@ -97,8 +111,14 @@ impl ConfigBuilder {
         self
     }
 
+    /// Seed Kademlia with one or more known peers.
+    pub fn with_known_peers(mut self, peers: HashMap<PeerId, Vec<Multiaddr>>) -> Self {
+        self.known_peers = peers;
+        self
+    }
+
     /// Build Kademlia [`Config`].
     pub fn build(self) -> (Config, KademliaHandle) {
-        Config::new(self.replication_factor)
+        Config::new(self.replication_factor, self.known_peers)
     }
 }

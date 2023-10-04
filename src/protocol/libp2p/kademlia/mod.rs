@@ -148,18 +148,23 @@ impl Kademlia {
     /// Create new [`Kademlia`].
     pub(crate) fn new(service: TransportService, config: Config) -> Self {
         let local_key = Key::from(service.local_peer_id);
+        let mut routing_table = RoutingTable::new(local_key.clone());
+
+        for (peer, addresses) in config.known_peers {
+            routing_table.add_known_peer(peer, addresses.clone(), ConnectionType::NotConnected);
+        }
 
         Self {
             service,
+            routing_table,
             peers: HashMap::new(),
             cmd_rx: config.cmd_rx,
             store: MemoryStore::new(),
             event_tx: config.event_tx,
-            _local_key: local_key.clone(),
+            _local_key: local_key,
             pending_dials: HashMap::new(),
             substreams: SubstreamSet::new(),
             pending_substreams: HashMap::new(),
-            routing_table: RoutingTable::new(local_key),
             engine: QueryEngine::new(config.replication_factor, PARALLELISM_FACTOR),
         }
     }
