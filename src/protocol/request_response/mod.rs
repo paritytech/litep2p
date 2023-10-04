@@ -618,6 +618,10 @@ impl RequestResponseProtocol {
 
         loop {
             tokio::select! {
+                // events coming from the network have higher priority than user commands as all user commands are
+                // responses to network behaviour so ensure that the commands operate on the most up to date information.
+                biased;
+
                 event = self.service.next_event() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         if let Err(error) = self.on_connection_established(peer).await {
@@ -671,6 +675,27 @@ impl RequestResponseProtocol {
                     Some(TransportEvent::DialFailure { peer, .. }) => self.on_dial_failure(peer).await,
                     None => return,
                 },
+                event = self.pending_inbound.select_next_some(), if !self.pending_inbound.is_empty() => {
+                    let (peer, request_id, event) = event;
+
+                    if let Err(error) = self.on_substream_event(peer, request_id, event).await {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?request_id, ?error, "failed to handle substream event");
+                    }
+                }
+                event = self.pending_inbound_requests.next() => match event {
+                    Some(((peer, request_id), message)) => {
+                        if let Err(error) = self.on_inbound_request(peer, request_id, message).await {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?request_id,
+                                ?error,
+                                "failed to handle inbound request"
+                            );
+                        }
+                    }
+                    None => return,
+                },
                 command = self.command_rx.recv() => match command {
                     None => {
                         tracing::debug!(target: LOG_TARGET, "user protocol has exited, exiting");
@@ -712,27 +737,6 @@ impl RequestResponseProtocol {
                         }
                     }
                 },
-                event = self.pending_inbound.select_next_some(), if !self.pending_inbound.is_empty() => {
-                    let (peer, request_id, event) = event;
-
-                    if let Err(error) = self.on_substream_event(peer, request_id, event).await {
-                        tracing::debug!(target: LOG_TARGET, ?peer, ?request_id, ?error, "failed to handle substream event");
-                    }
-                }
-                event = self.pending_inbound_requests.next() => match event {
-                    Some(((peer, request_id), message)) => {
-                        if let Err(error) = self.on_inbound_request(peer, request_id, message).await {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?request_id,
-                                ?error,
-                                "failed to handle inbound request"
-                            );
-                        }
-                    }
-                    None => return,
-                }
             }
         }
     }
