@@ -249,12 +249,16 @@ impl TransportService {
                     );
                     return None;
                 }
-
-                tracing::trace!(target: LOG_TARGET, ?peer, ?connection, "secondary connection");
-
-                // user is not notified of the second connection
+                // TODO: ugly
                 entry.push((handle, connection));
-                None
+
+                if entry.len() == 1 {
+                    Some(TransportEvent::ConnectionEstablished { peer, address })
+                } else {
+                    // user is not notified of the second connection
+                    tracing::trace!(target: LOG_TARGET, ?peer, ?connection, "secondary connection");
+                    None
+                }
             }
             Entry::Vacant(entry) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, ?connection, "inform protocol");
@@ -282,7 +286,6 @@ impl Transport for TransportService {
     async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
         self.transport_handle.dial_address(address).await
     }
-
     fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
         let addresses: HashSet<Multiaddr> = addresses
             .filter_map(|address| {
@@ -347,6 +350,8 @@ impl Transport for TransportService {
                     }
                     InnerTransportEvent::ConnectionClosed { peer, connection } => match self.connections.get_mut(&peer) {
                         Some(connections) => {
+                            tracing::trace!(target: LOG_TARGET, ?peer, ?connection, ?connections, "connection closed");
+
                             connections.retain(|(_, id)| &connection != id);
                             return Some(TransportEvent::ConnectionClosed { peer })
                         }
@@ -363,7 +368,7 @@ impl Transport for TransportService {
                         }
                         Some((peer, connection)) => {
                             if let Some(connections) = self.connections.get_mut(&peer) {
-                                tracing::debug!(target: LOG_TARGET, ?peer, "keep-alive timeout over, downgrade connection");
+                                tracing::debug!(target: LOG_TARGET, ?peer, ?connection, "keep-alive timeout over, downgrade connection");
 
                                 match connections.iter_mut().find(|(_, id)| id == &connection) {
                                     Some((connection, _)) => connection.close(),
