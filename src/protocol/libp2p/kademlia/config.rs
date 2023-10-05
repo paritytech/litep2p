@@ -39,8 +39,10 @@ const REPLICATION_FACTOR: usize = 20usize;
 /// Kademlia configuration.
 #[derive(Debug)]
 pub struct Config {
-    /// Protocol name.
-    pub(crate) protocol: ProtocolName,
+    // Protocol name.
+    // pub(crate) protocol: ProtocolName,
+    /// Protocol names.
+    pub(crate) protocol_names: Vec<ProtocolName>,
 
     /// Protocol codec.
     pub(crate) codec: ProtocolCodec,
@@ -63,13 +65,20 @@ impl Config {
     fn new(
         replication_factor: usize,
         known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+        mut protocol_names: Vec<ProtocolName>,
     ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
+        // if no protocol names were provided, use the default protocol
+        if protocol_names.is_empty() {
+            protocol_names.push(ProtocolName::from(PROTOCOL_NAME));
+        }
+
         (
             Config {
-                protocol: ProtocolName::from(PROTOCOL_NAME),
+                protocol_names,
+                // protocol: ProtocolName::from(PROTOCOL_NAME),
                 codec: ProtocolCodec::UnsignedVarint(None),
                 replication_factor,
                 known_peers,
@@ -82,7 +91,7 @@ impl Config {
 
     /// Build default Kademlia configuration.
     pub fn default() -> (Self, KademliaHandle) {
-        Self::new(REPLICATION_FACTOR, HashMap::new())
+        Self::new(REPLICATION_FACTOR, HashMap::new(), Vec::new())
     }
 }
 
@@ -94,6 +103,9 @@ pub struct ConfigBuilder {
 
     /// Known peers.
     pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+
+    /// Protocol names.
+    pub(super) protocol_names: Vec<ProtocolName>,
 }
 
 impl ConfigBuilder {
@@ -102,6 +114,7 @@ impl ConfigBuilder {
         Self {
             replication_factor: REPLICATION_FACTOR,
             known_peers: HashMap::new(),
+            protocol_names: Vec::new(),
         }
     }
 
@@ -117,8 +130,26 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set Kademlia protocol names, overriding the default protocol name.
+    ///
+    /// The order of the protocol names signifies preference so if, for example, there are two
+    /// protocols:
+    ///  * `/kad/2.0.0`
+    ///  * `/kad/1.0.0`
+    ///
+    /// Where `/kad/2.0.0` is the preferred version, then that should be in `protocol_names` before
+    /// `/kad/1.0.0`.
+    pub fn with_protocol_names(mut self, protocol_names: Vec<ProtocolName>) -> Self {
+        self.protocol_names = protocol_names;
+        self
+    }
+
     /// Build Kademlia [`Config`].
     pub fn build(self) -> (Config, KademliaHandle) {
-        Config::new(self.replication_factor, self.known_peers)
+        Config::new(
+            self.replication_factor,
+            self.known_peers,
+            self.protocol_names,
+        )
     }
 }

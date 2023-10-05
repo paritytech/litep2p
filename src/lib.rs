@@ -192,13 +192,19 @@ impl Litep2p {
         if let Some(kademlia_config) = config.kademlia.take() {
             tracing::debug!(
                 target: LOG_TARGET,
-                protocol = ?kademlia_config.protocol,
+                protocol_names = ?kademlia_config.protocol_names,
                 "enable ipfs kademlia protocol",
             );
 
+            let main_protocol =
+                kademlia_config.protocol_names.get(0).expect("protocol name to exist");
+            let fallback_names = kademlia_config.protocol_names.iter().skip(1).cloned().collect();
+
             let service = transport_manager.register_protocol(
-                kademlia_config.protocol.clone(),
-                Vec::new(),
+                main_protocol.clone(),
+                fallback_names,
+                // kademlia_config.protocol.clone(),
+                // Vec::new(),
                 kademlia_config.codec,
             );
             tokio::spawn(async move { Kademlia::new(service, kademlia_config).run().await });
