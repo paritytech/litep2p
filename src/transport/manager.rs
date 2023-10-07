@@ -772,9 +772,13 @@ impl TransportManager {
                 match self.pending_connections.remove(&connection) {
                     Some(dialed_peer) => {
                         if &dialed_peer != peer {
-                            tracing::warn!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer IDs do not match");
-                            // TODO: which peer ID should be reported to the protocol?
-                            todo!();
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?dialed_peer,
+                                ?peer,
+                                "peer IDs do not match but transport was supposed to reject connection"
+                            );
+                            debug_assert!(false)
                         }
 
                         match self.peers.write().get_mut(&dialed_peer) {

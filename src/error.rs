@@ -114,6 +114,8 @@ pub enum Error {
     Quinn(quinn::ConnectionError),
     #[error("Invalid certificate")]
     InvalidCertificate,
+    #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]
+    PeerIdMismatch(PeerId, PeerId),
 }
 
 #[derive(Debug, thiserror::Error)]

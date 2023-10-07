@@ -268,6 +268,22 @@ impl Transport for WebSocketTransport {
                     TransportManagerCommand::Dial { address, connection } => {
                         let context = self.context.protocol_set();
                         let yamux_config = self.config.yamux_config.clone();
+                        let peer = match address.iter().find(
+                            |protocol| std::matches!(protocol, Protocol::P2p(_))
+                        ) {
+                            Some(Protocol::P2p(peer)) => PeerId::from_multihash(peer).expect("to succeed"),
+                            _ => {
+                                tracing::error!(target: LOG_TARGET, ?address, "state mismatch: multiaddress doesn't contain peer id");
+                                debug_assert!(false);
+
+                                self.context.report_dial_failure(
+                                    connection,
+                                    address.clone(),
+                                    Error::AddressError(AddressError::PeerIdMissing)
+                                ).await;
+                                continue;
+                            }
+                        };
 
                         // try to convert the multiaddress into a `Url` and if it fails, report dial failure immediately
                         let ws_address = match Self::multiaddr_into_url(address.clone()) {
@@ -288,6 +304,7 @@ impl Transport for WebSocketTransport {
                             match tokio::time::timeout(Duration::from_secs(10), async move {
                                 WebSocketConnection::open_connection(
                                     address,
+                                    Some(peer),
                                     ws_address,
                                     connection,
                                     yamux_config,

@@ -148,6 +148,7 @@ impl WebSocketConnection {
     /// Open WebSocket connection.
     pub(crate) async fn open_connection(
         address: Multiaddr,
+        dialed_peer: Option<PeerId>,
         ws_address: Url,
         connection_id: ConnectionId,
         yamux_config: yamux::Config,
@@ -177,6 +178,15 @@ impl WebSocketConnection {
         let (stream, peer) =
             noise::handshake(stream.inner(), &protocol_set.keypair, Role::Dialer, 5, 2).await?;
         let stream: NoiseSocket<BufferedStream<_>> = stream;
+
+        // if the local node dialed a remote node, verify that received peer ID matches the one that
+        // was transported as part of the noise handshake
+        if let Some(dialed_peer) = dialed_peer {
+            if dialed_peer != peer {
+                tracing::debug!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer id mismatch");
+                return Err(Error::PeerIdMismatch(dialed_peer, peer));
+            }
+        }
 
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
 

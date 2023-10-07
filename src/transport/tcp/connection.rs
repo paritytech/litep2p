@@ -159,6 +159,7 @@ impl TcpConnection {
 
             Self::negotiate_connection(
                 stream,
+                peer,
                 connection_id,
                 context,
                 keypair,
@@ -237,6 +238,7 @@ impl TcpConnection {
         match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             Self::negotiate_connection(
                 stream,
+                None,
                 connection_id,
                 context,
                 // noise_config,
@@ -318,6 +320,7 @@ impl TcpConnection {
     /// Negotiate noise + yamux for the connection.
     async fn negotiate_connection(
         stream: TcpStream,
+        dialed_peer: Option<PeerId>,
         connection_id: ConnectionId,
         mut protocol_set: ProtocolSet,
         keypair: Keypair,
@@ -354,6 +357,14 @@ impl TcpConnection {
             max_write_buffer_size,
         )
         .await?;
+
+        if let Some(dialed_peer) = dialed_peer {
+            if dialed_peer != peer {
+                tracing::debug!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer id mismatch");
+                return Err(Error::PeerIdMismatch(dialed_peer, peer));
+            }
+        }
+
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
         let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
