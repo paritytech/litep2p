@@ -103,7 +103,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     }
 
     /// Register `FIND_NODE` response from `peer`.
-    pub fn register_response(&mut self, peer: PeerId, mut peers: Vec<KademliaPeer>) {
+    pub fn register_response(&mut self, peer: PeerId, peers: Vec<KademliaPeer>) {
         let Some(peer) = self.pending.remove(&peer) else {
             tracing::warn!(target: LOG_TARGET, ?peer, "received response from peer but didn't expect it");
             debug_assert!(false);
@@ -130,11 +130,13 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
 
         // filter already queried peers and extend the set of candidates
-        peers.retain(|peer| !self.queried.contains_key(&peer.peer));
-
-        for candidate in &peers {
-            let distance = self.target.distance(&candidate.key);
-            self.candidates.insert(distance, candidate.clone());
+        for candidate in peers {
+            if !self.queried.contains_key(&candidate.peer)
+                && !self.pending.contains_key(&candidate.peer)
+            {
+                let distance = self.target.distance(&candidate.key);
+                self.candidates.insert(distance, candidate);
+            }
         }
     }
 
