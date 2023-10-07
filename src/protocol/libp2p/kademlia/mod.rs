@@ -146,12 +146,13 @@ pub(crate) struct Kademlia {
 
 impl Kademlia {
     /// Create new [`Kademlia`].
-    pub(crate) fn new(service: TransportService, config: Config) -> Self {
+    pub(crate) fn new(mut service: TransportService, config: Config) -> Self {
         let local_key = Key::from(service.local_peer_id);
         let mut routing_table = RoutingTable::new(local_key.clone());
 
         for (peer, addresses) in config.known_peers {
             routing_table.add_known_peer(peer, addresses.clone(), ConnectionType::NotConnected);
+            service.add_known_address(&peer, addresses.into_iter());
         }
 
         Self {
