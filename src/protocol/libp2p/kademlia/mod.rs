@@ -404,9 +404,9 @@ impl Kademlia {
 
     /// Handle dial failure.
     fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
-        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
-
         if let Some(PeerAction::SendFindNode(query)) = self.pending_dials.remove(&peer) {
+            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
+
             self.engine.register_response_failure(query, peer);
         }
     }
@@ -432,10 +432,18 @@ impl Kademlia {
                     .map_err(|_| (query, peer)),
                 None => match self.service.open_substream(peer).await {
                     Err(_) => {
-                        tracing::debug!(target: LOG_TARGET, ?query, ?peer, "dial peer");
+                        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "dial peer");
 
-                        let _ = self.service.dial(&peer).await;
-                        self.pending_dials.insert(peer, PeerAction::SendFindNode(query));
+                        match self.service.dial(&peer).await {
+                            Ok(_) => {
+                                self.pending_dials.insert(peer, PeerAction::SendFindNode(query));
+                            }
+                            Err(error) => {
+                                tracing::debug!(target: LOG_TARGET, ?query, ?peer, ?error, "failed to dial peer");
+                                self.engine.register_response_failure(query, peer);
+                            }
+                        }
+
                         Ok(())
                     }
                     Ok(substream_id) => {
