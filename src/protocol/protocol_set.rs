@@ -286,6 +286,7 @@ impl Transport for TransportService {
     async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
         self.transport_handle.dial_address(address).await
     }
+
     fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
         let addresses: HashSet<Multiaddr> = addresses
             .filter_map(|address| {

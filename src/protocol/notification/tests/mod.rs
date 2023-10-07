@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::collections::HashSet;
+
 use crate::{
     crypto::ed25519::Keypair,
     protocol::{
@@ -45,7 +47,8 @@ fn make_notification_protocol() -> (
     TransportManager,
     Sender<InnerTransportEvent>,
 ) {
-    let (manager, handle) = TransportManager::new(Keypair::generate(), BandwidthSink::new());
+    let (manager, handle) =
+        TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(

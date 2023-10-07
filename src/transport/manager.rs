@@ -140,6 +140,9 @@ pub struct TransportManagerHandle {
 
     /// TX channel for sending commands to [`TransportManager`].
     cmd_tx: Sender<InnerTransportManagerCommand>,
+
+    /// Supported transports.
+    supported_transport: HashSet<SupportedTransport>,
 }
 
 impl TransportManagerHandle {
@@ -147,8 +150,47 @@ impl TransportManagerHandle {
     pub fn new(
         peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
         cmd_tx: Sender<InnerTransportManagerCommand>,
+        supported_transport: HashSet<SupportedTransport>,
     ) -> Self {
-        Self { peers, cmd_tx }
+        Self {
+            peers,
+            cmd_tx,
+            supported_transport,
+        }
+    }
+
+    /// Check if `address` is supported by one of the enabled transports.
+    fn supported_transport(&self, address: &Multiaddr) -> bool {
+        let mut iter = address.iter();
+
+        if !std::matches!(
+            iter.next(),
+            Some(Protocol::Ip4(_) | Protocol::Ip6(_) | Protocol::Dns(_))
+        ) {
+            return false;
+        }
+
+        match iter.next() {
+            None => return false,
+            Some(Protocol::Tcp(_)) => match (
+                iter.next(),
+                self.supported_transport.contains(&SupportedTransport::WebSocket),
+            ) {
+                (Some(Protocol::Ws(_)), true) => true,
+                (Some(Protocol::Wss(_)), true) => true,
+                (Some(Protocol::P2p(_)), false) =>
+                    self.supported_transport.contains(&SupportedTransport::Tcp),
+                _ => return false,
+            },
+            Some(Protocol::Udp(_)) => match (
+                iter.next(),
+                self.supported_transport.contains(&SupportedTransport::Quic),
+            ) {
+                (Some(Protocol::QuicV1), true) => true,
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     /// Add one or more known addresses for peer.
@@ -156,15 +198,18 @@ impl TransportManagerHandle {
     /// If peer doesn't exist, it will be added to known peers.
     pub fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
         let mut peers = self.peers.write();
+        let addresses = addresses
+            .filter_map(|address| self.supported_transport(&address).then_some(address))
+            .collect::<HashSet<_>>();
 
         match peers.get_mut(&peer) {
-            Some(context) => context.addresses.extend(addresses),
+            Some(context) => context.addresses.extend(addresses.into_iter()),
             None => {
                 peers.insert(
                     *peer,
                     PeerContext {
                         state: PeerState::Disconnected,
-                        addresses: HashSet::from_iter(addresses),
+                        addresses: HashSet::from_iter(addresses.into_iter()),
                     },
                 );
             }
@@ -421,12 +466,16 @@ pub struct TransportManager {
 impl TransportManager {
     /// Create new [`TransportManager`].
     // TODO: don't return handle here
-    pub fn new(keypair: Keypair, bandwidth_sink: BandwidthSink) -> (Self, TransportManagerHandle) {
+    pub fn new(
+        keypair: Keypair,
+        supported_transports: HashSet<SupportedTransport>,
+        bandwidth_sink: BandwidthSink,
+    ) -> (Self, TransportManagerHandle) {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let handle = TransportManagerHandle::new(peers.clone(), cmd_tx);
+        let handle = TransportManagerHandle::new(peers.clone(), cmd_tx, supported_transports);
 
         (
             Self {
@@ -602,7 +651,7 @@ impl TransportManager {
                     ),
                     _ => {
                         tracing::debug!(target: LOG_TARGET, ?address, "peer id missing");
-                        return Err(Error::TransportNotSupported(address.clone()));
+                        return Err(Error::AddressError(AddressError::PeerIdMissing));
                     }
                 },
                 Some(Protocol::P2p(hash)) => (
@@ -611,7 +660,7 @@ impl TransportManager {
                 ),
                 _ => {
                     tracing::debug!(target: LOG_TARGET, ?address, "peer id missing");
-                    return Err(Error::TransportNotSupported(address.clone()));
+                    return Err(Error::AddressError(AddressError::PeerIdMissing));
                 }
             },
             Protocol::Udp(_) => match protocol_stack
@@ -625,7 +674,7 @@ impl TransportManager {
                     ),
                     _ => {
                         tracing::debug!(target: LOG_TARGET, ?address, "peer id missing");
-                        return Err(Error::TransportNotSupported(address.clone()));
+                        return Err(Error::AddressError(AddressError::PeerIdMissing));
                     }
                 },
                 _ => {
@@ -801,7 +850,8 @@ mod tests {
     #[cfg(debug_assertions)]
     fn duplicate_protocol() {
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -820,7 +870,8 @@ mod tests {
     #[cfg(debug_assertions)]
     fn fallback_protocol_as_duplicate_main_protocol() {
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -842,7 +893,8 @@ mod tests {
     #[cfg(debug_assertions)]
     fn duplicate_fallback_protocol() {
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -867,7 +919,8 @@ mod tests {
     #[cfg(debug_assertions)]
     fn duplicate_transport() {
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
 
         manager.register_transport(SupportedTransport::Tcp);
         manager.register_transport(SupportedTransport::Tcp);
@@ -878,7 +931,7 @@ mod tests {
         let keypair = Keypair::generate();
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(keypair, sink);
+        let (mut manager, _handle) = TransportManager::new(keypair, HashSet::new(), sink);
 
         assert!(manager.dial(&local_peer_id).await.is_err());
     }
@@ -886,7 +939,8 @@ mod tests {
     #[tokio::test]
     async fn try_to_dial_over_disabled_transport() {
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let address = Multiaddr::empty()
@@ -910,7 +964,8 @@ mod tests {
             .try_init();
 
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -947,7 +1002,8 @@ mod tests {
             .try_init();
 
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -972,7 +1028,8 @@ mod tests {
             .try_init();
 
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -1011,7 +1068,8 @@ mod tests {
             .try_init();
 
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         assert!(manager.dial(&PeerId::random()).await.is_err());
@@ -1024,7 +1082,8 @@ mod tests {
             .try_init();
 
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -1037,5 +1096,60 @@ mod tests {
         );
 
         assert!(manager.dial(&peer).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn check_supported_transport_when_adding_known_address() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (_manager, handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::from_iter([SupportedTransport::Tcp, SupportedTransport::Quic]),
+            BandwidthSink::new(),
+        );
+
+        // ipv6
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
+            ));
+        assert!(handle.supported_transport(&address));
+
+        // ipv4
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
+            ));
+        assert!(handle.supported_transport(&address));
+
+        // quic
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Udp(8888))
+            .with(Protocol::QuicV1)
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
+            ));
+        assert!(handle.supported_transport(&address));
+
+        // websocket
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())));
+        assert!(!handle.supported_transport(&address));
+
+        // websocket secure
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::Wss(std::borrow::Cow::Owned("/".to_string())));
+        assert!(!handle.supported_transport(&address));
     }
 }

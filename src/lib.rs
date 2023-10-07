@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::collections::HashSet;
+
 use crate::{
     config::Litep2pConfig,
     crypto::PublicKey,
@@ -121,8 +123,12 @@ impl Litep2p {
         let bandwidth_sink = BandwidthSink::new();
         let mut listen_addresses = vec![];
 
-        let (mut transport_manager, transport_handle) =
-            TransportManager::new(config.keypair.clone(), bandwidth_sink.clone());
+        let supported_transports = Self::supported_transports(&config);
+        let (mut transport_manager, transport_handle) = TransportManager::new(
+            config.keypair.clone(),
+            supported_transports,
+            bandwidth_sink.clone(),
+        );
 
         // add known addresses to `TransportManager`, if any exist
         if !config.known_addresses.is_empty() {
@@ -345,6 +351,34 @@ impl Litep2p {
             listen_addresses,
             transport_manager,
         })
+    }
+
+    /// Collect supported transports before initializing the transports themselves.
+    ///
+    /// Information of the supported transports is needed to initialize protocols but
+    /// information about protocols must be known to initialize transports so the initialization
+    /// has to be split.
+    fn supported_transports(config: &Litep2pConfig) -> HashSet<SupportedTransport> {
+        let mut supported_transports = HashSet::new();
+
+        config
+            .tcp
+            .is_some()
+            .then(|| supported_transports.insert(SupportedTransport::Tcp));
+        config
+            .quic
+            .is_some()
+            .then(|| supported_transports.insert(SupportedTransport::Quic));
+        config
+            .websocket
+            .is_some()
+            .then(|| supported_transports.insert(SupportedTransport::WebSocket));
+        config
+            .webrtc
+            .is_some()
+            .then(|| supported_transports.insert(SupportedTransport::WebRtc));
+
+        supported_transports
     }
 
     /// Get local peer ID.

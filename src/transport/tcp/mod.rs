@@ -338,6 +338,8 @@ impl Transport for TcpTransport {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::{
         codec::ProtocolCodec,
@@ -595,7 +597,7 @@ mod tests {
     #[tokio::test]
     async fn dial_error_reported_for_outbound_connections() {
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), BandwidthSink::new());
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
         let handle = manager.register_transport(SupportedTransport::Tcp);
         let mut transport = TcpTransport::new(
             handle,

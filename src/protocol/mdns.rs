@@ -346,7 +346,8 @@ mod tests {
             .try_init();
 
         let (config1, mut stream1) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle1) = TransportManager::new(Keypair::generate(), BandwidthSink::new());
+        let (_manager1, handle1) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
 
         let mdns1 = Mdns::new(
             handle1,
@@ -363,7 +364,8 @@ mod tests {
         .unwrap();
 
         let (config2, mut stream2) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle2) = TransportManager::new(Keypair::generate(), BandwidthSink::new());
+        let (_manager1, handle2) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
 
         let mdns2 = Mdns::new(
             handle2,

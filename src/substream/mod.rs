@@ -703,7 +703,7 @@ where
                 entry.insert(substream);
             }
             Entry::Occupied(_) => {
-                tracing::error!(?key, "substream alraedy exists");
+                tracing::error!(?key, "substream already exists");
                 debug_assert!(false);
             }
         }

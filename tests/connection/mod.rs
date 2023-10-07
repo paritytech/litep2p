@@ -430,7 +430,7 @@ async fn dial_quic_peer_id_missing() {
 
     match litep2p.connect(address.clone()).await {
         Err(Error::AddressError(AddressError::PeerIdMissing)) => {}
-        _ => panic!("dial not supposed to succeed"),
+        state => panic!("dial not supposed to succeed {state:?}"),
     }
 }
 

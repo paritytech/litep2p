@@ -643,6 +643,8 @@ impl Kademlia {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::{
         codec::ProtocolCodec, crypto::ed25519::Keypair, transport::manager::TransportManager,
@@ -657,7 +659,8 @@ mod tests {
     }
 
     fn _make_kademlia() -> (Kademlia, Context, TransportManager) {
-        let (manager, handle) = TransportManager::new(Keypair::generate(), BandwidthSink::new());
+        let (manager, handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
 
         let peer = PeerId::random();
         let (transport_service, _tx) = TransportService::new(
@@ -671,7 +674,8 @@ mod tests {
         let (_cmd_tx, cmd_rx) = channel(64);
 
         let config = Config {
-            protocol: ProtocolName::from("/kad/1"),
+            protocol_names: vec![ProtocolName::from("/kad/1")],
+            known_peers: HashMap::new(),
             codec: ProtocolCodec::UnsignedVarint(None),
             replication_factor: 20usize,
             event_tx,

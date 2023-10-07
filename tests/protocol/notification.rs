@@ -1472,7 +1472,7 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpenFailure {
             peer,
-            error: NotificationError::NoConnection
+            error: NotificationError::DialFailure,
         }
     );
 }
