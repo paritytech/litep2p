@@ -51,7 +51,7 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     pub queried: HashMap<PeerId, KademliaPeer>,
 
     /// Candidates.
-    pub candidates: VecDeque<KademliaPeer>,
+    pub candidates: BTreeMap<Distance, KademliaPeer>,
 
     /// Responses.
     pub responses: BTreeMap<Distance, KademliaPeer>,
@@ -68,10 +68,17 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     pub fn new(
         query: QueryId,
         target: Key<T>,
-        candidates: VecDeque<KademliaPeer>,
+        in_peers: VecDeque<KademliaPeer>,
         replication_factor: usize,
         parallelism_factor: usize,
     ) -> Self {
+        let mut candidates = BTreeMap::new();
+
+        for candidate in &in_peers {
+            let distance = target.distance(&candidate.key);
+            candidates.insert(distance, candidate.clone());
+        }
+
         Self {
             query,
             target,
@@ -124,10 +131,11 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
         // filter already queried peers and extend the set of candidates
         peers.retain(|peer| !self.queried.contains_key(&peer.peer));
-        self.candidates.extend(peers.clone());
-        self.candidates
-            .make_contiguous()
-            .sort_by(|a, b| self.target.distance(&a.key).cmp(&self.target.distance(&b.key)));
+
+        for candidate in &peers {
+            let distance = self.target.distance(&candidate.key);
+            self.candidates.insert(distance, candidate.clone());
+        }
     }
 
     /// Get next action for `peer`.
@@ -143,8 +151,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     pub fn schedule_next_peer(&mut self) -> QueryAction {
         tracing::trace!(target: LOG_TARGET, query = ?self.query, "get next peer");
 
-        let candidate = self.candidates.pop_front().expect("entry to exist");
-        tracing::trace!(target: LOG_TARGET, ?candidate, "current candidate");
+        let (_, candidate) = self.candidates.pop_first().expect("entry to exist");
         self.pending.insert(candidate.peer, candidate.clone());
 
         QueryAction::SendMessage {
@@ -179,16 +186,20 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
 
         // check if any candidate has lower distance thant the current worst
+        // `expect()` is ok because both `candidates` and `responses` have been confirmed to contain
+        // entries
         if !self.candidates.is_empty() {
-            let first_candidate_distance = self.target.distance(&self.candidates[0].key);
-            let worst_response_candidate = self.responses.last_entry().unwrap().key().clone();
+            let first_candidate_distance = self
+                .target
+                .distance(&self.candidates.first_key_value().expect("candidate to exist").1.key);
+            let worst_response_candidate =
+                self.responses.last_entry().expect("response to exist").key().clone();
 
             if first_candidate_distance < worst_response_candidate {
                 return Some(self.schedule_next_peer());
             }
 
-            // TODO: this is probably not correct
-            return Some(QueryAction::QueryFailed { query: self.query });
+            return Some(QueryAction::QuerySucceeded { query: self.query });
         }
 
         // TODO: probably not correct
