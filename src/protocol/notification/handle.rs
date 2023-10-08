@@ -228,6 +228,19 @@ impl NotificationHandle {
         let _ = self.command_tx.send(NotificationCommand::SetHandshake { handshake }).await;
     }
 
+    /// Set new handshake.
+    pub fn try_set_handshake(&mut self, handshake: Vec<u8>) -> Result<(), NotificationError> {
+        tracing::trace!(target: LOG_TARGET, ?handshake, "set handshake");
+
+        match self.command_tx.try_send(NotificationCommand::SetHandshake { handshake }) {
+            Err(error) => match error {
+                TrySendError::Full(_) => Err(NotificationError::ChannelClogged),
+                TrySendError::Closed(_) => Err(NotificationError::EssentialTaskClosed),
+            },
+            Ok(_) => return Ok(()),
+        }
+    }
+
     /// Send validation result to the notification protocol for the inbound substream.
     pub async fn send_validation_result(&self, peer: PeerId, result: ValidationResult) {
         tracing::trace!(target: LOG_TARGET, ?peer, ?result, "send validation result");

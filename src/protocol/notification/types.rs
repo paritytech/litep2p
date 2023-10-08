@@ -52,6 +52,9 @@ pub enum NotificationError {
 
     /// Failed to dial peer.
     DialFailure,
+
+    /// Notification protocol has been closed.
+    EssentialTaskClosed,
 }
 
 /// Notification events.
