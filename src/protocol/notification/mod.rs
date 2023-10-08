@@ -59,7 +59,7 @@ mod types;
 mod tests;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "litep2p::notification::protocol";
+const LOG_TARGET: &str = "litep2p::notification";
 
 /// Inbound substream state.
 #[derive(Debug)]
@@ -255,7 +255,7 @@ impl NotificationProtocol {
     ///
     /// Any other state indicates that there's an error in the state transition logic.
     async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
+        tracing::debug!(target: LOG_TARGET, ?peer, protocol = %*self.protocol, "connection established");
 
         let Some(context) = self.peers.get_mut(&peer) else {
             self.peers.insert(peer, PeerContext::new());
@@ -264,7 +264,12 @@ impl NotificationProtocol {
 
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
             PeerState::Dialing => {
-                tracing::trace!(target: LOG_TARGET, ?peer, "dial succeeded, open substream to peer");
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %*self.protocol,
+                    "dial succeeded, open substream to peer",
+                );
 
                 context.state = PeerState::Closed { pending_open: None };
                 self.on_open_substream(peer).await
@@ -273,6 +278,7 @@ impl NotificationProtocol {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?peer,
+                    protocol = %*self.protocol,
                     ?state,
                     "state mismatch: peer already exists"
                 );
@@ -291,12 +297,13 @@ impl NotificationProtocol {
     /// reported about it only if they had opened an outbound substream (outbound is either fully
     /// open, it had been initiated or the substream was under negotiation).
     async fn on_connection_closed(&mut self, peer: PeerId) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?peer, "connection closed");
+        tracing::debug!(target: LOG_TARGET, ?peer, protocol = %*self.protocol, "connection closed");
 
         let Some(context) = self.peers.remove(&peer) else {
             tracing::error!(
                 target: LOG_TARGET,
                 ?peer,
+                protocol = %*self.protocol,
                 "state mismatch: peer doesn't exist"
             );
             debug_assert!(false);
@@ -567,6 +574,7 @@ impl NotificationProtocol {
     async fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
         tracing::debug!(
             target: LOG_TARGET,
+            protocol = %*self.protocol,
             ?substream,
             ?error,
             "failed to open substream"
@@ -621,12 +629,13 @@ impl NotificationProtocol {
     /// Other states either imply an invalid state transition ([`PeerState::Open`]) or that an
     /// inbound substream has already been received and its currently being validated by the user.
     async fn on_open_substream(&mut self, peer: PeerId) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?peer, protocol = ?self.protocol, "open substream");
+        tracing::trace!(target: LOG_TARGET, ?peer, protocol = %*self.protocol, "open substream");
 
         let Some(context) = self.peers.get_mut(&peer) else {
             match self.service.dial(&peer).await {
                 Err(error) => {
-                    tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
+                    tracing::debug!(target: LOG_TARGET, ?peer, protocol = %*self.protocol, ?error, "failed to dial peer");
+
                     self.event_handle
                         .report_notification_stream_open_failure(
                             peer,
@@ -656,7 +665,7 @@ impl NotificationProtocol {
                     context.state = PeerState::OutboundInitiated { substream };
                 }
                 Err(error) => {
-                    tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream");
+                    tracing::debug!(target: LOG_TARGET, ?peer, protocol = %*self.protocol, ?error, "failed to open substream");
 
                     self.event_handle
                         .report_notification_stream_open_failure(
@@ -678,7 +687,7 @@ impl NotificationProtocol {
     /// unreachable as the user is unable to emit this command to [`NotificationProtocol`] unless
     /// the connection has been fully opened.
     async fn on_close_substream(&mut self, peer: PeerId) {
-        tracing::trace!(target: LOG_TARGET, ?peer, "close substream");
+        tracing::trace!(target: LOG_TARGET, ?peer, protocol = %*self.protocol, "close substream");
 
         let Some(context) = self.peers.get_mut(&peer) else {
             tracing::debug!(target: LOG_TARGET, ?peer, "peer doesn't exist");
@@ -715,6 +724,7 @@ impl NotificationProtocol {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
+            protocol = %*self.protocol,
             ?result,
             "handle validation result"
         );
@@ -796,6 +806,7 @@ impl NotificationProtocol {
                 tracing::warn!(
                     target: LOG_TARGET,
                     ?peer,
+                    protocol = %*self.protocol,
                     ?state,
                     "validation result received for peer that doesn't require validation");
 
@@ -960,6 +971,7 @@ impl NotificationProtocol {
                 tracing::trace!(
                     target: LOG_TARGET,
                     ?peer,
+                    protocol = %*self.protocol,
                     ?direction,
                     state = ?context.state,
                     "failed to negotiate outbound substream"
@@ -1065,7 +1077,7 @@ impl NotificationProtocol {
 
         match context.state {
             PeerState::Dialing => {
-                tracing::debug!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
+                tracing::debug!(target: LOG_TARGET, ?peer, protocol = %*self.protocol, ?address, "failed to dial peer");
                 self.event_handle
                     .report_notification_stream_open_failure(peer, NotificationError::DialFailure)
                     .await;
