@@ -305,6 +305,15 @@ impl Kademlia {
     /// Inform user about the potential routing table, allowing them to update it manually if
     /// the mode was set to manual.
     async fn update_routing_table(&mut self, peers: &Vec<KademliaPeer>) {
+        // inform user about the routing table update, regardless of what the routing table update
+        // mode is
+        let _ = self
+            .event_tx
+            .send(KademliaEvent::RoutingTableUpdate {
+                peers: peers.iter().map(|peer| peer.peer).collect::<Vec<PeerId>>(),
+            })
+            .await;
+
         for info in peers {
             self.service.add_known_address(&info.peer, info.addresses.iter().cloned());
 
