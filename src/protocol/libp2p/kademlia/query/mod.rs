@@ -340,6 +340,11 @@ impl QueryEngine {
 
         match self.queries.get_mut(query) {
             None => {
+                if query.0 < self.next_query_id {
+                    tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
+                    return None;
+                }
+
                 tracing::warn!(target: LOG_TARGET, ?query, ?peer, "pending query doesn't exist for peer");
                 debug_assert!(false);
                 return None;

@@ -243,34 +243,43 @@ impl Kademlia {
                 return Ok(());
             }
             Some(PeerAction::SendFindNode(query)) => {
-                if let Some(QueryAction::SendMessage {
-                    query,
-                    peer,
-                    message,
-                }) = self.engine.next_peer_action(&query, &peer)
-                {
-                    match substream.send_framed(message).await {
+                match self.engine.next_peer_action(&query, &peer) {
+                    Some(QueryAction::SendMessage {
+                        query,
+                        peer,
+                        message,
+                    }) => match substream.send_framed(message).await {
                         Err(_) => {
+                            let _ = substream.close().await;
                             self.disconnect_peer(peer, Some(query)).await;
-                            return Ok(());
                         }
                         Ok(_) => {
+                            tracing::trace!(target: LOG_TARGET, ?peer, ?query, "message sent to peer");
                             *pending_action = Some(PeerAction::SendFindNode(query));
+                            self.substreams.insert(peer, substream);
                         }
+                    },
+                    // query finished while the substream was being opened
+                    None => {
+                        let _ = substream.close().await;
+                    }
+                    action => {
+                        tracing::warn!(target: LOG_TARGET, ?query, ?peer, ?action, "unexpected action for `FIND_NODE`");
+                        let _ = substream.close().await;
+                        debug_assert!(false);
                     }
                 }
             }
             Some(PeerAction::SendPutValue(record)) => {
                 let message = KademliaMessage::put_value(record);
 
-                if let Err(_) = substream.send_framed(message).await {
-                    self.disconnect_peer(peer, None).await;
-                    return Ok(());
+                match substream.send_framed(message).await {
+                    Ok(_) => self.substreams.insert(peer, substream),
+                    Err(_) => self.disconnect_peer(peer, None).await,
                 }
             }
         }
 
-        self.substreams.insert(peer, substream);
         Ok(())
     }
 
