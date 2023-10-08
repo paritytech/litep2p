@@ -27,7 +27,7 @@ use crate::{
     PeerId,
 };
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_node";
@@ -48,7 +48,7 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     ///
     /// These are the peers for whom the query has already been sent
     /// and who have either returned their closest peers or failed to answer.
-    pub queried: HashMap<PeerId, KademliaPeer>,
+    pub queried: HashSet<PeerId>,
 
     /// Candidates.
     pub candidates: BTreeMap<Distance, KademliaPeer>,
@@ -84,7 +84,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             target,
             candidates,
             pending: HashMap::new(),
-            queried: HashMap::new(),
+            queried: HashSet::new(),
             responses: BTreeMap::new(),
             replication_factor,
             parallelism_factor,
@@ -99,7 +99,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             return;
         };
 
-        self.queried.insert(peer.peer, peer);
+        self.queried.insert(peer.peer);
     }
 
     /// Register `FIND_NODE` response from `peer`.
@@ -119,19 +119,22 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         // TODO: only insert nodes from whom a response was received
         match self.responses.len() < self.replication_factor {
             true => {
+                self.queried.insert(peer.peer);
                 self.responses.insert(distance, peer);
             }
             false => {
                 let mut entry = self.responses.last_entry().expect("entry to exist");
                 if entry.key() > &distance {
+                    self.queried.insert(peer.peer);
                     entry.insert(peer);
                 }
             }
         }
 
         // filter already queried peers and extend the set of candidates
+
         for candidate in peers {
-            if !self.queried.contains_key(&candidate.peer)
+            if !self.queried.contains(&candidate.peer)
                 && !self.pending.contains_key(&candidate.peer)
             {
                 let distance = self.target.distance(&candidate.key);
