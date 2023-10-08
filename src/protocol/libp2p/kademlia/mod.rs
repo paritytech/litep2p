@@ -250,7 +250,10 @@ impl Kademlia {
                 }) = self.engine.next_peer_action(&query, &peer)
                 {
                     match substream.send_framed(message).await {
-                        Err(_) => self.disconnect_peer(peer, Some(query)).await,
+                        Err(_) => {
+                            self.disconnect_peer(peer, Some(query)).await;
+                            return Ok(());
+                        }
                         Ok(_) => {
                             *pending_action = Some(PeerAction::SendFindNode(query));
                         }
@@ -262,6 +265,7 @@ impl Kademlia {
 
                 if let Err(_) = substream.send_framed(message).await {
                     self.disconnect_peer(peer, None).await;
+                    return Ok(());
                 }
             }
         }
@@ -459,7 +463,19 @@ impl Kademlia {
                     }
                 },
             },
-            QueryAction::FindNodeQuerySucceeded { target, peers, .. } => {
+            QueryAction::FindNodeQuerySucceeded {
+                target,
+                peers,
+                query,
+            } => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?query,
+                    peer = ?target,
+                    num_peers = ?peers.len(),
+                    "`FIND_NODE` succeeded"
+                );
+
                 let _ = self
                     .event_tx
                     .send(KademliaEvent::FindNodeResult {
