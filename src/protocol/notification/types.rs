@@ -28,6 +28,16 @@ pub(super) const SYNC_CHANNEL_SIZE: usize = 16;
 /// Default channel size for asynchronous notifications.
 pub(super) const ASYNC_CHANNEL_SIZE: usize = 8;
 
+/// Direction of the connection.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Direction {
+    /// Connection is considered inbound, i.e., it was initiated by the remote node.
+    Inbound,
+
+    /// Connection is considered outbound, i.e., it was initiated by the local node.
+    Outbound,
+}
+
 /// Validation result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationResult {
@@ -83,6 +93,9 @@ pub(crate) enum InnerNotificationEvent {
         /// Fallback, if the substream was negotiated using a fallback protocol.
         fallback: Option<ProtocolName>,
 
+        /// Direction of the substream.
+        direction: Direction,
+
         /// Peer ID.
         peer: PeerId,
 
@@ -134,6 +147,14 @@ pub enum NotificationEvent {
 
         /// Fallback, if the substream was negotiated using a fallback protocol.
         fallback: Option<ProtocolName>,
+
+        /// Direction of the substream.
+        ///
+        /// [`Direction::Inbound`](crate::protocol::Direction::Outbound) indicates that the
+        /// substream was opened by the remote peer and
+        /// [`Direction::Outbound`](crate::protocol::Direction::Outbound) that it was
+        /// opened by the local node.
+        direction: Direction,
 
         /// Peer ID.
         peer: PeerId,
@@ -214,12 +235,14 @@ impl From<InnerNotificationEvent> for NotificationEvent {
             InnerNotificationEvent::NotificationStreamOpened {
                 protocol,
                 fallback,
+                direction,
                 peer,
                 handshake,
                 ..
             } => NotificationEvent::NotificationStreamOpened {
                 protocol,
                 fallback,
+                direction,
                 peer,
                 handshake,
             },

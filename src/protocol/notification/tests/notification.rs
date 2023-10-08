@@ -21,15 +21,16 @@
 use crate::{
     mock::substream::{DummySubstream, MockSubstream},
     protocol::{
+        self,
         connection::ConnectionHandle,
         notification::{
             negotiation::HandshakeEvent,
             tests::make_notification_protocol,
-            types::{NotificationError, NotificationEvent},
+            types::{Direction, NotificationError, NotificationEvent},
             InboundState, NotificationProtocol, OutboundState, PeerContext, PeerState,
             ValidationResult,
         },
-        Direction, InnerTransportEvent, ProtocolCommand,
+        InnerTransportEvent, ProtocolCommand,
     },
     substream::Substream,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -83,6 +84,7 @@ async fn connection_closed_for_outbound_open_substream() {
         connection_closed(
             peer,
             PeerState::Validating {
+                direction: Direction::Inbound,
                 protocol: ProtocolName::from("/notif/1"),
                 fallback: None,
                 outbound: OutboundState::Open {
@@ -108,6 +110,7 @@ async fn connection_closed_for_outbound_initiated_substream() {
         connection_closed(
             peer,
             PeerState::Validating {
+                direction: Direction::Inbound,
                 protocol: ProtocolName::from("/notif/1"),
                 fallback: None,
                 outbound: OutboundState::OutboundInitiated {
@@ -132,6 +135,7 @@ async fn connection_closed_for_outbound_negotiated_substream() {
         connection_closed(
             peer,
             PeerState::Validating {
+                direction: Direction::Inbound,
                 protocol: ProtocolName::from("/notif/1"),
                 fallback: None,
                 outbound: OutboundState::Negotiating,
@@ -252,6 +256,7 @@ async fn open_substream_under_validation() {
         for k in 0..4 {
             open_substream(
                 PeerState::Validating {
+                    direction: Direction::Inbound,
                     protocol: ProtocolName::from("/notif/1"),
                     fallback: None,
                     outbound: next_outbound_state(k),
@@ -304,7 +309,7 @@ async fn remote_opens_multiple_inbound_substreams() {
         peer,
         protocol: protocol.clone(),
         fallback: None,
-        direction: Direction::Inbound,
+        direction: protocol::Direction::Inbound,
         substream: Substream::new_mock(PeerId::random(), Box::new(DummySubstream::new())),
     })
     .await
@@ -315,6 +320,7 @@ async fn remote_opens_multiple_inbound_substreams() {
         Some(PeerContext {
             state:
                 PeerState::Validating {
+                    direction: Direction::Inbound,
                     protocol,
                     fallback: None,
                     outbound: OutboundState::Closed,
@@ -335,7 +341,7 @@ async fn remote_opens_multiple_inbound_substreams() {
         peer,
         protocol: protocol.clone(),
         fallback: None,
-        direction: Direction::Inbound,
+        direction: protocol::Direction::Inbound,
         substream: Substream::new_mock(PeerId::random(), Box::new(substream)),
     })
     .await
@@ -346,6 +352,7 @@ async fn remote_opens_multiple_inbound_substreams() {
         Some(PeerContext {
             state:
                 PeerState::Validating {
+                    direction: Direction::Inbound,
                     protocol,
                     fallback: None,
                     outbound: OutboundState::Closed,
@@ -395,6 +402,7 @@ async fn pending_outbound_tracked_correctly() {
         Some(PeerContext {
             state:
                 PeerState::Validating {
+                    direction: Direction::Outbound,
                     outbound: OutboundState::OutboundInitiated { .. },
                     inbound: InboundState::ReadingHandshake,
                     ..
@@ -419,6 +427,7 @@ async fn pending_outbound_tracked_correctly() {
         Some(PeerContext {
             state:
                 PeerState::Validating {
+                    direction: Direction::Outbound,
                     outbound: OutboundState::OutboundInitiated { .. },
                     inbound: InboundState::Validating { .. },
                     ..
@@ -486,6 +495,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
         Some(PeerContext {
             state:
                 PeerState::Validating {
+                    direction: Direction::Inbound,
                     outbound: OutboundState::Closed { .. },
                     inbound: InboundState::ReadingHandshake,
                     ..
@@ -510,6 +520,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
         Some(PeerContext {
             state:
                 PeerState::Validating {
+                    direction: Direction::Inbound,
                     outbound: OutboundState::Closed { .. },
                     inbound: InboundState::Validating { .. },
                     ..

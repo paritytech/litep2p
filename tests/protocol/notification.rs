@@ -23,8 +23,8 @@ use litep2p::{
     crypto::ed25519::Keypair,
     error::Error,
     protocol::notification::{
-        Config as NotificationConfig, ConfigBuilder, NotificationError, NotificationEvent,
-        ValidationResult,
+        Config as NotificationConfig, ConfigBuilder, Direction, NotificationError,
+        NotificationEvent, ValidationResult,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
@@ -205,6 +205,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
             fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
@@ -215,6 +216,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -492,6 +494,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -501,6 +504,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -665,6 +669,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -674,6 +679,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -723,6 +729,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -732,6 +739,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -890,6 +898,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -899,6 +908,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -952,6 +962,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer1,
             handshake: vec![5, 5, 5, 5],
         }
@@ -961,6 +972,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer2,
             handshake: vec![6, 6, 6, 6],
         }
@@ -1101,6 +1113,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1110,6 +1123,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1670,6 +1684,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1679,6 +1694,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -2045,6 +2061,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -2054,6 +2071,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/2"),
             fallback: Some(ProtocolName::from("/notif/1")),
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -2185,6 +2203,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/2"),
             fallback: Some(ProtocolName::from("/notif/1")),
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -2193,6 +2212,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Outbound,
             fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
@@ -2318,6 +2338,7 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
             fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
@@ -2327,6 +2348,7 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Outbound,
             fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
@@ -2481,6 +2503,7 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
             fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
@@ -2490,6 +2513,7 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Outbound,
             fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
@@ -2660,6 +2684,7 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
             fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
@@ -2669,6 +2694,7 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Outbound,
             fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],

@@ -21,8 +21,8 @@
 use crate::{
     error::Error,
     protocol::notification::types::{
-        InnerNotificationEvent, NotificationCommand, NotificationError, NotificationEvent,
-        ValidationResult,
+        Direction, InnerNotificationEvent, NotificationCommand, NotificationError,
+        NotificationEvent, ValidationResult,
     },
     types::protocol::ProtocolName,
     PeerId,
@@ -75,6 +75,7 @@ impl NotificationEventHandle {
         &self,
         protocol: ProtocolName,
         fallback: Option<ProtocolName>,
+        direction: Direction,
         peer: PeerId,
         handshake: Vec<u8>,
         sink: NotificationSink,
@@ -84,6 +85,7 @@ impl NotificationEventHandle {
             .send(InnerNotificationEvent::NotificationStreamOpened {
                 protocol,
                 fallback,
+                direction,
                 peer,
                 handshake,
                 sink,
@@ -314,6 +316,7 @@ impl futures::Stream for NotificationHandle {
                         InnerNotificationEvent::NotificationStreamOpened {
                             protocol,
                             fallback,
+                            direction,
                             peer,
                             handshake,
                             sink,
@@ -323,6 +326,7 @@ impl futures::Stream for NotificationHandle {
                             Poll::Ready(Some(NotificationEvent::NotificationStreamOpened {
                                 protocol,
                                 fallback,
+                                direction,
                                 peer,
                                 handshake,
                             }))

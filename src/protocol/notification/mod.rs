@@ -23,13 +23,14 @@
 use crate::{
     error::Error,
     protocol::{
+        self,
         notification::{
             connection::Connection,
             handle::{NotificationEventHandle, NotificationSink},
             negotiation::{HandshakeEvent, HandshakeService},
             types::{NotificationCommand, ASYNC_CHANNEL_SIZE, SYNC_CHANNEL_SIZE},
         },
-        Direction, Transport, TransportEvent, TransportService,
+        Transport, TransportEvent, TransportService,
     },
     substream::Substream,
     types::{protocol::ProtocolName, SubstreamId},
@@ -47,7 +48,7 @@ use std::collections::HashMap;
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::NotificationHandle;
-pub use types::{NotificationError, NotificationEvent, ValidationResult};
+pub use types::{Direction, NotificationError, NotificationEvent, ValidationResult};
 
 mod config;
 mod connection;
@@ -162,6 +163,9 @@ enum PeerState {
 
         /// Inbound protocol state.
         inbound: InboundState,
+
+        /// Direction.
+        direction: Direction,
     },
 
     /// Notification stream has been opened.
@@ -399,12 +403,14 @@ impl NotificationProtocol {
                     fallback,
                     inbound: InboundState::Closed,
                     outbound: OutboundState::Negotiating,
+                    direction: Direction::Outbound,
                 };
             }
             PeerState::Validating {
                 protocol,
                 fallback,
                 inbound,
+                direction,
                 outbound: outbound_state,
             } => {
                 // the inbound substream has been accepted by the local node since the handshake has
@@ -416,6 +422,7 @@ impl NotificationProtocol {
                             protocol,
                             fallback,
                             inbound,
+                            direction,
                             outbound: OutboundState::Negotiating,
                         };
                         self.negotiation.negotiate_outbound(peer, outbound);
@@ -428,6 +435,7 @@ impl NotificationProtocol {
                             context.state = PeerState::Validating {
                                 protocol,
                                 fallback,
+                                direction,
                                 inbound: inbound_state,
                                 outbound: OutboundState::Negotiating,
                             };
@@ -508,6 +516,7 @@ impl NotificationProtocol {
                 context.state = PeerState::Validating {
                     protocol,
                     fallback,
+                    direction: Direction::Inbound,
                     inbound: InboundState::ReadingHandshake,
                     outbound: OutboundState::Closed,
                 };
@@ -520,6 +529,7 @@ impl NotificationProtocol {
                 protocol,
                 fallback,
                 outbound,
+                direction,
                 inbound: InboundState::Closed,
             } => {
                 self.negotiation.read_handshake(peer, substream);
@@ -528,6 +538,7 @@ impl NotificationProtocol {
                     protocol,
                     fallback,
                     outbound,
+                    direction,
                     inbound: InboundState::ReadingHandshake,
                 };
             }
@@ -541,6 +552,7 @@ impl NotificationProtocol {
                 context.state = PeerState::Validating {
                     protocol,
                     fallback,
+                    direction: Direction::Outbound,
                     outbound: OutboundState::OutboundInitiated {
                         substream: outbound,
                     },
@@ -739,6 +751,7 @@ impl NotificationProtocol {
                 protocol,
                 fallback,
                 outbound,
+                direction,
                 inbound: InboundState::Validating { inbound },
             } => match result {
                 // substream was rejected by the local node, if an outbound substream was under
@@ -766,6 +779,7 @@ impl NotificationProtocol {
                             context.state = PeerState::Validating {
                                 protocol,
                                 fallback,
+                                direction,
                                 inbound: InboundState::SendingHandshake,
                                 outbound: OutboundState::OutboundInitiated { substream },
                             };
@@ -792,6 +806,7 @@ impl NotificationProtocol {
                         context.state = PeerState::Validating {
                             protocol,
                             fallback,
+                            direction,
                             inbound: InboundState::SendingHandshake,
                             outbound,
                         };
@@ -862,12 +877,14 @@ impl NotificationProtocol {
                     PeerState::Validating {
                         protocol,
                         fallback,
+                        direction,
                         outbound: OutboundState::Negotiating,
                         inbound,
                     } => {
                         context.state = PeerState::Validating {
                             protocol,
                             fallback,
+                            direction,
                             outbound: OutboundState::Open {
                                 handshake,
                                 outbound: substream,
@@ -921,6 +938,7 @@ impl NotificationProtocol {
                     PeerState::Validating {
                         protocol,
                         fallback,
+                        direction,
                         outbound,
                         inbound: InboundState::ReadingHandshake,
                     } => {
@@ -929,6 +947,7 @@ impl NotificationProtocol {
                             context.state = PeerState::Validating {
                                 protocol,
                                 fallback,
+                                direction,
                                 inbound: InboundState::SendingHandshake,
                                 outbound,
                             };
@@ -941,6 +960,7 @@ impl NotificationProtocol {
                             fallback: fallback.clone(),
                             inbound: InboundState::Validating { inbound: substream },
                             outbound,
+                            direction,
                         };
 
                         self.event_handle
@@ -950,6 +970,7 @@ impl NotificationProtocol {
                     PeerState::Validating {
                         protocol,
                         fallback,
+                        direction,
                         inbound: InboundState::SendingHandshake,
                         outbound,
                     } => {
@@ -958,6 +979,7 @@ impl NotificationProtocol {
                             fallback: fallback.clone(),
                             inbound: InboundState::Open { inbound: substream },
                             outbound,
+                            direction,
                         };
                     }
                     _state => debug_assert!(false),
@@ -1011,6 +1033,7 @@ impl NotificationProtocol {
             PeerState::Validating {
                 protocol,
                 fallback,
+                direction,
                 outbound:
                     OutboundState::Open {
                         handshake,
@@ -1057,6 +1080,7 @@ impl NotificationProtocol {
                     .report_notification_stream_opened(
                         protocol,
                         fallback,
+                        direction,
                         peer,
                         handshake.into(),
                         sink,
@@ -1140,7 +1164,7 @@ impl NotificationProtocol {
                     protocol,
                     fallback,
                 }) => match direction {
-                    Direction::Inbound => {
+                    protocol::Direction::Inbound => {
                         if let Err(error) = self.on_inbound_substream(protocol, fallback, peer, substream).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -1150,7 +1174,7 @@ impl NotificationProtocol {
                             );
                         }
                     }
-                    Direction::Outbound(substream_id) => {
+                    protocol::Direction::Outbound(substream_id) => {
                         if let Err(error) = self
                             .on_outbound_substream(protocol, fallback, peer, substream_id, substream)
                             .await

@@ -26,7 +26,7 @@ use crate::{
         notification::{
             negotiation::HandshakeEvent,
             tests::{add_peer, make_notification_protocol},
-            types::{NotificationEvent, ValidationResult},
+            types::{Direction, NotificationEvent, ValidationResult},
             InboundState, OutboundState, PeerContext, PeerState,
         },
         InnerTransportEvent, ProtocolCommand,
@@ -101,6 +101,7 @@ async fn substream_accepted() {
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
+            direction: Direction::Inbound,
             protocol: _,
             fallback: None,
             inbound: InboundState::ReadingHandshake,
@@ -142,6 +143,7 @@ async fn substream_accepted() {
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
+            direction: Direction::Inbound,
             protocol: _,
             fallback: None,
             inbound: InboundState::Open { .. },
@@ -190,6 +192,7 @@ async fn substream_rejected() {
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
+            direction: Direction::Inbound,
             protocol: _,
             fallback: None,
             inbound: InboundState::ReadingHandshake,
@@ -274,6 +277,7 @@ async fn accept_fails_due_to_closed_substream() {
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
+            direction: Direction::Inbound,
             protocol: _,
             fallback: None,
             inbound: InboundState::ReadingHandshake,
@@ -359,6 +363,7 @@ async fn accept_fails_due_to_closed_connection() {
 
     match &notif.peers.get(&peer).unwrap().state {
         PeerState::Validating {
+            direction: Direction::Inbound,
             protocol: _,
             fallback: None,
             inbound: InboundState::ReadingHandshake,

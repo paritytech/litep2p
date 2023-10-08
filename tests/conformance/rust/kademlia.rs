@@ -399,8 +399,11 @@ async fn get_record() {
 
     kad_handle.get_record(RecordKey::new(&vec![1, 2, 3, 4]), Quorum::All).await;
 
-    match kad_handle.next().await.unwrap() {
-        KademliaEvent::GetRecordResult { .. } => {}
-        _ => panic!("invalid event received"),
+    loop {
+        match kad_handle.next().await.unwrap() {
+            KademliaEvent::GetRecordResult { .. } => break,
+            KademliaEvent::RoutingTableUpdate { .. } => {}
+            _ => panic!("invalid event received"),
+        }
     }
 }
