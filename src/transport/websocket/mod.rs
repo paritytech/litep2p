@@ -313,7 +313,6 @@ impl Transport for WebSocketTransport {
                                 )
                                 .await
                                 .map_err(|error| {
-                                    tracing::warn!("connection failed: {error:?}");
                                     WebSocketError::new(error, Some(connection))
                                 })
                             }).await {

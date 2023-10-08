@@ -29,8 +29,7 @@ use std::{
 #[derive(Debug, Clone)]
 pub enum ProtocolName {
     Static(&'static str),
-    Allocated(Arc<String>),
-    AllocatedStr(Arc<str>),
+    Allocated(Arc<str>),
 }
 
 impl ProtocolName {
@@ -47,13 +46,13 @@ impl From<&'static str> for ProtocolName {
 
 impl From<String> for ProtocolName {
     fn from(protocol: String) -> Self {
-        ProtocolName::Allocated(Arc::new(protocol))
+        ProtocolName::Allocated(Arc::from(protocol))
     }
 }
 
 impl From<Arc<str>> for ProtocolName {
     fn from(protocol: Arc<str>) -> Self {
-        Self::AllocatedStr(protocol)
+        Self::Allocated(protocol)
     }
 }
 
@@ -63,8 +62,7 @@ impl std::ops::Deref for ProtocolName {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Static(protocol) => protocol,
-            Self::Allocated(protocol) => protocol.as_str(),
-            Self::AllocatedStr(protocol) => protocol,
+            Self::Allocated(protocol) => protocol,
         }
     }
 }
