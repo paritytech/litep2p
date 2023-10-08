@@ -46,9 +46,11 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap};
 
+use self::types::KademliaPeer;
+
 pub use {
     config::{Config, ConfigBuilder},
-    handle::{KademliaEvent, KademliaHandle, Quorum},
+    handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode},
     record::{Key as RecordKey, Record},
 };
 
@@ -140,6 +142,9 @@ pub(crate) struct Kademlia {
     /// Pending dials.
     pending_dials: HashMap<PeerId, PeerAction>,
 
+    /// Routing table update mode.
+    update_mode: RoutingTableUpdateMode,
+
     /// Query engine.
     engine: QueryEngine,
 }
@@ -166,6 +171,7 @@ impl Kademlia {
             pending_dials: HashMap::new(),
             substreams: SubstreamSet::new(),
             pending_substreams: HashMap::new(),
+            update_mode: config.update_mode,
             engine: QueryEngine::new(config.replication_factor, PARALLELISM_FACTOR),
         }
     }
@@ -294,6 +300,26 @@ impl Kademlia {
         Ok(())
     }
 
+    /// Update routing table if the routing table update mode was set to automatic.
+    ///
+    /// Inform user about the potential routing table, allowing them to update it manually if
+    /// the mode was set to manual.
+    async fn update_routing_table(&mut self, peers: &Vec<KademliaPeer>) {
+        for info in peers {
+            self.service.add_known_address(&info.peer, info.addresses.iter().cloned());
+
+            if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
+                self.routing_table.add_known_peer(
+                    info.peer,
+                    info.addresses.clone(),
+                    self.peers
+                        .get(&info.peer)
+                        .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
+                );
+            }
+        }
+    }
+
     /// Handle received message.
     async fn on_message_received(&mut self, peer: PeerId, message: BytesMut) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "handle message from peer");
@@ -327,9 +353,8 @@ impl Kademlia {
                     "handle `FIND_NODE` response"
                 );
 
-                for info in peers {
-                    self.service.add_known_address(&info.peer, info.addresses.iter().cloned())
-                }
+                // update routing table and inform user about the update
+                self.update_routing_table(peers).await;
 
                 match self
                     .peers
@@ -365,9 +390,8 @@ impl Kademlia {
                     "handle `FIND_NODE` response"
                 );
 
-                for info in peers {
-                    self.service.add_known_address(&info.peer, info.addresses.iter().cloned())
-                }
+                // update routing table and inform user about the update
+                self.update_routing_table(peers).await;
 
                 match self
                     .peers
@@ -712,6 +736,7 @@ mod tests {
             known_peers: HashMap::new(),
             codec: ProtocolCodec::UnsignedVarint(None),
             replication_factor: 20usize,
+            update_mode: RoutingTableUpdateMode::Automatic,
             event_tx,
             cmd_rx,
         };

@@ -20,7 +20,9 @@
 
 use crate::{
     codec::ProtocolCodec,
-    protocol::libp2p::kademlia::handle::{KademliaCommand, KademliaEvent, KademliaHandle},
+    protocol::libp2p::kademlia::handle::{
+        KademliaCommand, KademliaEvent, KademliaHandle, RoutingTableUpdateMode,
+    },
     types::protocol::ProtocolName,
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
@@ -54,6 +56,9 @@ pub struct Config {
     /// Known peers.
     pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
 
+    /// Routing table update mode.
+    pub(super) update_mode: RoutingTableUpdateMode,
+
     /// TX channel for sending events to `KademliaHandle`.
     pub(super) event_tx: Sender<KademliaEvent>,
 
@@ -66,6 +71,7 @@ impl Config {
         replication_factor: usize,
         known_peers: HashMap<PeerId, Vec<Multiaddr>>,
         mut protocol_names: Vec<ProtocolName>,
+        update_mode: RoutingTableUpdateMode,
     ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -78,7 +84,7 @@ impl Config {
         (
             Config {
                 protocol_names,
-                // protocol: ProtocolName::from(PROTOCOL_NAME),
+                update_mode,
                 codec: ProtocolCodec::UnsignedVarint(None),
                 replication_factor,
                 known_peers,
@@ -91,7 +97,12 @@ impl Config {
 
     /// Build default Kademlia configuration.
     pub fn default() -> (Self, KademliaHandle) {
-        Self::new(REPLICATION_FACTOR, HashMap::new(), Vec::new())
+        Self::new(
+            REPLICATION_FACTOR,
+            HashMap::new(),
+            Vec::new(),
+            RoutingTableUpdateMode::Automatic,
+        )
     }
 }
 
@@ -100,6 +111,9 @@ impl Config {
 pub struct ConfigBuilder {
     /// Replication factor.
     pub(super) replication_factor: usize,
+
+    /// Routing table update mode.
+    pub(super) update_mode: RoutingTableUpdateMode,
 
     /// Known peers.
     pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
@@ -115,6 +129,7 @@ impl ConfigBuilder {
             replication_factor: REPLICATION_FACTOR,
             known_peers: HashMap::new(),
             protocol_names: Vec::new(),
+            update_mode: RoutingTableUpdateMode::Automatic,
         }
     }
 
@@ -127,6 +142,12 @@ impl ConfigBuilder {
     /// Seed Kademlia with one or more known peers.
     pub fn with_known_peers(mut self, peers: HashMap<PeerId, Vec<Multiaddr>>) -> Self {
         self.known_peers = peers;
+        self
+    }
+
+    /// Set routing table update mode.
+    pub fn with_routing_table_update_mode(mut self, mode: RoutingTableUpdateMode) -> Self {
+        self.update_mode = mode;
         self
     }
 
@@ -150,6 +171,7 @@ impl ConfigBuilder {
             self.replication_factor,
             self.known_peers,
             self.protocol_names,
+            self.update_mode,
         )
     }
 }

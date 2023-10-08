@@ -49,6 +49,16 @@ pub enum Quorum {
     N(NonZeroUsize),
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum RoutingTableUpdateMode {
+    /// Don't insert discovered peers automatically to the routing tables but
+    /// allow user to do that by calling [`KademliaHandle::add_known_peer()`].
+    Manual,
+
+    /// Automatically add all discovered peers to routing tables.
+    Automatic,
+}
+
 /// Kademlia commands.
 #[derive(Debug)]
 pub(crate) enum KademliaCommand {
