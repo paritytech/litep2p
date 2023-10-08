@@ -272,6 +272,11 @@ impl QueryEngine {
 
         match self.queries.get_mut(&query) {
             None => {
+                if query.0 < self.next_query_id {
+                    tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
+                    return;
+                }
+
                 tracing::warn!(target: LOG_TARGET, ?query, ?peer, "query doesn't exist");
                 debug_assert!(false);
                 return;
@@ -299,6 +304,11 @@ impl QueryEngine {
 
         match self.queries.get_mut(&query) {
             None => {
+                if query.0 < self.next_query_id {
+                    tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
+                    return;
+                }
+
                 tracing::warn!(target: LOG_TARGET, ?query, ?peer, "query doesn't exist");
                 debug_assert!(false);
                 return;
