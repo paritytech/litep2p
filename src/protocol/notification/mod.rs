@@ -1129,11 +1129,21 @@ impl NotificationProtocol {
             event = self.shutdown_rx.recv() => match event {
                 None => return,
                 Some(peer) => {
-                    self.peers
-                        .get_mut(&peer)
-                        .expect("peer to exist since an event was received")
-                        .state = PeerState::Closed { pending_open: None };
-                    self.event_handle.report_notification_stream_closed(peer).await;
+                    if let Some(context) = self.peers.get_mut(&peer) {
+                        match std::mem::replace(&mut context.state, PeerState::Closed { pending_open: None }) {
+                            PeerState::Open { .. } => {
+                                self.event_handle.report_notification_stream_closed(peer).await;
+                            }
+                            state => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?state,
+                                    "connection closed by the handler but it's already close",
+                                );
+                            }
+                        }
+                    }
                 }
             },
             event = self.service.next_event() => match event {
