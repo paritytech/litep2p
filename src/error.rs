@@ -174,6 +174,16 @@ pub enum NotificationError {
     NotificationStreamClosed(PeerId),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum DialError {
+    #[error("Tried to dial self")]
+    TriedToDialSelf,
+    #[error("Already connected to peer")]
+    AlreadyConnected,
+    #[error("Peer doens't have any known addresses")]
+    NoAddressAvailable(PeerId),
+}
+
 impl From<MultihashGeneric<64>> for Error {
     fn from(hash: MultihashGeneric<64>) -> Self {
         Error::ParseError(ParseError::InvalidMultihash(hash))

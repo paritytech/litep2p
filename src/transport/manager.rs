@@ -213,26 +213,18 @@ impl TransportManagerHandle {
             .collect::<HashSet<_>>();
 
         match peers.get_mut(&peer) {
-            Some(context) => {
-                // TODO: so ugly
-                let mut to_add: Vec<AddressRecord> = vec![];
-                'outer: for rec in addresses {
-                    for record in &context.addresses {
-                        if rec.address == record.address {
-                            continue 'outer;
-                        }
+            Some(context) =>
+                for record in addresses {
+                    if !context.addresses.contains(&record.address) {
+                        context.addresses.insert(record);
                     }
-                    to_add.push(rec);
-                }
-
-                context.addresses.extend(to_add.into_iter());
-            }
+                },
             None => {
                 peers.insert(
                     *peer,
                     PeerContext {
                         state: PeerState::Disconnected,
-                        addresses: BinaryHeap::from_iter(addresses.into_iter()),
+                        addresses: AddressStore::from_iter(addresses.into_iter()),
                     },
                 );
             }
@@ -476,14 +468,78 @@ impl Ord for AddressRecord {
     }
 }
 
+/// Store for peer addresses.
+#[derive(Debug)]
 struct AddressStore {
+    //// Addresses sorted by score.
     by_score: BinaryHeap<AddressRecord>,
+
+    /// Addresses queryable by hashing them for faster lookup.
     by_address: HashSet<Multiaddr>,
 }
 
-// impl AddressStore {
+impl FromIterator<Multiaddr> for AddressStore {
+    fn from_iter<T: IntoIterator<Item = Multiaddr>>(iter: T) -> Self {
+        let mut store = AddressStore::new();
+        for address in iter {
+            store.insert(address.into());
+        }
 
-// }
+        store
+    }
+}
+
+impl FromIterator<AddressRecord> for AddressStore {
+    fn from_iter<T: IntoIterator<Item = AddressRecord>>(iter: T) -> Self {
+        let mut store = AddressStore::new();
+        for record in iter {
+            store.by_address.insert(record.address.clone());
+            store.by_score.push(record);
+        }
+
+        store
+    }
+}
+
+impl AddressStore {
+    /// Create new [`AddressStore`].
+    fn new() -> Self {
+        Self {
+            by_score: BinaryHeap::new(),
+            by_address: HashSet::new(),
+        }
+    }
+
+    /// Check if [`AddressStore`] is empty.
+    pub fn is_empty(&self) -> bool {
+        self.by_score.is_empty()
+    }
+
+    /// Check if address is already in the a
+    pub fn contains(&self, address: &Multiaddr) -> bool {
+        self.by_address.contains(address)
+    }
+
+    /// Insert new address record into [`AddressStore`] with default address score.
+    pub fn insert(&mut self, record: AddressRecord) {
+        self.by_address.insert(record.address.clone());
+        self.by_score.push(record);
+    }
+
+    /// Insert new address into [`AddressStore`] with score.
+    pub fn insert_with_score(&mut self, address: Multiaddr, score: i32) {
+        self.by_address.insert(address.clone());
+        self.by_score.push(AddressRecord { score, address });
+    }
+
+    /// Pop address with the highest score from [`AddressScore`].
+    pub fn pop(&mut self) -> Option<AddressRecord> {
+        self.by_score.pop().map(|record| {
+            self.by_address.remove(&record.address);
+            record
+        })
+    }
+}
 
 /// Peer context.
 #[derive(Debug)]
@@ -492,7 +548,7 @@ pub struct PeerContext {
     state: PeerState,
 
     /// Known addresses of peer.
-    addresses: BinaryHeap<AddressRecord>,
+    addresses: AddressStore,
 }
 
 /// Litep2p connection manager.
@@ -801,7 +857,7 @@ impl TransportManager {
                         remote_peer_id,
                         PeerContext {
                             state: PeerState::Dialing(record.clone()),
-                            addresses: BinaryHeap::new(),
+                            addresses: AddressStore::new(),
                         },
                     );
                 }
@@ -863,7 +919,7 @@ impl TransportManager {
         match &mut context.state {
             PeerState::Dialing(ref mut record) => {
                 record.update_score(SCORE_DIAL_FAILURE);
-                context.addresses.push(record.clone());
+                context.addresses.insert(record.clone());
                 context.state = PeerState::Disconnected;
 
                 Ok(())
@@ -909,10 +965,7 @@ impl TransportManager {
                 PeerState::Connected(_) => {
                     tracing::debug!(target: LOG_TARGET, ?peer, ?connection_id, ?address, "secondary connection");
 
-                    context.addresses.push(AddressRecord {
-                        score: SCORE_DIAL_SUCCESS,
-                        address: address.clone(),
-                    });
+                    context.addresses.insert_with_score(address.clone(), SCORE_DIAL_SUCCESS);
                 }
                 PeerState::Dialing(ref record) => {
                     // TODO: so ugly
@@ -952,7 +1005,7 @@ impl TransportManager {
                             score: SCORE_DIAL_SUCCESS,
                             address: address.clone(),
                         }),
-                        addresses: BinaryHeap::new(),
+                        addresses: AddressStore::new(),
                     },
                 );
             }
@@ -995,7 +1048,7 @@ impl TransportManager {
                         },
                     ) => match std::mem::replace(&mut context.state, PeerState::Disconnected) {
                         PeerState::Connected(record) => {
-                            context.addresses.push(record);
+                            context.addresses.insert(record);
                         }
                         _ => unreachable!(),
                     },
@@ -1284,7 +1337,7 @@ mod tests {
             peer,
             PeerContext {
                 state: PeerState::Disconnected,
-                addresses: BinaryHeap::new(),
+                addresses: AddressStore::new(),
             },
         );
 

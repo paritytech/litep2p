@@ -672,9 +672,13 @@ impl NotificationProtocol {
         // other states imply that it's already open
         if std::matches!(context.state, PeerState::Closed { .. }) {
             match self.service.open_substream(peer).await {
-                Ok(substream) => {
-                    self.pending_outbound.insert(substream, peer);
-                    context.state = PeerState::OutboundInitiated { substream };
+                Ok(substream_id) => {
+                    tracing::trace!(target: LOG_TARGET, ?peer, ?substream_id, "outbound substream opening");
+
+                    self.pending_outbound.insert(substream_id, peer);
+                    context.state = PeerState::OutboundInitiated {
+                        substream: substream_id,
+                    };
                 }
                 Err(error) => {
                     tracing::debug!(target: LOG_TARGET, ?peer, protocol = %*self.protocol, ?error, "failed to open substream");
