@@ -2644,7 +2644,7 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
     let peer2 = *litep2p2.local_peer_id();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
-    litep2p1.add_known_address(peer2, address);
+    litep2p1.add_known_address(peer2, std::iter::once(address));
 
     // add `peer2` known address for `peer1` and spawn the litep2p objects in the background
     tokio::spawn(async move {

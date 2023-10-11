@@ -416,8 +416,9 @@ impl Litep2p {
         self.transport_manager.dial_address(address).await
     }
 
-    pub fn add_known_address(&mut self, peer: PeerId, address: Multiaddr) {
-        self.transport_manager.add_known_address(peer, std::iter::once(address));
+    /// Add one ore more known addresses for peer.
+    pub fn add_known_address(&mut self, peer: PeerId, address: impl Iterator<Item = Multiaddr>) {
+        self.transport_manager.add_known_address(peer, address);
     }
 
     /// Poll next event.

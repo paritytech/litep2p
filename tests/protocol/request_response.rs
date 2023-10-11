@@ -1539,7 +1539,7 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
     let address = litep2p2.listen_addresses().next().unwrap().clone();
 
     // add known address for `peer2` and start event loop for both litep2ps
-    litep2p1.add_known_address(peer2, address);
+    litep2p1.add_known_address(peer2, std::iter::once(address));
 
     tokio::spawn(async move {
         loop {
