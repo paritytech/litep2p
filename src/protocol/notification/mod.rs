@@ -779,6 +779,7 @@ impl NotificationProtocol {
                     OutboundState::Closed => match self.service.open_substream(peer).await {
                         Ok(substream) => {
                             self.negotiation.send_handshake(peer, inbound);
+                            self.pending_outbound.insert(substream, peer);
 
                             context.state = PeerState::Validating {
                                 protocol,
