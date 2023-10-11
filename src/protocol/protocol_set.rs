@@ -261,8 +261,6 @@ impl TransportService {
                 }
             }
             Entry::Vacant(entry) => {
-                tracing::trace!(target: LOG_TARGET, ?peer, ?connection, "inform protocol");
-
                 entry.insert(vec![(handle, connection)]);
                 Some(TransportEvent::ConnectionEstablished { peer, address })
             }
@@ -498,7 +496,7 @@ impl ProtocolSet {
         direction: Direction,
         substream: Substream,
     ) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
+        tracing::debug!(target: LOG_TARGET, %protocol, ?peer, ?direction, "substream opened");
 
         let (protocol, fallback) = match self.fallback_names.get(&protocol) {
             Some(main_protocol) => (main_protocol.clone(), Some(protocol)),

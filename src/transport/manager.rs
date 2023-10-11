@@ -763,9 +763,9 @@ impl TransportManager {
                 // possible to dial it
 
                 // TODO: this is not good
-                if address.score <= -200 {
-                    return Err(Error::NoAddressAvailable(*peer));
-                }
+                // if address.score <= -200 {
+                //     return Err(Error::NoAddressAvailable(*peer));
+                // }
 
                 address
             }

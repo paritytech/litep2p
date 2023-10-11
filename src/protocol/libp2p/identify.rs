@@ -225,6 +225,9 @@ impl Identify {
                 ))))??;
 
         let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
+
+        tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
+
         self.tx
             .send(IdentifyEvent::PeerIdentified {
                 peer,
