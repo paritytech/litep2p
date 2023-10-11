@@ -21,6 +21,7 @@
 //! Protocol name.
 
 use std::{
+    fmt::Display,
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -41,6 +42,15 @@ impl ProtocolName {
 impl From<&'static str> for ProtocolName {
     fn from(protocol: &'static str) -> Self {
         ProtocolName::Static(protocol)
+    }
+}
+
+impl Display for ProtocolName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Static(protocol) => protocol.fmt(f),
+            Self::Allocated(protocol) => protocol.fmt(f),
+        }
     }
 }
 
