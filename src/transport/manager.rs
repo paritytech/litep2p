@@ -204,13 +204,25 @@ impl TransportManagerHandle {
     /// Add one or more known addresses for peer.
     ///
     /// If peer doesn't exist, it will be added to known peers.
-    pub fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
+    ///
+    /// Returns the number of added addresses after non-supported transports were filtered out.
+    pub fn add_known_address(
+        &mut self,
+        peer: &PeerId,
+        addresses: impl Iterator<Item = Multiaddr>,
+    ) -> usize {
         let mut peers = self.peers.write();
         let addresses = addresses
             .filter_map(|address| {
                 self.supported_transport(&address).then_some(AddressRecord::from(address))
             })
             .collect::<HashSet<_>>();
+
+        // if all of the added addresses belonged to unsupported transports, exit early
+        let num_added = addresses.len();
+        if num_added == 0 {
+            return 0usize;
+        }
 
         match peers.get_mut(&peer) {
             Some(context) =>
@@ -229,6 +241,8 @@ impl TransportManagerHandle {
                 );
             }
         }
+
+        num_added
     }
 
     /// Dial peer using `PeerId`.
@@ -711,8 +725,12 @@ impl TransportManager {
     }
 
     /// Add one or more known addresses for `peer`.
-    pub fn add_known_address(&mut self, peer: PeerId, address: impl Iterator<Item = Multiaddr>) {
-        self.transport_manager_handle.add_known_address(&peer, address);
+    pub fn add_known_address(
+        &mut self,
+        peer: PeerId,
+        address: impl Iterator<Item = Multiaddr>,
+    ) -> usize {
+        self.transport_manager_handle.add_known_address(&peer, address)
     }
 
     /// Dial peer using `PeerId`.
@@ -744,6 +762,7 @@ impl TransportManager {
                 // the peer shouldn't be considered dead but currently it's not
                 // possible to dial it
 
+                // TODO: this is not good
                 if address.score <= -200 {
                     return Err(Error::NoAddressAvailable(*peer));
                 }

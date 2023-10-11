@@ -417,8 +417,12 @@ impl Litep2p {
     }
 
     /// Add one ore more known addresses for peer.
-    pub fn add_known_address(&mut self, peer: PeerId, address: impl Iterator<Item = Multiaddr>) {
-        self.transport_manager.add_known_address(peer, address);
+    pub fn add_known_address(
+        &mut self,
+        peer: PeerId,
+        address: impl Iterator<Item = Multiaddr>,
+    ) -> usize {
+        self.transport_manager.add_known_address(peer, address)
     }
 
     /// Poll next event.
