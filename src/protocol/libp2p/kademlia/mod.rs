@@ -89,6 +89,16 @@ enum PeerAction {
     SendPutValue(Record),
 }
 
+impl PeerAction {
+    /// Get `QueryId`, if it exists.
+    fn query_id(&self) -> Option<QueryId> {
+        match self {
+            Self::SendFindNode(query_id) => Some(*query_id),
+            _ => None,
+        }
+    }
+}
+
 /// Peer context.
 struct PeerContext {
     /// Pending action, if any.
@@ -699,7 +709,17 @@ impl Kademlia {
                                 tracing::debug!(target: LOG_TARGET, ?peer, "message handled sucecssfully");
                             }
                         }
-                        Err(error) => return Err(error), // TODO: don't return error here
+                        Err(error) => {
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to read data from substream");
+
+                            let query = self
+                                .peers
+                                .get_mut(&peer)
+                                .map(|context| context.pending_action.take().map(|action| action.query_id()))
+                                .flatten()
+                                .flatten();
+                            self.disconnect_peer(peer, query).await;
+                        }
                     },
                     None => return Err(Error::EssentialTaskClosed),
                 }
