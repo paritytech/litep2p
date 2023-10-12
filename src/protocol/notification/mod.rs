@@ -26,7 +26,7 @@ use crate::{
         self,
         notification::{
             connection::Connection,
-            handle::{NotificationEventHandle, NotificationSink},
+            handle::NotificationEventHandle,
             negotiation::{HandshakeEvent, HandshakeService},
             types::{NotificationCommand, ASYNC_CHANNEL_SIZE, SYNC_CHANNEL_SIZE},
         },
@@ -47,7 +47,7 @@ use tokio::sync::{
 use std::collections::HashMap;
 
 pub use config::{Config, ConfigBuilder};
-pub use handle::NotificationHandle;
+pub use handle::{NotificationHandle, NotificationSink};
 pub use types::{Direction, NotificationError, NotificationEvent, ValidationResult};
 
 mod config;
