@@ -2520,8 +2520,8 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         }
     );
 
-    let mut sink1 = handle1.notification_sink(peer2).unwrap();
-    let mut sink2 = handle2.notification_sink(peer1).unwrap();
+    let sink1 = handle1.notification_sink(peer2).unwrap();
+    let sink2 = handle2.notification_sink(peer1).unwrap();
 
     sink1.send_sync_notification(vec![1, 3, 3, 7]).unwrap();
     sink2.send_sync_notification(vec![1, 3, 3, 8]).unwrap();
@@ -2701,8 +2701,8 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         }
     );
 
-    let mut sink1 = handle1.notification_sink(peer2).unwrap();
-    let mut sink2 = handle2.notification_sink(peer1).unwrap();
+    let sink1 = handle1.notification_sink(peer2).unwrap();
+    let sink2 = handle2.notification_sink(peer1).unwrap();
 
     sink1.send_sync_notification(vec![1, 3, 3, 7]).unwrap();
     sink2.send_sync_notification(vec![1, 3, 3, 8]).unwrap();

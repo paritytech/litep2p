@@ -139,10 +139,7 @@ impl NotificationSink {
     /// Send notification to peer synchronously.
     ///
     /// If the channel is clogged, [`NotificationError::ChannelClogged`] is returned.
-    pub fn send_sync_notification(
-        &mut self,
-        notification: Vec<u8>,
-    ) -> Result<(), NotificationError> {
+    pub fn send_sync_notification(&self, notification: Vec<u8>) -> Result<(), NotificationError> {
         match self.sync_tx.try_send(notification) {
             Ok(_) => Ok(()),
             Err(error) => match error {
@@ -156,7 +153,7 @@ impl NotificationSink {
     ///
     /// Returns [`Error::PeerDoesntExist(PeerId)`](crate::error::Error::PeerDoesntExist)
     /// if the connection has been closed.
-    pub async fn send_async_notification(&mut self, notification: Vec<u8>) -> crate::Result<()> {
+    pub async fn send_async_notification(&self, notification: Vec<u8>) -> crate::Result<()> {
         self.async_tx
             .send(notification)
             .await
