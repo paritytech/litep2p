@@ -30,7 +30,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{Stream, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::Multiaddr;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
@@ -132,7 +132,14 @@ pub(crate) struct Identify {
     protocols: Vec<String>,
 
     /// Pending outbound substreams.
-    pending_outbound: HashMap<SubstreamId, PeerId>,
+    pending_opens: HashMap<SubstreamId, PeerId>,
+
+    /// Pending outbound substreams.
+    pending_outbound:
+        FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, HashSet<String>)>>>,
+
+    /// Pending inbound substreams.
+    pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
 }
 
 impl Identify {
@@ -144,7 +151,9 @@ impl Identify {
             peers: HashSet::new(),
             public: config.public.expect("public key to be supplied"),
             listen_addresses: config.listen_addresses,
-            pending_outbound: HashMap::new(),
+            pending_opens: HashMap::new(),
+            pending_inbound: FuturesUnordered::new(),
+            pending_outbound: FuturesUnordered::new(),
             protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
         }
     }
@@ -154,7 +163,7 @@ impl Identify {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
         let substream_id = self.service.open_substream(peer).await?;
-        self.pending_outbound.insert(substream_id, peer);
+        self.pending_opens.insert(substream_id, peer);
 
         Ok(())
     }
@@ -167,12 +176,12 @@ impl Identify {
     }
 
     /// Inbound substream opened.
-    async fn on_inbound_substream(
+    fn on_inbound_substream(
         &mut self,
         peer: PeerId,
         protocol: ProtocolName,
         mut substream: Substream,
-    ) -> crate::Result<()> {
+    ) {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
@@ -195,18 +204,21 @@ impl Identify {
         let mut msg = Vec::with_capacity(identify.encoded_len());
         identify.encode(&mut msg).expect("`msg` to have enough capacity");
 
-        // TODO: this is not good
-        substream.send_framed(msg.into()).await
+        self.pending_inbound.push(Box::pin(async move {
+            if let Err(error) = substream.send_framed(msg.into()).await {
+                tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to send ipfs identify response");
+            }
+        }))
     }
 
     /// Outbound substream opened.
-    async fn on_outbound_substream(
+    fn on_outbound_substream(
         &mut self,
         peer: PeerId,
         protocol: ProtocolName,
         substream_id: SubstreamId,
         mut substream: Substream,
-    ) -> crate::Result<()> {
+    ) {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
@@ -215,26 +227,17 @@ impl Identify {
             "outbound substream opened"
         );
 
-        // TODO: not good, use `SubstreamSet`
-        let payload =
-            substream
-                .next()
-                .await
-                .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(Some(
-                    substream_id,
-                ))))??;
+        self.pending_outbound.push(Box::pin(async move {
+            let payload = substream.next().await.ok_or(Error::SubstreamError(
+                SubstreamError::ReadFailure(Some(substream_id)),
+            ))??;
 
-        let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
+            let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
 
-        tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
+            tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
 
-        self.tx
-            .send(IdentifyEvent::PeerIdentified {
-                peer,
-                supported_protocols: HashSet::from_iter(info.protocols),
-            })
-            .await
-            .map_err(From::from)
+            Ok((peer, HashSet::from_iter(info.protocols)))
+        }));
     }
 
     /// Failed to open substream to remote peer.
@@ -251,59 +254,51 @@ impl Identify {
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting identify event loop");
 
-        while let Some(event) = self.service.next_event().await {
-            match event {
-                TransportEvent::ConnectionEstablished { peer, .. } => {
-                    if let Err(error) = self.on_connection_established(peer).await {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?error,
-                            "failed to register peer"
-                        );
-                    }
-                }
-                TransportEvent::ConnectionClosed { peer } => {
-                    self.on_connection_closed(peer);
-                }
-                TransportEvent::SubstreamOpened {
-                    peer,
-                    protocol,
-                    direction,
-                    substream,
-                    ..
-                } => match direction {
-                    Direction::Inbound => {
-                        if let Err(error) =
-                            self.on_inbound_substream(peer, protocol, substream).await
-                        {
+        loop {
+            tokio::select! {
+                event = self.service.next_event() => match event {
+                    None => return,
+                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
+                        if let Err(error) = self.on_connection_established(peer).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
                                 ?error,
-                                "failed to handle inbound substream"
+                                "failed to register peer"
                             );
                         }
                     }
-                    Direction::Outbound(substream_id) => {
-                        if let Err(error) = self
-                            .on_outbound_substream(peer, protocol, substream_id, substream)
-                            .await
-                        {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?substream_id,
-                                ?error,
-                                "failed to handle outbound substream"
-                            );
-                        }
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
+                        self.on_connection_closed(peer);
                     }
+                    Some(TransportEvent::SubstreamOpened {
+                        peer,
+                        protocol,
+                        direction,
+                        substream,
+                        ..
+                    }) => match direction {
+                        Direction::Inbound => self.on_inbound_substream(peer, protocol, substream),
+                        Direction::Outbound(substream_id) => self.on_outbound_substream(peer, protocol, substream_id, substream),
+                    },
+                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
+                        self.on_substream_open_failure(substream, error);
+                    }
+                    _ => {}
                 },
-                TransportEvent::SubstreamOpenFailure { substream, error } => {
-                    self.on_substream_open_failure(substream, error);
+                _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
+                event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
+                    Some(Ok((peer, supported_protocols))) => {
+                        let _ = self.tx
+                            .send(IdentifyEvent::PeerIdentified {
+                                peer,
+                                supported_protocols,
+                            })
+                            .await;
+                    }
+                    Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
+                    None => return,
                 }
-                _ => {}
             }
         }
     }

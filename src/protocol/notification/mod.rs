@@ -37,7 +37,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
