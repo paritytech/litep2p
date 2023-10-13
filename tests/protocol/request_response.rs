@@ -194,7 +194,7 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
     );
 
     // send response to the received request
-    handle2.send_response(request_id, vec![1, 3, 3, 8]).await.unwrap();
+    handle2.send_response(request_id, vec![1, 3, 3, 8]);
     assert_eq!(
         handle1.next().await.unwrap(),
         RequestResponseEvent::ResponseReceived {
@@ -319,7 +319,7 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
     {
         assert_eq!(peer, peer1);
         assert_eq!(request, vec![1, 3, 3, 7]);
-        handle2.reject_request(request_id).await;
+        handle2.reject_request(request_id);
     } else {
         panic!("invalid event received");
     };
@@ -475,7 +475,7 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
             assert_eq!(peer, peer1);
             if expected_requests.iter().any(|req| req == &request) {
                 request[0] = 2;
-                handle2.send_response(request_id, request).await.unwrap();
+                handle2.send_response(request_id, request);
             } else {
                 panic!("invalid request received");
             }
@@ -1072,7 +1072,7 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
     );
 
     // try to send too large response to the received request
-    handle2.send_response(request_id, vec![0u8; 257]).await.unwrap();
+    handle2.send_response(request_id, vec![0u8; 257]);
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -1312,7 +1312,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
     );
 
     // send response to the received request
-    handle2.send_response(request_id, vec![1, 3, 3, 8]).await.unwrap();
+    handle2.send_response(request_id, vec![1, 3, 3, 8]);
     assert_eq!(
         handle1.next().await.unwrap(),
         RequestResponseEvent::ResponseReceived {
@@ -1438,7 +1438,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
     );
 
     // send response to the received request
-    handle2.send_response(request_id, vec![1, 3, 3, 8]).await.unwrap();
+    handle2.send_response(request_id, vec![1, 3, 3, 8]);
     assert_eq!(
         handle1.next().await.unwrap(),
         RequestResponseEvent::ResponseReceived {
@@ -1564,7 +1564,7 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
     );
 
     // send response to the received request
-    handle2.send_response(request_id, vec![1, 3, 3, 8]).await.unwrap();
+    handle2.send_response(request_id, vec![1, 3, 3, 8]);
     assert_eq!(
         handle1.next().await.unwrap(),
         RequestResponseEvent::ResponseReceived {
@@ -1802,7 +1802,7 @@ async fn cancel_request(transport1: Transport, transport2: Transport) {
     handle1.cancel_request(request_id).await;
 
     // try to send response to the canceled request
-    handle2.send_response(request_id, vec![1, 3, 3, 8]).await.unwrap();
+    handle2.send_response(request_id, vec![1, 3, 3, 8]);
 
     // verify that nothing is receieved since the request was canceled
     match tokio::time::timeout(Duration::from_secs(2), handle1.next()).await {

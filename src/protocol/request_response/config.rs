@@ -21,7 +21,7 @@
 use crate::{
     codec::ProtocolCodec,
     protocol::request_response::{
-        handle::{RequestResponseCommand, RequestResponseEvent, RequestResponseHandle},
+        handle::{InnerRequestResponseEvent, RequestResponseCommand, RequestResponseHandle},
         REQUEST_TIMEOUT,
     },
     types::protocol::ProtocolName,
@@ -51,7 +51,7 @@ pub struct Config {
     pub(crate) codec: ProtocolCodec,
 
     /// TX channel for sending events to the user protocol.
-    pub(crate) event_tx: Sender<RequestResponseEvent>,
+    pub(super) event_tx: Sender<InnerRequestResponseEvent>,
 
     /// RX channel for receiving commands from the user protocol.
     pub(crate) command_rx: Receiver<RequestResponseCommand>,

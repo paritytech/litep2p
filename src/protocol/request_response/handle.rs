@@ -23,9 +23,13 @@ use crate::{
     PeerId,
 };
 
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
 
 use std::{
+    collections::HashMap,
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -54,6 +58,89 @@ pub enum RequestResponseError {
 
     /// Too large payload.
     TooLargePayload,
+}
+
+/// Request-response events.
+#[derive(Debug)]
+pub(super) enum InnerRequestResponseEvent {
+    /// Request received from remote
+    RequestReceived {
+        /// Peer Id.
+        peer: PeerId,
+
+        /// Fallback protocol, if the substream was negotiated using a fallback.
+        fallback: Option<ProtocolName>,
+
+        /// Request ID.
+        request_id: RequestId,
+
+        /// Received request.
+        request: Vec<u8>,
+
+        /// `oneshot::Sender` for response.
+        response_tx: oneshot::Sender<Vec<u8>>,
+    },
+
+    /// Response received.
+    ResponseReceived {
+        /// Peer Id.
+        peer: PeerId,
+
+        /// Request ID.
+        request_id: RequestId,
+
+        /// Received request.
+        response: Vec<u8>,
+    },
+
+    /// Request failed.
+    RequestFailed {
+        /// Peer Id.
+        peer: PeerId,
+
+        /// Request ID.
+        request_id: RequestId,
+
+        /// Request-response error.
+        error: RequestResponseError,
+    },
+}
+
+impl From<InnerRequestResponseEvent> for RequestResponseEvent {
+    fn from(event: InnerRequestResponseEvent) -> Self {
+        match event {
+            InnerRequestResponseEvent::RequestReceived {
+                peer,
+                fallback,
+                request_id,
+                request,
+                ..
+            } => RequestResponseEvent::RequestReceived {
+                peer,
+                fallback,
+                request_id,
+                request,
+            },
+            InnerRequestResponseEvent::ResponseReceived {
+                peer,
+                request_id,
+                response,
+            } => RequestResponseEvent::ResponseReceived {
+                peer,
+                request_id,
+                response,
+            },
+            InnerRequestResponseEvent::RequestFailed {
+                peer,
+                request_id,
+                error,
+            } => RequestResponseEvent::RequestFailed {
+                peer,
+                request_id,
+                error,
+            },
+        }
+    }
 }
 
 /// Request-response events.
@@ -138,23 +225,6 @@ pub(crate) enum RequestResponseCommand {
         dial_options: DialOptions,
     },
 
-    /// Send response.
-    SendResponse {
-        /// Request ID.
-        ///
-        /// This is the request ID that was received in [`RequestResponseEvent::RequestReceived`].
-        request_id: RequestId,
-
-        /// Response.
-        response: Vec<u8>,
-    },
-
-    /// Reject inbound request.
-    RejectRequest {
-        /// Request ID.
-        request_id: RequestId,
-    },
-
     /// Cancel outbound request.
     CancelRequest {
         /// Request ID.
@@ -166,10 +236,13 @@ pub(crate) enum RequestResponseCommand {
 /// protocol.
 pub struct RequestResponseHandle {
     /// TX channel for sending commands to the request-response protocol.
-    event_rx: Receiver<RequestResponseEvent>,
+    event_rx: Receiver<InnerRequestResponseEvent>,
 
     /// RX channel for receiving events from the request-response protocol.
     command_tx: Sender<RequestResponseCommand>,
+
+    /// Pending responses.
+    pending_responses: HashMap<RequestId, oneshot::Sender<Vec<u8>>>,
 
     /// Next ephemeral request ID.
     next_request_id: Arc<AtomicUsize>,
@@ -177,8 +250,8 @@ pub struct RequestResponseHandle {
 
 impl RequestResponseHandle {
     /// Create new [`RequestResponseHandle`].
-    pub(crate) fn new(
-        event_rx: Receiver<RequestResponseEvent>,
+    pub(super) fn new(
+        event_rx: Receiver<InnerRequestResponseEvent>,
         command_tx: Sender<RequestResponseCommand>,
         next_request_id: Arc<AtomicUsize>,
     ) -> Self {
@@ -186,6 +259,7 @@ impl RequestResponseHandle {
             event_rx,
             command_tx,
             next_request_id,
+            pending_responses: HashMap::new(),
         }
     }
 
@@ -193,10 +267,16 @@ impl RequestResponseHandle {
     ///
     /// Reject request received from a remote peer. The substream is dropped which signals
     /// to the remote peer that request was rejected.
-    pub async fn reject_request(&mut self, request_id: RequestId) {
-        tracing::trace!(target: LOG_TARGET, ?request_id, "reject request");
-
-        let _ = self.command_tx.send(RequestResponseCommand::RejectRequest { request_id }).await;
+    pub fn reject_request(&mut self, request_id: RequestId) {
+        match self.pending_responses.remove(&request_id) {
+            None => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "rejected request doesn't exist")
+            }
+            Some(sender) => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "reject request");
+                drop(sender);
+            }
+        }
     }
 
     /// Cancel an outbound request.
@@ -240,20 +320,19 @@ impl RequestResponseHandle {
     }
 
     /// Send response to remote peer.
-    pub async fn send_response(
-        &mut self,
-        request_id: RequestId,
-        response: Vec<u8>,
-    ) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
+    pub fn send_response(&mut self, request_id: RequestId, response: Vec<u8>) {
+        match self.pending_responses.remove(&request_id) {
+            None => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "pending response doens't exist");
+            }
+            Some(response_tx) => {
+                tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
 
-        self.command_tx
-            .send(RequestResponseCommand::SendResponse {
-                request_id,
-                response,
-            })
-            .await
-            .map_err(From::from)
+                if let Err(_) = response_tx.send(response) {
+                    tracing::debug!(target: LOG_TARGET, ?request_id, "substream closed");
+                }
+            }
+        }
     }
 
     /// Helper function for Polkadot SDK.
@@ -268,6 +347,26 @@ impl futures::Stream for RequestResponseHandle {
     type Item = RequestResponseEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.event_rx.poll_recv(cx)
+        match futures::ready!(self.event_rx.poll_recv(cx)) {
+            None => return Poll::Ready(None),
+            Some(event) => match event {
+                InnerRequestResponseEvent::RequestReceived {
+                    peer,
+                    fallback,
+                    request_id,
+                    request,
+                    response_tx,
+                } => {
+                    self.pending_responses.insert(request_id, response_tx);
+                    Poll::Ready(Some(RequestResponseEvent::RequestReceived {
+                        peer,
+                        fallback,
+                        request_id,
+                        request,
+                    }))
+                }
+                event => Poll::Ready(Some(event.into())),
+            },
+        }
     }
 }

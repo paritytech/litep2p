@@ -23,8 +23,8 @@
 use crate::{
     error::Error,
     protocol::{
-        request_response::handle::RequestResponseCommand, Direction, Transport, TransportEvent,
-        TransportService,
+        request_response::handle::{InnerRequestResponseEvent, RequestResponseCommand},
+        Direction, Transport, TransportEvent, TransportService,
     },
     substream::{Substream, SubstreamSet},
     types::{protocol::ProtocolName, RequestId, SubstreamId},
@@ -58,6 +58,8 @@ mod config;
 mod handle;
 
 // TODO: add ability to specify limit for inbound requests?
+// TODO: convert inbound/outbound substreams to use `oneshot:Sender<()>` for sending/rejecting
+// responses.       this way, the code dealing with rejecting/responding doesn't have to block.
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::request-response::protocol";
@@ -125,7 +127,14 @@ pub(crate) struct RequestResponseProtocol {
     pending_outbound: HashMap<SubstreamId, RequestContext>,
 
     /// Pending outbound responses.
-    pending_outbound_responses: HashMap<RequestId, Substream>,
+    ///
+    /// The future listens to a `oneshot::Sender` which is given to `RequestResponseHandle`.
+    /// If the request is accepted by the local node, the response is sent over the channel to the
+    /// the future which sends it to remote peer and closes the substream.
+    ///
+    /// If the substream is rejected by the local node, the `oneshot::Sender` is dropped which
+    /// notifies the future that the request should be rejected by closing the substream.
+    pending_outbound_responses: FuturesUnordered<BoxFuture<'static, ()>>,
 
     /// Pending inbound responses.
     pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
@@ -140,7 +149,7 @@ pub(crate) struct RequestResponseProtocol {
     pending_dials: HashMap<PeerId, RequestContext>,
 
     /// TX channel for sending events to the user protocol.
-    event_tx: Sender<RequestResponseEvent>,
+    event_tx: Sender<InnerRequestResponseEvent>,
 
     /// RX channel for receive commands from the `RequestResponseHandle`.
     command_rx: Receiver<RequestResponseCommand>,
@@ -169,8 +178,8 @@ impl RequestResponseProtocol {
             pending_outbound: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
             pending_outbound_cancels: HashMap::new(),
-            pending_outbound_responses: HashMap::new(),
             pending_inbound_requests: SubstreamSet::new(),
+            pending_outbound_responses: FuturesUnordered::new(),
         }
     }
 
@@ -247,7 +256,7 @@ impl RequestResponseProtocol {
         for request_id in context.active {
             let _ = self
                 .event_tx
-                .send(RequestResponseEvent::RequestFailed {
+                .send(InnerRequestResponseEvent::RequestFailed {
                     peer,
                     request_id,
                     error: RequestResponseError::Rejected,
@@ -351,20 +360,41 @@ impl RequestResponseProtocol {
             .active_inbound
             .remove(&request_id)
             .ok_or(Error::InvalidState)?;
-        let substream = self
+        let mut substream = self
             .pending_inbound_requests
             .remove(&(peer, request_id))
             .ok_or(Error::InvalidState)?;
+        let protocol = self.protocol.clone();
 
         if let Ok(request) = request {
-            self.pending_outbound_responses.insert(request_id, substream);
+            let (response_tx, rx): (oneshot::Sender<Vec<u8>>, _) = oneshot::channel();
+            self.pending_outbound_responses.push(Box::pin(async move {
+                tokio::select! {
+                    response = rx => match response {
+                        Err(_) => {
+                            tracing::trace!(target: LOG_TARGET, ?peer, %protocol, ?request_id, "request rejected");
+                            let _ = substream.close().await;
+                            todo!();
+                        }
+                        Ok(response) => {
+                            tracing::trace!(target: LOG_TARGET, ?peer, %protocol, ?request_id, "send response");
+                            let _ = substream.send_framed(response.into()).await;
+                        }
+                    },
+                    event = substream.next() => {
+                        tracing::debug!(target: LOG_TARGET, ?event, "read an unexpected event from substream");
+                    }
+                }
+            }));
+
             return self
                 .event_tx
-                .send(RequestResponseEvent::RequestReceived {
+                .send(InnerRequestResponseEvent::RequestReceived {
                     peer,
                     fallback,
                     request_id,
                     request: request.freeze().into(),
+                    response_tx,
                 })
                 .await
                 .map_err(From::from);
@@ -437,7 +467,7 @@ impl RequestResponseProtocol {
         };
 
         self.event_tx
-            .send(RequestResponseEvent::RequestFailed {
+            .send(InnerRequestResponseEvent::RequestFailed {
                 peer,
                 request_id,
                 error: RequestResponseError::Rejected,
@@ -454,7 +484,7 @@ impl RequestResponseProtocol {
         error: RequestResponseError,
     ) -> crate::Result<()> {
         self.event_tx
-            .send(RequestResponseEvent::RequestFailed {
+            .send(InnerRequestResponseEvent::RequestFailed {
                 peer,
                 request_id,
                 error,
@@ -545,33 +575,6 @@ impl RequestResponseProtocol {
         }
     }
 
-    /// Send response to remote peer.
-    async fn on_send_response(
-        &mut self,
-        request_id: RequestId,
-        response: Vec<u8>,
-    ) -> crate::Result<()> {
-        tracing::trace!(
-            target: LOG_TARGET,
-            protocol = %self.protocol,
-            ?request_id,
-            ?response,
-            "send response to remote peer"
-        );
-
-        match self.pending_outbound_responses.remove(&request_id) {
-            Some(mut substream) => match substream.send_framed(response.into()).await {
-                Ok(()) => Ok(()),
-                Err(error) => {
-                    tracing::trace!(target: LOG_TARGET, ?request_id, ?error, "failed to send response");
-                    let _ = substream.close().await;
-                    Ok(())
-                }
-            },
-            None => return Err(Error::Other(format!("pending request doesn't exist"))),
-        }
-    }
-
     /// Handle substream event.
     async fn on_substream_event(
         &mut self,
@@ -590,7 +593,7 @@ impl RequestResponseProtocol {
         }
 
         let event = match message {
-            Ok(response) => RequestResponseEvent::ResponseReceived {
+            Ok(response) => InnerRequestResponseEvent::ResponseReceived {
                 peer,
                 request_id,
                 response,
@@ -606,7 +609,7 @@ impl RequestResponseProtocol {
                     );
                     return Ok(());
                 }
-                error => RequestResponseEvent::RequestFailed {
+                error => InnerRequestResponseEvent::RequestFailed {
                     peer,
                     request_id,
                     error,
@@ -700,6 +703,7 @@ impl RequestResponseProtocol {
                         tracing::debug!(target: LOG_TARGET, ?peer, ?request_id, ?error, "failed to handle substream event");
                     }
                 }
+                _ = self.pending_outbound_responses.next(), if !self.pending_outbound_responses.is_empty() => {}
                 event = self.pending_inbound_requests.next() => match event {
                     Some(((peer, request_id), message)) => {
                         if let Err(error) = self.on_inbound_request(peer, request_id, message).await {
@@ -729,23 +733,6 @@ impl RequestResponseProtocol {
                                     ?error,
                                     "failed to send request"
                                 );
-                            }
-                        }
-                        RequestResponseCommand::SendResponse { request_id, response } => {
-                            if let Err(error) = self.on_send_response(request_id, response).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?request_id,
-                                    ?error,
-                                    "failed to send response"
-                                );
-                            }
-                        },
-                        RequestResponseCommand::RejectRequest { request_id } => {
-                            tracing::trace!(target: LOG_TARGET, ?request_id, "reject request");
-
-                            if let Some(substream) = self.pending_outbound_responses.remove(&request_id) {
-                                let _ = substream.close().await;
                             }
                         }
                         RequestResponseCommand::CancelRequest { request_id } => {
