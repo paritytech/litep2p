@@ -24,7 +24,7 @@ use litep2p::{
     error::Error,
     protocol::notification::{
         Config as NotificationConfig, ConfigBuilder, Direction, NotificationError,
-        NotificationEvent, ValidationResult,
+        NotificationEvent, NotificationHandle, ValidationResult,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
@@ -74,6 +74,28 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+}
+
+async fn make_default_litep2p(transport: Transport) -> (Litep2p, NotificationHandle) {
+    let (notif_config, handle) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+        false,
+    );
+    let config = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config);
+
+    let config = match transport {
+        Transport::Tcp(transport_config) => config.with_tcp(transport_config),
+        Transport::Quic(transport_config) => config.with_quic(transport_config),
+        Transport::WebSocket(transport_config) => config.with_websocket(transport_config),
+    }
+    .build();
+
+    (Litep2p::new(config).await.unwrap(), handle)
 }
 
 #[tokio::test]
@@ -2732,4 +2754,469 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         sink1.send_sync_notification(vec![1, 3, 3, 7]),
         Err(NotificationError::NoConnection),
     );
+}
+
+#[tokio::test]
+async fn open_and_close_batched_tcp() {
+    open_and_close_batched(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn open_and_close_batched_quic() {
+    open_and_close_batched(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_and_close_batched_websocket() {
+    open_and_close_batched(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn open_and_close_batched(
+    transport1: Transport,
+    transport2: Transport,
+    transport3: Transport,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut litep2p1, mut handle1) = make_default_litep2p(transport1).await;
+    let (mut litep2p2, mut handle2) = make_default_litep2p(transport2).await;
+    let (mut litep2p3, mut handle3) = make_default_litep2p(transport3).await;
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+    let peer3 = *litep2p3.local_peer_id();
+
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+    let address3 = litep2p3.listen_addresses().next().unwrap().clone();
+    litep2p1.add_known_address(peer2, std::iter::once(address2));
+    litep2p1.add_known_address(peer3, std::iter::once(address3));
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+                _ = litep2p3.next_event() => {},
+            }
+        }
+    });
+
+    // open substreams to `peer2` and `peer3`
+    handle1.open_substream_batch(vec![peer3, peer2].into_iter()).await.unwrap();
+
+    // accept for `peer2`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+
+    // accept for `peer3`
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle3.send_validation_result(peer1, ValidationResult::Accept).await;
+
+    // accept inbound substream for `peer2` and `peer3`
+    let mut peer2_validated = false;
+    let mut peer3_validated = false;
+    let mut peer2_opened = false;
+    let mut peer3_opened = false;
+
+    while !peer2_validated || !peer3_validated || !peer2_opened || !peer3_opened {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::ValidateSubstream {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(handshake, vec![1, 2, 3, 4]);
+                assert_eq!(fallback, None);
+
+                if peer == peer2 && !peer2_validated {
+                    peer2_validated = true;
+                } else if peer == peer3 && !peer3_validated {
+                    peer3_validated = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+
+                handle1.send_validation_result(peer, ValidationResult::Accept).await;
+            }
+            NotificationEvent::NotificationStreamOpened { peer, .. } => {
+                if peer == peer2 && !peer2_opened {
+                    peer2_opened = true;
+                } else if peer == peer3 && !peer3_opened {
+                    peer3_opened = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
+
+    // verify the substream is opened for `peer2` and `peer3`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // close substreams to `peer2` and `peer3`
+    handle1.close_substream_batch(vec![peer2, peer3].into_iter()).await;
+
+    // verify the substream is closed for `peer2` and `peer3`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamClosed { peer: peer1 }
+    );
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::NotificationStreamClosed { peer: peer1 }
+    );
+
+    // verify `peer1` receives close events for both peers
+    let mut peer2_closed = false;
+    let mut peer3_closed = false;
+
+    while !peer2_closed || !peer3_closed {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::NotificationStreamClosed { peer } => {
+                if peer == peer2 && !peer2_closed {
+                    peer2_closed = true;
+                } else if peer == peer3 && !peer3_closed {
+                    peer3_closed = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn open_and_close_batched_duplicate_peer_tcp() {
+    open_and_close_batched_duplicate_peer(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn open_and_close_batched_duplicate_peer_quic() {
+    open_and_close_batched_duplicate_peer(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_and_close_batched_duplicate_peer_websocket() {
+    open_and_close_batched_duplicate_peer(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn open_and_close_batched_duplicate_peer(
+    transport1: Transport,
+    transport2: Transport,
+    transport3: Transport,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut litep2p1, mut handle1) = make_default_litep2p(transport1).await;
+    let (mut litep2p2, mut handle2) = make_default_litep2p(transport2).await;
+    let (mut litep2p3, mut handle3) = make_default_litep2p(transport3).await;
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+    let peer3 = *litep2p3.local_peer_id();
+
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+    let address3 = litep2p3.listen_addresses().next().unwrap().clone();
+    litep2p1.add_known_address(peer2, std::iter::once(address2));
+    litep2p1.add_known_address(peer3, std::iter::once(address3));
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+                _ = litep2p3.next_event() => {},
+            }
+        }
+    });
+
+    // open substream to `peer2`.
+    handle1.open_substream_batch(vec![peer2].into_iter()).await.unwrap();
+
+    // accept for `peer2`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+
+    // accept inbound substream for `peer2`
+    let mut peer2_validated = false;
+    let mut peer2_opened = false;
+
+    while !peer2_validated || !peer2_opened {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::ValidateSubstream {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(handshake, vec![1, 2, 3, 4]);
+                assert_eq!(fallback, None);
+                assert_eq!(peer, peer2);
+
+                if !peer2_validated {
+                    peer2_validated = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+
+                handle1.send_validation_result(peer, ValidationResult::Accept).await;
+            }
+            NotificationEvent::NotificationStreamOpened { peer, .. } => {
+                assert_eq!(peer, peer2);
+
+                if !peer2_opened {
+                    peer2_opened = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
+
+    // verify the substream is opened for `peer2`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // batch another substream open command but this time include `peer2` for which
+    // a connection is already open
+    match handle1.open_substream_batch(vec![peer2, peer3].into_iter()).await {
+        Err(ignored) => {
+            assert_eq!(ignored.len(), 1);
+            assert!(ignored.contains(&peer2));
+        }
+        _ => panic!("call was supposed to fail"),
+    }
+
+    // accept for `peer3`
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle3.send_validation_result(peer1, ValidationResult::Accept).await;
+
+    // accept inbound substream for `peer3`
+    let mut peer3_validated = false;
+    let mut peer3_opened = false;
+
+    while !peer3_validated || !peer3_opened {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::ValidateSubstream {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(handshake, vec![1, 2, 3, 4]);
+                assert_eq!(fallback, None);
+                assert_eq!(peer, peer3);
+
+                if !peer3_validated {
+                    peer3_validated = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+
+                handle1.send_validation_result(peer, ValidationResult::Accept).await;
+            }
+            NotificationEvent::NotificationStreamOpened { peer, .. } => {
+                assert_eq!(peer, peer3);
+
+                if !peer3_opened {
+                    peer3_opened = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
+
+    // verify the substream is opened for `peer2` and `peer3`
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // close substreams to `peer2` and `peer3`
+    handle1.close_substream_batch(vec![peer2, peer3].into_iter()).await;
+
+    // verify the substream is closed for `peer2` and `peer3`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamClosed { peer: peer1 }
+    );
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::NotificationStreamClosed { peer: peer1 }
+    );
+
+    // verify `peer1` receives close events for both peers
+    let mut peer2_closed = false;
+    let mut peer3_closed = false;
+
+    while !peer2_closed || !peer3_closed {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::NotificationStreamClosed { peer } => {
+                if peer == peer2 && !peer2_closed {
+                    peer2_closed = true;
+                } else if peer == peer3 && !peer3_closed {
+                    peer3_closed = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
 }

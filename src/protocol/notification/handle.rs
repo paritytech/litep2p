@@ -32,7 +32,7 @@ use futures::{future::Either, pin_mut};
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -204,9 +204,46 @@ impl NotificationHandle {
         }
 
         self.command_tx
-            .send(NotificationCommand::OpenSubstream { peer })
+            .send(NotificationCommand::OpenSubstream {
+                peers: HashSet::from_iter([peer]),
+            })
             .await
             .map_or(Ok(()), |_| Ok(()))
+    }
+
+    /// Open substreams to multiple peers.
+    ///
+    /// Similar to [`NotificationHandle::open_substream()`] but multiple connections are initiated
+    /// using a single call to `NotificationProtocol`.
+    ///
+    /// Peers who are already connected are ignored and returned as `Err(HashSet<PeerId>>)`.
+    pub async fn open_substream_batch(
+        &self,
+        peers: impl Iterator<Item = PeerId>,
+    ) -> Result<(), HashSet<PeerId>> {
+        let (to_add, to_ignore): (Vec<_>, Vec<_>) = peers
+            .map(|peer| match self.peers.contains_key(&peer) {
+                true => (None, Some(peer)),
+                false => (Some(peer), None),
+            })
+            .unzip();
+
+        let to_add = to_add.into_iter().flatten().collect::<HashSet<_>>();
+        let to_ignore = to_ignore.into_iter().flatten().collect::<HashSet<_>>();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            peers_to_add = ?to_add.len(),
+            peers_to_ignore = ?to_ignore.len(),
+            "open substream",
+        );
+
+        let _ = self.command_tx.send(NotificationCommand::OpenSubstream { peers: to_add }).await;
+
+        match to_ignore.is_empty() {
+            true => Ok(()),
+            false => Err(to_ignore),
+        }
     }
 
     /// Close substream to `peer`.
@@ -217,7 +254,34 @@ impl NotificationHandle {
             return;
         }
 
-        let _ = self.command_tx.send(NotificationCommand::CloseSubstream { peer }).await;
+        let _ = self
+            .command_tx
+            .send(NotificationCommand::CloseSubstream {
+                peers: HashSet::from_iter([peer]),
+            })
+            .await;
+    }
+
+    /// Close substream to multiple peers.
+    ///
+    /// Similar to [`NotificationHandle::close_substream()`] but multiple connections are closed
+    /// using a single call to `NotificationProtocol`.
+    pub async fn close_substream_batch(&self, peers: impl Iterator<Item = PeerId>) {
+        let peers = peers
+            .filter_map(|peer| self.peers.contains_key(&peer).then_some(peer))
+            .collect::<HashSet<_>>();
+
+        if peers.is_empty() {
+            return;
+        }
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peers,
+            "close substreams",
+        );
+
+        let _ = self.command_tx.send(NotificationCommand::CloseSubstream { peers }).await;
     }
 
     /// Set new handshake.

@@ -22,6 +22,8 @@ use crate::{
     protocol::notification::handle::NotificationSink, types::protocol::ProtocolName, PeerId,
 };
 
+use std::collections::HashSet;
+
 /// Default channel size for synchronous notifications.
 pub(super) const SYNC_CHANNEL_SIZE: usize = 16;
 
@@ -190,16 +192,16 @@ pub enum NotificationEvent {
 
 /// Notification commands sent by the [`NotificationService`] to the protocol.
 pub(crate) enum NotificationCommand {
-    /// Open substream to peer.
+    /// Open substreams to one or more peers.
     OpenSubstream {
-        /// Peer ID.
-        peer: PeerId,
+        /// Peer IDs.
+        peers: HashSet<PeerId>,
     },
 
-    /// Close substream to peer.
+    /// Close substreams to one or more peers.
     CloseSubstream {
-        /// Peer ID.
-        peer: PeerId,
+        /// Peer IDs.
+        peers: HashSet<PeerId>,
     },
 
     /// Set handshake.

@@ -1241,18 +1241,22 @@ impl NotificationProtocol {
                     return
                 }
                 Some(command) => match command {
-                    NotificationCommand::OpenSubstream { peer } => {
-                        if let Err(error) = self.on_open_substream(peer).await {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?error,
-                                "failed to open substream"
-                            );
+                    NotificationCommand::OpenSubstream { peers } => {
+                        for peer in peers {
+                            if let Err(error) = self.on_open_substream(peer).await {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?error,
+                                    "failed to open substream"
+                                );
+                            }
                         }
                     }
-                    NotificationCommand::CloseSubstream { peer } => {
-                        self.on_close_substream(peer).await;
+                    NotificationCommand::CloseSubstream { peers } => {
+                        for peer in peers {
+                            self.on_close_substream(peer).await;
+                        }
                     }
                     NotificationCommand::SubstreamValidated { peer, result } => {
                         if let Err(error) = self.on_validation_result(peer, result).await {
