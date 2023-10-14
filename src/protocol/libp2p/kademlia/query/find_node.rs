@@ -207,6 +207,14 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             return Some(QueryAction::QuerySucceeded { query: self.query });
         }
 
+        tracing::error!(
+            target: LOG_TARGET,
+            candidates_len = ?self.candidates.len(),
+            pending_len = ?self.pending.len(),
+            responses_len = ?self.responses.len(),
+            "unhandled state"
+        );
+
         // TODO: probably not correct
         unreachable!();
     }
