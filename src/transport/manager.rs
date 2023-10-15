@@ -235,7 +235,7 @@ impl TransportManagerHandle {
                 peers.insert(
                     *peer,
                     PeerContext {
-                        state: PeerState::Disconnected,
+                        state: PeerState::Disconnected { dial_record: None },
                         addresses: AddressStore::from_iter(addresses.into_iter()),
                     },
                 );
@@ -253,19 +253,33 @@ impl TransportManagerHandle {
         {
             match self.peers.read().get(&peer) {
                 Some(PeerContext {
-                    state: PeerState::Connected(_),
+                    state: PeerState::Connected { .. },
                     ..
                 }) => return Err(Error::AlreadyConnected),
                 Some(PeerContext {
-                    state: PeerState::Disconnected,
+                    state: PeerState::Disconnected { dial_record },
                     addresses,
-                }) if addresses.is_empty() => return Err(Error::NoAddressAvailable(*peer)),
+                }) => {
+                    if addresses.is_empty() {
+                        return Err(Error::NoAddressAvailable(*peer));
+                    }
+
+                    // peer is already being dialed, don't dial again until the first dial concluded
+                    if dial_record.is_some() {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?dial_record,
+                            "peer is aready being dialed",
+                        );
+                        return Ok(());
+                    }
+                }
                 Some(PeerContext {
-                    state: PeerState::Dialing(_),
+                    state: PeerState::Dialing { .. },
                     ..
                 }) => return Ok(()),
                 None => return Err(Error::PeerDoesntExist(*peer)),
-                _ => {}
             }
         }
 
@@ -425,13 +439,36 @@ impl ProtocolContext {
 #[derive(Debug)]
 enum PeerState {
     /// `Litep2p` is connected to peer.
-    Connected(AddressRecord),
+    // TODO: store pending dial here
+    Connected {
+        /// Address record.
+        record: AddressRecord,
+
+        /// Dial address, if it exists.
+        ///
+        /// While the local node was dialing a remote peer, the remote peer might've dialed
+        /// the local node and connection was established successfully. This dial address
+        /// is stored for processing later when the dial attempt conclused as either
+        /// successful/failed.
+        dial_record: Option<AddressRecord>,
+    },
 
     /// Peer is being dialed.
-    Dialing(AddressRecord),
+    Dialing {
+        /// Address record.
+        record: AddressRecord,
+    },
 
     /// `Litep2p` is not connected to peer.
-    Disconnected,
+    Disconnected {
+        /// Dial address, if it exists.
+        ///
+        /// While the local node was dialing a remote peer, the remote peer might've dialed
+        /// the local node and connection was established successfully. The connection might've
+        /// been closed before the dial concluded which means that [`TransportManager`] must be
+        /// prepared to handle the dial failure even after the connection has been closed.
+        dial_record: Option<AddressRecord>,
+    },
 }
 
 #[derive(Debug, Clone, Hash)]
@@ -744,17 +781,27 @@ impl TransportManager {
         let address = match self.peers.write().get_mut(&peer) {
             None => return Err(Error::PeerDoesntExist(*peer)),
             Some(PeerContext {
-                state: PeerState::Connected(_),
+                state: PeerState::Connected { .. },
                 ..
             }) => return Err(Error::AlreadyConnected),
             Some(PeerContext {
-                state: PeerState::Dialing(_),
+                state: PeerState::Dialing { .. },
                 ..
             }) => return Ok(()),
             Some(PeerContext {
-                state: PeerState::Disconnected,
+                state: PeerState::Disconnected { dial_record },
                 addresses,
             }) => {
+                if dial_record.is_some() {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?dial_record,
+                        "peer is aready being dialed while",
+                    );
+                    return Ok(());
+                }
+
                 let address = addresses.pop().ok_or(Error::NoAddressAvailable(*peer))?;
 
                 // TODO: start timer for the address and after 2 minutes reset peer score to try
@@ -875,19 +922,23 @@ impl TransportManager {
                     self.peers.write().insert(
                         remote_peer_id,
                         PeerContext {
-                            state: PeerState::Dialing(record.clone()),
+                            state: PeerState::Dialing {
+                                record: record.clone(),
+                            },
                             addresses: AddressStore::new(),
                         },
                     );
                 }
                 Some(PeerContext {
-                    state: PeerState::Dialing(_) | PeerState::Connected(_),
+                    state: PeerState::Dialing { .. } | PeerState::Connected { .. },
                     ..
                 }) => return Ok(()),
                 Some(PeerContext { ref mut state, .. }) => {
                     // TODO: verify that the address is not in `addresses` already
                     // addresses.insert(address.clone());
-                    *state = PeerState::Dialing(record.clone());
+                    *state = PeerState::Dialing {
+                        record: record.clone(),
+                    };
                 }
             }
         }
@@ -912,7 +963,7 @@ impl TransportManager {
     fn on_dial_failure(
         &mut self,
         connection_id: &ConnectionId,
-        _address: &Multiaddr,
+        address: &Multiaddr,
         _error: &Error,
     ) -> crate::Result<()> {
         let peer = self.pending_connections.remove(&connection_id).ok_or_else(|| {
@@ -935,11 +986,49 @@ impl TransportManager {
             Error::InvalidState
         })?;
 
-        match &mut context.state {
-            PeerState::Dialing(ref mut record) => {
+        match std::mem::replace(
+            &mut context.state,
+            PeerState::Disconnected { dial_record: None },
+        ) {
+            PeerState::Dialing { ref mut record } => {
+                debug_assert_eq!(&record.address, address);
+
                 record.update_score(SCORE_DIAL_FAILURE);
                 context.addresses.insert(record.clone());
-                context.state = PeerState::Disconnected;
+
+                context.state = PeerState::Disconnected { dial_record: None };
+                Ok(())
+            }
+            PeerState::Connected {
+                record,
+                dial_record: Some(mut dial_record),
+            } => {
+                debug_assert_ne!(&record.address, address);
+                debug_assert_eq!(&dial_record.address, address);
+
+                dial_record.update_score(SCORE_DIAL_FAILURE);
+                context.addresses.insert(dial_record);
+
+                context.state = PeerState::Connected {
+                    record,
+                    dial_record: None,
+                };
+                Ok(())
+            }
+            PeerState::Disconnected {
+                dial_record: Some(mut dial_record),
+            } => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?connection_id,
+                    ?address,
+                    ?dial_record,
+                    "dial failed for a disconnected peer",
+                );
+                debug_assert_eq!(&dial_record.address, address);
+
+                dial_record.update_score(SCORE_DIAL_FAILURE);
+                context.addresses.insert(dial_record);
 
                 Ok(())
             }
@@ -949,12 +1038,13 @@ impl TransportManager {
                     ?peer,
                     ?connection_id,
                     ?state,
-                    "dial failed but peer doesn't exist"
+                    ?address,
+                    "invalid state for dial failure",
                 );
-                debug_assert!(false);
+                context.state = state;
 
-                context.state = PeerState::Disconnected;
-                Err(Error::InvalidState)
+                debug_assert!(false);
+                Ok(())
             }
         }
     }
@@ -981,17 +1071,20 @@ impl TransportManager {
         let mut peers = self.peers.write();
         match peers.get_mut(&peer) {
             Some(context) => match context.state {
-                PeerState::Connected(_) => {
+                PeerState::Connected { .. } => {
                     tracing::debug!(target: LOG_TARGET, ?peer, ?connection_id, ?address, "secondary connection");
 
                     context.addresses.insert_with_score(address.clone(), SCORE_DIAL_SUCCESS);
                 }
-                PeerState::Dialing(ref record) => {
+                PeerState::Dialing { ref record, .. } => {
                     // TODO: so ugly
                     if &record.address == address {
                         tracing::trace!(target: LOG_TARGET, ?peer, ?connection_id, ?address, "connection opened to remote");
 
-                        context.state = PeerState::Connected(record.clone());
+                        context.state = PeerState::Connected {
+                            record: record.clone(),
+                            dial_record: None,
+                        };
                     } else {
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -1001,29 +1094,66 @@ impl TransportManager {
                             "connection opened by remote while local node was dialing",
                         );
 
-                        context.state = PeerState::Connected(AddressRecord {
-                            score: SCORE_DIAL_SUCCESS,
-                            address: address.clone(),
-                        });
+                        context.state = PeerState::Connected {
+                            record: AddressRecord {
+                                score: SCORE_DIAL_SUCCESS,
+                                address: address.clone(),
+                            },
+                            dial_record: Some(record.clone()),
+                        };
                     }
                 }
-                PeerState::Disconnected => {
-                    tracing::trace!(target: LOG_TARGET, ?peer, ?connection_id, ?address, "connection opened by remote");
+                PeerState::Disconnected {
+                    ref mut dial_record,
+                } => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?connection_id,
+                        ?address,
+                        ?dial_record,
+                        "connection opened by remote or delayed dial succeeded",
+                    );
 
-                    context.state = PeerState::Connected(AddressRecord {
-                        score: SCORE_DIAL_SUCCESS,
-                        address: address.clone(),
-                    });
+                    let (record, dial_record) = match dial_record.take() {
+                        Some(dial_record) =>
+                            if &dial_record.address == address {
+                                (dial_record, None)
+                            } else {
+                                (
+                                    AddressRecord {
+                                        score: SCORE_DIAL_SUCCESS,
+                                        address: address.clone(),
+                                    },
+                                    Some(dial_record),
+                                )
+                            },
+                        None => (
+                            AddressRecord {
+                                score: SCORE_DIAL_SUCCESS,
+                                address: address.clone(),
+                            },
+                            None,
+                        ),
+                    };
+
+                    context.state = PeerState::Connected {
+                        record,
+                        dial_record,
+                    };
                 }
             },
             None => {
                 peers.insert(
                     *peer,
                     PeerContext {
-                        state: PeerState::Connected(AddressRecord {
-                            score: SCORE_DIAL_SUCCESS,
-                            address: address.clone(),
-                        }),
+                        state: PeerState::Connected {
+                            record: AddressRecord {
+                                score: SCORE_DIAL_SUCCESS,
+                                address: address.clone(),
+                            },
+                            dial_record: None,
+                        },
                         addresses: AddressStore::new(),
                     },
                 );
@@ -1033,60 +1163,71 @@ impl TransportManager {
         Ok(())
     }
 
-    /// Handle transport manager event.
-    fn on_transport_manager_event(
+    /// Handle closed connection.
+    fn on_connection_closed(
         &mut self,
-        event: TransportManagerEvent,
-    ) -> TransportManagerEvent {
-        match &event {
-            TransportManagerEvent::DialFailure {
-                address,
-                connection,
-                error,
-            } => {
-                let _ = self.on_dial_failure(connection, &address, &error);
-                event
-            }
-            TransportManagerEvent::ConnectionEstablished {
-                peer,
-                connection,
-                address,
-            } => {
-                let _ = self.on_connection_established(peer, connection, address);
-                event
-            }
-            TransportManagerEvent::ConnectionClosed {
-                peer,
-                connection: connection_id,
-            } => {
-                match self.peers.write().get_mut(peer) {
-                    Some(
-                        context @ PeerContext {
-                            state: PeerState::Connected(_),
-                            ..
-                        },
-                    ) => match std::mem::replace(&mut context.state, PeerState::Disconnected) {
-                        PeerState::Connected(record) => {
-                            context.addresses.insert(record);
-                        }
-                        _ => unreachable!(),
-                    },
-                    state => {
-                        tracing::warn!(target: LOG_TARGET, ?peer, ?connection_id, ?state, "invalid state for a closed connection");
-                        debug_assert!(false);
-                    }
+        peer: &PeerId,
+        connection_id: &ConnectionId,
+    ) -> crate::Result<()> {
+        match self.peers.write().get_mut(peer) {
+            Some(
+                context @ PeerContext {
+                    state: PeerState::Connected { .. },
+                    ..
+                },
+            ) => match std::mem::replace(
+                &mut context.state,
+                PeerState::Disconnected { dial_record: None },
+            ) {
+                PeerState::Connected {
+                    record,
+                    dial_record: actual_dial_record,
+                } => {
+                    context.addresses.insert(record);
+                    context.state = PeerState::Disconnected {
+                        dial_record: actual_dial_record,
+                    };
                 }
-
-                event
+                _ => unreachable!(),
+            },
+            state => {
+                tracing::warn!(target: LOG_TARGET, ?peer, ?connection_id, ?state, "invalid state for a closed connection");
+                debug_assert!(false);
             }
         }
+
+        Ok(())
     }
 
     /// Poll next event from [`TransportManager`].
     pub async fn next(&mut self) -> Option<TransportManagerEvent> {
         loop {
             tokio::select! {
-                event = self.event_rx.recv() => return Some(self.on_transport_manager_event(event?)),
+                event = self.event_rx.recv() => {
+                    let inner = event?;
+                    let result = match &inner {
+                        TransportManagerEvent::DialFailure {
+                            address,
+                            connection,
+                            error,
+                        } => self.on_dial_failure(&connection, &address, &error),
+                        TransportManagerEvent::ConnectionEstablished {
+                            peer,
+                            connection,
+                            address,
+                        } => self.on_connection_established(&peer, &connection, &address),
+                        TransportManagerEvent::ConnectionClosed {
+                            peer,
+                            connection: connection_id,
+                        } => self.on_connection_closed(&peer, &connection_id),
+                    };
+
+                    if let Err(error) = result {
+                        tracing::debug!(target: LOG_TARGET, ?error, "failed to handle transport event");
+                    }
+
+                    return Some(inner)
+                },
                 command = self.cmd_rx.recv() => match command? {
                     InnerTransportManagerCommand::DialPeer { peer } => {
                         if let Err(error) = self.dial(&peer).await {
@@ -1355,7 +1496,7 @@ mod tests {
         manager.peers.write().insert(
             peer,
             PeerContext {
-                state: PeerState::Disconnected,
+                state: PeerState::Disconnected { dial_record: None },
                 addresses: AddressStore::new(),
             },
         );
@@ -1416,5 +1557,225 @@ mod tests {
             .with(Protocol::Tcp(8888))
             .with(Protocol::Wss(std::borrow::Cow::Owned("/".to_string())));
         assert!(!handle.supported_transport(&address));
+    }
+
+    // local node tried to dial a node and it failed but in the mean
+    // time the remote node dialed local node and that succeeded.
+    #[tokio::test]
+    async fn on_dial_failure_already_connected() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), HashSet::new());
+        let _handle = manager.register_transport(SupportedTransport::Tcp);
+
+        let peer = PeerId::random();
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        let connect_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        assert!(manager.dial_address(dial_address.clone()).await.is_ok());
+        assert_eq!(manager.pending_connections.len(), 1);
+
+        match &manager.peers.read().get(&peer).unwrap().state {
+            PeerState::Dialing { record } => {
+                assert_eq!(record.address, dial_address);
+            }
+            state => panic!("invalid state for peer: {state:?}"),
+        }
+
+        // remote peer connected to local node from a different address that was dialed
+        manager
+            .on_connection_established(&peer, &ConnectionId::from(1usize), &connect_address)
+            .unwrap();
+
+        // dialing the peer failed
+        manager
+            .on_dial_failure(
+                &ConnectionId::from(0usize),
+                &dial_address,
+                &Error::Disconnected,
+            )
+            .unwrap();
+
+        let peers = manager.peers.read();
+        let peer = peers.get(&peer).unwrap();
+
+        match &peer.state {
+            PeerState::Connected { dial_record, .. } => {
+                assert!(dial_record.is_none());
+                assert!(peer.addresses.contains(&dial_address));
+            }
+            state => panic!("invalid state: {state:?}"),
+        }
+    }
+
+    // local node tried to dial a node and it failed but in the mean
+    // time the remote node dialed local node and that succeeded.
+    //
+    // while the dial was still in progresss, the remote node disconnected after which
+    // the dial failure was reported.
+    #[tokio::test]
+    async fn on_dial_failure_already_connected_and_disconnected() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), HashSet::new());
+        let _handle = manager.register_transport(SupportedTransport::Tcp);
+
+        let peer = PeerId::random();
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        let connect_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        assert!(manager.dial_address(dial_address.clone()).await.is_ok());
+        assert_eq!(manager.pending_connections.len(), 1);
+
+        match &manager.peers.read().get(&peer).unwrap().state {
+            PeerState::Dialing { record } => {
+                assert_eq!(record.address, dial_address);
+            }
+            state => panic!("invalid state for peer: {state:?}"),
+        }
+
+        // remote peer connected to local node from a different address that was dialed
+        manager
+            .on_connection_established(&peer, &ConnectionId::from(1usize), &connect_address)
+            .unwrap();
+
+        // connection to remote was closed while the dial was still in progress
+        manager.on_connection_closed(&peer, &ConnectionId::from(1usize)).unwrap();
+
+        // verify that the peer state is `Disconnected`
+        {
+            let peers = manager.peers.read();
+            let peer = peers.get(&peer).unwrap();
+
+            match &peer.state {
+                PeerState::Disconnected {
+                    dial_record: Some(dial_record),
+                    ..
+                } => {
+                    assert_eq!(dial_record.address, dial_address);
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
+
+        // dialing the peer failed
+        manager
+            .on_dial_failure(
+                &ConnectionId::from(0usize),
+                &dial_address,
+                &Error::Disconnected,
+            )
+            .unwrap();
+
+        let peers = manager.peers.read();
+        let peer = peers.get(&peer).unwrap();
+
+        match &peer.state {
+            PeerState::Disconnected {
+                dial_record: None, ..
+            } => {
+                assert!(peer.addresses.contains(&dial_address));
+            }
+            state => panic!("invalid state: {state:?}"),
+        }
+    }
+
+    // local node tried to dial a node and it failed but in the mean
+    // time the remote node dialed local node and that succeeded.
+    //
+    // while the dial was still in progresss, the remote node disconnected after which
+    // the dial failure was reported.
+    #[tokio::test]
+    async fn on_dial_success_while_connected_and_disconnected() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), HashSet::new());
+        let _handle = manager.register_transport(SupportedTransport::Tcp);
+
+        let peer = PeerId::random();
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        let connect_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        assert!(manager.dial_address(dial_address.clone()).await.is_ok());
+        assert_eq!(manager.pending_connections.len(), 1);
+
+        match &manager.peers.read().get(&peer).unwrap().state {
+            PeerState::Dialing { record } => {
+                assert_eq!(record.address, dial_address);
+            }
+            state => panic!("invalid state for peer: {state:?}"),
+        }
+
+        // remote peer connected to local node from a different address that was dialed
+        manager
+            .on_connection_established(&peer, &ConnectionId::from(1usize), &connect_address)
+            .unwrap();
+
+        // connection to remote was closed while the dial was still in progress
+        manager.on_connection_closed(&peer, &ConnectionId::from(1usize)).unwrap();
+
+        // verify that the peer state is `Disconnected`
+        {
+            let peers = manager.peers.read();
+            let peer = peers.get(&peer).unwrap();
+
+            match &peer.state {
+                PeerState::Disconnected {
+                    dial_record: Some(dial_record),
+                    ..
+                } => {
+                    assert_eq!(dial_record.address, dial_address);
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
+
+        // the original dial succeeded
+        manager
+            .on_connection_established(&peer, &ConnectionId::from(0usize), &dial_address)
+            .unwrap();
+
+        let peers = manager.peers.read();
+        let peer = peers.get(&peer).unwrap();
+
+        match &peer.state {
+            PeerState::Connected {
+                dial_record: None, ..
+            } => {}
+            state => panic!("invalid state: {state:?}"),
+        }
     }
 }
