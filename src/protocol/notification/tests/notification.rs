@@ -587,3 +587,67 @@ async fn open_substream_on_closed_connection() {
         event => panic!("invalid event received: {event:?}"),
     }
 }
+
+// `NotificationHandle` may have an inconsistent view of the peer state and connection to peer may
+// already been closed by the time `close_substream()` is called but this event hasn't yet been
+// registered to `NotificationHandle` which causes it to send a stale disconnection request to
+// `NotificationProtocol`.
+//
+// verify that `NotificationProtocol` ignores stale disconnection requests
+#[tokio::test]
+async fn close_already_closed_connection() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, mut handle, _, mut tx) = make_notification_protocol();
+    let (peer, _) = register_peer(&mut notif, &mut tx).await;
+
+    notif.peers.insert(
+        peer,
+        PeerContext {
+            state: PeerState::Validating {
+                protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
+                direction: Direction::Inbound,
+                outbound: OutboundState::Open {
+                    handshake: vec![1, 2, 3, 4],
+                    outbound: Box::new(DummySubstream::new()),
+                },
+                inbound: InboundState::SendingHandshake,
+            },
+        },
+    );
+    notif
+        .on_handshake_event(
+            peer,
+            HandshakeEvent::InboundNegotiated {
+                peer,
+                handshake: vec![1],
+                substream: Box::new(DummySubstream::new()),
+            },
+        )
+        .await;
+
+    match handle.next().await {
+        Some(NotificationEvent::NotificationStreamOpened { .. }) => {}
+        _ => panic!("invalid event received"),
+    }
+
+    // close the substream but don't poll the `NotificationHandle`
+    notif.shutdown_tx.send(peer).await.unwrap();
+
+    // close the connection using the handle
+    handle.close_substream(peer).await;
+
+    // process the events
+    notif.next_event().await;
+    notif.next_event().await;
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state: PeerState::Closed { pending_open: None },
+        }) => {}
+        state => panic!("invalid state: {state:?}"),
+    }
+}

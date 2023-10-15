@@ -744,7 +744,15 @@ impl NotificationProtocol {
 
                 self.event_handle.report_notification_stream_closed(peer).await;
             }
-            _ => unreachable!(),
+            state => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    "substream already closed",
+                );
+                context.state = state;
+            }
         }
     }
 
