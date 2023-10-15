@@ -200,10 +200,16 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             let worst_response_candidate =
                 self.responses.last_entry().expect("response to exist").key().clone();
 
-            if first_candidate_distance < worst_response_candidate {
+            if first_candidate_distance < worst_response_candidate
+                && self.pending.len() < self.parallelism_factor
+            {
                 return Some(self.schedule_next_peer());
             }
 
+            return Some(QueryAction::QuerySucceeded { query: self.query });
+        }
+
+        if self.responses.len() == self.replication_factor {
             return Some(QueryAction::QuerySucceeded { query: self.query });
         }
 
@@ -215,7 +221,6 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             "unhandled state"
         );
 
-        // TODO: probably not correct
         unreachable!();
     }
 }

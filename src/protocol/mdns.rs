@@ -288,7 +288,7 @@ impl Mdns {
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(self.query_interval) => {
-                    tracing::info!(target: LOG_TARGET, "timeout expired");
+                    tracing::trace!(target: LOG_TARGET, "timeout expired");
 
                     if let Err(error) = self.on_outbound_request().await {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
