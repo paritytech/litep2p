@@ -74,7 +74,7 @@ async fn substream_accepted() {
     tx.send(InnerTransportEvent::ConnectionEstablished {
         peer,
         address: Multiaddr::empty(),
-        sender: ConnectionHandle::new(proto_tx.clone()),
+        sender: ConnectionHandle::new(ConnectionId::from(0usize), proto_tx.clone()),
         connection: ConnectionId::from(0usize),
     })
     .await
@@ -250,7 +250,7 @@ async fn accept_fails_due_to_closed_substream() {
     tx.send(InnerTransportEvent::ConnectionEstablished {
         peer,
         address: Multiaddr::empty(),
-        sender: ConnectionHandle::new(proto_tx),
+        sender: ConnectionHandle::new(ConnectionId::from(0usize), proto_tx),
         connection: ConnectionId::from(0usize),
     })
     .await
@@ -336,7 +336,7 @@ async fn accept_fails_due_to_closed_connection() {
     tx.send(InnerTransportEvent::ConnectionEstablished {
         peer,
         address: Multiaddr::empty(),
-        sender: ConnectionHandle::new(proto_tx),
+        sender: ConnectionHandle::new(ConnectionId::from(0usize), proto_tx),
         connection: ConnectionId::from(0usize),
     })
     .await

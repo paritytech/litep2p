@@ -238,12 +238,14 @@ impl WebRtcTransport {
                     .expect("client to handle input successfully");
 
                     let (tx, rx) = channel(64);
+                    let connection_id = self.context.next_connection_id();
+
                     let connection = WebRtcConnection::new(
                         rtc,
-                        self.context.next_connection_id(),
+                        connection_id,
                         noise_channel_id,
                         self.context.keypair.clone(),
-                        self.context.protocol_set(),
+                        self.context.protocol_set(connection_id),
                         source,
                         self.listen_address,
                         Arc::clone(&self.socket),

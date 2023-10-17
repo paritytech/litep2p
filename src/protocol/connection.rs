@@ -23,7 +23,7 @@
 use crate::{
     error::Error,
     protocol::protocol_set::ProtocolCommand,
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
 use tokio::sync::mpsc::{Sender, WeakSender};
@@ -46,6 +46,9 @@ enum ConnectionType {
 pub struct ConnectionHandle {
     /// Connection type.
     connection: ConnectionType,
+
+    /// Connection ID.
+    connection_id: ConnectionId,
 }
 
 impl ConnectionHandle {
@@ -53,8 +56,9 @@ impl ConnectionHandle {
     ///
     /// By default the connection is set as `Active` to give protocols time to open a substream if
     /// they wish.
-    pub fn new(connection: Sender<ProtocolCommand>) -> Self {
+    pub fn new(connection_id: ConnectionId, connection: Sender<ProtocolCommand>) -> Self {
         Self {
+            connection_id,
             connection: ConnectionType::Active(connection),
         }
     }
@@ -67,7 +71,7 @@ impl ConnectionHandle {
     pub fn downgrade(&mut self) -> Self {
         let connection = match &self.connection {
             ConnectionType::Active(connection) => {
-                let handle = Self::new(connection.clone());
+                let handle = Self::new(self.connection_id, connection.clone());
                 self.connection = ConnectionType::Inactive(connection.downgrade());
 
                 handle
@@ -78,6 +82,11 @@ impl ConnectionHandle {
         };
 
         connection
+    }
+
+    /// Get reference to connection ID.
+    pub fn connection_id(&self) -> &ConnectionId {
+        &self.connection_id
     }
 
     /// Mark connection as closed.

@@ -210,7 +210,7 @@ async fn register_peer(
             peer,
             connection: ConnectionId::new(),
             address: Multiaddr::empty(),
-            sender: ConnectionHandle::new(conn_tx),
+            sender: ConnectionHandle::new(ConnectionId::from(0usize), conn_tx),
         })
         .await
         .unwrap();

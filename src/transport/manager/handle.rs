@@ -239,9 +239,10 @@ pub struct TransportHandle {
 }
 
 impl TransportHandle {
-    pub fn protocol_set(&self) -> ProtocolSet {
+    pub fn protocol_set(&self, connection_id: ConnectionId) -> ProtocolSet {
         ProtocolSet::new(
             self.keypair.clone(),
+            connection_id,
             self.tx.clone(),
             self.next_substream_id.clone(),
             self.protocols.clone(),

@@ -234,7 +234,7 @@ impl TransportService {
             ?peer,
             ?address,
             ?connection,
-            "connection established"
+            "connection established",
         );
 
         let event = match self.connections.entry(peer) {
@@ -246,7 +246,7 @@ impl TransportService {
                         ?peer,
                         ?address,
                         ?connection,
-                        "connection established but already at maximum"
+                        "connection established but already at maximum",
                     );
                     return None;
                 }
@@ -322,7 +322,6 @@ impl Transport for TransportService {
             "open substream",
         );
 
-        // TODO: so much clonin
         connection
             .open_substream(
                 self.protocol.clone(),
@@ -363,9 +362,7 @@ impl Transport for TransportService {
                 },
                 peer = self.keep_alive_timeouts.next(), if !self.keep_alive_timeouts.is_empty() => {
                     match peer {
-                        None => {
-                            tracing::warn!(target: LOG_TARGET, "read `None` from `keep_alive_timeouts`");
-                        }
+                        None => tracing::warn!(target: LOG_TARGET, "read `None` from `keep_alive_timeouts`"),
                         Some((peer, connection)) => {
                             if let Some(connections) = self.connections.get_mut(&peer) {
                                 tracing::debug!(
@@ -447,6 +444,7 @@ pub struct ProtocolSet {
 impl ProtocolSet {
     pub fn new(
         keypair: Keypair,
+        connection_id: ConnectionId,
         mgr_tx: Sender<TransportManagerEvent>,
         next_substream_id: Arc<AtomicUsize>,
         protocols: HashMap<ProtocolName, ProtocolContext>,
@@ -472,7 +470,7 @@ impl ProtocolSet {
             protocols,
             next_substream_id,
             fallback_names,
-            connection: ConnectionHandle::new(tx),
+            connection: ConnectionHandle::new(connection_id, tx),
         }
     }
 
@@ -670,6 +668,7 @@ mod tests {
 
         let mut protocol_set = ProtocolSet::new(
             Keypair::generate(),
+            ConnectionId::from(0usize),
             tx,
             Default::default(),
             HashMap::from_iter([(
@@ -713,6 +712,7 @@ mod tests {
 
         let mut protocol_set = ProtocolSet::new(
             Keypair::generate(),
+            ConnectionId::from(0usize),
             tx,
             Default::default(),
             HashMap::from_iter([(
@@ -756,6 +756,7 @@ mod tests {
 
         let mut protocol_set = ProtocolSet::new(
             Keypair::generate(),
+            ConnectionId::from(0usize),
             tx,
             Default::default(),
             HashMap::from_iter([(

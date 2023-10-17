@@ -598,7 +598,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -656,7 +656,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -719,7 +719,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -781,7 +781,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -848,7 +848,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -915,7 +915,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -977,7 +977,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1032,7 +1032,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1093,7 +1093,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1172,7 +1172,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1243,7 +1243,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1318,7 +1318,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
         );
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 

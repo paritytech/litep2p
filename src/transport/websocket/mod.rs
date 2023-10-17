@@ -236,8 +236,8 @@ impl Transport for WebSocketTransport {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((stream, address)) => {
-                        let context = self.context.protocol_set();
                         let connection_id = self.context.next_connection_id();
+                        let context = self.context.protocol_set(connection_id);
                         let yamux_config = self.config.yamux_config.clone();
                         let bandwidth_sink = self.context.bandwidth_sink.clone();
 
@@ -266,7 +266,7 @@ impl Transport for WebSocketTransport {
                 },
                 command = self.context.next() => match command.ok_or(Error::EssentialTaskClosed)? {
                     TransportManagerCommand::Dial { address, connection } => {
-                        let context = self.context.protocol_set();
+                        let context = self.context.protocol_set(connection);
                         let yamux_config = self.config.yamux_config.clone();
                         let peer = match address.iter().find(
                             |protocol| std::matches!(protocol, Protocol::P2p(_))

@@ -201,7 +201,7 @@ impl QuicTransport {
                 );
 
                 let bandwidth_sink = self.context.bandwidth_sink.clone();
-                let mut protocol_set = self.context.protocol_set();
+                let mut protocol_set = self.context.protocol_set(connection_id);
                 protocol_set
                     .report_connection_established(connection_id, connection.peer, address)
                     .await?;

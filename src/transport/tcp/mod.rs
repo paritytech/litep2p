@@ -171,8 +171,8 @@ impl TcpTransport {
 
     /// Handle inbound TCP connection.
     fn on_inbound_connection(&mut self, connection: TcpStream, address: SocketAddr) {
-        let protocol_set = self.context.protocol_set();
         let connection_id = self.context.next_connection_id();
+        let protocol_set = self.context.protocol_set(connection_id);
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -230,22 +230,22 @@ impl TcpTransport {
     async fn on_dial_peer(
         &mut self,
         address: Multiaddr,
-        connection: ConnectionId,
+        connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?address, ?connection, "open connection");
+        tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, "open connection");
 
-        let protocol_set = self.context.protocol_set();
+        let protocol_set = self.context.protocol_set(connection_id);
         let (socket_address, peer) = Self::get_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let bandwidth_sink = self.context.bandwidth_sink.clone();
 
-        self.pending_dials.insert(connection, address);
+        self.pending_dials.insert(connection_id, address);
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::open_connection(
                 protocol_set,
-                connection,
+                connection_id,
                 socket_address,
                 peer,
                 yamux_config,
@@ -254,7 +254,7 @@ impl TcpTransport {
                 bandwidth_sink,
             )
             .await
-            .map_err(|error| TcpError::new(error, Some(connection)))
+            .map_err(|error| TcpError::new(error, Some(connection_id)))
         }));
 
         Ok(())
