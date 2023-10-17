@@ -22,7 +22,12 @@ use crate::{
     codec::ProtocolCodec,
     crypto::{ed25519::Keypair, PublicKey},
     error::{AddressError, Error},
-    protocol::{InnerTransportEvent, ProtocolSet, TransportService},
+    protocol::{InnerTransportEvent, TransportService},
+    transport::manager::{
+        address::{AddressRecord, AddressStore},
+        handle::InnerTransportManagerCommand,
+        types::{PeerContext, PeerState},
+    },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
 };
@@ -33,12 +38,19 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{BinaryHeap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
+
+pub use handle::{TransportHandle, TransportManagerHandle};
+pub use types::SupportedTransport;
+
+mod address;
+mod handle;
+mod types;
 
 // TODO: store `Multiaddr` in `Arc`
 // TODO: limit number of peers and addresses
@@ -53,22 +65,6 @@ const SCORE_DIAL_SUCCESS: i32 = 100i32;
 
 /// Score for a non-working address.
 const SCORE_DIAL_FAILURE: i32 = -100i32;
-
-/// Supported protocols.
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub enum SupportedTransport {
-    /// TCP.
-    Tcp,
-
-    /// QUIC.
-    Quic,
-
-    /// WebRTC
-    WebRtc,
-
-    /// WebSocket
-    WebSocket,
-}
 
 /// [`TransportManager`] configuration.
 #[derive(Debug)]
@@ -114,22 +110,6 @@ pub enum TransportManagerEvent {
     },
 }
 
-/// Inner commands sent from [`TransportManagerHandle`] to [`TransportManager`].
-#[derive(Debug)]
-pub enum InnerTransportManagerCommand {
-    /// Dial peer.
-    DialPeer {
-        /// Remote peer ID.
-        peer: PeerId,
-    },
-
-    /// Dial address.
-    DialAddress {
-        /// Remote address.
-        address: Multiaddr,
-    },
-}
-
 #[derive(Debug)]
 pub enum TransportManagerCommand {
     Dial {
@@ -139,271 +119,6 @@ pub enum TransportManagerCommand {
         /// Connection ID.
         connection: ConnectionId,
     },
-}
-
-/// Handle for communicating with [`TransportManager`].
-#[derive(Debug, Clone)]
-pub struct TransportManagerHandle {
-    /// Peers.
-    peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
-
-    /// TX channel for sending commands to [`TransportManager`].
-    cmd_tx: Sender<InnerTransportManagerCommand>,
-
-    /// Supported transports.
-    supported_transport: HashSet<SupportedTransport>,
-}
-
-impl TransportManagerHandle {
-    /// Create new [`TransportManagerHandle`].
-    pub fn new(
-        peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
-        cmd_tx: Sender<InnerTransportManagerCommand>,
-        supported_transport: HashSet<SupportedTransport>,
-    ) -> Self {
-        Self {
-            peers,
-            cmd_tx,
-            supported_transport,
-        }
-    }
-
-    /// Check if `address` is supported by one of the enabled transports.
-    fn supported_transport(&self, address: &Multiaddr) -> bool {
-        let mut iter = address.iter();
-
-        if !std::matches!(
-            iter.next(),
-            Some(Protocol::Ip4(_) | Protocol::Ip6(_) | Protocol::Dns(_))
-        ) {
-            return false;
-        }
-
-        match iter.next() {
-            None => return false,
-            Some(Protocol::Tcp(_)) => match (
-                iter.next(),
-                self.supported_transport.contains(&SupportedTransport::WebSocket),
-            ) {
-                (Some(Protocol::Ws(_)), true) => true,
-                (Some(Protocol::Wss(_)), true) => true,
-                (Some(Protocol::P2p(_)), false) =>
-                    self.supported_transport.contains(&SupportedTransport::Tcp),
-                _ => return false,
-            },
-            Some(Protocol::Udp(_)) => match (
-                iter.next(),
-                self.supported_transport.contains(&SupportedTransport::Quic),
-            ) {
-                (Some(Protocol::QuicV1), true) => true,
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
-    /// Add one or more known addresses for peer.
-    ///
-    /// If peer doesn't exist, it will be added to known peers.
-    ///
-    /// Returns the number of added addresses after non-supported transports were filtered out.
-    pub fn add_known_address(
-        &mut self,
-        peer: &PeerId,
-        addresses: impl Iterator<Item = Multiaddr>,
-    ) -> usize {
-        let mut peers = self.peers.write();
-        let addresses = addresses
-            .filter_map(|address| {
-                self.supported_transport(&address).then_some(AddressRecord::from(address))
-            })
-            .collect::<HashSet<_>>();
-
-        // if all of the added addresses belonged to unsupported transports, exit early
-        let num_added = addresses.len();
-        if num_added == 0 {
-            return 0usize;
-        }
-
-        match peers.get_mut(&peer) {
-            Some(context) =>
-                for record in addresses {
-                    if !context.addresses.contains(&record.address) {
-                        context.addresses.insert(record);
-                    }
-                },
-            None => {
-                peers.insert(
-                    *peer,
-                    PeerContext {
-                        state: PeerState::Disconnected { dial_record: None },
-                        addresses: AddressStore::from_iter(addresses.into_iter()),
-                        secondary_connection: None,
-                    },
-                );
-            }
-        }
-
-        num_added
-    }
-
-    /// Dial peer using `PeerId`.
-    ///
-    /// Returns an error if the peer is unknown or the peer is already connected.
-    // TODO: this must report some tokent to the caller so `DialFailure` can be reported to them
-    pub async fn dial(&self, peer: &PeerId) -> crate::Result<()> {
-        {
-            match self.peers.read().get(&peer) {
-                Some(PeerContext {
-                    state: PeerState::Connected { .. },
-                    ..
-                }) => return Err(Error::AlreadyConnected),
-                Some(PeerContext {
-                    state: PeerState::Disconnected { dial_record },
-                    addresses,
-                    ..
-                }) => {
-                    if addresses.is_empty() {
-                        return Err(Error::NoAddressAvailable(*peer));
-                    }
-
-                    // peer is already being dialed, don't dial again until the first dial concluded
-                    if dial_record.is_some() {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?dial_record,
-                            "peer is aready being dialed",
-                        );
-                        return Ok(());
-                    }
-                }
-                Some(PeerContext {
-                    state: PeerState::Dialing { .. },
-                    ..
-                }) => return Ok(()),
-                None => return Err(Error::PeerDoesntExist(*peer)),
-            }
-        }
-
-        self.cmd_tx
-            .send(InnerTransportManagerCommand::DialPeer { peer: *peer })
-            .await
-            .map_err(From::from)
-    }
-
-    /// Dial peer using `Multiaddr`.
-    ///
-    /// Returns an error if address it not valid.
-    pub async fn dial_address(&self, address: Multiaddr) -> crate::Result<()> {
-        if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
-            return Err(Error::AddressError(AddressError::PeerIdMissing));
-        }
-
-        self.cmd_tx
-            .send(InnerTransportManagerCommand::DialAddress { address })
-            .await
-            .map_err(From::from)
-    }
-}
-
-// TODO: add getters for these
-#[derive(Debug)]
-pub struct TransportHandle {
-    pub keypair: Keypair,
-    pub tx: Sender<TransportManagerEvent>,
-    pub rx: Receiver<TransportManagerCommand>,
-    pub protocols: HashMap<ProtocolName, ProtocolContext>,
-    pub next_connection_id: Arc<AtomicUsize>,
-    pub next_substream_id: Arc<AtomicUsize>,
-    pub protocol_names: Vec<ProtocolName>,
-    pub bandwidth_sink: BandwidthSink,
-}
-
-impl TransportHandle {
-    pub fn protocol_set(&self) -> ProtocolSet {
-        ProtocolSet::new(
-            self.keypair.clone(),
-            self.tx.clone(),
-            self.next_substream_id.clone(),
-            self.protocols.clone(),
-        )
-    }
-
-    /// Get next connection ID.
-    pub fn next_connection_id(&mut self) -> ConnectionId {
-        let connection_id = self.next_connection_id.fetch_add(1usize, Ordering::Relaxed);
-
-        ConnectionId::from(connection_id)
-    }
-
-    pub async fn _report_connection_established(
-        &mut self,
-        connection: ConnectionId,
-        peer: PeerId,
-        address: Multiaddr,
-    ) {
-        let _ = self
-            .tx
-            .send(TransportManagerEvent::ConnectionEstablished {
-                connection,
-                peer,
-                address,
-            })
-            .await;
-    }
-
-    /// Report to `Litep2p` that a peer disconnected.
-    pub async fn _report_connection_closed(&mut self, peer: PeerId, connection: ConnectionId) {
-        let _ = self.tx.send(TransportManagerEvent::ConnectionClosed { peer, connection }).await;
-    }
-
-    /// Report to `Litep2p` that dialing a remote peer failed.
-    pub async fn report_dial_failure(
-        &mut self,
-        connection: ConnectionId,
-        address: Multiaddr,
-        error: Error,
-    ) {
-        tracing::debug!(target: LOG_TARGET, ?connection, ?address, ?error, "dial failure");
-
-        match address.iter().last() {
-            Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                Ok(peer) =>
-                    for (_, context) in &self.protocols {
-                        let _ = context
-                            .tx
-                            .send(InnerTransportEvent::DialFailure {
-                                peer,
-                                address: address.clone(),
-                            })
-                            .await;
-                    },
-                Err(error) => {
-                    tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
-                    debug_assert!(false);
-                }
-            },
-            _ => {
-                tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
-                debug_assert!(false);
-            }
-        }
-
-        let _ = self
-            .tx
-            .send(TransportManagerEvent::DialFailure {
-                connection,
-                address,
-                error,
-            })
-            .await;
-    }
-
-    /// Get next transport command.
-    pub async fn next(&mut self) -> Option<TransportManagerCommand> {
-        self.rx.recv().await
-    }
 }
 
 struct TransportContext {
@@ -436,188 +151,6 @@ impl ProtocolContext {
             fallback_names,
         }
     }
-}
-
-/// Peer state.
-#[derive(Debug)]
-enum PeerState {
-    /// `Litep2p` is connected to peer.
-    // TODO: store pending dial here
-    Connected {
-        /// Address record.
-        record: AddressRecord,
-
-        /// Dial address, if it exists.
-        ///
-        /// While the local node was dialing a remote peer, the remote peer might've dialed
-        /// the local node and connection was established successfully. This dial address
-        /// is stored for processing later when the dial attempt conclused as either
-        /// successful/failed.
-        dial_record: Option<AddressRecord>,
-    },
-
-    /// Peer is being dialed.
-    Dialing {
-        /// Address record.
-        record: AddressRecord,
-    },
-
-    /// `Litep2p` is not connected to peer.
-    Disconnected {
-        /// Dial address, if it exists.
-        ///
-        /// While the local node was dialing a remote peer, the remote peer might've dialed
-        /// the local node and connection was established successfully. The connection might've
-        /// been closed before the dial concluded which means that [`TransportManager`] must be
-        /// prepared to handle the dial failure even after the connection has been closed.
-        dial_record: Option<AddressRecord>,
-    },
-}
-
-#[derive(Debug, Clone, Hash)]
-struct AddressRecord {
-    score: i32,
-    address: Multiaddr,
-    connection_id: Option<ConnectionId>,
-}
-
-impl AsRef<Multiaddr> for AddressRecord {
-    fn as_ref(&self) -> &Multiaddr {
-        &self.address
-    }
-}
-
-impl From<Multiaddr> for AddressRecord {
-    fn from(address: Multiaddr) -> Self {
-        Self {
-            address,
-            score: 0i32,
-            connection_id: None,
-        }
-    }
-}
-
-impl AddressRecord {
-    /// Update score of an address.
-    pub fn update_score(&mut self, score: i32) {
-        self.score += score;
-    }
-
-    /// Set `ConnectionId` for the [`AddressRecord`].
-    pub fn set_connection_id(&mut self, connection_id: ConnectionId) {
-        self.connection_id = Some(connection_id);
-    }
-}
-
-impl PartialEq for AddressRecord {
-    fn eq(&self, other: &Self) -> bool {
-        self.score.eq(&other.score)
-    }
-}
-
-impl Eq for AddressRecord {}
-
-impl PartialOrd for AddressRecord {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.score.cmp(&other.score))
-    }
-}
-
-impl Ord for AddressRecord {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.score.cmp(&other.score)
-    }
-}
-
-/// Store for peer addresses.
-#[derive(Debug)]
-struct AddressStore {
-    //// Addresses sorted by score.
-    by_score: BinaryHeap<AddressRecord>,
-
-    /// Addresses queryable by hashing them for faster lookup.
-    by_address: HashSet<Multiaddr>,
-}
-
-impl FromIterator<Multiaddr> for AddressStore {
-    fn from_iter<T: IntoIterator<Item = Multiaddr>>(iter: T) -> Self {
-        let mut store = AddressStore::new();
-        for address in iter {
-            store.insert(address.into());
-        }
-
-        store
-    }
-}
-
-impl FromIterator<AddressRecord> for AddressStore {
-    fn from_iter<T: IntoIterator<Item = AddressRecord>>(iter: T) -> Self {
-        let mut store = AddressStore::new();
-        for record in iter {
-            store.by_address.insert(record.address.clone());
-            store.by_score.push(record);
-        }
-
-        store
-    }
-}
-
-impl AddressStore {
-    /// Create new [`AddressStore`].
-    fn new() -> Self {
-        Self {
-            by_score: BinaryHeap::new(),
-            by_address: HashSet::new(),
-        }
-    }
-
-    /// Check if [`AddressStore`] is empty.
-    pub fn is_empty(&self) -> bool {
-        self.by_score.is_empty()
-    }
-
-    /// Check if address is already in the a
-    pub fn contains(&self, address: &Multiaddr) -> bool {
-        self.by_address.contains(address)
-    }
-
-    /// Insert new address record into [`AddressStore`] with default address score.
-    pub fn insert(&mut self, mut record: AddressRecord) {
-        record.connection_id = None;
-        self.by_address.insert(record.address.clone());
-        self.by_score.push(record);
-    }
-
-    /// Insert new address into [`AddressStore`] with score.
-    pub fn insert_with_score(&mut self, address: Multiaddr, score: i32) {
-        self.by_address.insert(address.clone());
-        self.by_score.push(AddressRecord {
-            score,
-            address,
-            connection_id: None,
-        });
-    }
-
-    /// Pop address with the highest score from [`AddressScore`].
-    pub fn pop(&mut self) -> Option<AddressRecord> {
-        self.by_score.pop().map(|record| {
-            self.by_address.remove(&record.address);
-            record
-        })
-    }
-}
-
-/// Peer context.
-#[derive(Debug)]
-pub struct PeerContext {
-    /// Peer state.
-    state: PeerState,
-
-    /// Seconary connection, if it's open.
-    secondary_connection: Option<AddressRecord>,
-
-    /// Known addresses of peer.
-    addresses: AddressStore,
 }
 
 /// Litep2p connection manager.
@@ -1718,7 +1251,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), HashSet::new());
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -1781,7 +1315,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), HashSet::new());
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -1864,7 +1399,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), HashSet::new());
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -1936,7 +1472,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), HashSet::new());
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -2026,7 +1563,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), HashSet::new());
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -2111,7 +1649,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), HashSet::new());
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();

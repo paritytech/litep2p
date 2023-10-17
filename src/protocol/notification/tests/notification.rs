@@ -612,7 +612,7 @@ async fn close_already_closed_connection() {
                 direction: Direction::Inbound,
                 outbound: OutboundState::Open {
                     handshake: vec![1, 2, 3, 4],
-                    outbound: Box::new(DummySubstream::new()),
+                    outbound: Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
                 },
                 inbound: InboundState::SendingHandshake,
             },
@@ -624,7 +624,7 @@ async fn close_already_closed_connection() {
             HandshakeEvent::InboundNegotiated {
                 peer,
                 handshake: vec![1],
-                substream: Box::new(DummySubstream::new()),
+                substream: Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
             },
         )
         .await;
