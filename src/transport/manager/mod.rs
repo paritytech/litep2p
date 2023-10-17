@@ -49,8 +49,9 @@ pub use handle::{TransportHandle, TransportManagerHandle};
 pub use types::SupportedTransport;
 
 mod address;
-mod handle;
 mod types;
+
+pub(crate) mod handle;
 
 // TODO: store `Multiaddr` in `Arc`
 // TODO: limit number of peers and addresses
