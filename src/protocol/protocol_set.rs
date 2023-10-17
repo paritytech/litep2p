@@ -367,11 +367,17 @@ impl Transport for TransportService {
                         }
                         Some((peer, connection)) => {
                             if let Some(connections) = self.connections.get_mut(&peer) {
-                                tracing::debug!(target: LOG_TARGET, ?peer, ?connection, "keep-alive timeout over, downgrade connection");
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?connection,
+                                    "keep-alive timeout over, downgrade connection",
+                                );
 
-                                match connections.iter_mut().find(|(_, id)| id == &connection) {
-                                    Some((connection, _)) => connection.close(),
-                                    None => tracing::warn!(target: LOG_TARGET, ?peer, ?connection, "connection not found"),
+                                if let Some((connection, _)) =
+                                    connections.iter_mut().find(|(_, id)| id == &connection)
+                                {
+                                    connection.close();
                                 }
                             }
                         }
