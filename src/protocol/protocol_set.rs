@@ -53,6 +53,7 @@ const LOG_TARGET: &str = "litep2p::protocol-set";
 /// Maximum connections per peer.
 const MAX_CONNECTIONS_PER_PEER: usize = 2;
 
+/// Events emitted by the underlying transport protocols.
 pub enum InnerTransportEvent {
     /// Connection established to `peer`.
     ConnectionEstablished {
@@ -163,8 +164,8 @@ impl From<InnerTransportEvent> for TransportEvent {
     }
 }
 
-/// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact with the underlying
-/// transport protocols.
+/// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact
+/// with the underlying transport protocols.
 #[derive(Debug)]
 pub struct TransportService {
     /// Local peer ID.
@@ -559,30 +560,50 @@ impl ProtocolSet {
         }
     }
 
-    // TODO: documentation
+    /// Report to protocols that a connection was established.
     pub(crate) async fn report_connection_established(
         &mut self,
-        connection: ConnectionId,
+        connection_id: ConnectionId,
         peer: PeerId,
         address: Multiaddr,
     ) -> crate::Result<()> {
         let connection_handle = self.connection.downgrade();
+        let mut futures = self
+            .protocols
+            .iter()
+            .map(|(_, sender)| {
+                let address = address.clone();
+                let connection_handle = connection_handle.clone();
 
-        for (_, sender) in &self.protocols {
-            let _ = sender
-                .tx
-                .send(InnerTransportEvent::ConnectionEstablished {
-                    peer,
-                    connection,
-                    address: address.clone(),
-                    sender: connection_handle.clone(),
-                })
-                .await?;
+                async move {
+                    sender
+                        .tx
+                        .send(InnerTransportEvent::ConnectionEstablished {
+                            peer,
+                            connection: connection_id,
+                            address,
+                            sender: connection_handle,
+                        })
+                        .await
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        while !futures.is_empty() {
+            if let Some(Err(error)) = futures.next().await {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?error,
+                    "failed to report closed connection",
+                );
+            }
         }
 
         self.mgr_tx
             .send(TransportManagerEvent::ConnectionEstablished {
-                connection,
+                connection: connection_id,
                 peer,
                 address,
             })
@@ -590,21 +611,43 @@ impl ProtocolSet {
             .map_err(From::from)
     }
 
-    /// Report to `Litep2p` that a peer disconnected.
+    /// Report to protocols that a connection was closed.
     pub(crate) async fn report_connection_closed(
         &mut self,
         peer: PeerId,
-        connection: ConnectionId,
+        connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        for (_, sender) in &self.protocols {
-            let _ = sender
-                .tx
-                .send(InnerTransportEvent::ConnectionClosed { peer, connection })
-                .await?;
+        let mut futures = self
+            .protocols
+            .iter()
+            .map(|(_, sender)| async move {
+                sender
+                    .tx
+                    .send(InnerTransportEvent::ConnectionClosed {
+                        peer,
+                        connection: connection_id,
+                    })
+                    .await
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        while !futures.is_empty() {
+            if let Some(Err(error)) = futures.next().await {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?error,
+                    "failed to report closed connection",
+                );
+            }
         }
 
         self.mgr_tx
-            .send(TransportManagerEvent::ConnectionClosed { peer, connection })
+            .send(TransportManagerEvent::ConnectionClosed {
+                peer,
+                connection: connection_id,
+            })
             .await
             .map_err(From::from)
     }
