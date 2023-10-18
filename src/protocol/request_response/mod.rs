@@ -208,6 +208,15 @@ impl RequestResponseProtocol {
             }
             Some(context) => match self.service.open_substream(peer).await {
                 Ok(substream_id) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        request_id = ?context.request_id,
+                        ?substream_id,
+                        "dial succeeded, open substream",
+                    );
+
                     entry.insert(PeerContext {
                         active: HashSet::from_iter([context.request_id]),
                         active_inbound: HashMap::new(),
@@ -371,7 +380,7 @@ impl RequestResponseProtocol {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
-            protocol = %self.protocol,
+            %protocol,
             ?request_id,
             "inbound request",
         );
@@ -465,14 +474,6 @@ impl RequestResponseProtocol {
         substream: SubstreamId,
         error: Error,
     ) -> crate::Result<()> {
-        tracing::debug!(
-            target: LOG_TARGET,
-            protocol = %self.protocol,
-            ?substream,
-            ?error,
-            "failed to open substream",
-        );
-
         let Some(RequestContext {
             request_id, peer, ..
         }) = self.pending_outbound.remove(&substream)
@@ -487,6 +488,16 @@ impl RequestResponseProtocol {
 
             return Err(Error::InvalidState);
         };
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            protocol = %self.protocol,
+            ?request_id,
+            ?substream,
+            ?error,
+            "failed to open substream",
+        );
 
         self.event_tx
             .send(InnerRequestResponseEvent::RequestFailed {
