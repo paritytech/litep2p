@@ -155,6 +155,10 @@ pub enum RequestResponseEvent {
         fallback: Option<ProtocolName>,
 
         /// Request ID.
+        ///
+        /// While `request_id` is guaranteed to be unique for this protocols, the request IDs are
+        /// not unique across different request-response protocols, meaning two different
+        /// request-response protocols can both assign `RequestId(123)` for any given request.
         request_id: RequestId,
 
         /// Received request.
@@ -298,6 +302,11 @@ impl RequestResponseHandle {
     }
 
     /// Send request to remote peer.
+    ///
+    /// While the returned `RequestId` is guaranteed to be unique for this request-response
+    /// protocol, it's not unique across all installed request-response protocols. That is,
+    /// multiple request-response protocols can return the same `RequestId` and this must be
+    /// handled by the calling code correctly if the `RequestId`s are stored somewhere.
     pub async fn send_request(
         &mut self,
         peer: PeerId,
