@@ -1810,3 +1810,130 @@ async fn cancel_request(transport1: Transport, transport2: Transport) {
         Ok(event) => panic!("invalid event received: {event:?}"),
     }
 }
+
+#[tokio::test]
+async fn substream_open_failure_reported_once_tcp() {
+    substream_open_failure_reported_once(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn substream_open_failure_reported_once_quic() {
+    substream_open_failure_reported_once(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn substream_open_failure_reported_once_websocket() {
+    substream_open_failure_reported_once(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn substream_open_failure_reported_once(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/1"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, _handle2) = RequestResponseConfig::new(
+        ProtocolName::from("/protocol/2"),
+        Vec::new(),
+        1024,
+        Duration::from_secs(5),
+    );
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // send request to remote peer
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestFailed {
+            peer: peer2,
+            request_id,
+            error: RequestResponseError::Rejected
+        }
+    );
+
+    loop {
+        match litep2p1.next_event().await {
+            Some(Litep2pEvent::ConnectionClosed { peer }) => {
+                assert_eq!(peer, peer2);
+                break;
+            }
+            event => panic!("invalid event received: {event:?}"),
+        }
+    }
+
+    // verify that nothing is received from the handle as the request failure was already reported
+    if let Ok(event) = tokio::time::timeout(Duration::from_secs(5), handle1.next()).await {
+        panic!("didn't expect to receive event: {event:?}");
+    }
+}

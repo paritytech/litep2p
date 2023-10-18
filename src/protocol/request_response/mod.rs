@@ -226,8 +226,12 @@ impl RequestResponseProtocol {
                         RequestContext::new(peer, context.request_id, context.request),
                     );
                 }
+                // only reason the substream would fail to open would be that the connection
+                // would've been reported to the protocol with enough delay that the keep-alive
+                // timeout had expired and no other protocol had opened a substream to it, causing
+                // the connection to be closed
                 Err(error) => {
-                    tracing::debug!(
+                    tracing::warn!(
                         target: LOG_TARGET,
                         ?peer,
                         protocol = %self.protocol,
@@ -235,6 +239,8 @@ impl RequestResponseProtocol {
                         ?error,
                         "failed to open substream",
                     );
+                    debug_assert!(false);
+
                     return self
                         .report_request_failure(
                             peer,
@@ -463,6 +469,10 @@ impl RequestResponseProtocol {
             tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "failed to dial peer");
 
             let _ = self
+                .peers
+                .get_mut(&peer)
+                .map(|peer_context| peer_context.active.remove(&context.request_id));
+            let _ = self
                 .report_request_failure(peer, context.request_id, RequestResponseError::Rejected)
                 .await;
         }
@@ -498,6 +508,11 @@ impl RequestResponseProtocol {
             ?error,
             "failed to open substream",
         );
+
+        let _ = self
+            .peers
+            .get_mut(&peer)
+            .map(|peer_context| peer_context.active.remove(&request_id));
 
         self.event_tx
             .send(InnerRequestResponseEvent::RequestFailed {
