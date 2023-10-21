@@ -22,7 +22,8 @@ use litep2p::{
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::request_response::{
-        Config as RequestResponseConfig, DialOptions, RequestResponseError, RequestResponseEvent,
+        Config as RequestResponseConfig, ConfigBuilder, DialOptions, RequestResponseError,
+        RequestResponseEvent,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
@@ -38,6 +39,7 @@ use tokio::time::sleep;
 
 use std::{
     collections::{HashMap, HashSet},
+    task::Poll,
     time::Duration,
 };
 
@@ -132,6 +134,7 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -149,6 +152,7 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -258,6 +262,7 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
 
     let config1 = Litep2pConfigBuilder::new()
@@ -276,6 +281,7 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -387,6 +393,7 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
 
     let config1 = Litep2pConfigBuilder::new()
@@ -405,6 +412,7 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -553,6 +561,7 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -570,6 +579,7 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -670,6 +680,7 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
 
     let config1 = Litep2pConfigBuilder::new()
@@ -688,6 +699,7 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -786,6 +798,7 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -803,6 +816,7 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -901,6 +915,7 @@ async fn request_too_big(transport1: Transport, transport2: Transport) {
         Vec::new(),
         256,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -918,6 +933,7 @@ async fn request_too_big(transport1: Transport, transport2: Transport) {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1012,6 +1028,7 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
         Vec::new(),
         256,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1029,6 +1046,7 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
         Vec::new(),
         256,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1095,6 +1113,7 @@ async fn too_many_pending_requests() {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let mut yamux_config = yamux::Config::default();
     yamux_config.set_max_num_streams(4);
@@ -1113,6 +1132,7 @@ async fn too_many_pending_requests() {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let mut yamux_config = yamux::Config::default();
     yamux_config.set_max_num_streams(4);
@@ -1250,6 +1270,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         vec![ProtocolName::from("/protocol/1")],
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1267,6 +1288,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1376,6 +1398,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1393,6 +1416,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         vec![ProtocolName::from("/protocol/1")],
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1502,6 +1526,7 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1519,6 +1544,7 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
         vec![ProtocolName::from("/protocol/1")],
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1628,6 +1654,7 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1645,6 +1672,7 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
         vec![ProtocolName::from("/protocol/1")],
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1737,6 +1765,7 @@ async fn cancel_request(transport1: Transport, transport2: Transport) {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1754,6 +1783,7 @@ async fn cancel_request(transport1: Transport, transport2: Transport) {
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1864,6 +1894,7 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1881,6 +1912,7 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
         Vec::new(),
         1024,
         Duration::from_secs(5),
+        None,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1936,4 +1968,129 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
     if let Ok(event) = tokio::time::timeout(Duration::from_secs(5), handle1.next()).await {
         panic!("didn't expect to receive event: {event:?}");
     }
+}
+
+#[tokio::test]
+async fn excess_inbound_request_rejected_tcp() {
+    excess_inbound_request_rejected(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn excess_inbound_request_rejected_quic() {
+    excess_inbound_request_rejected(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn excess_inbound_request_rejected_websocket() {
+    excess_inbound_request_rejected(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn excess_inbound_request_rejected(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, _handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .with_max_concurrent_inbound_requests(2)
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    // send two requests and verify that nothing is returned back (yet)
+    for _ in 0..2 {
+        let _ = handle1
+            .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+            .await
+            .unwrap();
+    }
+
+    futures::future::poll_fn(|cx| match handle1.poll_next_unpin(cx) {
+        Poll::Pending => Poll::Ready(()),
+        Poll::Ready(_) => panic!("didn't expect an event"),
+    })
+    .await;
+
+    // send another request to peer and since there's two requests already pending
+    // and the limit was set at 2, the third request must be rejeced
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestFailed {
+            peer: peer2,
+            request_id,
+            error: RequestResponseError::Rejected
+        }
+    );
 }

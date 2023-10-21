@@ -161,6 +161,9 @@ pub(crate) struct RequestResponseProtocol {
 
     /// Timeout for outbound requests.
     timeout: Duration,
+
+    /// Maximum concurrent inbound requests, if specified.
+    max_concurrent_inbound_requests: Option<usize>,
 }
 
 impl RequestResponseProtocol {
@@ -180,6 +183,7 @@ impl RequestResponseProtocol {
             pending_outbound_cancels: HashMap::new(),
             pending_inbound_requests: SubstreamSet::new(),
             pending_outbound_responses: FuturesUnordered::new(),
+            max_concurrent_inbound_requests: config.max_concurrent_inbound_request,
         }
     }
 
@@ -448,6 +452,25 @@ impl RequestResponseProtocol {
         substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "handle inbound substream");
+
+        if let Some(max_requests) = self.max_concurrent_inbound_requests {
+            let num_inbound_requests =
+                self.pending_inbound_requests.len() + self.pending_outbound_responses.len();
+
+            if max_requests <= num_inbound_requests {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    ?fallback,
+                    ?max_requests,
+                    "rejecting request as already at maximum",
+                );
+
+                let _ = substream.close().await;
+                return Ok(());
+            }
+        }
 
         // allocate ephemeral id for the inbound request and return it to the user protocol
         //

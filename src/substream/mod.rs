@@ -718,6 +718,11 @@ where
     pub fn get_mut(&mut self, key: &K) -> Option<&mut S> {
         self.substreams.get_mut(key)
     }
+
+    /// Get size of [`SubstreamSet`].
+    pub fn len(&self) -> usize {
+        self.substreams.len()
+    }
 }
 
 impl<K, S> Stream for SubstreamSet<K, S>
