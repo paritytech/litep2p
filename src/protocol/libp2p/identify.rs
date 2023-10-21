@@ -109,6 +109,9 @@ pub enum IdentifyEvent {
 
         /// Supported protocols.
         supported_protocols: HashSet<String>,
+
+        /// Observed address.
+        observed_address: Multiaddr,
     },
 }
 
@@ -120,7 +123,7 @@ pub(crate) struct Identify {
     tx: Sender<IdentifyEvent>,
 
     /// Connected peers.
-    peers: HashSet<PeerId>,
+    peers: HashMap<PeerId, Multiaddr>,
 
     // Public key of the local node, filled by `Litep2p`.
     public: PublicKey,
@@ -148,7 +151,7 @@ impl Identify {
         Self {
             service,
             tx: config.tx_event,
-            peers: HashSet::new(),
+            peers: HashMap::new(),
             public: config.public.expect("public key to be supplied"),
             listen_addresses: config.listen_addresses,
             pending_opens: HashMap::new(),
@@ -159,11 +162,16 @@ impl Identify {
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
+    async fn on_connection_established(
+        &mut self,
+        peer: PeerId,
+        observed_address: Multiaddr,
+    ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
         let substream_id = self.service.open_substream(peer).await?;
         self.pending_opens.insert(substream_id, peer);
+        self.peers.insert(peer, observed_address);
 
         Ok(())
     }
@@ -258,8 +266,8 @@ impl Identify {
             tokio::select! {
                 event = self.service.next_event() => match event {
                     None => return,
-                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer).await {
+                    Some(TransportEvent::ConnectionEstablished { peer, address }) => {
+                        if let Err(error) = self.on_connection_established(peer, address).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
@@ -289,12 +297,25 @@ impl Identify {
                 _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
                     Some(Ok((peer, supported_protocols))) => {
-                        let _ = self.tx
-                            .send(IdentifyEvent::PeerIdentified {
-                                peer,
-                                supported_protocols,
-                            })
-                            .await;
+                        match self.peers.get(&peer) {
+                            Some(observed_address) => {
+                                let _ = self.tx
+                                    .send(IdentifyEvent::PeerIdentified {
+                                        peer,
+                                        supported_protocols,
+                                        observed_address: observed_address.clone(),
+                                    })
+                                    .await;
+                            }
+                            None => {
+                                tracing::warn!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    "read identify payload but peer doesn't exist",
+                                );
+                                debug_assert!(false);
+                            }
+                        }
                     }
                     Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
                     None => return,
