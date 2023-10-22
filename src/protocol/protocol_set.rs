@@ -190,23 +190,25 @@ impl ConnectionContext {
     /// Downgrade connection to non-active which means it will be closed
     /// if there are no substreams open over it.
     fn downgrade(&mut self, connection_id: &ConnectionId) {
-        match &mut self.secondary {
-            None if self.primary.connection_id() == connection_id => {
-                self.primary.close();
-            }
-            Some(handle) if handle.connection_id() == connection_id => {
+        if self.primary.connection_id() == connection_id {
+            self.primary.close();
+            return;
+        }
+
+        if let Some(handle) = &mut self.secondary {
+            if handle.connection_id() == connection_id {
                 handle.close();
-            }
-            connection_state => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?connection_id,
-                    ?connection_state,
-                    "connection doesn't exist, cannot downgrade",
-                );
-                debug_assert!(false);
+                return;
             }
         }
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            primary = ?self.primary.connection_id(),
+            secondary = ?self.secondary.as_ref().map(|handle| handle.connection_id()),
+            ?connection_id,
+            "connection doesn't exist, cannot downgrade",
+        );
     }
 }
 
@@ -1220,5 +1222,115 @@ mod tests {
         // verify that the primary connection has been replaced
         assert!(service.connections.get(&peer).is_none());
         assert!(cmd_rx2.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn keep_alive_timeout_expires_for_a_stale_connection() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1337usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            address: connected_addr,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(connected_addr, Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(service.keep_alive_timeouts.len(), 1);
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        // close the primary connection
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(1337usize),
+            })
+            .await
+            .unwrap();
+
+        // verify that the protocols are notified of the connection closing as well
+        if let Some(TransportEvent::ConnectionClosed {
+            peer: connected_peer,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+        } else {
+            panic!("expected event from `TransportService`");
+        }
+
+        // verify that the keep-alive timeout still exists for the peer but the peer itself
+        // doesn't exist anymore
+        //
+        // the peer is removed because there is no connection to them
+        assert_eq!(service.keep_alive_timeouts.len(), 1);
+        assert!(service.connections.get(&peer).is_none());
+
+        // register new primary connection but verify that there are now two pending keep-alive
+        // timeouts
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1338usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(1338usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            address: connected_addr,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(connected_addr, Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(service.keep_alive_timeouts.len(), 2);
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1338usize)
+                );
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        match tokio::time::timeout(Duration::from_secs(10), service.next_event()).await {
+            Ok(event) => panic!("didn't expect an event: {event:?}"),
+            Err(_) => {}
+        }
     }
 }
