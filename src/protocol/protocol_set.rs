@@ -370,15 +370,14 @@ impl TransportService {
                 return None;
             }
             connection_state => {
-                tracing::warn!(
+                tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
                     ?connection_id,
                     ?connection_state,
-                    "connection closed but it doens't exist",
+                    "connection closed but it doesn't exist",
                 );
 
-                debug_assert!(false);
                 return None;
             }
         }
