@@ -401,7 +401,10 @@ impl Litep2p {
     /// If the transport specified by `address` is not supported, an error is returned.
     /// The connection is established in the background and its result is reported through
     /// [`Litep2p::next_event()`].
-    // TODO: remove
+    #[deprecated(
+        since = "0.3.0",
+        note = "`Litep2p::connect()` will be removed in 0.4.0. Please use `Litep2p::dial_address()`"
+    )]
     pub async fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
         self.transport_manager.dial_address(address).await
     }
