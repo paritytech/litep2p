@@ -138,8 +138,9 @@ pub(crate) struct Identify {
     pending_opens: HashMap<SubstreamId, PeerId>,
 
     /// Pending outbound substreams.
-    pending_outbound:
-        FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, HashSet<String>)>>>,
+    pending_outbound: FuturesUnordered<
+        BoxFuture<'static, crate::Result<(PeerId, HashSet<String>, Option<Multiaddr>)>>,
+    >,
 
     /// Pending inbound substreams.
     pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
@@ -258,7 +259,11 @@ impl Identify {
 
             tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
 
-            Ok((peer, HashSet::from_iter(info.protocols)))
+            Ok((
+                peer,
+                HashSet::from_iter(info.protocols),
+                info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten(),
+            ))
         }));
     }
 
@@ -310,7 +315,7 @@ impl Identify {
                 },
                 _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
-                    Some(Ok((peer, supported_protocols))) => {
+                    Some(Ok((peer, supported_protocols, _observed_address))) => {
                         match self.peers.get(&peer) {
                             Some(observed_address) => {
                                 let _ = self.tx
