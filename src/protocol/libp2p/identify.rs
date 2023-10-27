@@ -122,7 +122,7 @@ pub(crate) struct Identify {
     /// TX channel for sending events to the user protocol.
     tx: Sender<IdentifyEvent>,
 
-    /// Connected peers.
+    /// Connected peers and their observed addresses.
     peers: HashMap<PeerId, Multiaddr>,
 
     // Public key of the local node, filled by `Litep2p`.
@@ -197,6 +197,20 @@ impl Identify {
             "inbound substream opened"
         );
 
+        let observed_addr = match self.peers.get(&peer) {
+            Some(address) => Some(address.to_vec()),
+            None => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    %protocol,
+                    "inbound identify substream opened for peer who doesn't exist",
+                );
+                debug_assert!(false);
+                None
+            }
+        };
+
         let identify = identify_schema::Identify {
             protocol_version: None,
             agent_version: None,
@@ -206,7 +220,7 @@ impl Identify {
                 .iter()
                 .map(|address| address.to_vec())
                 .collect::<Vec<_>>(),
-            observed_addr: None, // TODO: fill this at some point
+            observed_addr,
             protocols: self.protocols.clone(),
         };
         let mut msg = Vec::with_capacity(identify.encoded_len());
