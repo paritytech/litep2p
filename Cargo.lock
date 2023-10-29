@@ -444,9 +444,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.3.3"
+version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "630be753d4e58660abd17930c71b647fe46c27ea6b63cc59e1e3851406972e42"
+checksum = "327762f6e5a765692301e5bb513e0d9fef63be86bbc14528052b1cd3e6f03e07"
 
 [[package]]
 name = "bitvec"
@@ -2829,7 +2829,6 @@ checksum = "57bcfdad1b858c2db7c38303a6d2ad4dfaf5eb53dfeb0910128b2c26d6158503"
 name = "litep2p"
 version = "0.2.0"
 dependencies = [
- "async-channel",
  "async-trait",
  "asynchronous-codec",
  "bs58",
@@ -2839,9 +2838,7 @@ dependencies = [
  "futures",
  "futures-rustls",
  "futures-timer",
- "hex",
  "hex-literal",
- "lazy_static",
  "libp2p",
  "mockall",
  "multiaddr",
@@ -2872,7 +2869,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.17",
- "trust-dns-resolver",
  "uint",
  "unsigned-varint",
  "url",
@@ -4419,7 +4415,7 @@ version = "0.38.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19ed4fa021d81c8392ce04db050a3da9a60299050b7ae1cf482d862b54a7218f"
 dependencies = [
- "bitflags 2.3.3",
+ "bitflags 2.4.1",
  "errno",
  "libc",
  "linux-raw-sys 0.4.5",
@@ -5068,11 +5064,11 @@ dependencies = [
 
 [[package]]
 name = "simple-dns"
-version = "0.5.3"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e3b154a5a073c507d1dd35e2cb454ed499d2216f1305cba4f597b4b64a9c141"
+checksum = "cae9a3fcdadafb6d97f4c0e007e4247b114ee0f119f650c3cbf3a8b3a1479694"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.4.1",
 ]
 
 [[package]]
@@ -6311,7 +6307,7 @@ checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
  "cfg-if",
  "digest 0.10.7",
- "rand 0.7.3",
+ "rand 0.8.5",
  "static_assertions",
 ]
 

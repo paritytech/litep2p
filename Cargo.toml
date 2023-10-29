@@ -9,7 +9,6 @@ edition = "2021"
 prost-build = "0.11"
 
 [dependencies]
-asynchronous-codec = "0.6.1"
 async-trait = "0.1.66"
 bs58 = "0.4.0"
 bytes = "1.4.0"
@@ -18,16 +17,13 @@ ed25519-dalek = "1.0.1"
 futures = "0.3.27"
 futures-rustls = "0.22.2"
 futures-timer = "3.0.2"
-hex = "0.4.3"
 hex-literal = "0.4.1"
-lazy_static = "1.4.0"
 mockall = "0.11.4"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
 parking_lot = "0.12.1"
 pin-project = "1.1.0"
 prost = "0.11.8"
-quickcheck = "1.0.3"
 quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls", "runtime-tokio"] }
 rand = { version = "0.8.0", features = ["getrandom"] }
 rcgen = "0.10.0"
@@ -44,9 +40,7 @@ tokio-stream = "0.1.12"
 tokio-tungstenite = { version = "0.20.0", features = ["rustls-tls-native-roots"] }
 tokio-util = { version = "0.7.7", features = ["compat", "io", "codec"] }
 tokio = { version = "1.26.0", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 tracing = { version = "0.1.37", features = ["log"] }
-trust-dns-resolver = { version = "0.22.0", features = ["tokio"] }
 uint = "0.9.5"
 unsigned-varint = { version = "0.7.2", features = ["codec"] }
 url = "2.4.0"
@@ -63,7 +57,7 @@ default-features = false
 features = ["dangerous_configuration"] # Must enable this to allow for custom verification code.
 
 [dev-dependencies]
-async-channel = "1.8.0"
+asynchronous-codec = "0.6.1"
 libp2p = { version = "0.51.3", features = [
     "tokio",
     "dns",
@@ -81,6 +75,7 @@ libp2p = { version = "0.51.3", features = [
 quickcheck = "1.0.3"
 sc-network = "0.28.0"
 sc-utils = "8.0.0"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 
 [features]
 custom_sc_network = []
