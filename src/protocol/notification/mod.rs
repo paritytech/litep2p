@@ -1147,6 +1147,7 @@ impl NotificationProtocol {
                     )
                     .await;
 
+                // TODO: should executor be exposed to protocols (or use `FuturesUnordered`?)
                 tokio::spawn(connection.start());
             }
             state => context.state = state,

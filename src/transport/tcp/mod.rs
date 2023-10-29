@@ -203,11 +203,11 @@ impl TcpTransport {
                 let _peer = *connection.peer();
                 let _address = connection.address().clone();
 
-                tokio::spawn(async move {
+                self.context.executor.run(Box::pin(async move {
                     if let Err(error) = connection.start().await {
                         tracing::error!(target: LOG_TARGET, ?error, "connection failure");
                     }
-                });
+                }));
             }
             Err(error) => match error.connection_id {
                 Some(connection_id) => match self.pending_dials.remove(&connection_id) {
@@ -266,10 +266,7 @@ impl Transport for TcpTransport {
     type Config = TransportConfig;
 
     /// Create new [`TcpTransport`].
-    async fn new(
-        context: crate::transport::manager::TransportHandle,
-        config: Self::Config,
-    ) -> crate::Result<Self> {
+    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self> {
         tracing::info!(
             target: LOG_TARGET,
             listen_address = ?config.listen_address,
@@ -338,12 +335,13 @@ impl Transport for TcpTransport {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::{collections::HashSet, sync::Arc};
 
     use super::*;
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
+        executor::DefaultExecutor,
         transport::manager::{
             ProtocolContext, SupportedTransport, TransportManager, TransportManagerCommand,
             TransportManagerEvent,
@@ -403,6 +401,7 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -438,6 +437,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -502,6 +502,7 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -534,6 +535,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -598,7 +600,8 @@ mod tests {
     async fn dial_error_reported_for_outbound_connections() {
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let handle = manager.register_transport(SupportedTransport::Tcp);
+        let handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let mut transport = TcpTransport::new(
             handle,
             TransportConfig {

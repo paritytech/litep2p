@@ -206,16 +206,17 @@ impl QuicTransport {
                     .report_connection_established(connection_id, connection.peer, address)
                     .await?;
 
-                tokio::spawn(
-                    connection::Connection::new(
+                self.context.executor.run(Box::pin(async move {
+                    let _ = connection::Connection::new(
                         connection.peer,
                         connection_id,
                         connection.connection,
                         protocol_set,
                         bandwidth_sink,
                     )
-                    .start(),
-                );
+                    .start()
+                    .await;
+                }));
             }
             Err(error) => {
                 tracing::debug!(target: LOG_TARGET, ?connection_id, ?error, "failed to establish connection");
@@ -358,7 +359,8 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
-        transport::manager::{ProtocolContext, TransportManagerEvent},
+        executor::DefaultExecutor,
+        transport::manager::{ProtocolContext, TransportHandle, TransportManagerEvent},
         types::protocol::ProtocolName,
         BandwidthSink,
     };
@@ -376,7 +378,8 @@ mod tests {
         let (event_tx1, mut event_rx1) = channel(64);
         let (_cmd_tx1, cmd_rx1) = channel(64);
 
-        let handle1 = crate::transport::manager::TransportHandle {
+        let handle1 = TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -411,7 +414,8 @@ mod tests {
         let (event_tx2, mut event_rx2) = channel(64);
         let (cmd_tx2, cmd_rx2) = channel(64);
 
-        let handle2 = crate::transport::manager::TransportHandle {
+        let handle2 = TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),

@@ -329,11 +329,11 @@ impl Transport for WebSocketTransport {
                             let _peer = *connection.peer();
                             let _address = connection.address().clone();
 
-                            tokio::spawn(async move {
+                            self.context.executor.run(Box::pin(async move {
                                 if let Err(error) = connection.start().await {
                                     tracing::debug!(target: LOG_TARGET, ?error, "connection failed");
                                 }
-                            });
+                            }))
                         }
                         Err(error) => match error.connection_id {
                             Some(connection_id) => match self.pending_dials.remove(&connection_id) {

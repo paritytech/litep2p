@@ -21,6 +21,7 @@
 use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
+    executor::Executor,
     protocol::{InnerTransportEvent, ProtocolSet},
     transport::manager::{
         address::{AddressRecord, AddressStore},
@@ -236,6 +237,7 @@ pub struct TransportHandle {
     pub next_substream_id: Arc<AtomicUsize>,
     pub protocol_names: Vec<ProtocolName>,
     pub bandwidth_sink: BandwidthSink,
+    pub executor: Arc<dyn Executor>,
 }
 
 impl TransportHandle {

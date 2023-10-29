@@ -252,7 +252,9 @@ impl WebRtcTransport {
                         rx,
                     );
 
-                    tokio::spawn(connection.run());
+                    self.context.executor.run(Box::pin(async move {
+                        let _ = connection.run().await;
+                    }));
                     self.peers.insert(source, tx);
                 }
             }

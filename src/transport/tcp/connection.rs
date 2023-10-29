@@ -561,15 +561,15 @@ impl TcpConnection {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
+        executor::DefaultExecutor,
         transport::manager::{SupportedTransport, TransportManager, TransportManagerEvent},
     };
     use multihash::Multihash;
+    use std::{collections::HashSet, sync::Arc};
     use tokio::{io::AsyncWriteExt, net::TcpListener};
 
     #[tokio::test]
@@ -597,7 +597,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -655,7 +656,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -718,7 +720,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -780,7 +783,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -847,7 +851,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -914,7 +919,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -976,7 +982,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -1031,7 +1038,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -1092,7 +1100,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -1171,7 +1180,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -1242,7 +1252,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
@@ -1317,7 +1328,8 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();

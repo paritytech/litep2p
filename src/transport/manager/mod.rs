@@ -22,6 +22,7 @@ use crate::{
     codec::ProtocolCodec,
     crypto::{ed25519::Keypair, PublicKey},
     error::{AddressError, Error},
+    executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
     transport::manager::{
         address::{AddressRecord, AddressStore},
@@ -287,7 +288,11 @@ impl TransportManager {
     }
 
     /// Register transport protocol to [`TransportManager`].
-    pub fn register_transport(&mut self, transport: SupportedTransport) -> TransportHandle {
+    pub fn register_transport(
+        &mut self,
+        transport: SupportedTransport,
+        executor: Arc<dyn Executor>,
+    ) -> TransportHandle {
         assert!(!self.transports.contains_key(&transport));
 
         let (tx, rx) = channel(256);
@@ -296,6 +301,7 @@ impl TransportManager {
         TransportHandle {
             rx,
             tx: self.event_tx.clone(),
+            executor,
             keypair: self.keypair.clone(),
             protocols: self.protocols.clone(),
             bandwidth_sink: self.bandwidth_sink.clone(),
@@ -932,8 +938,11 @@ impl TransportManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::ed25519::Keypair;
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use crate::{crypto::ed25519::Keypair, executor::DefaultExecutor};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        sync::Arc,
+    };
 
     #[test]
     #[should_panic]
@@ -1012,8 +1021,8 @@ mod tests {
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), sink);
 
-        manager.register_transport(SupportedTransport::Tcp);
-        manager.register_transport(SupportedTransport::Tcp);
+        manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
     }
 
     #[tokio::test]
@@ -1028,10 +1037,10 @@ mod tests {
 
     #[tokio::test]
     async fn try_to_dial_over_disabled_transport() {
-        let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -1053,10 +1062,10 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1091,10 +1100,10 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1117,10 +1126,10 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
 
@@ -1157,10 +1166,10 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         assert!(manager.dial(&PeerId::random()).await.is_err());
     }
@@ -1171,10 +1180,10 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
         manager.peers.write().insert(
@@ -1254,7 +1263,8 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1318,7 +1328,8 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1402,7 +1413,8 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1475,7 +1487,8 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
@@ -1566,7 +1579,8 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
@@ -1652,7 +1666,8 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle = manager.register_transport(SupportedTransport::Tcp);
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
