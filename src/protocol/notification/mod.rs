@@ -633,6 +633,16 @@ impl NotificationProtocol {
                         .await;
                 }
             }
+            PeerState::Closed { pending_open } => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    protocol = %self.protocol,
+                    ?substream_id,
+                    "substream open failure for a closed connection",
+                );
+                debug_assert_eq!(pending_open, &Some(substream_id));
+                context.state = PeerState::Closed { pending_open: None };
+            }
             state => {
                 tracing::warn!(
                     target: LOG_TARGET,
