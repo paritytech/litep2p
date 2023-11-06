@@ -1066,6 +1066,10 @@ impl NotificationProtocol {
                 // negotiate.
                 match std::mem::replace(&mut context.state, PeerState::Poisoned) {
                     PeerState::Validating { outbound, .. } => {
+                        context.state = PeerState::Closed {
+                            pending_open: outbound.pending_open(),
+                        };
+
                         // notify user if the outbound substream is not considered closed
                         if !std::matches!(outbound, OutboundState::Closed) {
                             return self
@@ -1076,10 +1080,6 @@ impl NotificationProtocol {
                                 )
                                 .await;
                         }
-
-                        context.state = PeerState::Closed {
-                            pending_open: outbound.pending_open(),
-                        };
                     }
                     _state => debug_assert!(false),
                 }
