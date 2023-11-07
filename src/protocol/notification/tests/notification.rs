@@ -151,19 +151,6 @@ async fn connection_closed_for_outbound_negotiated_substream() {
 }
 
 #[tokio::test]
-async fn connection_closed_for_open_notification_stream() {
-    let peer = PeerId::random();
-    let (tx, _rx) = oneshot::channel();
-
-    connection_closed(
-        peer,
-        PeerState::Open { shutdown: tx },
-        Some(NotificationEvent::NotificationStreamClosed { peer }),
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn connection_closed_for_initiated_substream() {
     let peer = PeerId::random();
 

@@ -28,7 +28,7 @@ use crate::{
     PeerId,
 };
 
-use futures::{future::Either, pin_mut};
+use futures::Stream;
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 
 use std::{
@@ -40,7 +40,7 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::notification::handle";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct NotificationEventHandle {
     tx: Sender<InnerNotificationEvent>,
 }
@@ -109,6 +109,14 @@ impl NotificationEventHandle {
             .send(InnerNotificationEvent::NotificationStreamOpenFailure { peer, error })
             .await;
     }
+
+    /// Received a notification from remote peer.
+    pub(crate) async fn report_notification_received(&self, peer: PeerId, notification: Vec<u8>) {
+        let _ = self
+            .tx
+            .send(InnerNotificationEvent::NotificationReceived { peer, notification })
+            .await;
+    }
 }
 
 /// Notification sink.
@@ -167,9 +175,6 @@ pub struct NotificationHandle {
     /// RX channel for receiving events from the notification protocol.
     event_rx: Receiver<InnerNotificationEvent>,
 
-    /// RX channel for receiving notifications from peers.
-    notif_rx: Receiver<(PeerId, Vec<u8>)>,
-
     /// TX channel for sending commands to the notification protocol.
     command_tx: Sender<NotificationCommand>,
 
@@ -182,12 +187,10 @@ impl NotificationHandle {
     pub(crate) fn new(
         event_rx: Receiver<InnerNotificationEvent>,
         command_tx: Sender<NotificationCommand>,
-        notif_rx: Receiver<(PeerId, Vec<u8>)>,
     ) -> Self {
         Self {
             event_rx,
             command_tx,
-            notif_rx,
             peers: HashMap::new(),
         }
     }
@@ -353,61 +356,37 @@ impl NotificationHandle {
     }
 }
 
-use std::future::Future;
-
-impl futures::Stream for NotificationHandle {
+impl Stream for NotificationHandle {
     type Item = NotificationEvent;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = Pin::into_inner(self);
-        let fut = async {
-            tokio::select! {
-                event = this.event_rx.recv() => Either::Right(event),
-                event = this.notif_rx.recv() => Either::Left(event),
-            }
-        };
-        pin_mut!(fut);
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match futures::ready!(self.event_rx.poll_recv(cx)) {
+            None => Poll::Ready(None),
+            Some(event) => match event {
+                InnerNotificationEvent::NotificationStreamOpened {
+                    protocol,
+                    fallback,
+                    direction,
+                    peer,
+                    handshake,
+                    sink,
+                } => {
+                    self.peers.insert(peer, sink);
 
-        match fut.poll(cx) {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(either) => match either {
-                Either::Right(event) => match event {
-                    None => return Poll::Ready(None),
-                    Some(event) => match event {
-                        InnerNotificationEvent::NotificationStreamOpened {
-                            protocol,
-                            fallback,
-                            direction,
-                            peer,
-                            handshake,
-                            sink,
-                        } => {
-                            this.peers.insert(peer, sink);
+                    Poll::Ready(Some(NotificationEvent::NotificationStreamOpened {
+                        protocol,
+                        fallback,
+                        direction,
+                        peer,
+                        handshake,
+                    }))
+                }
+                InnerNotificationEvent::NotificationStreamClosed { peer } => {
+                    self.peers.remove(&peer);
 
-                            Poll::Ready(Some(NotificationEvent::NotificationStreamOpened {
-                                protocol,
-                                fallback,
-                                direction,
-                                peer,
-                                handshake,
-                            }))
-                        }
-                        InnerNotificationEvent::NotificationStreamClosed { peer } => {
-                            this.peers.remove(&peer);
-
-                            Poll::Ready(Some(NotificationEvent::NotificationStreamClosed { peer }))
-                        }
-                        event => Poll::Ready(Some(event.into())),
-                    },
-                },
-                Either::Left(event) => match event {
-                    None => return Poll::Ready(None),
-                    Some((peer, notification)) =>
-                        Poll::Ready(Some(NotificationEvent::NotificationReceived {
-                            peer,
-                            notification,
-                        })),
-                },
+                    Poll::Ready(Some(NotificationEvent::NotificationStreamClosed { peer }))
+                }
+                event => Poll::Ready(Some(event.into())),
             },
         }
     }

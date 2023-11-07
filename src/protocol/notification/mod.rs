@@ -208,9 +208,6 @@ pub(crate) struct NotificationProtocol {
     /// TX channel passed to the protocol used for sending events.
     event_handle: NotificationEventHandle,
 
-    /// TX channel given to substream handlers for sending notifications to user.
-    notif_tx: Sender<(PeerId, Vec<u8>)>,
-
     /// TX channel for sending shut down notifications from connection handlers to
     /// [`NotificationProtocol`].
     shutdown_tx: Sender<PeerId>,
@@ -245,7 +242,6 @@ impl NotificationProtocol {
             handshake: config.handshake.clone(),
             auto_accept: config.auto_accept,
             event_handle: NotificationEventHandle::new(config.event_tx),
-            notif_tx: config.notif_tx,
             command_rx: config.command_rx,
             pending_outbound: HashMap::new(),
             negotiation: HandshakeService::new(config.handshake),
@@ -328,7 +324,6 @@ impl NotificationProtocol {
             // substream fully open, report that the notification stream is closed
             PeerState::Open { shutdown } => {
                 let _ = shutdown.send(());
-                self.event_handle.report_notification_stream_closed(peer).await;
             }
             // if the substream was being validated, notify user only if the outbound state is not
             // `Closed` states other than `Closed` indicate that the user was interested
@@ -750,9 +745,8 @@ impl NotificationProtocol {
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
             PeerState::Open { shutdown } => {
                 let _ = shutdown.send(());
-                context.state = PeerState::Closed { pending_open: None };
 
-                self.event_handle.report_notification_stream_closed(peer).await;
+                context.state = PeerState::Closed { pending_open: None };
             }
             state => {
                 tracing::debug!(
@@ -1134,12 +1128,11 @@ impl NotificationProtocol {
                 // handling the connectivity logic on the `NotificationHandle` side
                 // might get confused about the current state of the connection.
                 let shutdown_tx = self.shutdown_tx.clone();
-                let notif_tx = self.notif_tx.clone();
                 let (connection, shutdown) = Connection::new(
                     peer,
                     inbound,
                     outbound,
-                    notif_tx.clone(),
+                    self.event_handle.clone(),
                     shutdown_tx.clone(),
                     async_rx,
                     sync_rx,
@@ -1201,19 +1194,7 @@ impl NotificationProtocol {
                 None => return,
                 Some(peer) => {
                     if let Some(context) = self.peers.get_mut(&peer) {
-                        match std::mem::replace(&mut context.state, PeerState::Closed { pending_open: None }) {
-                            PeerState::Open { .. } => {
-                                self.event_handle.report_notification_stream_closed(peer).await;
-                            }
-                            state => {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?state,
-                                    "connection closed by the handler but it's already close",
-                                );
-                            }
-                        }
+                        context.state = PeerState::Closed { pending_open: None };
                     }
                 }
             },
