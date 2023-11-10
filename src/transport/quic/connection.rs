@@ -21,12 +21,11 @@
 //! QUIC connection.
 
 use crate::{
-    codec::{generic::Generic, identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     config::Role,
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
-    substream::Substream as SubstreamT,
+    substream,
     transport::quic::substream::{NegotiatingSubstream, Substream},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
@@ -34,7 +33,6 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
 use quinn::{Connection as QuinnConnection, RecvStream, SendStream};
-use tokio_util::codec::Framed;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "quic::connection";
@@ -283,19 +281,11 @@ impl Connection {
                         Ok(substream) => {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
-                            let substream = Substream::new(substream.permit, substream.sender, substream.receiver);
-
-                            let substream: Box<dyn SubstreamT> = match self.protocol_set.protocol_codec(&protocol) {
-                                ProtocolCodec::Identity(payload_size) => {
-                                    Box::new(Framed::new(substream, Identity::new(payload_size)))
-                                }
-                                ProtocolCodec::UnsignedVarint(max_size) => {
-                                    Box::new(Framed::new(substream, UnsignedVarint::new(max_size)))
-                                }
-                                ProtocolCodec::Generic => {
-                                    Box::new(Framed::new(substream, Generic::new()))
-                                }
-                            };
+                            let substream = substream::Substream::new_quic(
+                                self.peer,
+                                Substream::new(substream.permit, substream.sender, substream.receiver),
+                                self.protocol_set.protocol_codec(&protocol)
+                            );
 
                             if let Err(error) = self.protocol_set
                                 .report_substream_open(self.peer, protocol, direction, substream)

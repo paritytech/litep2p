@@ -20,13 +20,32 @@
 
 use crate::error::Error;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use futures::{Sink, Stream};
 
 use std::{
+    fmt::Debug,
     pin::Pin,
     task::{Context, Poll},
 };
+
+/// Trait which describes the behavior of a mock substream.
+pub trait Substream:
+    Debug + Stream<Item = crate::Result<BytesMut>> + Sink<Bytes, Error = Error> + Send + Unpin + 'static
+{
+}
+
+/// Blanket implementation for [`Substream`].
+impl<
+        T: Debug
+            + Stream<Item = crate::Result<BytesMut>>
+            + Sink<Bytes, Error = Error>
+            + Send
+            + Unpin
+            + 'static,
+    > Substream for T
+{
+}
 
 mockall::mock! {
     #[derive(Debug)]

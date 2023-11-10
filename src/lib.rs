@@ -42,6 +42,8 @@ use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
 pub use peer_id::PeerId;
+pub use substream::Substream;
+
 pub use yamux;
 
 pub(crate) mod peer_id;

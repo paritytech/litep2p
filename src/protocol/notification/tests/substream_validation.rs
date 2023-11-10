@@ -31,6 +31,7 @@ use crate::{
         },
         InnerTransportEvent, ProtocolCommand,
     },
+    substream::Substream,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
@@ -93,7 +94,7 @@ async fn substream_accepted() {
             ProtocolName::from("/notif/1"),
             None,
             peer,
-            Box::new(substream),
+            Substream::new_mock(PeerId::random(), Box::new(substream)),
         )
         .await
         .unwrap();
@@ -182,7 +183,7 @@ async fn substream_rejected() {
             ProtocolName::from("/notif/1"),
             None,
             peer,
-            Box::new(substream),
+            Substream::new_mock(PeerId::random(), Box::new(substream)),
         )
         .await
         .unwrap();
@@ -266,7 +267,7 @@ async fn accept_fails_due_to_closed_substream() {
             ProtocolName::from("/notif/1"),
             None,
             peer,
-            Box::new(substream),
+            Substream::new_mock(PeerId::random(), Box::new(substream)),
         )
         .await
         .unwrap();
@@ -351,7 +352,7 @@ async fn accept_fails_due_to_closed_connection() {
             ProtocolName::from("/notif/1"),
             None,
             peer,
-            Box::new(substream),
+            Substream::new_mock(PeerId::random(), Box::new(substream)),
         )
         .await
         .unwrap();
@@ -381,8 +382,8 @@ async fn accept_fails_due_to_closed_connection() {
         },
     );
 
-    // drop the connection and verify that the protocol doesn't make any outbound substream requests
-    // and instead marks the connection as closed
+    // drop the connection and verify that the protocol doesn't make any outbound substream
+    // requests and instead marks the connection as closed
     drop(proto_rx);
 
     assert!(notif.on_validation_result(peer, ValidationResult::Accept).await.is_err());

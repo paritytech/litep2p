@@ -36,7 +36,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     oneshot,
@@ -72,7 +72,7 @@ enum InboundState {
     /// Substream and its handshake are being validated by the user protocol.
     Validating {
         /// Inbound substream.
-        inbound: Box<dyn Substream>,
+        inbound: Substream,
     },
 
     /// Handshake is being sent to the remote node.
@@ -81,7 +81,7 @@ enum InboundState {
     /// Substream is open.
     Open {
         /// Inbound substream.
-        inbound: Box<dyn Substream>,
+        inbound: Substream,
     },
 }
 
@@ -110,7 +110,7 @@ enum OutboundState {
         handshake: Vec<u8>,
 
         /// Outbound substream.
-        outbound: Box<dyn Substream>,
+        outbound: Substream,
     },
 }
 
@@ -344,7 +344,7 @@ impl NotificationProtocol {
         fallback: Option<ProtocolName>,
         peer: PeerId,
         substream_id: SubstreamId,
-        mut outbound: Box<dyn Substream>,
+        outbound: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -460,7 +460,7 @@ impl NotificationProtocol {
         protocol: ProtocolName,
         fallback: Option<ProtocolName>,
         peer: PeerId,
-        mut substream: Box<dyn Substream>,
+        substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -694,7 +694,7 @@ impl NotificationProtocol {
                 protocol,
                 fallback,
                 outbound,
-                inbound: InboundState::Validating { mut inbound },
+                inbound: InboundState::Validating { inbound },
             } => match result {
                 // substream was rejected by the local node, if an outbound substream was under
                 // negotation, discard that data and if an outbound substream was

@@ -40,7 +40,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -120,7 +120,7 @@ pub(crate) struct Kademlia {
     peers: HashMap<PeerId, PeerContext>,
 
     /// Substream set.
-    substreams: SubstreamSet<PeerId>,
+    substreams: SubstreamSet<PeerId, Substream>,
 
     /// TX channel for sending events to `KademliaHandle`.
     event_tx: Sender<KademliaEvent>,
@@ -202,7 +202,7 @@ impl Kademlia {
             self.engine.register_response_failure(query, peer);
         }
 
-        if let Some(mut substream) = self.substreams.remove(&peer) {
+        if let Some(substream) = self.substreams.remove(&peer) {
             let _ = substream.close().await;
         }
 
@@ -218,7 +218,7 @@ impl Kademlia {
         &mut self,
         peer: PeerId,
         substream_id: SubstreamId,
-        mut substream: Box<dyn Substream>,
+        mut substream: Substream,
     ) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -243,7 +243,7 @@ impl Kademlia {
                     message,
                 }) = self.engine.next_peer_action(&query, &peer)
                 {
-                    match substream.send(message).await {
+                    match substream.send_framed(message).await {
                         Err(_) => self.disconnect_peer(peer, Some(query)).await,
                         Ok(_) => {
                             *pending_action = Some(PeerAction::SendFindNode(query));
@@ -254,7 +254,7 @@ impl Kademlia {
             Some(PeerAction::SendPutValue(record)) => {
                 let message = KademliaMessage::put_value(record);
 
-                if let Err(_) = substream.send(message).await {
+                if let Err(_) = substream.send_framed(message).await {
                     self.disconnect_peer(peer, None).await;
                 }
             }
@@ -268,7 +268,7 @@ impl Kademlia {
     async fn on_inbound_substream(
         &mut self,
         peer: PeerId,
-        _substream: Box<dyn Substream>,
+        _substream: Substream,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?peer, "inbound substream opened");
 
@@ -295,7 +295,7 @@ impl Kademlia {
                     self.routing_table.closest(Key::from(target), 20),
                 );
 
-                if let Err(_error) = substream.send(message.into()).await {
+                if let Err(_error) = substream.send_framed(message.into()).await {
                     // TODO: check if peer has an active query in progress
                     self.disconnect_peer(peer, None).await;
                 }
@@ -414,7 +414,7 @@ impl Kademlia {
                 message,
             } => match self.substreams.get_mut(&peer) {
                 Some(substream) => substream
-                    .send(message)
+                    .send_framed(message)
                     .await
                     .map(|_| {
                         self.peers.insert(
@@ -466,8 +466,9 @@ impl Kademlia {
                 for peer in peers {
                     match self.substreams.get_mut(&peer.peer) {
                         Some(substream) => {
-                            if let Err(error) =
-                                substream.send(KademliaMessage::put_value(record.clone())).await
+                            if let Err(error) = substream
+                                .send_framed(KademliaMessage::put_value(record.clone()))
+                                .await
                             {
                                 tracing::debug!(target: LOG_TARGET, ?error, "failed to send message to peer");
                                 self.disconnect_peer(peer.peer, None).await;

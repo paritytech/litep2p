@@ -20,7 +20,7 @@
 
 use crate::{substream::Substream, PeerId};
 
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use tokio::sync::{
     mpsc::{Receiver, Sender},
     oneshot,
@@ -35,10 +35,10 @@ pub(crate) struct Connection {
     peer: PeerId,
 
     /// Inbound substreams for receiving notifications.
-    inbound: Box<dyn Substream>,
+    inbound: Substream,
 
     /// Outbound substream for sending notifications.
-    outbound: Box<dyn Substream>,
+    outbound: Substream,
 
     /// TX channel for sending received notifications to user.
     notif_tx: Sender<(PeerId, Vec<u8>)>,
@@ -72,8 +72,8 @@ impl Connection {
     /// Create new [`Connection`].
     pub(crate) fn new(
         peer: PeerId,
-        inbound: Box<dyn Substream>,
-        outbound: Box<dyn Substream>,
+        inbound: Substream,
+        outbound: Substream,
         notif_tx: Sender<(PeerId, Vec<u8>)>,
         conn_closed_tx: Sender<PeerId>,
         async_rx: Receiver<Vec<u8>>,
@@ -100,7 +100,7 @@ impl Connection {
     ///
     /// If [`NotificationProtocol`](super::NotificationProtocol) was the one that initiated
     /// shut down, it's not notified of connection getting closed.
-    async fn close_connection(&mut self, notify_protocol: NotifyProtocol) {
+    async fn close_connection(self, notify_protocol: NotifyProtocol) {
         let _ = self.inbound.close().await;
         let _ = self.outbound.close().await;
 
@@ -140,7 +140,7 @@ impl Connection {
                     }
                 },
                 notification = self.async_rx.recv() => match notification {
-                    Some(notification) => if let Err(_) = self.outbound.send(notification.into()).await {
+                    Some(notification) => if let Err(_) = self.outbound.send_framed(notification.into()).await {
                         return self.close_connection(NotifyProtocol::Yes).await;
                     },
                     None => {
@@ -149,7 +149,7 @@ impl Connection {
                     }
                 },
                 notification = self.sync_rx.recv() => match notification {
-                    Some(notification) => if let Err(_) = self.outbound.send(notification.into()).await {
+                    Some(notification) => if let Err(_) = self.outbound.send_framed(notification.into()).await {
                         return self.close_connection(NotifyProtocol::Yes).await;
                     },
                     None => {

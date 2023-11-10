@@ -112,7 +112,7 @@ pub enum TransportEvent {
         direction: Direction,
 
         /// Substream.
-        substream: Box<dyn Substream>,
+        substream: Substream,
     },
 
     /// Failed to open substream.

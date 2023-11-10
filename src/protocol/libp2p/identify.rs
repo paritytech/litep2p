@@ -30,7 +30,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{SinkExt, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use multiaddr::Multiaddr;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
@@ -171,7 +171,7 @@ impl Identify {
         &mut self,
         peer: PeerId,
         protocol: ProtocolName,
-        mut substream: Box<dyn Substream>,
+        mut substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -196,7 +196,7 @@ impl Identify {
         identify.encode(&mut msg).expect("`msg` to have enough capacity");
 
         // TODO: this is not good
-        substream.send(msg.into()).await
+        substream.send_framed(msg.into()).await
     }
 
     /// Outbound substream opened.
@@ -205,7 +205,7 @@ impl Identify {
         peer: PeerId,
         protocol: ProtocolName,
         substream_id: SubstreamId,
-        mut substream: Box<dyn Substream>,
+        mut substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,

@@ -43,7 +43,10 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+pub(crate) use substream::Substream;
+
 mod connection;
+mod substream;
 
 pub mod config;
 

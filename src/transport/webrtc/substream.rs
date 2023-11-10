@@ -21,7 +21,7 @@
 //! Channel-backed substream.
 
 use crate::{
-    codec::{generic::Generic, identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
+    codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     error::Error,
 };
 
@@ -89,7 +89,7 @@ impl Sink<bytes::Bytes> for Substream {
         let item: Vec<u8> = match self.codec.as_ref().expect("codec to exist") {
             ProtocolCodec::Identity(_) => Identity::encode(item)?.into(),
             ProtocolCodec::UnsignedVarint(_) => UnsignedVarint::encode(item)?.into(),
-            ProtocolCodec::Generic => Generic::encode(item)?.into(),
+            ProtocolCodec::Unspecified => unreachable!(), // TODO: may not be correct
         };
         let id = self.id;
 

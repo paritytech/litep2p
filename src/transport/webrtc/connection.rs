@@ -26,7 +26,7 @@ use crate::{
     error::Error,
     multistream_select::{listener_negotiate, DialerState, HandshakeResult},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
-    substream::Substream as SubstreamT,
+    substream::Substream,
     transport::webrtc::{
         substream::SubstreamBackend,
         util::{SubstreamContext, WebRtcMessage},
@@ -452,28 +452,30 @@ impl WebRtcConnection {
         channel_id: ChannelId,
         protocol: ProtocolName,
     ) -> crate::Result<WebRtcEvent> {
-        let substream_id = self.substream_id.next();
-        let (mut substream, tx) = self.backend.substream(channel_id);
-        let substream: Box<dyn SubstreamT> = {
-            substream.apply_codec(self.protocol_set.protocol_codec(&protocol));
-            Box::new(substream)
-        };
-        let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
+        // let substream_id = self.substream_id.next();
+        // let (mut substream, tx) = self.backend.substream(channel_id);
+        // let substream: Box<dyn SubstreamT> = {
+        //     substream.apply_codec(self.protocol_set.protocol_codec(&protocol));
+        //     Box::new(substream)
+        // };
+        // let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
 
-        self.substreams.insert(
-            channel_id,
-            SubstreamState::Open {
-                substream_id,
-                substream: SubstreamContext::new(channel_id, tx),
-                permit,
-            },
-        );
+        // self.substreams.insert(
+        //     channel_id,
+        //     SubstreamState::Open {
+        //         substream_id,
+        //         substream: SubstreamContext::new(channel_id, tx),
+        //         permit,
+        //     },
+        // );
+        // TODO: fix
 
         if let State::Open { peer, .. } = &mut self.state {
-            let _ = self
-                .protocol_set
-                .report_substream_open(*peer, protocol.clone(), Direction::Inbound, substream)
-                .await;
+            // let _ = self
+            //     .protocol_set
+            //     .report_substream_open(*peer, protocol.clone(), Direction::Inbound, substream)
+            //     .await;
+            todo!();
         }
 
         Ok(WebRtcEvent::Noop)

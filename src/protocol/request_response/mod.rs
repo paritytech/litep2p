@@ -32,7 +32,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
@@ -122,7 +122,7 @@ pub(crate) struct RequestResponseProtocol {
     pending_outbound: HashMap<SubstreamId, RequestContext>,
 
     /// Pending outbound responses.
-    pending_outbound_responses: HashMap<RequestId, Box<dyn Substream>>,
+    pending_outbound_responses: HashMap<RequestId, Substream>,
 
     /// Pending inbound responses.
     pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
@@ -131,7 +131,7 @@ pub(crate) struct RequestResponseProtocol {
     pending_outbound_cancels: HashMap<RequestId, oneshot::Sender<()>>,
 
     /// Pending inbound requests.
-    pending_inbound_requests: SubstreamSet<(PeerId, RequestId)>,
+    pending_inbound_requests: SubstreamSet<(PeerId, RequestId), Substream>,
 
     /// Pending dials for outbound requests.
     pending_dials: HashMap<PeerId, RequestContext>,
@@ -257,7 +257,7 @@ impl RequestResponseProtocol {
         &mut self,
         peer: PeerId,
         substream_id: SubstreamId,
-        mut substream: Box<dyn Substream>,
+        mut substream: Substream,
     ) -> crate::Result<()> {
         let Some(RequestContext {
             request_id,
@@ -289,7 +289,7 @@ impl RequestResponseProtocol {
         self.pending_outbound_cancels.insert(request_id, tx);
 
         self.pending_inbound.push(Box::pin(async move {
-            match substream.send(request.into()).await {
+            match substream.send_framed(request.into()).await {
                 Ok(_) => {
                     tokio::select! {
                         _ = rx => {
@@ -360,7 +360,7 @@ impl RequestResponseProtocol {
         &mut self,
         peer: PeerId,
         fallback: Option<ProtocolName>,
-        substream: Box<dyn Substream>,
+        substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
@@ -536,7 +536,7 @@ impl RequestResponseProtocol {
         );
 
         match self.pending_outbound_responses.remove(&request_id) {
-            Some(mut substream) => match substream.send(response.into()).await {
+            Some(mut substream) => match substream.send_framed(response.into()).await {
                 Ok(()) => Ok(()),
                 Err(error) => {
                     tracing::trace!(target: LOG_TARGET, ?request_id, ?error, "failed to send response");
@@ -694,7 +694,7 @@ impl RequestResponseProtocol {
                         RequestResponseCommand::RejectRequest { request_id } => {
                             tracing::trace!(target: LOG_TARGET, ?request_id, "reject request");
 
-                            if let Some(mut substream) = self.pending_outbound_responses.remove(&request_id) {
+                            if let Some(substream) = self.pending_outbound_responses.remove(&request_id) {
                                 let _ = substream.close().await;
                             }
                         }

@@ -20,6 +20,8 @@
 
 //! WebRTC transport.
 
+#![allow(unused)]
+
 use crate::{
     error::{AddressError, Error},
     transport::{

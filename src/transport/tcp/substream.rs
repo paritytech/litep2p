@@ -21,6 +21,7 @@
 use crate::protocol::Permit;
 
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_util::compat::Compat;
 
 use std::{
     io,
@@ -31,22 +32,22 @@ use std::{
 /// Substream that holds the inner substream provided by the transport
 /// and a permit which keeps the connection open.
 #[derive(Debug)]
-pub struct Substream<S: AsyncRead + AsyncWrite + Unpin> {
+pub struct Substream {
     /// Underlying socket.
-    io: S,
+    io: Compat<yamux::Stream>,
 
     /// Connection permit.
     _permit: Permit,
 }
 
-impl<S: AsyncRead + AsyncWrite + Unpin> Substream<S> {
+impl Substream {
     /// Create new [`Substream`].
-    pub fn new(io: S, _permit: Permit) -> Self {
+    pub fn new(io: Compat<yamux::Stream>, _permit: Permit) -> Self {
         Self { io, _permit }
     }
 }
 
-impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Substream<S> {
+impl AsyncRead for Substream {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -56,7 +57,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Substream<S> {
     }
 }
 
-impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Substream<S> {
+impl AsyncWrite for Substream {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

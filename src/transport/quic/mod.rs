@@ -44,6 +44,8 @@ use std::{
     sync::Arc,
 };
 
+pub(crate) use substream::Substream;
+
 mod connection;
 mod substream;
 

@@ -120,7 +120,7 @@ pub enum InnerTransportEvent {
         direction: Direction,
 
         /// Substream.
-        substream: Box<dyn Substream>,
+        substream: Substream,
     },
 
     /// Failed to open substream.
@@ -489,7 +489,7 @@ impl ProtocolSet {
         peer: PeerId,
         protocol: ProtocolName,
         direction: Direction,
-        substream: Box<dyn Substream>,
+        substream: Substream,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
 
@@ -646,7 +646,7 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1/fallback/2"),
                 Direction::Inbound,
-                Box::new(MockSubstream::new()),
+                Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
             )
             .await
             .unwrap();
@@ -679,7 +679,7 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1"),
                 Direction::Inbound,
-                Box::new(MockSubstream::new()),
+                Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
             )
             .await
             .unwrap();
@@ -722,7 +722,7 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1/fallback/2"),
                 Direction::Inbound,
-                Box::new(MockSubstream::new()),
+                Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
             )
             .await
             .unwrap();
