@@ -44,6 +44,8 @@ async fn webrtc_test() {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
 
     let config = Litep2pConfigBuilder::new()

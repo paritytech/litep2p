@@ -83,6 +83,8 @@ async fn make_default_litep2p(transport: Transport) -> (Litep2p, NotificationHan
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -152,6 +154,8 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -170,6 +174,8 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -317,6 +323,8 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -335,6 +343,8 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -440,6 +450,8 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -458,6 +470,8 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -612,6 +626,8 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -630,6 +646,8 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -841,6 +859,8 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -859,6 +879,8 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1055,6 +1077,8 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1073,6 +1097,8 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1230,6 +1256,8 @@ async fn both_nodes_open_substream_one_rejects_substreams(
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1248,6 +1276,8 @@ async fn both_nodes_open_substream_one_rejects_substreams(
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1353,6 +1383,8 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1415,6 +1447,8 @@ async fn send_async_notification_to_non_existent_peer(transport1: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1480,6 +1514,8 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1550,6 +1586,8 @@ async fn try_to_disconnect_non_existent_peer(transport1: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1629,6 +1667,8 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1647,6 +1687,8 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1783,6 +1825,8 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1801,6 +1845,8 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2296,6 +2342,8 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         true,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2314,6 +2362,8 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2450,6 +2500,8 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2468,6 +2520,8 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2629,6 +2683,8 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2647,6 +2703,8 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())

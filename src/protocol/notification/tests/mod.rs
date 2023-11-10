@@ -64,6 +64,8 @@ fn make_notification_protocol() -> (
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
 
     (

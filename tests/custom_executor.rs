@@ -99,6 +99,8 @@ async fn custom_executor() {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let (req_resp_config1, mut req_resp_handle1) =
         RequestResponseConfigBuilder::new(ProtocolName::from("/protocol/1"))
@@ -123,6 +125,8 @@ async fn custom_executor() {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let (req_resp_config2, mut req_resp_handle2) =
         RequestResponseConfigBuilder::new(ProtocolName::from("/protocol/1"))

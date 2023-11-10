@@ -28,7 +28,7 @@ use crate::{
             connection::Connection,
             handle::NotificationEventHandle,
             negotiation::{HandshakeEvent, HandshakeService},
-            types::{NotificationCommand, ASYNC_CHANNEL_SIZE, SYNC_CHANNEL_SIZE},
+            types::NotificationCommand,
         },
         Transport, TransportEvent, TransportService,
     },
@@ -227,6 +227,12 @@ pub(crate) struct NotificationProtocol {
     /// Handshaking service which reads and writes the handshakes to inbound
     /// and outbound substreams asynchronously.
     negotiation: HandshakeService,
+
+    /// Synchronous channel size.
+    sync_channel_size: usize,
+
+    /// Asynchronous channel size.
+    async_channel_size: usize,
 }
 
 impl NotificationProtocol {
@@ -245,6 +251,8 @@ impl NotificationProtocol {
             command_rx: config.command_rx,
             pending_outbound: HashMap::new(),
             negotiation: HandshakeService::new(config.handshake),
+            sync_channel_size: config.sync_channel_size,
+            async_channel_size: config.async_channel_size,
         }
     }
 
@@ -1113,8 +1121,8 @@ impl NotificationProtocol {
                     "notification stream opened",
                 );
 
-                let (async_tx, async_rx) = channel(ASYNC_CHANNEL_SIZE);
-                let (sync_tx, sync_rx) = channel(SYNC_CHANNEL_SIZE);
+                let (async_tx, async_rx) = channel(self.async_channel_size);
+                let (sync_tx, sync_rx) = channel(self.sync_channel_size);
                 let sink = NotificationSink::new(peer, sync_tx, async_tx);
 
                 // start connection handler for the peer which only deals with sending/receiving
