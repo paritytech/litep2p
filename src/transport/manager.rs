@@ -24,7 +24,7 @@ use crate::{
     error::{AddressError, Error},
     protocol::{InnerTransportEvent, ProtocolSet, TransportService},
     types::{protocol::ProtocolName, ConnectionId},
-    PeerId,
+    BandwidthSink, PeerId,
 };
 
 use multiaddr::{Multiaddr, Protocol};
@@ -226,6 +226,7 @@ pub struct TransportHandle {
     pub next_connection_id: Arc<AtomicUsize>,
     pub next_substream_id: Arc<AtomicUsize>,
     pub protocol_names: Vec<ProtocolName>,
+    pub bandwidth_sink: BandwidthSink,
 }
 
 impl TransportHandle {
@@ -377,6 +378,9 @@ pub struct TransportManager {
     /// Keypair.
     keypair: Keypair,
 
+    /// Bandwidth sink.
+    bandwidth_sink: BandwidthSink,
+
     /// Installed protocols.
     protocols: HashMap<ProtocolName, ProtocolContext>,
 
@@ -417,7 +421,7 @@ pub struct TransportManager {
 impl TransportManager {
     /// Create new [`TransportManager`].
     // TODO: don't return handle here
-    pub fn new(keypair: Keypair) -> (Self, TransportManagerHandle) {
+    pub fn new(keypair: Keypair, bandwidth_sink: BandwidthSink) -> (Self, TransportManagerHandle) {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
@@ -432,6 +436,7 @@ impl TransportManager {
                 event_tx,
                 event_rx,
                 local_peer_id,
+                bandwidth_sink,
                 protocols: HashMap::new(),
                 transports: HashMap::new(),
                 protocol_names: HashSet::new(),
@@ -505,6 +510,7 @@ impl TransportManager {
             tx: self.event_tx.clone(),
             keypair: self.keypair.clone(),
             protocols: self.protocols.clone(),
+            bandwidth_sink: self.bandwidth_sink.clone(),
             protocol_names: self.protocol_names.iter().cloned().collect(),
             next_substream_id: self.next_substream_id.clone(),
             next_connection_id: self.next_connection_id.clone(),
@@ -782,7 +788,8 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_protocol() {
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -800,7 +807,8 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn fallback_protocol_as_duplicate_main_protocol() {
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -821,7 +829,8 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_fallback_protocol() {
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -845,7 +854,8 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_transport() {
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
 
         manager.register_transport(SupportedTransport::Tcp);
         manager.register_transport(SupportedTransport::Tcp);
@@ -855,14 +865,16 @@ mod tests {
     async fn tried_to_self_using_peer_id() {
         let keypair = Keypair::generate();
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(keypair, sink);
 
         assert!(manager.dial(&local_peer_id).await.is_err());
     }
 
     #[tokio::test]
     async fn try_to_dial_over_disabled_transport() {
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let address = Multiaddr::empty()
@@ -885,7 +897,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
         let mut handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -921,7 +934,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -945,7 +959,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();
@@ -983,7 +998,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         assert!(manager.dial(&PeerId::random()).await.is_err());
@@ -995,7 +1011,8 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(Keypair::generate());
+        let sink = BandwidthSink::new();
+        let (mut manager, _handle) = TransportManager::new(Keypair::generate(), sink);
         let _handle = manager.register_transport(SupportedTransport::Tcp);
 
         let peer = PeerId::random();

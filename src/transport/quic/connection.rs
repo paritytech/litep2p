@@ -28,7 +28,7 @@ use crate::{
     substream,
     transport::quic::substream::{NegotiatingSubstream, Substream},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
-    PeerId,
+    BandwidthSink, PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
@@ -93,6 +93,9 @@ pub struct Connection {
     /// Protocol set.
     protocol_set: ProtocolSet,
 
+    /// Bandwidth sink.
+    bandwidth_sink: BandwidthSink,
+
     /// Pending substreams.
     pending_substreams:
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
@@ -105,12 +108,14 @@ impl Connection {
         connection_id: ConnectionId,
         connection: QuinnConnection,
         protocol_set: ProtocolSet,
+        bandwidth_sink: BandwidthSink,
     ) -> Self {
         Self {
             peer,
             connection,
             protocol_set,
             connection_id,
+            bandwidth_sink,
             pending_substreams: FuturesUnordered::new(),
         }
     }
@@ -281,9 +286,15 @@ impl Connection {
                         Ok(substream) => {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
+                            let bandwidth_sink = self.bandwidth_sink.clone();
                             let substream = substream::Substream::new_quic(
                                 self.peer,
-                                Substream::new(substream.permit, substream.sender, substream.receiver),
+                                Substream::new(
+                                    substream.permit,
+                                    substream.sender,
+                                    substream.receiver,
+                                    bandwidth_sink
+                                ),
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
@@ -324,7 +335,13 @@ impl Connection {
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(5), // TODO: make this configurable
-                                Self::open_substream(connection, permit, Direction::Outbound(substream_id), protocol, fallback_names),
+                                Self::open_substream(
+                                    connection,
+                                    permit,
+                                    Direction::Outbound(substream_id),
+                                    protocol,
+                                    fallback_names,
+                                ),
                             )
                             .await
                             {

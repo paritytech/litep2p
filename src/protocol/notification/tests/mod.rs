@@ -28,7 +28,7 @@ use crate::{
     },
     transport::manager::TransportManager,
     types::protocol::ProtocolName,
-    PeerId,
+    BandwidthSink, PeerId,
 };
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -45,7 +45,7 @@ fn make_notification_protocol() -> (
     TransportManager,
     Sender<InnerTransportEvent>,
 ) {
-    let (manager, handle) = TransportManager::new(Keypair::generate());
+    let (manager, handle) = TransportManager::new(Keypair::generate(), BandwidthSink::new());
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(

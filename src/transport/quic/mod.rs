@@ -200,6 +200,7 @@ impl QuicTransport {
                     |address| address,
                 );
 
+                let bandwidth_sink = self.context.bandwidth_sink.clone();
                 let mut protocol_set = self.context.protocol_set();
                 protocol_set
                     .report_connection_established(connection_id, connection.peer, address)
@@ -211,6 +212,7 @@ impl QuicTransport {
                         connection_id,
                         connection.connection,
                         protocol_set,
+                        bandwidth_sink,
                     )
                     .start(),
                 );
@@ -358,6 +360,7 @@ mod tests {
         crypto::{ed25519::Keypair, PublicKey},
         transport::manager::{ProtocolContext, TransportManagerEvent},
         types::protocol::ProtocolName,
+        BandwidthSink,
     };
     use multihash::Multihash;
     use tokio::sync::mpsc::channel;
@@ -380,6 +383,7 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             rx: cmd_rx1,
+            bandwidth_sink: BandwidthSink::new(),
 
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -414,6 +418,7 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             rx: cmd_rx2,
+            bandwidth_sink: BandwidthSink::new(),
 
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),

@@ -30,7 +30,7 @@ use crate::{
     substream,
     transport::tcp::{substream::Substream, AddressType},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
-    PeerId,
+    BandwidthSink, PeerId,
 };
 
 use futures::{
@@ -113,6 +113,9 @@ pub struct TcpConnection {
     /// Remote address.
     address: Multiaddr,
 
+    // Bandwidth sink.
+    bandwidth_sink: BandwidthSink,
+
     /// Pending substreams.
     pending_substreams:
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
@@ -137,6 +140,7 @@ impl TcpConnection {
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        bandwidth_sink: BandwidthSink,
     ) -> crate::Result<Self> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -163,6 +167,7 @@ impl TcpConnection {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                bandwidth_sink,
             )
             .await
         })
@@ -224,6 +229,7 @@ impl TcpConnection {
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        bandwidth_sink: BandwidthSink,
     ) -> crate::Result<Self> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
@@ -240,6 +246,7 @@ impl TcpConnection {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                bandwidth_sink,
             )
             .await
         })
@@ -319,6 +326,7 @@ impl TcpConnection {
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        bandwidth_sink: BandwidthSink,
     ) -> crate::Result<Self> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -375,6 +383,7 @@ impl TcpConnection {
             connection,
             protocol_set,
             connection_id,
+            bandwidth_sink,
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
         })
@@ -478,9 +487,10 @@ impl TcpConnection {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
                             let socket = FuturesAsyncReadCompatExt::compat(substream.io);
+                            let bandwidth_sink = self.bandwidth_sink.clone();
                             let substream = substream::Substream::new_tcp(
                                 self.peer,
-                                Substream::new(socket, substream.permit),
+                                Substream::new(socket, bandwidth_sink, substream.permit),
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
@@ -559,13 +569,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let bandwidth_sink = BandwidthSink::new();
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -586,6 +597,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -614,13 +626,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let bandwidth_sink = BandwidthSink::new();
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -647,6 +660,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -674,13 +688,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let bandwidth_sink = BandwidthSink::new();
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -701,6 +716,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -733,13 +749,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let bandwidth_sink = BandwidthSink::new();
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -766,6 +783,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -797,13 +815,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let bandwidth_sink = BandwidthSink::new();
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -830,6 +849,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -860,6 +880,7 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let bandwidth_sink = BandwidthSink::new();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
@@ -867,7 +888,7 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -888,6 +909,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -919,6 +941,7 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let bandwidth_sink = BandwidthSink::new();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
@@ -926,7 +949,7 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -947,6 +970,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -972,13 +996,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let bandwidth_sink = BandwidthSink::new();
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1005,6 +1030,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -1030,13 +1056,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let bandwidth_sink = BandwidthSink::new();
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1063,6 +1090,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -1106,13 +1134,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let bandwidth_sink = BandwidthSink::new();
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1133,6 +1162,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -1173,6 +1203,7 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let bandwidth_sink = BandwidthSink::new();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
@@ -1180,7 +1211,7 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1207,6 +1238,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {
@@ -1245,6 +1277,7 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let keypair = Keypair::generate();
+        let bandwidth_sink = BandwidthSink::new();
         let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let multiaddr = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
@@ -1252,7 +1285,7 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair);
+        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1273,6 +1306,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                bandwidth_sink,
             )
             .await
             {

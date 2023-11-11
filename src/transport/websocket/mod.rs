@@ -239,12 +239,20 @@ impl Transport for WebSocketTransport {
                         let context = self.context.protocol_set();
                         let connection_id = self.context.next_connection_id();
                         let yamux_config = self.config.yamux_config.clone();
+                        let bandwidth_sink = self.context.bandwidth_sink.clone();
 
                         self.pending_connections.push(Box::pin(async move {
                             match tokio::time::timeout(Duration::from_secs(10), async move {
-                                WebSocketConnection::accept_connection(stream, address, connection_id, yamux_config, context)
-                                    .await
-                                    .map_err(|error| WebSocketError::new(error, None))
+                                WebSocketConnection::accept_connection(
+                                    stream,
+                                    address,
+                                    connection_id,
+                                    yamux_config,
+                                    bandwidth_sink,
+                                    context,
+                                )
+                                .await
+                                .map_err(|error| WebSocketError::new(error, None))
                             }).await {
                                 Err(_) => Err(WebSocketError::new(Error::Timeout, None)),
                                 Ok(Err(error)) => Err(error),
@@ -273,12 +281,21 @@ impl Transport for WebSocketTransport {
                         tracing::debug!(target: LOG_TARGET, ?address, ?connection, "open connection");
 
                         // TODO: make timeout configurable
+                        let bandwidth_sink = self.context.bandwidth_sink.clone();
                         self.pending_dials.insert(connection, address.clone());
+
                         self.pending_connections.push(Box::pin(async move {
                             match tokio::time::timeout(Duration::from_secs(10), async move {
-                                WebSocketConnection::open_connection(address, ws_address, connection, yamux_config, context)
-                                    .await
-                                    .map_err(|error| {
+                                WebSocketConnection::open_connection(
+                                    address,
+                                    ws_address,
+                                    connection,
+                                    yamux_config,
+                                    bandwidth_sink,
+                                    context,
+                                )
+                                .await
+                                .map_err(|error| {
                                     tracing::warn!("connection failed: {error:?}");
                                     WebSocketError::new(error, Some(connection))
                                 })

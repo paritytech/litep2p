@@ -641,7 +641,7 @@ mod tests {
     use super::*;
     use crate::{
         codec::ProtocolCodec, crypto::ed25519::Keypair, transport::manager::TransportManager,
-        types::protocol::ProtocolName,
+        types::protocol::ProtocolName, BandwidthSink,
     };
     use tokio::sync::mpsc::channel;
 
@@ -652,7 +652,7 @@ mod tests {
     }
 
     fn _make_kademlia() -> (Kademlia, Context, TransportManager) {
-        let (manager, handle) = TransportManager::new(Keypair::generate());
+        let (manager, handle) = TransportManager::new(Keypair::generate(), BandwidthSink::new());
 
         let peer = PeerId::random();
         let (transport_service, _tx) = TransportService::new(

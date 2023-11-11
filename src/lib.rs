@@ -41,6 +41,7 @@ use crate::{
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
+pub use bandwidth::BandwidthSink;
 pub use peer_id::PeerId;
 pub use substream::Substream;
 
@@ -57,6 +58,7 @@ pub mod protocol;
 pub mod transport;
 pub mod types;
 
+mod bandwidth;
 mod mock;
 mod multistream_select;
 
@@ -107,16 +109,20 @@ pub struct Litep2p {
 
     /// Transport manager.
     transport_manager: TransportManager,
+
+    /// Bandwidth sink.
+    bandwidth_sink: BandwidthSink,
 }
 
 impl Litep2p {
     /// Create new [`Litep2p`].
     pub async fn new(mut config: Litep2pConfig) -> crate::Result<Litep2p> {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(config.keypair.public()));
+        let bandwidth_sink = BandwidthSink::new();
         let mut listen_addresses = vec![];
 
         let (mut transport_manager, transport_handle) =
-            TransportManager::new(config.keypair.clone());
+            TransportManager::new(config.keypair.clone(), bandwidth_sink.clone());
 
         // start notification protocol event loops
         for (protocol, config) in config.notification_protocols.into_iter() {
@@ -322,6 +328,7 @@ impl Litep2p {
 
         Ok(Self {
             local_peer_id,
+            bandwidth_sink,
             listen_addresses,
             transport_manager,
         })
@@ -335,6 +342,11 @@ impl Litep2p {
     /// Get listen address for protocol.
     pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
         self.listen_addresses.iter()
+    }
+
+    /// Get handle to bandwidth sink.
+    pub fn bandwidth_sink(&self) -> BandwidthSink {
+        self.bandwidth_sink.clone()
     }
 
     /// Attempt to connect to peer at `address`.
