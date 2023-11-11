@@ -23,6 +23,7 @@ use crate::{
     PeerId,
 };
 
+use futures::channel;
 use tokio::sync::{
     mpsc::{Receiver, Sender},
     oneshot,
@@ -78,7 +79,7 @@ pub(super) enum InnerRequestResponseEvent {
         request: Vec<u8>,
 
         /// `oneshot::Sender` for response.
-        response_tx: oneshot::Sender<Vec<u8>>,
+        response_tx: oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>,
     },
 
     /// Response received.
@@ -246,7 +247,8 @@ pub struct RequestResponseHandle {
     command_tx: Sender<RequestResponseCommand>,
 
     /// Pending responses.
-    pending_responses: HashMap<RequestId, oneshot::Sender<Vec<u8>>>,
+    pending_responses:
+        HashMap<RequestId, oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>>,
 
     /// Next ephemeral request ID.
     next_request_id: Arc<AtomicUsize>,
@@ -337,7 +339,35 @@ impl RequestResponseHandle {
             Some(response_tx) => {
                 tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
 
-                if let Err(_) = response_tx.send(response) {
+                if let Err(_) = response_tx.send((response, None)) {
+                    tracing::debug!(target: LOG_TARGET, ?request_id, "substream closed");
+                }
+            }
+        }
+    }
+
+    /// Send response to remote peer with feedback.
+    ///
+    /// The feedback system is inherited from Polkadot SDK's `sc-network` and it's used to notify
+    /// the sender the response whether it was sent successfully or not. Once the response has been
+    /// sent over the substream successfully, `()` will be sent over the feedback channel to the
+    /// sender to notify them about it. If the substream has been closed or the substream failed
+    /// while sending the response, the feedback channel will be dropped, notifying the sender
+    /// that sending the response failed.
+    pub fn send_response_with_feedback(
+        &mut self,
+        request_id: RequestId,
+        response: Vec<u8>,
+        feedback: channel::oneshot::Sender<()>,
+    ) {
+        match self.pending_responses.remove(&request_id) {
+            None => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "pending response doens't exist");
+            }
+            Some(response_tx) => {
+                tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
+
+                if let Err(_) = response_tx.send((response, Some(feedback))) {
                     tracing::debug!(target: LOG_TARGET, ?request_id, "substream closed");
                 }
             }

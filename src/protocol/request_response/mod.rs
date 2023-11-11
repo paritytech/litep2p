@@ -32,7 +32,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{channel, future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
@@ -336,6 +336,8 @@ impl RequestResponseProtocol {
                                 ?request_id,
                                 "request canceled",
                             );
+
+                            let _ = substream.close().await;
                             (peer, request_id, Err(RequestResponseError::Canceled))
                         }
                         _ = sleep(request_timeout) => {
@@ -346,6 +348,8 @@ impl RequestResponseProtocol {
                                 ?request_id,
                                 "request timed out",
                             );
+
+                            let _ = substream.close().await;
                             (peer, request_id, Err(RequestResponseError::Timeout))
                         }
                         event = substream.next() => match event {
@@ -412,7 +416,10 @@ impl RequestResponseProtocol {
         //
         // the input is either a response (succes) or rejection (failure) which is communicated
         // by sending the response over the `oneshot::Sender` or closing it, respectively.
-        let (response_tx, rx): (oneshot::Sender<Vec<u8>>, _) = oneshot::channel();
+        let (response_tx, rx): (
+            oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>,
+            _,
+        ) = oneshot::channel();
 
         self.pending_outbound_responses.push(Box::pin(async move {
             tokio::select! {
@@ -421,9 +428,14 @@ impl RequestResponseProtocol {
                         tracing::debug!(target: LOG_TARGET, ?peer, %protocol, ?request_id, "request rejected");
                         let _ = substream.close().await;
                     }
-                    Ok(response) => {
+                    Ok((response, feedback)) => {
                         tracing::trace!(target: LOG_TARGET, ?peer, %protocol, ?request_id, "send response");
-                        let _ = substream.send_framed(response.into()).await;
+
+                        if let Ok(_) = substream.send_framed(response.into()).await {
+                            if let Some(feedback) = feedback {
+                                let _ = feedback.send(());
+                            }
+                        }
                     }
                 },
                 event = substream.next() => {

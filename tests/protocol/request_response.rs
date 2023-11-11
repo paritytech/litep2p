@@ -34,7 +34,7 @@ use litep2p::{
     Litep2p, Litep2pEvent,
 };
 
-use futures::StreamExt;
+use futures::{channel, StreamExt};
 use tokio::time::sleep;
 
 use std::{
@@ -2093,4 +2093,248 @@ async fn excess_inbound_request_rejected(transport1: Transport, transport2: Tran
             error: RequestResponseError::Rejected
         }
     );
+}
+
+#[tokio::test]
+async fn feedback_received_for_succesful_response_tcp() {
+    feedback_received_for_succesful_response(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn feedback_received_for_succesful_response_quic() {
+    feedback_received_for_succesful_response(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn feedback_received_for_succesful_response_websocket() {
+    feedback_received_for_succesful_response(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn feedback_received_for_succesful_response(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer1,
+            fallback: None,
+            request_id,
+            request: vec![1, 3, 3, 7]
+        },
+    );
+
+    // send response with feedback and verify that the response was sent successfully
+    let (feedback_tx, feedback_rx) = channel::oneshot::channel();
+    handle2.send_response_with_feedback(request_id, vec![1, 3, 3, 8], feedback_tx);
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::ResponseReceived {
+            peer: peer2,
+            request_id,
+            response: vec![1, 3, 3, 8],
+        }
+    );
+    assert!(feedback_rx.await.is_ok());
+}
+
+#[tokio::test]
+async fn feedback_not_received_for_failed_response_tcp() {
+    feedback_not_received_for_failed_response(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn feedback_not_received_for_failed_response_quic() {
+    feedback_not_received_for_failed_response(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn feedback_not_received_for_failed_response_websocket() {
+    feedback_not_received_for_failed_response(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn feedback_not_received_for_failed_response(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer1,
+            fallback: None,
+            request_id,
+            request: vec![1, 3, 3, 7]
+        },
+    );
+
+    // cancel the request and give a moment to register
+    handle1.cancel_request(request_id).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    // send response with feedback and verify that sending the response fails
+    let (feedback_tx, feedback_rx) = channel::oneshot::channel();
+    handle2.send_response_with_feedback(request_id, vec![1, 3, 3, 8], feedback_tx);
+
+    assert!(feedback_rx.await.is_err());
 }
