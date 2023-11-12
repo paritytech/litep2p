@@ -315,26 +315,14 @@ impl Identify {
                 },
                 _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
-                    Some(Ok((peer, supported_protocols, _observed_address))) => {
-                        match self.peers.get(&peer) {
-                            Some(observed_address) => {
-                                let _ = self.tx
-                                    .send(IdentifyEvent::PeerIdentified {
-                                        peer,
-                                        supported_protocols,
-                                        observed_address: observed_address.clone(),
-                                    })
-                                    .await;
-                            }
-                            None => {
-                                tracing::warn!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    "read identify payload but peer doesn't exist",
-                                );
-                                debug_assert!(false);
-                            }
-                        }
+                    Some(Ok((peer, supported_protocols, observed_address))) => {
+                        let _ = self.tx
+                            .send(IdentifyEvent::PeerIdentified {
+                                peer,
+                                supported_protocols,
+                                observed_address: observed_address.map_or(Multiaddr::empty(), |address| address),
+                            })
+                            .await;
                     }
                     Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
                     None => return,
