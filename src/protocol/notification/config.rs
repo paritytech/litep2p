@@ -102,6 +102,14 @@ impl Config {
     pub(crate) fn protocol_name(&self) -> &ProtocolName {
         &self.protocol_name
     }
+
+    /// Set handshake for the protocol.
+    ///
+    /// This function is used to work around an issue in Polkadot SDK and users
+    /// should not depend on its continued existence.
+    pub fn set_handshake(&mut self, handshake: Vec<u8>) {
+        self.handshake = handshake;
+    }
 }
 
 /// Notification configuration builder.
