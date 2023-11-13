@@ -715,6 +715,7 @@ where
     }
 
     /// Get mutable reference to stored substream.
+    #[cfg(test)]
     pub fn get_mut(&mut self, key: &K) -> Option<&mut S> {
         self.substreams.get_mut(key)
     }
