@@ -44,7 +44,10 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    time::Duration,
+};
 
 use self::types::KademliaPeer;
 
@@ -62,6 +65,9 @@ const _REPLICATION_FACTOR: usize = 20;
 
 /// Parallelism factor, `α`.
 const PARALLELISM_FACTOR: usize = 3;
+
+/// Read timeout for inbound messages.
+const READ_TIMEOUT: Duration = Duration::from_secs(15);
 
 mod bucket;
 mod config;
@@ -112,6 +118,7 @@ impl PeerContext {
 }
 
 /// Query result.
+#[derive(Debug)]
 enum QueryResult {
     /// Message was sent to remote peer successfully.
     SendSuccess {
@@ -127,6 +134,9 @@ enum QueryResult {
         /// Read message.
         message: BytesMut,
     },
+
+    /// Timeout while reading a response from the substream.
+    Timeout,
 
     /// Substream was closed wile reading/writing message to remote peer.
     SubstreamClosed,
@@ -321,18 +331,24 @@ impl Kademlia {
                                 };
                             }
 
-                            match substream.next().await {
-                                None | Some(Err(_)) =>
+                            match tokio::time::timeout(READ_TIMEOUT, substream.next()).await {
+                                Err(_) =>
                                     return QueryContext {
                                         peer,
                                         query_id: Some(query),
-                                        result: QueryResult::SubstreamClosed,
+                                        result: QueryResult::Timeout,
                                     },
-                                Some(Ok(message)) =>
+                                Ok(Some(Ok(message))) =>
                                     return QueryContext {
                                         peer,
                                         query_id: Some(query),
                                         result: QueryResult::ReadSuccess { substream, message },
+                                    },
+                                Ok(None) | Ok(Some(Err(_))) =>
+                                    return QueryContext {
+                                        peer,
+                                        query_id: Some(query),
+                                        result: QueryResult::SubstreamClosed,
                                     },
                             }
                         }));
@@ -705,7 +721,15 @@ impl Kademlia {
                                 }
                             }
                         }
-                        QueryResult::SubstreamClosed => {
+                        QueryResult::SubstreamClosed | QueryResult::Timeout => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?query_id,
+                                ?result,
+                                "failed to read message from substream",
+                            );
+
                             if let Some(query) = query_id {
                                 self.engine.register_response_failure(query, peer);
                             }
