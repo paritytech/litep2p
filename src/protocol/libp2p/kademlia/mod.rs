@@ -255,7 +255,7 @@ impl Kademlia {
 
         match std::mem::replace(pending_action, None) {
             None => {
-                self.substreams.insert(peer, substream);
+                let _ = substream.close().await;
                 return Ok(());
             }
             Some(PeerAction::SendFindNode(query)) => {
