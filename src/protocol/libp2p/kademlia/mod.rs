@@ -25,6 +25,7 @@ use crate::{
     protocol::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
+            executor::{QueryContext, QueryExecutor, QueryResult},
             handle::KademliaCommand,
             message::KademliaMessage,
             query::{QueryAction, QueryEngine, QueryId},
@@ -40,14 +41,11 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    time::Duration,
-};
+use std::collections::{hash_map::Entry, HashMap};
 
 use self::types::KademliaPeer;
 
@@ -63,11 +61,9 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
 /// Parallelism factor, `α`.
 const PARALLELISM_FACTOR: usize = 3;
 
-/// Read timeout for inbound messages.
-const READ_TIMEOUT: Duration = Duration::from_secs(15);
-
 mod bucket;
 mod config;
+mod executor;
 mod handle;
 mod message;
 mod query;
@@ -114,43 +110,6 @@ impl PeerContext {
     }
 }
 
-/// Query result.
-#[derive(Debug)]
-enum QueryResult {
-    /// Message was sent to remote peer successfully.
-    SendSuccess {
-        /// Substream.
-        substream: Substream,
-    },
-
-    /// Message was read from the remote peer successfully.
-    ReadSuccess {
-        /// Substream.
-        substream: Substream,
-
-        /// Read message.
-        message: BytesMut,
-    },
-
-    /// Timeout while reading a response from the substream.
-    Timeout,
-
-    /// Substream was closed wile reading/writing message to remote peer.
-    SubstreamClosed,
-}
-
-/// Query result.
-struct QueryContext {
-    /// Peer ID.
-    peer: PeerId,
-
-    /// Query ID.
-    query_id: Option<QueryId>,
-
-    /// Query result.
-    result: QueryResult,
-}
-
 /// Main Kademlia object.
 pub(crate) struct Kademlia {
     /// Transport service.
@@ -189,8 +148,8 @@ pub(crate) struct Kademlia {
     /// Query engine.
     engine: QueryEngine,
 
-    /// Pending queries.
-    pending_queries: FuturesUnordered<BoxFuture<'static, QueryContext>>,
+    /// Query executor.
+    executor: QueryExecutor,
 }
 
 impl Kademlia {
@@ -213,9 +172,9 @@ impl Kademlia {
             event_tx: config.event_tx,
             _local_key: local_key,
             pending_dials: HashMap::new(),
+            executor: QueryExecutor::new(),
             pending_substreams: HashMap::new(),
             update_mode: config.update_mode,
-            pending_queries: FuturesUnordered::new(),
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(config.replication_factor, PARALLELISM_FACTOR),
         }
@@ -286,13 +245,13 @@ impl Kademlia {
         &mut self,
         peer: PeerId,
         substream_id: SubstreamId,
-        mut substream: Substream,
+        substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
             ?substream_id,
-            "outbound substream opened"
+            "outbound substream opened",
         );
         let _ = self.pending_substreams.remove(&substream_id);
 
@@ -322,39 +281,14 @@ impl Kademlia {
                         peer,
                         message,
                     }) => {
-                        self.pending_queries.push(Box::pin(async move {
-                            if let Err(_) = substream.send_framed(message).await {
-                                let _ = substream.close().await;
-                                return QueryContext {
-                                    peer,
-                                    query_id: Some(query),
-                                    result: QueryResult::SubstreamClosed,
-                                };
-                            }
-
-                            match tokio::time::timeout(READ_TIMEOUT, substream.next()).await {
-                                Err(_) =>
-                                    return QueryContext {
-                                        peer,
-                                        query_id: Some(query),
-                                        result: QueryResult::Timeout,
-                                    },
-                                Ok(Some(Ok(message))) =>
-                                    return QueryContext {
-                                        peer,
-                                        query_id: Some(query),
-                                        result: QueryResult::ReadSuccess { substream, message },
-                                    },
-                                Ok(None) | Ok(Some(Err(_))) =>
-                                    return QueryContext {
-                                        peer,
-                                        query_id: Some(query),
-                                        result: QueryResult::SubstreamClosed,
-                                    },
-                            }
-                        }));
-
                         tracing::trace!(target: LOG_TARGET, ?peer, ?query, "start sending message to peer");
+
+                        self.executor.send_request_read_response(
+                            peer,
+                            Some(query),
+                            message,
+                            substream,
+                        );
                     }
                     // query finished while the substream was being opened
                     None => {
@@ -368,24 +302,9 @@ impl Kademlia {
                 }
             }
             Some(PeerAction::SendPutValue(record)) => {
-                let message = KademliaMessage::put_value(record);
+                tracing::trace!(target: LOG_TARGET, ?peer, "send `PUT_VALUE` response");
 
-                self.pending_queries.push(Box::pin(async move {
-                    match substream.send_framed(message).await {
-                        Ok(_) =>
-                            return QueryContext {
-                                peer,
-                                query_id: None,
-                                result: QueryResult::SendSuccess { substream },
-                            },
-                        Err(_) =>
-                            return QueryContext {
-                                peer,
-                                query_id: None,
-                                result: QueryResult::SubstreamClosed,
-                            },
-                    }
-                }));
+                self.executor.send_message(peer, KademliaMessage::put_value(record), substream);
             }
         }
 
@@ -393,42 +312,10 @@ impl Kademlia {
     }
 
     /// Remote opened a substream to local node.
-    async fn on_inbound_substream(
-        &mut self,
-        peer: PeerId,
-        mut substream: Substream,
-    ) -> crate::Result<()> {
+    async fn on_inbound_substream(&mut self, peer: PeerId, substream: Substream) {
         tracing::trace!(target: LOG_TARGET, ?peer, "inbound substream opened");
 
-        self.pending_queries.push(Box::pin(async move {
-            match tokio::time::timeout(READ_TIMEOUT, substream.next()).await {
-                Err(_) => {
-                    let _ = substream.close().await;
-                    return QueryContext {
-                        peer,
-                        query_id: None,
-                        result: QueryResult::Timeout,
-                    };
-                }
-                Ok(Some(Ok(message))) =>
-                    return QueryContext {
-                        peer,
-                        query_id: None,
-                        result: QueryResult::ReadSuccess { substream, message },
-                    },
-                Ok(None) | Ok(Some(Err(_))) => {
-                    let _ = substream.close().await;
-
-                    return QueryContext {
-                        peer,
-                        query_id: None,
-                        result: QueryResult::SubstreamClosed,
-                    };
-                }
-            }
-        }));
-
-        Ok(())
+        self.executor.read_message(peer, None, substream);
     }
 
     /// Update routing table if the routing table update mode was set to automatic.
@@ -466,7 +353,7 @@ impl Kademlia {
         peer: PeerId,
         query_id: Option<QueryId>,
         message: BytesMut,
-        mut substream: Substream,
+        substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, ?query_id, "handle message from peer");
 
@@ -482,23 +369,7 @@ impl Kademlia {
                 let message = KademliaMessage::find_node_response(
                     self.routing_table.closest(Key::from(target), self.replication_factor),
                 );
-
-                self.pending_queries.push(Box::pin(async move {
-                    match substream.send_framed(message.into()).await {
-                        Ok(_) =>
-                            return QueryContext {
-                                peer,
-                                query_id: None,
-                                result: QueryResult::SendSuccess { substream },
-                            },
-                        Err(_) =>
-                            return QueryContext {
-                                peer,
-                                query_id: None,
-                                result: QueryResult::SubstreamClosed,
-                            },
-                    }
-                }));
+                self.executor.send_message(peer, message.into(), substream);
             }
             ref message @ KademliaMessage::FindNodeResponse { ref peers } => {
                 tracing::trace!(
@@ -722,16 +593,7 @@ impl Kademlia {
                     }
                     Some(TransportEvent::SubstreamOpened { peer, direction, substream, .. }) => {
                         match direction {
-                            Direction::Inbound => {
-                                if let Err(error) = self.on_inbound_substream(peer, substream).await {
-                                    tracing::debug!(
-                                        target: LOG_TARGET,
-                                        ?peer,
-                                        ?error,
-                                        "failed to handle inbound substream",
-                                    );
-                                }
-                            }
+                            Direction::Inbound => self.on_inbound_substream(peer, substream).await,
                             Direction::Outbound(substream_id) => {
                                 if let Err(error) = self.on_outbound_substream(peer, substream_id, substream).await {
                                     tracing::debug!(
@@ -751,7 +613,7 @@ impl Kademlia {
                     Some(TransportEvent::DialFailure { peer, address }) => self.on_dial_failure(peer, address),
                     None => return Err(Error::EssentialTaskClosed),
                 },
-                context = self.pending_queries.next(), if !self.pending_queries.is_empty() => {
+                context = self.executor.next() => {
                     let QueryContext { peer, query_id, result } = context.unwrap();
 
                     match result {
