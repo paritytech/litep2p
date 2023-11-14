@@ -123,8 +123,7 @@ impl GetRecordContext {
         peers: Vec<KademliaPeer>,
     ) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "received response from peer but didn't expect it");
-            debug_assert!(false);
+            tracing::trace!(target: LOG_TARGET, ?peer, "received response from peer but didn't expect it");
             return;
         };
 
@@ -183,8 +182,14 @@ impl GetRecordContext {
                 (self.record_count + self.found_records.len() < num_responses.into()),
         };
 
+        // if enough replicas for the record have been received (defined by the quorum size),
+        /// mark the query as succeeded
+        if !continue_search {
+            return Some(QueryAction::QuerySucceeded { query: self.query });
+        }
+
         // if the search must continue, try to schedule next outbound message if possible
-        if continue_search && (!self.pending.is_empty() || !self.candidates.is_empty()) {
+        if !self.pending.is_empty() || !self.candidates.is_empty() {
             if self.pending.len() == self.parallelism_factor || self.candidates.is_empty() {
                 return None;
             }
@@ -199,6 +204,7 @@ impl GetRecordContext {
             num_candidates = ?self.candidates.len(),
             num_records = ?(self.record_count + self.found_records.len()),
             quorum = ?self.quorum,
+            ?continue_search,
             "unreachable condition for `GET_VALUE` search"
         );
 
