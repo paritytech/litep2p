@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    error::Error,
     mock::substream::{DummySubstream, MockSubstream},
     protocol::{
         self,
@@ -637,4 +638,70 @@ async fn close_already_closed_connection() {
         }) => {}
         state => panic!("invalid state: {state:?}"),
     }
+}
+
+/// Notification state was not reset correctly if the outbound substream failed to open after
+/// inbound substream had been negotiated, causing `NotificationProtocol` to report open failure
+/// twice, once when the failure occurred and again when the connection was closed.
+#[tokio::test]
+async fn open_failure_reported_once() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, mut handle, _, mut tx) = make_notification_protocol();
+    let (peer, _) = register_peer(&mut notif, &mut tx).await;
+
+    // move `peer` to state where the inbound substream has been negotiated
+    // and the local node has initiated an outbound substream
+    notif.peers.insert(
+        peer,
+        PeerContext {
+            state: PeerState::Validating {
+                protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
+                direction: Direction::Inbound,
+                outbound: OutboundState::OutboundInitiated {
+                    substream: SubstreamId::from(1337usize),
+                },
+                inbound: InboundState::Open {
+                    inbound: Substream::new_mock(peer, Box::new(DummySubstream::new())),
+                },
+            },
+        },
+    );
+    notif.pending_outbound.insert(SubstreamId::from(1337usize), peer);
+
+    notif
+        .on_substream_open_failure(SubstreamId::from(1337usize), Error::Unknown)
+        .await;
+
+    match handle.next().await {
+        Some(NotificationEvent::NotificationStreamOpenFailure {
+            peer: failed_peer,
+            error,
+        }) => {
+            assert_eq!(failed_peer, peer);
+            assert_eq!(error, NotificationError::Rejected);
+        }
+        _ => panic!("invalid event received"),
+    }
+
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state: PeerState::Closed { pending_open },
+        }) => {
+            assert_eq!(pending_open, &Some(SubstreamId::from(1337usize)));
+        }
+        state => panic!("invalid state for peer: {state:?}"),
+    }
+
+    // connection to `peer` is closed
+    notif.on_connection_closed(peer).await.unwrap();
+
+    futures::future::poll_fn(|cx| match handle.poll_next_unpin(cx) {
+        Poll::Pending => Poll::Ready(()),
+        result => panic!("didn't expect event from channel, got {result:?}"),
+    })
+    .await;
 }

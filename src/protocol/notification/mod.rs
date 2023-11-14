@@ -620,6 +620,7 @@ impl NotificationProtocol {
         match &mut context.state {
             PeerState::OutboundInitiated { .. } => {
                 context.state = PeerState::Closed { pending_open: None };
+
                 self.event_handle
                     .report_notification_stream_open_failure(peer, NotificationError::Rejected)
                     .await;
@@ -630,11 +631,31 @@ impl NotificationProtocol {
                 self.negotiation.remove_inbound(&peer);
                 self.negotiation.remove_outbound(&peer);
 
-                if !std::matches!(outbound, OutboundState::Closed) {
-                    self.event_handle
-                        .report_notification_stream_open_failure(peer, NotificationError::Rejected)
-                        .await;
-                }
+                let pending_open = match outbound {
+                    OutboundState::Closed => None,
+                    OutboundState::OutboundInitiated { substream } => {
+                        self.event_handle
+                            .report_notification_stream_open_failure(
+                                peer,
+                                NotificationError::Rejected,
+                            )
+                            .await;
+
+                        Some(*substream)
+                    }
+                    OutboundState::Negotiating | OutboundState::Open { .. } => {
+                        self.event_handle
+                            .report_notification_stream_open_failure(
+                                peer,
+                                NotificationError::Rejected,
+                            )
+                            .await;
+
+                        None
+                    }
+                };
+
+                context.state = PeerState::Closed { pending_open };
             }
             PeerState::Closed { pending_open } => {
                 tracing::debug!(
