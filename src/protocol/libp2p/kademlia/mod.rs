@@ -60,9 +60,6 @@ pub use {
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
 
-/// Kademlia replication factor, `k`.
-const _REPLICATION_FACTOR: usize = 20;
-
 /// Parallelism factor, `α`.
 const PARALLELISM_FACTOR: usize = 3;
 
@@ -174,6 +171,9 @@ pub(crate) struct Kademlia {
     /// Routing table.
     routing_table: RoutingTable,
 
+    /// Replication factor.
+    replication_factor: usize,
+
     /// Record store.
     store: MemoryStore,
 
@@ -216,6 +216,7 @@ impl Kademlia {
             pending_substreams: HashMap::new(),
             update_mode: config.update_mode,
             pending_queries: FuturesUnordered::new(),
+            replication_factor: config.replication_factor,
             engine: QueryEngine::new(config.replication_factor, PARALLELISM_FACTOR),
         }
     }
@@ -451,7 +452,7 @@ impl Kademlia {
                 );
 
                 let message = KademliaMessage::find_node_response(
-                    self.routing_table.closest(Key::from(target), 20),
+                    self.routing_table.closest(Key::from(target), self.replication_factor),
                 );
 
                 self.pending_queries.push(Box::pin(async move {
@@ -734,7 +735,6 @@ impl Kademlia {
                                 self.engine.register_response_failure(query, peer);
                             }
 
-                            tracing::trace!(target: LOG_TARGET, ?peer, ?query_id, "substream closed while sending/receiving data");
                             self.disconnect_peer(peer, query_id).await;
                         }
                     }
@@ -745,7 +745,7 @@ impl Kademlia {
                             tracing::debug!(target: LOG_TARGET, ?peer, "starting `FIND_NODE` query");
                             let _ = self.engine.start_find_node(
                                 peer,
-                                self.routing_table.closest(Key::from(peer), 20).into()
+                                self.routing_table.closest(Key::from(peer), self.replication_factor).into()
                             );
                         }
                         Some(KademliaCommand::PutRecord { record }) => {
@@ -756,7 +756,7 @@ impl Kademlia {
 
                             let _ = self.engine.start_put_record(
                                 record,
-                                self.routing_table.closest(key, 20).into(),
+                                self.routing_table.closest(key, self.replication_factor).into(),
                             );
                         }
                         Some(KademliaCommand::GetRecord { key, quorum }) => {
@@ -772,7 +772,7 @@ impl Kademlia {
                                 (record, _) => {
                                     let _ = self.engine.start_get_record(
                                         key.clone(),
-                                        self.routing_table.closest(Key::new(key.clone()), 20).into(),
+                                        self.routing_table.closest(Key::new(key.clone()), self.replication_factor).into(),
                                         quorum,
                                         if record.is_some() { 1 } else { 0 },
                                     );
