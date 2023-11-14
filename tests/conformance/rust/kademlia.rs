@@ -168,9 +168,10 @@ async fn find_node() {
 
     loop {
         match kad_handle.next().await {
-            Some(KademliaEvent::FindNodeResult {
+            Some(KademliaEvent::FindNodeSuccess {
                 target: query_target,
                 peers,
+                ..
             }) => {
                 assert_eq!(target, query_target);
                 assert!(!peers.is_empty());
@@ -401,7 +402,7 @@ async fn get_record() {
 
     loop {
         match kad_handle.next().await.unwrap() {
-            KademliaEvent::GetRecordResult { .. } => break,
+            KademliaEvent::GetRecordSuccess { .. } => break,
             KademliaEvent::RoutingTableUpdate { .. } => {}
             _ => panic!("invalid event received"),
         }

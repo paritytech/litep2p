@@ -109,6 +109,9 @@ pub enum QueryAction {
 
     /// `GET_VALUE` query succeeded.
     GetRecordQueryDone {
+        /// Query ID.
+        query_id: QueryId,
+
         /// Found record.
         record: Record,
     },
@@ -154,7 +157,7 @@ impl QueryEngine {
     }
 
     /// Allocate next query ID.
-    fn next_query_id(&mut self) -> QueryId {
+    pub fn next_query_id(&mut self) -> QueryId {
         let query_id = self.next_query_id;
         self.next_query_id += 1;
 
@@ -369,6 +372,7 @@ impl QueryEngine {
                 peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
+                query_id: context.query,
                 record: context.found_record(),
             },
         }

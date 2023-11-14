@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{Record, RecordKey},
+    protocol::libp2p::kademlia::{QueryId, Record, RecordKey},
     PeerId,
 };
 
@@ -97,7 +97,10 @@ pub(crate) enum KademliaCommand {
 #[derive(Debug, Clone)]
 pub enum KademliaEvent {
     /// Result for the issued `FIND_NODE` query.
-    FindNodeResult {
+    FindNodeSuccess {
+        /// Query ID.
+        query_id: QueryId,
+
         /// Target of the query
         target: PeerId,
 
@@ -118,10 +121,25 @@ pub enum KademliaEvent {
         peers: Vec<PeerId>,
     },
 
-    /// Get the result of a `GET_VALUE` query.
-    GetRecordResult {
+    /// `GET_VALUE` query succeeded.
+    GetRecordSuccess {
+        /// Query ID.
+        query_id: QueryId,
+
         /// Found record.
         record: Record,
+    },
+
+    /// `PUT_VALUE` query succeeded.
+    PutValueSucess {
+        /// Query ID.
+        query_id: QueryId,
+    },
+
+    /// Query failed.
+    QueryFailed {
+        /// Query ID.
+        query_id: QueryId,
     },
 }
 

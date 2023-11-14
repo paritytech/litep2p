@@ -519,8 +519,9 @@ impl Kademlia {
 
                 let _ = self
                     .event_tx
-                    .send(KademliaEvent::FindNodeResult {
+                    .send(KademliaEvent::FindNodeSuccess {
                         target,
+                        query_id: query,
                         peers: peers.into_iter().map(|info| (info.peer, info.addresses)).collect(),
                     })
                     .await;
@@ -554,10 +555,11 @@ impl Kademlia {
 
                 Ok(())
             }
-            QueryAction::GetRecordQueryDone { record } => {
+            QueryAction::GetRecordQueryDone { query_id, record } => {
                 self.store.put(record.clone());
 
-                let _ = self.event_tx.send(KademliaEvent::GetRecordResult { record }).await;
+                let _ =
+                    self.event_tx.send(KademliaEvent::GetRecordSuccess { query_id, record }).await;
                 Ok(())
             }
             QueryAction::QuerySucceeded { .. } => unreachable!(),
@@ -667,9 +669,12 @@ impl Kademlia {
 
                             match (self.store.get(&key), quorum) {
                                 (Some(record), Quorum::One) => {
+                                    // since the record was found from the store, allocate a dummy query ID
+                                    let query_id = self.engine.next_query_id();
+
                                     let _ = self
                                         .event_tx
-                                        .send(KademliaEvent::GetRecordResult { record: record.clone() })
+                                        .send(KademliaEvent::GetRecordSuccess { query_id, record: record.clone() })
                                         .await;
                                 }
                                 (record, _) => {
