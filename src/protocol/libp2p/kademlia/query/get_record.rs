@@ -123,8 +123,7 @@ impl GetRecordContext {
         peers: Vec<KademliaPeer>,
     ) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "received response from peer but didn't expect it");
-            debug_assert!(false);
+            tracing::trace!(target: LOG_TARGET, ?peer, "received response from peer but didn't expect it");
             return;
         };
 
