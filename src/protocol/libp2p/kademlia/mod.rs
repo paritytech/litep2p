@@ -562,12 +562,13 @@ impl Kademlia {
                     self.event_tx.send(KademliaEvent::GetRecordSuccess { query_id, record }).await;
                 Ok(())
             }
-            QueryAction::QuerySucceeded { .. } => unreachable!(),
             QueryAction::QueryFailed { query } => {
-                tracing::error!(target: LOG_TARGET, ?query, "QUERY FAILED");
+                tracing::debug!(target: LOG_TARGET, ?query, "query failed");
 
+                let _ = self.event_tx.send(KademliaEvent::QueryFailed { query_id: query }).await;
                 Ok(())
             }
+            QueryAction::QuerySucceeded { .. } => unreachable!(),
         }
     }
 
