@@ -28,7 +28,7 @@ use crate::{
             executor::{QueryContext, QueryExecutor, QueryResult},
             handle::KademliaCommand,
             message::KademliaMessage,
-            query::{QueryAction, QueryEngine, QueryId},
+            query::{QueryAction, QueryEngine},
             routing_table::RoutingTable,
             store::MemoryStore,
             types::{ConnectionType, KademliaPeer, Key},
@@ -50,6 +50,7 @@ use std::collections::{hash_map::Entry, HashMap};
 pub use {
     config::{Config, ConfigBuilder},
     handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode},
+    query::QueryId,
     record::{Key as RecordKey, Record},
 };
 
