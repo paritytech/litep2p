@@ -20,15 +20,14 @@
 
 //! Behavior defining how futures running in the background should be executed.
 
-use std::{fmt::Debug, future::Future, pin::Pin};
+use std::{future::Future, pin::Pin};
 
 /// Trait which defines the interface the executor must implement.
-pub trait Executor: Debug + Send + Sync {
+pub trait Executor: Send + Sync {
     fn run(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
 }
 
 /// Default executor, defaults to calling `tokio::spawn()`.
-#[derive(Debug)]
 pub(crate) struct DefaultExecutor;
 
 impl Executor for DefaultExecutor {

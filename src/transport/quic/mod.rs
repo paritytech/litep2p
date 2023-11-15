@@ -64,7 +64,6 @@ struct NegotiatedConnection {
 }
 
 /// QUIC transport object.
-#[derive(Debug)]
 pub(crate) struct QuicTransport {
     /// QUIC server.
     server: Endpoint,

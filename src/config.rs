@@ -262,7 +262,6 @@ impl Litep2pConfigBuilder {
 }
 
 /// Configuration for [`Litep2p`](`crate::Litep2p`).
-#[derive(Debug)]
 pub struct Litep2pConfig {
     // TCP transport configuration.
     pub(crate) tcp: Option<TcpTransportConfig>,

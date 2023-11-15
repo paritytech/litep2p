@@ -227,7 +227,6 @@ impl TransportManagerHandle {
 }
 
 // TODO: add getters for these
-#[derive(Debug)]
 pub struct TransportHandle {
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,

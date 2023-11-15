@@ -72,7 +72,6 @@ impl TcpError {
 }
 
 /// TCP transport.
-#[derive(Debug)]
 pub(crate) struct TcpTransport {
     /// Transport context.
     context: TransportHandle,
