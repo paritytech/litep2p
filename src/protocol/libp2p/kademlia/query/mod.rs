@@ -169,7 +169,7 @@ impl QueryEngine {
         &mut self,
         target: PeerId,
         candidates: VecDeque<KademliaPeer>,
-    ) -> crate::Result<QueryId> {
+    ) -> QueryId {
         let query_id = self.next_query_id();
 
         tracing::debug!(
@@ -193,7 +193,7 @@ impl QueryEngine {
             },
         );
 
-        Ok(query_id)
+        query_id
     }
 
     /// Start `PUT_VALUE` query.
@@ -201,7 +201,7 @@ impl QueryEngine {
         &mut self,
         record: Record,
         candidates: VecDeque<KademliaPeer>,
-    ) -> crate::Result<QueryId> {
+    ) -> QueryId {
         let query_id = self.next_query_id();
 
         tracing::debug!(
@@ -228,7 +228,7 @@ impl QueryEngine {
             },
         );
 
-        Ok(query_id)
+        query_id
     }
 
     /// Start `GET_VALUE` query.
@@ -238,7 +238,7 @@ impl QueryEngine {
         candidates: VecDeque<KademliaPeer>,
         quorum: Quorum,
         count: usize,
-    ) -> crate::Result<QueryId> {
+    ) -> QueryId {
         let query_id = self.next_query_id();
 
         tracing::debug!(
@@ -266,7 +266,7 @@ impl QueryEngine {
             },
         );
 
-        Ok(query_id)
+        query_id
     }
 
     /// Register response failure from a queried peer.
@@ -441,18 +441,16 @@ mod tests {
         let target_peer = PeerId::random();
         let _target_key = Key::from(target_peer);
 
-        let query = engine
-            .start_find_node(
-                target_peer,
-                vec![
-                    KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                    KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                    KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                    KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
-                ]
-                .into(),
-            )
-            .unwrap();
+        let query = engine.start_find_node(
+            target_peer,
+            vec![
+                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
+            ]
+            .into(),
+        );
 
         for _ in 0..4 {
             if let Some(QueryAction::SendMessage { query, peer, .. }) = engine.next_action() {

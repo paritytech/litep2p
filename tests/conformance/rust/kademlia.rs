@@ -164,7 +164,7 @@ async fn find_node() {
         .await;
 
     let target = litep2p::PeerId::random();
-    kad_handle.find_node(target).await;
+    let _ = kad_handle.find_node(target).await.unwrap();
 
     loop {
         match kad_handle.next().await {
@@ -283,7 +283,7 @@ async fn put_record() {
     let record_key = RecordKey::new(&vec![1, 2, 3, 4]);
     let record = Record::new(record_key, vec![1, 3, 3, 7, 1, 3, 3, 8]);
 
-    kad_handle.put_record(record).await;
+    let _ = kad_handle.put_record(record).await.unwrap();
 
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -398,7 +398,10 @@ async fn get_record() {
         )
         .await;
 
-    kad_handle.get_record(RecordKey::new(&vec![1, 2, 3, 4]), Quorum::All).await;
+    let _ = kad_handle
+        .get_record(RecordKey::new(&vec![1, 2, 3, 4]), Quorum::All)
+        .await
+        .unwrap();
 
     loop {
         match kad_handle.next().await.unwrap() {

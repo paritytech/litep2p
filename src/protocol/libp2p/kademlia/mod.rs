@@ -645,32 +645,35 @@ impl Kademlia {
                 }
                 command = self.cmd_rx.recv() => {
                     match command {
-                        Some(KademliaCommand::FindNode { peer }) => {
+                        Some(KademliaCommand::FindNode { peer, tx }) => {
                             tracing::debug!(target: LOG_TARGET, ?peer, "starting `FIND_NODE` query");
 
-                            let _ = self.engine.start_find_node(
+                            let query_id = self.engine.start_find_node(
                                 peer,
                                 self.routing_table.closest(Key::from(peer), self.replication_factor).into()
                             );
+                            let _ = tx.send(query_id);
                         }
-                        Some(KademliaCommand::PutRecord { record }) => {
+                        Some(KademliaCommand::PutRecord { record, tx }) => {
                             tracing::debug!(target: LOG_TARGET, key = ?record.key, "store record to DHT");
 
                             self.store.put(record.clone());
                             let key = Key::new(record.key.clone());
 
-                            let _ = self.engine.start_put_record(
+                            let query_id = self.engine.start_put_record(
                                 record,
                                 self.routing_table.closest(key, self.replication_factor).into(),
                             );
+                            let _ = tx.send(query_id);
                         }
-                        Some(KademliaCommand::GetRecord { key, quorum }) => {
+                        Some(KademliaCommand::GetRecord { key, quorum, tx }) => {
                             tracing::debug!(target: LOG_TARGET, ?key, "get record from DHT");
 
                             match (self.store.get(&key), quorum) {
                                 (Some(record), Quorum::One) => {
                                     // since the record was found from the store, allocate a dummy query ID
                                     let query_id = self.engine.next_query_id();
+                                    let _ = tx.send(query_id);
 
                                     let _ = self
                                         .event_tx
@@ -678,12 +681,13 @@ impl Kademlia {
                                         .await;
                                 }
                                 (record, _) => {
-                                    let _ = self.engine.start_get_record(
+                                    let query_id = self.engine.start_get_record(
                                         key.clone(),
                                         self.routing_table.closest(Key::new(key.clone()), self.replication_factor).into(),
                                         quorum,
                                         if record.is_some() { 1 } else { 0 },
                                     );
+                                    let _ = tx.send(query_id);
                                 }
                             }
 
