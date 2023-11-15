@@ -132,9 +132,6 @@ pub enum QueryAction {
 
 /// Kademlia query engine.
 pub struct QueryEngine {
-    /// Next query ID.
-    next_query_id: usize,
-
     /// Replication factor.
     replication_factor: usize,
 
@@ -151,27 +148,17 @@ impl QueryEngine {
         Self {
             replication_factor,
             parallelism_factor,
-            next_query_id: 0usize,
             queries: HashMap::new(),
         }
-    }
-
-    /// Allocate next query ID.
-    pub fn next_query_id(&mut self) -> QueryId {
-        let query_id = self.next_query_id;
-        self.next_query_id += 1;
-
-        QueryId(query_id)
     }
 
     /// Start `FIND_NODE` query.
     pub fn start_find_node(
         &mut self,
+        query_id: QueryId,
         target: PeerId,
         candidates: VecDeque<KademliaPeer>,
     ) -> QueryId {
-        let query_id = self.next_query_id();
-
         tracing::debug!(
             target: LOG_TARGET,
             ?query_id,
@@ -199,11 +186,10 @@ impl QueryEngine {
     /// Start `PUT_VALUE` query.
     pub fn start_put_record(
         &mut self,
+        query_id: QueryId,
         record: Record,
         candidates: VecDeque<KademliaPeer>,
     ) -> QueryId {
-        let query_id = self.next_query_id();
-
         tracing::debug!(
             target: LOG_TARGET,
             ?query_id,
@@ -234,13 +220,12 @@ impl QueryEngine {
     /// Start `GET_VALUE` query.
     pub fn start_get_record(
         &mut self,
+        query_id: QueryId,
         target: RecordKey,
         candidates: VecDeque<KademliaPeer>,
         quorum: Quorum,
         count: usize,
     ) -> QueryId {
-        let query_id = self.next_query_id();
-
         tracing::debug!(
             target: LOG_TARGET,
             ?query_id,
@@ -275,13 +260,7 @@ impl QueryEngine {
 
         match self.queries.get_mut(&query) {
             None => {
-                if query.0 < self.next_query_id {
-                    tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                    return;
-                }
-
-                tracing::warn!(target: LOG_TARGET, ?query, ?peer, "query doesn't exist");
-                debug_assert!(false);
+                tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
                 return;
             }
             Some(QueryType::FindNode { context }) => {
@@ -307,13 +286,7 @@ impl QueryEngine {
 
         match self.queries.get_mut(&query) {
             None => {
-                if query.0 < self.next_query_id {
-                    tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                    return;
-                }
-
-                tracing::warn!(target: LOG_TARGET, ?query, ?peer, "query doesn't exist");
-                debug_assert!(false);
+                tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
                 return;
             }
             Some(QueryType::FindNode { context }) => match message {
@@ -343,13 +316,7 @@ impl QueryEngine {
 
         match self.queries.get_mut(query) {
             None => {
-                if query.0 < self.next_query_id {
-                    tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                    return None;
-                }
-
-                tracing::warn!(target: LOG_TARGET, ?query, ?peer, "pending query doesn't exist for peer");
-                debug_assert!(false);
+                tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
                 return None;
             }
             Some(QueryType::FindNode { context }) => return context.next_peer_action(peer),
@@ -442,6 +409,7 @@ mod tests {
         let _target_key = Key::from(target_peer);
 
         let query = engine.start_find_node(
+            QueryId(1337),
             target_peer,
             vec![
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
@@ -472,6 +440,7 @@ mod tests {
         let _target_key = Key::from(target_peer);
 
         let _ = engine.start_find_node(
+            QueryId(1338),
             target_peer,
             vec![
                 KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected),
@@ -515,6 +484,7 @@ mod tests {
 
         // start find node with one known peer
         let _query = engine.start_find_node(
+            QueryId(1339),
             target_peer,
             vec![KademliaPeer::new(
                 *iter.next().unwrap().1,
@@ -609,6 +579,7 @@ mod tests {
 
         // start find node with one known peer
         let _query = engine.start_put_record(
+            QueryId(1340),
             original_record.clone(),
             vec![KademliaPeer::new(
                 *iter.next().unwrap().1,

@@ -20,15 +20,12 @@
 
 use crate::{
     protocol::libp2p::kademlia::{QueryId, Record, RecordKey},
-    Error, PeerId,
+    PeerId,
 };
 
 use futures::Stream;
 use multiaddr::Multiaddr;
-use tokio::sync::{
-    mpsc::{Receiver, Sender},
-    oneshot,
-};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
     num::NonZeroUsize,
@@ -79,8 +76,8 @@ pub(crate) enum KademliaCommand {
         /// Peer ID.
         peer: PeerId,
 
-        /// `oneshot::Sender` for returning query ID.
-        tx: oneshot::Sender<QueryId>,
+        /// Query ID for the query.
+        query_id: QueryId,
     },
 
     /// Store record to DHT.
@@ -88,8 +85,8 @@ pub(crate) enum KademliaCommand {
         /// Record.
         record: Record,
 
-        /// `oneshot::Sender` for returning query ID.
-        tx: oneshot::Sender<QueryId>,
+        /// Query ID for the query.
+        query_id: QueryId,
     },
 
     /// Get record from DHT.
@@ -100,8 +97,8 @@ pub(crate) enum KademliaCommand {
         /// [`Quorum`] for the query.
         quorum: Quorum,
 
-        /// `oneshot::Sender` for returning query ID.
-        tx: oneshot::Sender<QueryId>,
+        /// Query ID for the query.
+        query_id: QueryId,
     },
 }
 
@@ -165,12 +162,27 @@ pub struct KademliaHandle {
 
     /// RX channel for receiving events from `Kademlia`.
     event_rx: Receiver<KademliaEvent>,
+
+    /// Next query ID.
+    next_query_id: usize,
 }
 
 impl KademliaHandle {
     /// Create new [`KademliaHandle`].
     pub(super) fn new(cmd_tx: Sender<KademliaCommand>, event_rx: Receiver<KademliaEvent>) -> Self {
-        Self { cmd_tx, event_rx }
+        Self {
+            cmd_tx,
+            event_rx,
+            next_query_id: 0usize,
+        }
+    }
+
+    /// Allocate next query ID.
+    fn next_query_id(&mut self) -> QueryId {
+        let query_id = self.next_query_id;
+        self.next_query_id += 1;
+
+        QueryId(query_id)
     }
 
     /// Add known peer.
@@ -179,27 +191,34 @@ impl KademliaHandle {
     }
 
     /// Send `FIND_NODE` query to known peers.
-    pub async fn find_node(&mut self, peer: PeerId) -> crate::Result<QueryId> {
-        let (tx, rx) = oneshot::channel();
+    pub async fn find_node(&mut self, peer: PeerId) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::FindNode { peer, query_id }).await;
 
-        let _ = self.cmd_tx.send(KademliaCommand::FindNode { peer, tx }).await;
-        rx.await.map_err(|_| Error::EssentialTaskClosed)
+        query_id
     }
 
     /// Store record to DHT.
-    pub async fn put_record(&mut self, record: Record) -> crate::Result<QueryId> {
-        let (tx, rx) = oneshot::channel();
+    pub async fn put_record(&mut self, record: Record) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::PutRecord { record, query_id }).await;
 
-        let _ = self.cmd_tx.send(KademliaCommand::PutRecord { record, tx }).await;
-        rx.await.map_err(|_| Error::EssentialTaskClosed)
+        query_id
     }
 
     /// Get record from DHT.
-    pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) -> crate::Result<QueryId> {
-        let (tx, rx) = oneshot::channel();
+    pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::GetRecord {
+                key,
+                quorum,
+                query_id,
+            })
+            .await;
 
-        let _ = self.cmd_tx.send(KademliaCommand::GetRecord { key, quorum, tx }).await;
-        rx.await.map_err(|_| Error::EssentialTaskClosed)
+        query_id
     }
 }
 
