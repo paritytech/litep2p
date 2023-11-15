@@ -131,9 +131,12 @@ pub enum KademliaEvent {
     },
 
     /// `PUT_VALUE` query succeeded.
-    PutValueSucess {
+    PutRecordSucess {
         /// Query ID.
         query_id: QueryId,
+
+        /// Record key.
+        key: RecordKey,
     },
 
     /// Query failed.

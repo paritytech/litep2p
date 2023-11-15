@@ -31,7 +31,7 @@ use crate::{
             query::{QueryAction, QueryEngine, QueryId},
             routing_table::RoutingTable,
             store::MemoryStore,
-            types::{ConnectionType, Key},
+            types::{ConnectionType, KademliaPeer, Key},
         },
         Direction, Transport, TransportEvent, TransportService,
     },
@@ -40,14 +40,12 @@ use crate::{
     PeerId,
 };
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap};
-
-use self::types::KademliaPeer;
 
 pub use {
     config::{Config, ConfigBuilder},
@@ -85,7 +83,7 @@ enum PeerAction {
     SendFindNode(QueryId),
 
     /// Send `PUT_VALUE` message to peer.
-    SendPutValue(Record),
+    SendPutValue(Bytes),
 }
 
 /// Peer context.
@@ -301,10 +299,10 @@ impl Kademlia {
                     }
                 }
             }
-            Some(PeerAction::SendPutValue(record)) => {
+            Some(PeerAction::SendPutValue(message)) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, "send `PUT_VALUE` response");
 
-                self.executor.send_message(peer, KademliaMessage::put_value(record), substream);
+                self.executor.send_message(peer, message, substream);
             }
         }
 
@@ -534,6 +532,7 @@ impl Kademlia {
                     num_peers = ?peers.len(),
                     "store record to found peers",
                 );
+                let message = KademliaMessage::put_value(record);
 
                 for peer in peers {
                     match self.service.open_substream(peer.peer).await {
@@ -543,12 +542,12 @@ impl Kademlia {
                                 .entry(peer.peer)
                                 .or_default()
                                 .pending_actions
-                                .insert(substream_id, PeerAction::SendPutValue(record.clone()));
+                                .insert(substream_id, PeerAction::SendPutValue(message.clone()));
                         }
                         Err(_) => {
                             let _ = self.service.dial(&peer.peer).await;
                             self.pending_dials
-                                .insert(peer.peer, PeerAction::SendPutValue(record.clone()));
+                                .insert(peer.peer, PeerAction::SendPutValue(message.clone()));
                         }
                     }
                 }
