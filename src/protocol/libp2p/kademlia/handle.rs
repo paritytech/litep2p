@@ -220,6 +220,44 @@ impl KademliaHandle {
 
         query_id
     }
+
+    /// Try to add known peer and if the channel is clogged, return an error.
+    pub fn try_add_known_peer(&self, peer: PeerId, addresses: Vec<Multiaddr>) -> Result<(), ()> {
+        self.cmd_tx
+            .try_send(KademliaCommand::AddKnownPeer { peer, addresses })
+            .map_err(|_| ())
+    }
+
+    /// Try to initiate `FIND_NODE` query and if the channel is clogged, return an error.
+    pub fn try_find_node(&mut self, peer: PeerId) -> Result<QueryId, ()> {
+        let query_id = self.next_query_id();
+        self.cmd_tx
+            .try_send(KademliaCommand::FindNode { peer, query_id })
+            .map(|_| query_id)
+            .map_err(|_| ())
+    }
+
+    /// Try to initiate `PUT_VALUE` query and if the channel is clogged, return an error.
+    pub fn try_put_record(&mut self, record: Record) -> Result<QueryId, ()> {
+        let query_id = self.next_query_id();
+        self.cmd_tx
+            .try_send(KademliaCommand::PutRecord { record, query_id })
+            .map(|_| query_id)
+            .map_err(|_| ())
+    }
+
+    /// Try to initiate `GET_VALUE` query and if the channel is clogged, return an error.
+    pub fn try_get_record(&mut self, key: RecordKey, quorum: Quorum) -> Result<QueryId, ()> {
+        let query_id = self.next_query_id();
+        self.cmd_tx
+            .try_send(KademliaCommand::GetRecord {
+                key,
+                quorum,
+                query_id,
+            })
+            .map(|_| query_id)
+            .map_err(|_| ())
+    }
 }
 
 impl Stream for KademliaHandle {
