@@ -114,24 +114,24 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         //  b) it can replace some other peer that has a higher distance
         let distance = self.target.distance(&peer.key);
 
+        // always mark the peer as queried to prevent it getting queried again
+        self.queried.insert(peer.peer);
+
         // TODO: could this be written in another way?
         // TODO: only insert nodes from whom a response was received
         match self.responses.len() < self.replication_factor {
             true => {
-                self.queried.insert(peer.peer);
                 self.responses.insert(distance, peer);
             }
             false => {
                 let mut entry = self.responses.last_entry().expect("entry to exist");
                 if entry.key() > &distance {
-                    self.queried.insert(peer.peer);
                     entry.insert(peer);
                 }
             }
         }
 
         // filter already queried peers and extend the set of candidates
-
         for candidate in peers {
             if !self.queried.contains(&candidate.peer)
                 && !self.pending.contains_key(&candidate.peer)
