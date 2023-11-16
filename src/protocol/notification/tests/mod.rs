@@ -22,6 +22,7 @@ use std::collections::HashSet;
 
 use crate::{
     crypto::ed25519::Keypair,
+    executor::DefaultExecutor,
     protocol::{
         notification::{
             handle::NotificationHandle, Config as NotificationConfig, NotificationProtocol,
@@ -69,7 +70,11 @@ fn make_notification_protocol() -> (
     );
 
     (
-        NotificationProtocol::new(transport_service, config),
+        NotificationProtocol::new(
+            transport_service,
+            config,
+            std::sync::Arc::new(DefaultExecutor {}),
+        ),
         handle,
         manager,
         tx,

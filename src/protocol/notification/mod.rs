@@ -22,6 +22,7 @@
 
 use crate::{
     error::Error,
+    executor::Executor,
     protocol::{
         self,
         notification::{
@@ -44,7 +45,7 @@ use tokio::sync::{
     oneshot,
 };
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{NotificationHandle, NotificationSink};
@@ -191,7 +192,6 @@ impl PeerContext {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct NotificationProtocol {
     /// Transport service.
     service: TransportService,
@@ -233,16 +233,24 @@ pub(crate) struct NotificationProtocol {
 
     /// Asynchronous channel size.
     async_channel_size: usize,
+
+    /// Executor for connection handlers.
+    executor: Arc<dyn Executor>,
 }
 
 impl NotificationProtocol {
-    pub(crate) fn new(service: TransportService, config: Config) -> Self {
+    pub(crate) fn new(
+        service: TransportService,
+        config: Config,
+        executor: Arc<dyn Executor>,
+    ) -> Self {
         let (shutdown_tx, shutdown_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
         Self {
             service,
             shutdown_tx,
             shutdown_rx,
+            executor,
             peers: HashMap::new(),
             protocol: config.protocol_name,
             handshake: config.handshake.clone(),
@@ -1179,8 +1187,9 @@ impl NotificationProtocol {
                     )
                     .await;
 
-                // TODO: should executor be exposed to protocols (or use `FuturesUnordered`?)
-                tokio::spawn(connection.start());
+                self.executor.run(Box::pin(async move {
+                    connection.start().await;
+                }));
             }
             state => context.state = state,
         }

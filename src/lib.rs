@@ -152,8 +152,9 @@ impl Litep2p {
                 config.fallback_names.clone(),
                 config.codec,
             );
+            let executor = Arc::clone(&litep2p_config.executor);
             litep2p_config.executor.run(Box::pin(async move {
-                NotificationProtocol::new(service, config).run().await
+                NotificationProtocol::new(service, config, executor).run().await
             }));
         }
 
