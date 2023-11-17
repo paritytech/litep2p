@@ -199,9 +199,6 @@ pub(crate) struct NotificationProtocol {
     /// Protocol.
     protocol: ProtocolName,
 
-    /// Handshake bytes.
-    handshake: Vec<u8>,
-
     /// Auto accept inbound substream if the outbound substream was initiated by the local node.
     auto_accept: bool,
 
@@ -256,7 +253,6 @@ impl NotificationProtocol {
             executor,
             peers: HashMap::new(),
             protocol: config.protocol_name,
-            handshake: config.handshake.clone(),
             auto_accept: config.auto_accept,
             pending_validations: FuturesUnordered::new(),
             event_handle: NotificationEventHandle::new(config.event_tx),
@@ -1346,10 +1342,6 @@ impl NotificationProtocol {
                         for peer in peers {
                             self.on_close_substream(peer).await;
                         }
-                    }
-                    NotificationCommand::SetHandshake { handshake } => {
-                        self.negotiation.set_handshake(handshake.clone());
-                        self.handshake = handshake;
                     }
                 }
             },

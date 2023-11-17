@@ -217,12 +217,6 @@ pub(crate) enum NotificationCommand {
         /// Peer IDs.
         peers: HashSet<PeerId>,
     },
-
-    /// Set handshake.
-    SetHandshake {
-        /// Handshake.
-        handshake: Vec<u8>,
-    },
 }
 
 impl From<InnerNotificationEvent> for NotificationEvent {

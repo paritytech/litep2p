@@ -972,8 +972,8 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
     }
 
     // set new handshakes and open the substream
-    handle1.set_handshake(vec![5, 5, 5, 5]).await;
-    handle2.set_handshake(vec![6, 6, 6, 6]).await;
+    handle1.set_handshake(vec![5, 5, 5, 5]);
+    handle2.set_handshake(vec![6, 6, 6, 6]);
     handle2.open_substream(peer1).await.unwrap();
 
     // accept the substreams

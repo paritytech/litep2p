@@ -29,6 +29,7 @@ use crate::{
 };
 
 use futures::Stream;
+use parking_lot::RwLock;
 use tokio::sync::{
     mpsc::{error::TrySendError, Receiver, Sender},
     oneshot,
@@ -37,6 +38,7 @@ use tokio::sync::{
 use std::{
     collections::{HashMap, HashSet},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -188,6 +190,9 @@ pub struct NotificationHandle {
 
     /// Pending validations.
     pending_validations: HashMap<PeerId, oneshot::Sender<ValidationResult>>,
+
+    /// Handshake.
+    handshake: Arc<RwLock<Vec<u8>>>,
 }
 
 impl NotificationHandle {
@@ -195,10 +200,12 @@ impl NotificationHandle {
     pub(crate) fn new(
         event_rx: Receiver<InnerNotificationEvent>,
         command_tx: Sender<NotificationCommand>,
+        handshake: Arc<RwLock<Vec<u8>>>,
     ) -> Self {
         Self {
             event_rx,
             command_tx,
+            handshake,
             peers: HashMap::new(),
             pending_validations: HashMap::new(),
         }
@@ -297,23 +304,10 @@ impl NotificationHandle {
     }
 
     /// Set new handshake.
-    pub async fn set_handshake(&mut self, handshake: Vec<u8>) {
+    pub fn set_handshake(&mut self, handshake: Vec<u8>) {
         tracing::trace!(target: LOG_TARGET, ?handshake, "set handshake");
 
-        let _ = self.command_tx.send(NotificationCommand::SetHandshake { handshake }).await;
-    }
-
-    /// Set new handshake.
-    pub fn try_set_handshake(&mut self, handshake: Vec<u8>) -> Result<(), NotificationError> {
-        tracing::trace!(target: LOG_TARGET, ?handshake, "set handshake");
-
-        match self.command_tx.try_send(NotificationCommand::SetHandshake { handshake }) {
-            Err(error) => match error {
-                TrySendError::Full(_) => Err(NotificationError::ChannelClogged),
-                TrySendError::Closed(_) => Err(NotificationError::EssentialTaskClosed),
-            },
-            Ok(_) => return Ok(()),
-        }
+        *self.handshake.write() = handshake;
     }
 
     /// Send validation result to the notification protocol for the inbound substream.

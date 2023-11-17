@@ -30,7 +30,10 @@ use crate::{
     DEFAULT_CHANNEL_SIZE,
 };
 
+use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+use std::sync::Arc;
 
 /// Notification configuration.
 #[derive(Debug)]
@@ -45,7 +48,7 @@ pub struct Config {
     _max_notification_size: usize,
 
     /// Handshake bytes.
-    pub(crate) handshake: Vec<u8>,
+    pub(crate) handshake: Arc<RwLock<Vec<u8>>>,
 
     /// Auto accept inbound substream.
     pub(super) auto_accept: bool,
@@ -79,7 +82,8 @@ impl Config {
     ) -> (Self, NotificationHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let handle = NotificationHandle::new(event_rx, command_tx);
+        let handshake = Arc::new(RwLock::new(handshake));
+        let handle = NotificationHandle::new(event_rx, command_tx, Arc::clone(&handshake));
 
         (
             Self {
@@ -108,7 +112,8 @@ impl Config {
     /// This function is used to work around an issue in Polkadot SDK and users
     /// should not depend on its continued existence.
     pub fn set_handshake(&mut self, handshake: Vec<u8>) {
-        self.handshake = handshake;
+        let mut inner = self.handshake.write();
+        *inner = handshake;
     }
 }
 
