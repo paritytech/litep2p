@@ -29,7 +29,10 @@ use crate::{
 };
 
 use futures::Stream;
-use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{error::TrySendError, Receiver, Sender},
+    oneshot,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -58,6 +61,7 @@ impl NotificationEventHandle {
         fallback: Option<ProtocolName>,
         peer: PeerId,
         handshake: Vec<u8>,
+        tx: oneshot::Sender<ValidationResult>,
     ) {
         let _ = self
             .tx
@@ -66,6 +70,7 @@ impl NotificationEventHandle {
                 fallback,
                 peer,
                 handshake,
+                tx,
             })
             .await;
     }
@@ -180,6 +185,9 @@ pub struct NotificationHandle {
 
     /// Peers.
     peers: HashMap<PeerId, NotificationSink>,
+
+    /// Pending validations.
+    pending_validations: HashMap<PeerId, oneshot::Sender<ValidationResult>>,
 }
 
 impl NotificationHandle {
@@ -192,6 +200,7 @@ impl NotificationHandle {
             event_rx,
             command_tx,
             peers: HashMap::new(),
+            pending_validations: HashMap::new(),
         }
     }
 
@@ -308,13 +317,10 @@ impl NotificationHandle {
     }
 
     /// Send validation result to the notification protocol for the inbound substream.
-    pub async fn send_validation_result(&self, peer: PeerId, result: ValidationResult) {
+    pub fn send_validation_result(&mut self, peer: PeerId, result: ValidationResult) {
         tracing::trace!(target: LOG_TARGET, ?peer, ?result, "send validation result");
 
-        let _ = self
-            .command_tx
-            .send(NotificationCommand::SubstreamValidated { peer, result })
-            .await;
+        self.pending_validations.remove(&peer).map(|tx| tx.send(result));
     }
 
     /// Send synchronous notification to `peer`.
@@ -385,6 +391,22 @@ impl Stream for NotificationHandle {
                     self.peers.remove(&peer);
 
                     Poll::Ready(Some(NotificationEvent::NotificationStreamClosed { peer }))
+                }
+                InnerNotificationEvent::ValidateSubstream {
+                    protocol,
+                    fallback,
+                    peer,
+                    handshake,
+                    tx,
+                } => {
+                    self.pending_validations.insert(peer, tx);
+
+                    Poll::Ready(Some(NotificationEvent::ValidateSubstream {
+                        protocol,
+                        fallback,
+                        peer,
+                        handshake,
+                    }))
                 }
                 event => Poll::Ready(Some(event.into())),
             },

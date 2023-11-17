@@ -67,7 +67,7 @@ async fn client_event_loop(
             _ = litep2p.next_event() => {}
             event = handle.next() => match event.unwrap() {
                 NotificationEvent::ValidateSubstream { peer, .. } => {
-                    handle.send_validation_result(peer, ValidationResult::Accept).await;
+                    handle.send_validation_result(peer, ValidationResult::Accept);
                 }
                 NotificationEvent::NotificationStreamOpened { peer, .. } => break peer,
                 _ => {},
@@ -99,7 +99,7 @@ async fn server_event_loop(mut litep2p: Litep2p, mut handle: NotificationHandle)
             _ = litep2p.next_event() => {}
             event = handle.next() => match event.unwrap() {
                 NotificationEvent::ValidateSubstream { peer, .. } => {
-                    handle.send_validation_result(peer, ValidationResult::Accept).await;
+                    handle.send_validation_result(peer, ValidationResult::Accept);
                 }
                 NotificationEvent::NotificationReceived { peer, notification } => {
                     handle.send_async_notification(peer, notification).await.unwrap();

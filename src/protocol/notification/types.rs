@@ -22,6 +22,8 @@ use crate::{
     protocol::notification::handle::NotificationSink, types::protocol::ProtocolName, PeerId,
 };
 
+use tokio::sync::oneshot;
+
 use std::collections::HashSet;
 
 /// Default channel size for synchronous notifications.
@@ -41,7 +43,7 @@ pub enum Direction {
 }
 
 /// Validation result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ValidationResult {
     /// Accept the inbound substream.
     Accept,
@@ -70,7 +72,7 @@ pub enum NotificationError {
 }
 
 /// Notification events.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) enum InnerNotificationEvent {
     /// Validate substream.
     ValidateSubstream {
@@ -85,6 +87,9 @@ pub(crate) enum InnerNotificationEvent {
 
         /// Handshake.
         handshake: Vec<u8>,
+
+        /// `oneshot::Sender` for sending the validation result back to the protocol.
+        tx: oneshot::Sender<ValidationResult>,
     },
 
     /// Notification stream opened.
@@ -218,15 +223,6 @@ pub(crate) enum NotificationCommand {
         /// Handshake.
         handshake: Vec<u8>,
     },
-
-    /// Send validation result for the inbound protocol.
-    SubstreamValidated {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Validation result.
-        result: ValidationResult,
-    },
 }
 
 impl From<InnerNotificationEvent> for NotificationEvent {
@@ -237,6 +233,7 @@ impl From<InnerNotificationEvent> for NotificationEvent {
                 fallback,
                 peer,
                 handshake,
+                ..
             } => NotificationEvent::ValidateSubstream {
                 protocol,
                 fallback,

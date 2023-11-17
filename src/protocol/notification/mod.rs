@@ -38,7 +38,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::StreamExt;
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
@@ -236,6 +236,9 @@ pub(crate) struct NotificationProtocol {
 
     /// Executor for connection handlers.
     executor: Arc<dyn Executor>,
+
+    /// Pending substream validations.
+    pending_validations: FuturesUnordered<BoxFuture<'static, (PeerId, ValidationResult)>>,
 }
 
 impl NotificationProtocol {
@@ -255,6 +258,7 @@ impl NotificationProtocol {
             protocol: config.protocol_name,
             handshake: config.handshake.clone(),
             auto_accept: config.auto_accept,
+            pending_validations: FuturesUnordered::new(),
             event_handle: NotificationEventHandle::new(config.event_tx),
             command_rx: config.command_rx,
             pending_outbound: HashMap::new(),
@@ -790,6 +794,7 @@ impl NotificationProtocol {
                     target: LOG_TARGET,
                     ?peer,
                     protocol = %self.protocol,
+                    ?state,
                     "substream already closed",
                 );
                 context.state = state;
@@ -1064,8 +1069,22 @@ impl NotificationProtocol {
                             direction,
                         };
 
+                        let (tx, rx) = oneshot::channel();
+                        self.pending_validations.push(Box::pin(async move {
+                            match rx.await {
+                                Ok(ValidationResult::Accept) => (peer, ValidationResult::Accept),
+                                _ => (peer, ValidationResult::Reject),
+                            }
+                        }));
+
                         self.event_handle
-                            .report_inbound_substream(protocol, fallback, peer, handshake.into())
+                            .report_inbound_substream(
+                                protocol,
+                                fallback,
+                                peer,
+                                handshake.into(),
+                                tx,
+                            )
                             .await;
                     }
                     PeerState::Validating {
@@ -1294,6 +1313,17 @@ impl NotificationProtocol {
                 Some(TransportEvent::DialFailure { peer, address }) => self.on_dial_failure(peer, address).await,
                 None => return,
             },
+            result = self.pending_validations.select_next_some(), if !self.pending_validations.is_empty() => {
+                if let Err(error) = self.on_validation_result(result.0, result.1).await {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?result.0,
+                        result = ?result.1,
+                        ?error,
+                        "failed to handle validation result",
+                    );
+                }
+            }
             command = self.command_rx.recv() => match command {
                 None => {
                     tracing::debug!(target: LOG_TARGET, "user protocol has exited, exiting");
@@ -1315,16 +1345,6 @@ impl NotificationProtocol {
                     NotificationCommand::CloseSubstream { peers } => {
                         for peer in peers {
                             self.on_close_substream(peer).await;
-                        }
-                    }
-                    NotificationCommand::SubstreamValidated { peer, result } => {
-                        if let Err(error) = self.on_validation_result(peer, result).await {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?error,
-                                "failed to open substream",
-                            );
                         }
                     }
                     NotificationCommand::SetHandshake { handshake } => {

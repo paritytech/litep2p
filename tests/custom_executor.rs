@@ -202,7 +202,7 @@ async fn custom_executor() {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -213,7 +213,7 @@ async fn custom_executor() {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
