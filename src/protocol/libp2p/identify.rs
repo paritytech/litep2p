@@ -207,7 +207,6 @@ impl Identify {
                     %protocol,
                     "inbound identify substream opened for peer who doesn't exist",
                 );
-                debug_assert!(false);
                 None
             }
         };
