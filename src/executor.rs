@@ -24,7 +24,11 @@ use std::{future::Future, pin::Pin};
 
 /// Trait which defines the interface the executor must implement.
 pub trait Executor: Send + Sync {
+    /// Start executing a future in the background.
     fn run(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
+
+    /// Start executing a future in the background and give the future a name;
+    fn run_with_name(&self, name: &'static str, future: Pin<Box<dyn Future<Output = ()> + Send>>);
 }
 
 /// Default executor, defaults to calling `tokio::spawn()`.
@@ -32,6 +36,10 @@ pub(crate) struct DefaultExecutor;
 
 impl Executor for DefaultExecutor {
     fn run(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        let _ = tokio::spawn(future);
+    }
+
+    fn run_with_name(&self, _: &'static str, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
         let _ = tokio::spawn(future);
     }
 }

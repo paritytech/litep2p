@@ -80,6 +80,10 @@ impl Executor for TaskExecutorHandle {
     fn run(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
         let _ = self.tx.try_send(future);
     }
+
+    fn run_with_name(&self, _: &'static str, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        let _ = self.tx.try_send(future);
+    }
 }
 
 #[tokio::main]
