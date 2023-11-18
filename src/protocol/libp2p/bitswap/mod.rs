@@ -107,7 +107,7 @@ pub(crate) struct Bitswap {
     cmd_rx: Receiver<BitswapCommand>,
 
     /// Pending outbound substreams.
-    pending_outbound: HashMap<SubstreamId, Vec<(Cid, ResponseType)>>,
+    pending_outbound: HashMap<SubstreamId, Vec<ResponseType>>,
 
     /// Pending inbound substreams.
     pending_inbound:
@@ -178,7 +178,7 @@ impl Bitswap {
         let mut response = schema::bitswap::Message::default();
 
         for entry in entries {
-            match entry.1 {
+            match entry {
                 ResponseType::Block { cid, block } => {
                     let prefix = Prefix {
                         version: cid.version(),
@@ -206,13 +206,13 @@ impl Bitswap {
     }
 
     /// Handle bitswap response.
-    async fn on_bitswap_response(&mut self, peer: PeerId, cids: Vec<(Cid, ResponseType)>) {
+    async fn on_bitswap_response(&mut self, peer: PeerId, responses: Vec<ResponseType>) {
         match self.service.open_substream(peer).await {
             Err(error) => {
                 tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream to peer")
             }
             Ok(substream_id) => {
-                self.pending_outbound.insert(substream_id, cids);
+                self.pending_outbound.insert(substream_id, responses);
             }
         }
     }
@@ -238,8 +238,8 @@ impl Bitswap {
                     event => tracing::trace!(target: LOG_TARGET, ?event, "unhandled event"),
                 },
                 command = self.cmd_rx.recv() => match command {
-                    Some(BitswapCommand::SendResponse { peer, cids }) => {
-                        self.on_bitswap_response(peer, cids).await;
+                    Some(BitswapCommand::SendResponse { peer, responses }) => {
+                        self.on_bitswap_response(peer, responses).await;
                     }
                     None => return,
                 },
