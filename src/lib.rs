@@ -72,7 +72,7 @@ pub type Result<T> = std::result::Result<T, error::Error>;
 const LOG_TARGET: &str = "litep2p";
 
 /// Default channel size.
-const DEFAULT_CHANNEL_SIZE: usize = 64usize;
+const DEFAULT_CHANNEL_SIZE: usize = 4096usize;
 
 /// Litep2p events.
 #[derive(Debug)]
