@@ -23,8 +23,8 @@
 use crate::{
     error::Error,
     protocol::{
-        libp2p::bitswap::handle::{BitswapCommand, ResponseType},
-        Direction, Transport, TransportEvent, TransportService,
+        libp2p::bitswap::handle::BitswapCommand, Direction, Transport, TransportEvent,
+        TransportService,
     },
     substream::Substream,
     types::SubstreamId,
@@ -39,7 +39,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use std::collections::HashMap;
 
 pub use config::Config;
-pub use handle::{BitswapEvent, BitswapHandle};
+pub use handle::{BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
 
 mod config;
