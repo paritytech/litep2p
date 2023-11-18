@@ -22,6 +22,7 @@ use crate::{
     codec::ProtocolCodec,
     protocol::libp2p::bitswap::{BitswapCommand, BitswapEvent, BitswapHandle},
     types::protocol::ProtocolName,
+    DEFAULT_CHANNEL_SIZE,
 };
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -51,8 +52,8 @@ pub struct Config {
 impl Config {
     /// Create new [`Config`].
     pub fn new() -> (Self, BitswapHandle) {
-        let (event_tx, event_rx) = channel(256);
-        let (cmd_tx, cmd_rx) = channel(256);
+        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
         (
             Self {
