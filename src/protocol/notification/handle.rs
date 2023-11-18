@@ -124,6 +124,11 @@ impl NotificationEventHandle {
             .send(InnerNotificationEvent::NotificationReceived { peer, notification })
             .await;
     }
+
+    /// Make a clone of the underlying channel.
+    pub(crate) fn sender(&self) -> Sender<InnerNotificationEvent> {
+        self.tx.clone()
+    }
 }
 
 /// Notification sink.
