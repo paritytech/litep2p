@@ -31,13 +31,14 @@ use crate::{
     PeerId,
 };
 
-use cid::{multihash::Code, Cid, Version};
+use cid::{multihash::Code, Version};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::HashMap;
 
+pub use cid::Cid;
 pub use config::Config;
 pub use handle::{BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
