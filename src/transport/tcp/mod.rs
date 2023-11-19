@@ -199,12 +199,9 @@ impl TcpTransport {
 
         match connection {
             Ok(connection) => {
-                let _peer = *connection.peer();
-                let _address = connection.address().clone();
-
                 self.context.executor.run(Box::pin(async move {
                     if let Err(error) = connection.start().await {
-                        tracing::error!(target: LOG_TARGET, ?error, "connection failure");
+                        tracing::trace!(target: LOG_TARGET, ?error, "connection failure");
                     }
                 }));
             }

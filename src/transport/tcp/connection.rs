@@ -110,9 +110,6 @@ pub struct TcpConnection {
     /// Next substream ID.
     next_substream_id: SubstreamId,
 
-    /// Remote address.
-    address: Multiaddr,
-
     // Bandwidth sink.
     bandwidth_sink: BandwidthSink,
 
@@ -389,7 +386,6 @@ impl TcpConnection {
 
         Ok(Self {
             peer,
-            address,
             control,
             connection,
             protocol_set,
@@ -398,16 +394,6 @@ impl TcpConnection {
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
         })
-    }
-
-    /// Get remote peer ID.
-    pub(crate) fn peer(&self) -> &PeerId {
-        &self.peer
-    }
-
-    /// Get remote address.
-    pub(crate) fn address(&self) -> &Multiaddr {
-        &self.address
     }
 
     /// Start connection event loop.
