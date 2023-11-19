@@ -215,6 +215,9 @@ pub(crate) struct NotificationProtocol {
     /// RX channel passed to the protocol used for receiving commands.
     command_rx: Receiver<NotificationCommand>,
 
+    /// TX channel given to connection handlers for sending notifications.
+    notif_tx: Sender<(PeerId, Vec<u8>)>,
+
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
 
@@ -256,6 +259,7 @@ impl NotificationProtocol {
             auto_accept: config.auto_accept,
             pending_validations: FuturesUnordered::new(),
             event_handle: NotificationEventHandle::new(config.event_tx),
+            notif_tx: config.notif_tx,
             command_rx: config.command_rx,
             pending_outbound: HashMap::new(),
             negotiation: HandshakeService::new(config.handshake),
@@ -1186,6 +1190,7 @@ impl NotificationProtocol {
                     outbound,
                     self.event_handle.clone(),
                     shutdown_tx.clone(),
+                    self.notif_tx.clone(),
                     async_rx,
                     sync_rx,
                 );

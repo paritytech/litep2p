@@ -127,15 +127,6 @@ pub(crate) enum InnerNotificationEvent {
         /// Error.
         error: NotificationError,
     },
-
-    /// Notification received.
-    NotificationReceived {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Notification.
-        notification: Vec<u8>,
-    },
 }
 
 /// Notification events.
@@ -252,8 +243,6 @@ impl From<InnerNotificationEvent> for NotificationEvent {
                 NotificationEvent::NotificationStreamClosed { peer },
             InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
                 NotificationEvent::NotificationStreamOpenFailure { peer, error },
-            InnerNotificationEvent::NotificationReceived { peer, notification } =>
-                NotificationEvent::NotificationReceived { peer, notification },
         }
     }
 }

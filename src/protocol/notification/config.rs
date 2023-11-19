@@ -27,7 +27,7 @@ use crate::{
         },
     },
     types::protocol::ProtocolName,
-    DEFAULT_CHANNEL_SIZE,
+    PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
 use parking_lot::RwLock;
@@ -59,6 +59,9 @@ pub struct Config {
     /// TX channel passed to the protocol used for sending events.
     pub(crate) event_tx: Sender<InnerNotificationEvent>,
 
+    /// TX channel for sending notifications from the connection handlers.
+    pub(crate) notif_tx: Sender<(PeerId, Vec<u8>)>,
+
     /// RX channel passed to the protocol used for receiving commands.
     pub(crate) command_rx: Receiver<NotificationCommand>,
 
@@ -81,9 +84,11 @@ impl Config {
         async_channel_size: usize,
     ) -> (Self, NotificationHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (notif_tx, notif_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let handshake = Arc::new(RwLock::new(handshake));
-        let handle = NotificationHandle::new(event_rx, command_tx, Arc::clone(&handshake));
+        let handle =
+            NotificationHandle::new(event_rx, notif_rx, command_tx, Arc::clone(&handshake));
 
         (
             Self {
@@ -94,6 +99,7 @@ impl Config {
                 handshake,
                 fallback_names,
                 event_tx,
+                notif_tx,
                 command_rx,
                 sync_channel_size,
                 async_channel_size,

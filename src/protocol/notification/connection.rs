@@ -19,14 +19,12 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::notification::{handle::NotificationEventHandle, types::InnerNotificationEvent},
-    substream::Substream,
-    PeerId,
+    protocol::notification::handle::NotificationEventHandle, substream::Substream, PeerId,
 };
 
 use futures::StreamExt;
 use tokio::sync::{
-    mpsc::{OwnedPermit, Receiver, Sender},
+    mpsc::{Receiver, Sender},
     oneshot,
 };
 
@@ -50,6 +48,9 @@ pub(crate) struct Connection {
     /// TX channel used to notify [`NotificationProtocol`](super::NotificationProtocol)
     /// that the connection has been closed.
     conn_closed_tx: Sender<PeerId>,
+
+    /// TX channel for sending notifications.
+    notif_tx: Sender<(PeerId, Vec<u8>)>,
 
     /// Receiver for asynchronously sent notifications.
     async_rx: Receiver<Vec<u8>>,
@@ -80,6 +81,7 @@ impl Connection {
         outbound: Substream,
         event_handle: NotificationEventHandle,
         conn_closed_tx: Sender<PeerId>,
+        notif_tx: Sender<(PeerId, Vec<u8>)>,
         async_rx: Receiver<Vec<u8>>,
         sync_rx: Receiver<Vec<u8>>,
     ) -> (Self, oneshot::Sender<()>) {
@@ -93,6 +95,7 @@ impl Connection {
                 async_rx,
                 inbound,
                 outbound,
+                notif_tx,
                 event_handle,
                 conn_closed_tx,
             },
@@ -126,7 +129,7 @@ impl Connection {
     pub async fn start(mut self) {
         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "start connection event loop");
 
-        let mut permit: Option<OwnedPermit<InnerNotificationEvent>> = None;
+        let mut next_notification: Option<Vec<u8>> = None;
         loop {
             tokio::select! {
                 biased;
@@ -153,29 +156,19 @@ impl Connection {
                         return self.close_connection(NotifyProtocol::Yes).await;
                     }
                 },
-                value = self.event_handle.sender().clone().reserve_owned(), if permit.is_none() => match value {
-                    Ok(value) => {
-                        permit = Some(value);
+                value = self.notif_tx.clone().reserve_owned(), if next_notification.is_some() => match value {
+                    Ok(permit) => {
+                        permit.send((self.peer, next_notification.take().expect("notification must exist")));
                     }
                     Err(_) => {}
                 },
-                event = self.inbound.next() => match event {
+                event = self.inbound.next(), if next_notification.is_none() => match event {
                     None | Some(Err(_)) => {
                         tracing::trace!(target: LOG_TARGET, peer = ?self.peer, "inbound substream closed");
                         return self.close_connection(NotifyProtocol::Yes).await;
                     }
                     Some(Ok(notification)) => {
-                        match permit.take() {
-                            Some(permit) => {
-                                permit.send(InnerNotificationEvent::NotificationReceived {
-                                    peer: self.peer,
-                                    notification: notification.freeze().into()
-                                });
-                            }
-                            None => {
-                                self.event_handle.report_notification_received(self.peer, notification.freeze().into()).await;
-                            }
-                        }
+                        next_notification = Some(notification.freeze().into());
                     }
                 },
                 // outbound substream never yields any events but it's polled so that if either one of the substreams

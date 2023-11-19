@@ -116,19 +116,6 @@ impl NotificationEventHandle {
             .send(InnerNotificationEvent::NotificationStreamOpenFailure { peer, error })
             .await;
     }
-
-    /// Received a notification from remote peer.
-    pub(crate) async fn report_notification_received(&self, peer: PeerId, notification: Vec<u8>) {
-        let _ = self
-            .tx
-            .send(InnerNotificationEvent::NotificationReceived { peer, notification })
-            .await;
-    }
-
-    /// Make a clone of the underlying channel.
-    pub(crate) fn sender(&self) -> Sender<InnerNotificationEvent> {
-        self.tx.clone()
-    }
 }
 
 /// Notification sink.
@@ -187,6 +174,9 @@ pub struct NotificationHandle {
     /// RX channel for receiving events from the notification protocol.
     event_rx: Receiver<InnerNotificationEvent>,
 
+    /// RX channel for receiving notifications from connection handlers.
+    notif_rx: Receiver<(PeerId, Vec<u8>)>,
+
     /// TX channel for sending commands to the notification protocol.
     command_tx: Sender<NotificationCommand>,
 
@@ -204,11 +194,13 @@ impl NotificationHandle {
     /// Create new [`NotificationHandle`].
     pub(crate) fn new(
         event_rx: Receiver<InnerNotificationEvent>,
+        notif_rx: Receiver<(PeerId, Vec<u8>)>,
         command_tx: Sender<NotificationCommand>,
         handshake: Arc<RwLock<Vec<u8>>>,
     ) -> Self {
         Self {
             event_rx,
+            notif_rx,
             command_tx,
             handshake,
             peers: HashMap::new(),
@@ -365,50 +357,66 @@ impl Stream for NotificationHandle {
     type Item = NotificationEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match futures::ready!(self.event_rx.poll_recv(cx)) {
-            None => Poll::Ready(None),
-            Some(event) => match event {
-                InnerNotificationEvent::NotificationStreamOpened {
-                    protocol,
-                    fallback,
-                    direction,
-                    peer,
-                    handshake,
-                    sink,
-                } => {
-                    self.peers.insert(peer, sink);
-
-                    Poll::Ready(Some(NotificationEvent::NotificationStreamOpened {
+        loop {
+            match self.event_rx.poll_recv(cx) {
+                Poll::Pending => {}
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Ready(Some(event)) => match event {
+                    InnerNotificationEvent::NotificationStreamOpened {
                         protocol,
                         fallback,
                         direction,
                         peer,
                         handshake,
-                    }))
-                }
-                InnerNotificationEvent::NotificationStreamClosed { peer } => {
-                    self.peers.remove(&peer);
+                        sink,
+                    } => {
+                        self.peers.insert(peer, sink);
 
-                    Poll::Ready(Some(NotificationEvent::NotificationStreamClosed { peer }))
-                }
-                InnerNotificationEvent::ValidateSubstream {
-                    protocol,
-                    fallback,
-                    peer,
-                    handshake,
-                    tx,
-                } => {
-                    self.pending_validations.insert(peer, tx);
+                        return Poll::Ready(Some(NotificationEvent::NotificationStreamOpened {
+                            protocol,
+                            fallback,
+                            direction,
+                            peer,
+                            handshake,
+                        }));
+                    }
+                    InnerNotificationEvent::NotificationStreamClosed { peer } => {
+                        self.peers.remove(&peer);
 
-                    Poll::Ready(Some(NotificationEvent::ValidateSubstream {
+                        return Poll::Ready(Some(NotificationEvent::NotificationStreamClosed {
+                            peer,
+                        }));
+                    }
+                    InnerNotificationEvent::ValidateSubstream {
                         protocol,
                         fallback,
                         peer,
                         handshake,
-                    }))
-                }
-                event => Poll::Ready(Some(event.into())),
-            },
+                        tx,
+                    } => {
+                        self.pending_validations.insert(peer, tx);
+
+                        return Poll::Ready(Some(NotificationEvent::ValidateSubstream {
+                            protocol,
+                            fallback,
+                            peer,
+                            handshake,
+                        }));
+                    }
+                    event => return Poll::Ready(Some(event.into())),
+                },
+            }
+
+            match futures::ready!(self.notif_rx.poll_recv(cx)) {
+                None => return Poll::Ready(None),
+                Some((peer, notification)) =>
+                    if self.peers.contains_key(&peer) {
+                        return Poll::Ready(Some(NotificationEvent::NotificationReceived {
+                            peer,
+                            notification,
+                        }));
+                    },
+            }
         }
     }
 }
