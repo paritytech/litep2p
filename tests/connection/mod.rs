@@ -121,7 +121,7 @@ async fn two_litep2ps_work(transport1: Transport, transport2: Transport) {
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
-    litep2p1.connect(address).await.unwrap();
+    litep2p1.dial_address(address).await.unwrap();
 
     let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
 
@@ -231,7 +231,7 @@ async fn dial_failure(transport1: Transport, transport2: Transport, dial_address
         Multihash::from_bytes(&litep2p2.local_peer_id().to_bytes()).unwrap(),
     ));
 
-    litep2p1.connect(address).await.unwrap();
+    litep2p1.dial_address(address).await.unwrap();
 
     tokio::spawn(async move {
         loop {
@@ -289,7 +289,7 @@ async fn connect_over_dns() {
         Multihash::from_bytes(&peer2.to_bytes()).unwrap(),
     ));
 
-    litep2p1.connect(new_address).await.unwrap();
+    litep2p1.dial_address(new_address).await.unwrap();
     let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
 
     assert!(std::matches!(
@@ -388,7 +388,7 @@ async fn connection_timeout(transport: Transport, address: Multiaddr) {
 
     let mut litep2p = Litep2p::new(litep2p_config).await.unwrap();
 
-    litep2p.connect(address.clone()).await.unwrap();
+    litep2p.dial_address(address.clone()).await.unwrap();
 
     let Some(Litep2pEvent::DialFailure {
         address: dial_address,
@@ -428,9 +428,9 @@ async fn dial_quic_peer_id_missing() {
         .with(Protocol::Udp(address.port()))
         .with(Protocol::QuicV1);
 
-    match litep2p.connect(address.clone()).await {
+    match litep2p.dial_address(address.clone()).await {
         Err(Error::AddressError(AddressError::PeerIdMissing)) => {}
-        _ => panic!("dial not supposed to succeed"),
+        state => panic!("dial not supposed to succeed {state:?}"),
     }
 }
 
@@ -482,7 +482,7 @@ async fn dial_self(transport: Transport) {
 
     // dial without peer id attached
     assert!(std::matches!(
-        litep2p.connect(address.clone()).await,
+        litep2p.dial_address(address.clone()).await,
         Err(Error::TriedToDialSelf)
     ));
 }
@@ -511,7 +511,7 @@ async fn attempt_to_dial_using_unsupported_transport() {
         ));
 
     assert!(std::matches!(
-        litep2p.connect(address.clone()).await,
+        litep2p.dial_address(address.clone()).await,
         Err(Error::TransportNotSupported(_))
     ));
 }
@@ -591,7 +591,7 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
-    litep2p2.connect(address1).await.unwrap();
+    litep2p2.dial_address(address1).await.unwrap();
     let mut litep2p1_ping = false;
     let mut litep2p2_ping = false;
 
@@ -652,7 +652,10 @@ async fn simultaneous_dial_tcp() {
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
 
-    let (res1, res2) = tokio::join!(litep2p1.connect(address2), litep2p2.connect(address1));
+    let (res1, res2) = tokio::join!(
+        litep2p1.dial_address(address2),
+        litep2p2.dial_address(address1)
+    );
     assert!(std::matches!((res1, res2), (Ok(()), Ok(()))));
 
     let mut ping_received1 = false;
@@ -705,7 +708,10 @@ async fn simultaneous_dial_quic() {
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
 
-    let (res1, res2) = tokio::join!(litep2p1.connect(address2), litep2p2.connect(address1));
+    let (res1, res2) = tokio::join!(
+        litep2p1.dial_address(address2),
+        litep2p2.dial_address(address1)
+    );
     assert!(std::matches!((res1, res2), (Ok(()), Ok(()))));
 
     let mut ping_received1 = false;
@@ -758,7 +764,10 @@ async fn simultaneous_dial_ipv6_quic() {
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
 
-    let (res1, res2) = tokio::join!(litep2p1.connect(address2), litep2p2.connect(address1));
+    let (res1, res2) = tokio::join!(
+        litep2p1.dial_address(address2),
+        litep2p2.dial_address(address1)
+    );
     assert!(std::matches!((res1, res2), (Ok(()), Ok(()))));
 
     let mut ping_received1 = false;
@@ -811,7 +820,7 @@ async fn websocket_over_ipv6() {
     let mut litep2p2 = Litep2p::new(config2).await.unwrap();
 
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
-    litep2p1.connect(address2).await.unwrap();
+    litep2p1.dial_address(address2).await.unwrap();
 
     let mut ping_received1 = false;
     let mut ping_received2 = false;
@@ -872,7 +881,7 @@ async fn tcp_dns_resolution() {
     new_address.push(Protocol::P2p(
         Multihash::from_bytes(&peer2.to_bytes()).unwrap(),
     ));
-    litep2p1.connect(new_address).await.unwrap();
+    litep2p1.dial_address(new_address).await.unwrap();
 
     let mut ping_received1 = false;
     let mut ping_received2 = false;
@@ -934,7 +943,7 @@ async fn websocket_dns_resolution() {
     new_address.push(Protocol::P2p(
         Multihash::from_bytes(&peer2.to_bytes()).unwrap(),
     ));
-    litep2p1.connect(new_address).await.unwrap();
+    litep2p1.dial_address(new_address).await.unwrap();
 
     let mut ping_received1 = false;
     let mut ping_received2 = false;

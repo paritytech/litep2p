@@ -20,12 +20,17 @@
 
 use crate::{
     codec::ProtocolCodec,
-    protocol::libp2p::kademlia::handle::{KademliaCommand, KademliaEvent, KademliaHandle},
+    protocol::libp2p::kademlia::handle::{
+        KademliaCommand, KademliaEvent, KademliaHandle, RoutingTableUpdateMode,
+    },
     types::protocol::ProtocolName,
-    DEFAULT_CHANNEL_SIZE,
+    PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
+use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+use std::collections::HashMap;
 
 /// Protocol name.
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
@@ -36,8 +41,10 @@ const REPLICATION_FACTOR: usize = 20usize;
 /// Kademlia configuration.
 #[derive(Debug)]
 pub struct Config {
-    /// Protocol name.
-    pub(crate) protocol: ProtocolName,
+    // Protocol name.
+    // pub(crate) protocol: ProtocolName,
+    /// Protocol names.
+    pub(crate) protocol_names: Vec<ProtocolName>,
 
     /// Protocol codec.
     pub(crate) codec: ProtocolCodec,
@@ -45,6 +52,12 @@ pub struct Config {
     /// Replication factor.
     #[allow(unused)]
     pub(super) replication_factor: usize,
+
+    /// Known peers.
+    pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+
+    /// Routing table update mode.
+    pub(super) update_mode: RoutingTableUpdateMode,
 
     /// TX channel for sending events to `KademliaHandle`.
     pub(super) event_tx: Sender<KademliaEvent>,
@@ -54,15 +67,27 @@ pub struct Config {
 }
 
 impl Config {
-    fn new(replication_factor: usize) -> (Self, KademliaHandle) {
+    fn new(
+        replication_factor: usize,
+        known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+        mut protocol_names: Vec<ProtocolName>,
+        update_mode: RoutingTableUpdateMode,
+    ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
+        // if no protocol names were provided, use the default protocol
+        if protocol_names.is_empty() {
+            protocol_names.push(ProtocolName::from(PROTOCOL_NAME));
+        }
+
         (
             Config {
-                protocol: ProtocolName::from(PROTOCOL_NAME),
+                protocol_names,
+                update_mode,
                 codec: ProtocolCodec::UnsignedVarint(None),
                 replication_factor,
+                known_peers,
                 cmd_rx,
                 event_tx,
             },
@@ -72,7 +97,12 @@ impl Config {
 
     /// Build default Kademlia configuration.
     pub fn default() -> (Self, KademliaHandle) {
-        Self::new(REPLICATION_FACTOR)
+        Self::new(
+            REPLICATION_FACTOR,
+            HashMap::new(),
+            Vec::new(),
+            RoutingTableUpdateMode::Automatic,
+        )
     }
 }
 
@@ -81,6 +111,15 @@ impl Config {
 pub struct ConfigBuilder {
     /// Replication factor.
     pub(super) replication_factor: usize,
+
+    /// Routing table update mode.
+    pub(super) update_mode: RoutingTableUpdateMode,
+
+    /// Known peers.
+    pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+
+    /// Protocol names.
+    pub(super) protocol_names: Vec<ProtocolName>,
 }
 
 impl ConfigBuilder {
@@ -88,6 +127,9 @@ impl ConfigBuilder {
     pub fn new() -> Self {
         Self {
             replication_factor: REPLICATION_FACTOR,
+            known_peers: HashMap::new(),
+            protocol_names: Vec::new(),
+            update_mode: RoutingTableUpdateMode::Automatic,
         }
     }
 
@@ -97,8 +139,39 @@ impl ConfigBuilder {
         self
     }
 
+    /// Seed Kademlia with one or more known peers.
+    pub fn with_known_peers(mut self, peers: HashMap<PeerId, Vec<Multiaddr>>) -> Self {
+        self.known_peers = peers;
+        self
+    }
+
+    /// Set routing table update mode.
+    pub fn with_routing_table_update_mode(mut self, mode: RoutingTableUpdateMode) -> Self {
+        self.update_mode = mode;
+        self
+    }
+
+    /// Set Kademlia protocol names, overriding the default protocol name.
+    ///
+    /// The order of the protocol names signifies preference so if, for example, there are two
+    /// protocols:
+    ///  * `/kad/2.0.0`
+    ///  * `/kad/1.0.0`
+    ///
+    /// Where `/kad/2.0.0` is the preferred version, then that should be in `protocol_names` before
+    /// `/kad/1.0.0`.
+    pub fn with_protocol_names(mut self, protocol_names: Vec<ProtocolName>) -> Self {
+        self.protocol_names = protocol_names;
+        self
+    }
+
     /// Build Kademlia [`Config`].
     pub fn build(self) -> (Config, KademliaHandle) {
-        Config::new(self.replication_factor)
+        Config::new(
+            self.replication_factor,
+            self.known_peers,
+            self.protocol_names,
+            self.update_mode,
+        )
     }
 }

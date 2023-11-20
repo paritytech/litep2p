@@ -48,7 +48,7 @@ use std::{borrow::Cow, fmt, net::SocketAddr, time::Duration};
 
 // TODO: introduce `NegotiatingConnection` to clean up this code a bit?
 /// Logging target for the file.
-const LOG_TARGET: &str = "tcp::connection";
+const LOG_TARGET: &str = "litep2p::tcp::connection";
 
 #[derive(Debug)]
 pub struct NegotiatedSubstream {
@@ -110,9 +110,6 @@ pub struct TcpConnection {
     /// Next substream ID.
     next_substream_id: SubstreamId,
 
-    /// Remote address.
-    address: Multiaddr,
-
     // Bandwidth sink.
     bandwidth_sink: BandwidthSink,
 
@@ -159,6 +156,7 @@ impl TcpConnection {
 
             Self::negotiate_connection(
                 stream,
+                peer,
                 connection_id,
                 context,
                 keypair,
@@ -237,6 +235,7 @@ impl TcpConnection {
         match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             Self::negotiate_connection(
                 stream,
+                None,
                 connection_id,
                 context,
                 // noise_config,
@@ -318,6 +317,7 @@ impl TcpConnection {
     /// Negotiate noise + yamux for the connection.
     async fn negotiate_connection(
         stream: TcpStream,
+        dialed_peer: Option<PeerId>,
         connection_id: ConnectionId,
         mut protocol_set: ProtocolSet,
         keypair: Keypair,
@@ -354,6 +354,14 @@ impl TcpConnection {
             max_write_buffer_size,
         )
         .await?;
+
+        if let Some(dialed_peer) = dialed_peer {
+            if dialed_peer != peer {
+                tracing::debug!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer id mismatch");
+                return Err(Error::PeerIdMismatch(dialed_peer, peer));
+            }
+        }
+
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
         let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
@@ -378,7 +386,6 @@ impl TcpConnection {
 
         Ok(Self {
             peer,
-            address,
             control,
             connection,
             protocol_set,
@@ -387,16 +394,6 @@ impl TcpConnection {
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
         })
-    }
-
-    /// Get remote peer ID.
-    pub(crate) fn peer(&self) -> &PeerId {
-        &self.peer
-    }
-
-    /// Get remote address.
-    pub(crate) fn address(&self) -> &Multiaddr {
-        &self.address
     }
 
     /// Start connection event loop.
@@ -554,9 +551,11 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
+        executor::DefaultExecutor,
         transport::manager::{SupportedTransport, TransportManager, TransportManagerEvent},
     };
     use multihash::Multihash;
+    use std::{collections::HashSet, sync::Arc};
     use tokio::{io::AsyncWriteExt, net::TcpListener};
 
     #[tokio::test]
@@ -576,15 +575,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -633,15 +634,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -695,15 +698,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -756,15 +761,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -822,15 +829,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -888,15 +897,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -949,15 +960,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1003,15 +1016,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1063,15 +1078,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1141,15 +1158,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1211,15 +1230,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 
@@ -1285,15 +1306,17 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) = TransportManager::new(keypair, bandwidth_sink.clone());
+        let (mut manager, _handle) =
+            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
         );
-        let mut handle = manager.register_transport(SupportedTransport::Tcp);
-        let protocol_set = handle.protocol_set();
+        let mut handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
         let _ = handle.next().await.unwrap();
 

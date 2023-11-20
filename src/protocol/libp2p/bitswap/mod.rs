@@ -23,23 +23,24 @@
 use crate::{
     error::Error,
     protocol::{
-        libp2p::bitswap::handle::{BitswapCommand, ResponseType},
-        Direction, Transport, TransportEvent, TransportService,
+        libp2p::bitswap::handle::BitswapCommand, Direction, Transport, TransportEvent,
+        TransportService,
     },
     substream::Substream,
     types::SubstreamId,
     PeerId,
 };
 
-use cid::{multihash::Code, Cid, Version};
+use cid::{multihash::Code, Version};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::HashMap;
 
+pub use cid::Cid;
 pub use config::Config;
-pub use handle::{BitswapEvent, BitswapHandle};
+pub use handle::{BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
 
 mod config;
@@ -52,7 +53,7 @@ mod schema {
 }
 
 /// Log target for the file.
-const LOG_TARGET: &str = "ipfs::bitswap";
+const LOG_TARGET: &str = "litep2p::ipfs::bitswap";
 
 /// Bitswap metadata.
 #[derive(Debug)]
@@ -106,7 +107,7 @@ pub(crate) struct Bitswap {
     cmd_rx: Receiver<BitswapCommand>,
 
     /// Pending outbound substreams.
-    pending_outbound: HashMap<SubstreamId, Vec<(Cid, ResponseType)>>,
+    pending_outbound: HashMap<SubstreamId, Vec<ResponseType>>,
 
     /// Pending inbound substreams.
     pending_inbound:
@@ -177,7 +178,7 @@ impl Bitswap {
         let mut response = schema::bitswap::Message::default();
 
         for entry in entries {
-            match entry.1 {
+            match entry {
                 ResponseType::Block { cid, block } => {
                     let prefix = Prefix {
                         version: cid.version(),
@@ -205,13 +206,13 @@ impl Bitswap {
     }
 
     /// Handle bitswap response.
-    async fn on_bitswap_response(&mut self, peer: PeerId, cids: Vec<(Cid, ResponseType)>) {
+    async fn on_bitswap_response(&mut self, peer: PeerId, responses: Vec<ResponseType>) {
         match self.service.open_substream(peer).await {
             Err(error) => {
                 tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream to peer")
             }
             Ok(substream_id) => {
-                self.pending_outbound.insert(substream_id, cids);
+                self.pending_outbound.insert(substream_id, responses);
             }
         }
     }
@@ -237,8 +238,8 @@ impl Bitswap {
                     event => tracing::trace!(target: LOG_TARGET, ?event, "unhandled event"),
                 },
                 command = self.cmd_rx.recv() => match command {
-                    Some(BitswapCommand::SendResponse { peer, cids }) => {
-                        self.on_bitswap_response(peer, cids).await;
+                    Some(BitswapCommand::SendResponse { peer, responses }) => {
+                        self.on_bitswap_response(peer, responses).await;
                     }
                     None => return,
                 },

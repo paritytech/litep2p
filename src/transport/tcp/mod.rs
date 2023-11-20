@@ -51,7 +51,7 @@ mod substream;
 pub mod config;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "tcp";
+const LOG_TARGET: &str = "litep2p::tcp";
 
 #[derive(Debug)]
 pub(super) struct TcpError {
@@ -72,7 +72,6 @@ impl TcpError {
 }
 
 /// TCP transport.
-#[derive(Debug)]
 pub(crate) struct TcpTransport {
     /// Transport context.
     context: TransportHandle,
@@ -171,8 +170,8 @@ impl TcpTransport {
 
     /// Handle inbound TCP connection.
     fn on_inbound_connection(&mut self, connection: TcpStream, address: SocketAddr) {
-        let protocol_set = self.context.protocol_set();
         let connection_id = self.context.next_connection_id();
+        let protocol_set = self.context.protocol_set(connection_id);
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -200,14 +199,11 @@ impl TcpTransport {
 
         match connection {
             Ok(connection) => {
-                let _peer = *connection.peer();
-                let _address = connection.address().clone();
-
-                tokio::spawn(async move {
+                self.context.executor.run(Box::pin(async move {
                     if let Err(error) = connection.start().await {
-                        tracing::error!(target: LOG_TARGET, ?error, "connection failure");
+                        tracing::trace!(target: LOG_TARGET, ?error, "connection failure");
                     }
-                });
+                }));
             }
             Err(error) => match error.connection_id {
                 Some(connection_id) => match self.pending_dials.remove(&connection_id) {
@@ -230,22 +226,22 @@ impl TcpTransport {
     async fn on_dial_peer(
         &mut self,
         address: Multiaddr,
-        connection: ConnectionId,
+        connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?address, ?connection, "open connection");
+        tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, "open connection");
 
-        let protocol_set = self.context.protocol_set();
+        let protocol_set = self.context.protocol_set(connection_id);
         let (socket_address, peer) = Self::get_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let bandwidth_sink = self.context.bandwidth_sink.clone();
 
-        self.pending_dials.insert(connection, address);
+        self.pending_dials.insert(connection_id, address);
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::open_connection(
                 protocol_set,
-                connection,
+                connection_id,
                 socket_address,
                 peer,
                 yamux_config,
@@ -254,7 +250,7 @@ impl TcpTransport {
                 bandwidth_sink,
             )
             .await
-            .map_err(|error| TcpError::new(error, Some(connection)))
+            .map_err(|error| TcpError::new(error, Some(connection_id)))
         }));
 
         Ok(())
@@ -266,10 +262,7 @@ impl Transport for TcpTransport {
     type Config = TransportConfig;
 
     /// Create new [`TcpTransport`].
-    async fn new(
-        context: crate::transport::manager::TransportHandle,
-        config: Self::Config,
-    ) -> crate::Result<Self> {
+    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self> {
         tracing::info!(
             target: LOG_TARGET,
             listen_address = ?config.listen_address,
@@ -338,10 +331,13 @@ impl Transport for TcpTransport {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashSet, sync::Arc};
+
     use super::*;
     use crate::{
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
+        executor::DefaultExecutor,
         transport::manager::{
             ProtocolContext, SupportedTransport, TransportManager, TransportManagerCommand,
             TransportManagerEvent,
@@ -401,6 +397,7 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -436,6 +433,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -500,6 +498,7 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -532,6 +531,7 @@ mod tests {
         let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
             protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -595,8 +595,9 @@ mod tests {
     #[tokio::test]
     async fn dial_error_reported_for_outbound_connections() {
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), BandwidthSink::new());
-        let handle = manager.register_transport(SupportedTransport::Tcp);
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let mut transport = TcpTransport::new(
             handle,
             TransportConfig {

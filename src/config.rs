@@ -22,6 +22,7 @@
 
 use crate::{
     crypto::ed25519::Keypair,
+    executor::{DefaultExecutor, Executor},
     protocol::{
         libp2p::{bitswap, identify, kademlia, ping},
         mdns::Config as MdnsConfig,
@@ -34,9 +35,12 @@ use crate::{
         websocket::config::TransportConfig as WebSocketTransportConfig,
     },
     types::protocol::ProtocolName,
+    PeerId,
 };
 
-use std::collections::HashMap;
+use multiaddr::Multiaddr;
+
+use std::{collections::HashMap, sync::Arc};
 
 /// Connection role.
 #[derive(Debug, Copy, Clone)]
@@ -58,7 +62,6 @@ impl From<Role> for yamux::Mode {
 }
 
 /// Configuration builder for [`Litep2p`](`crate::Litep2p`).
-#[derive(Debug)]
 pub struct Litep2pConfigBuilder {
     // TCP transport configuration.
     tcp: Option<TcpTransportConfig>,
@@ -98,6 +101,12 @@ pub struct Litep2pConfigBuilder {
 
     /// mDNS configuration.
     mdns: Option<MdnsConfig>,
+
+    /// Known addresess.
+    known_addresses: Vec<(PeerId, Vec<Multiaddr>)>,
+
+    /// Executor for running futures.
+    executor: Option<Arc<dyn Executor>>,
 }
 
 impl Default for Litep2pConfigBuilder {
@@ -120,9 +129,11 @@ impl Litep2pConfigBuilder {
             kademlia: None,
             bitswap: None,
             mdns: None,
+            executor: None,
             user_protocols: HashMap::new(),
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
+            known_addresses: Vec::new(),
         }
     }
 
@@ -204,6 +215,23 @@ impl Litep2pConfigBuilder {
         self
     }
 
+    /// Add known address(es) for one or more peers.
+    pub fn with_known_addresses(
+        mut self,
+        addresses: impl Iterator<Item = (PeerId, Vec<Multiaddr>)>,
+    ) -> Self {
+        self.known_addresses = addresses.collect();
+        self
+    }
+
+    /// Add executor for running futures spawned by `litep2p`.
+    ///
+    /// If no executor is specified, `litep2p` defaults to calling `tokio::spawn()`.
+    pub fn with_executor(mut self, executor: Arc<dyn Executor>) -> Self {
+        self.executor = Some(executor);
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     ///
     /// Generates a default keypair if user didn't provide one.
@@ -224,15 +252,16 @@ impl Litep2pConfigBuilder {
             identify: self.identify.take(),
             kademlia: self.kademlia.take(),
             bitswap: self.bitswap.take(),
+            executor: self.executor.map_or(Arc::new(DefaultExecutor {}), |executor| executor),
             user_protocols: self.user_protocols,
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
+            known_addresses: self.known_addresses,
         }
     }
 }
 
 /// Configuration for [`Litep2p`](`crate::Litep2p`).
-#[derive(Debug)]
 pub struct Litep2pConfig {
     // TCP transport configuration.
     pub(crate) tcp: Option<TcpTransportConfig>,
@@ -272,4 +301,10 @@ pub struct Litep2pConfig {
 
     /// mDNS configuration.
     pub(crate) mdns: Option<MdnsConfig>,
+
+    /// Executor.
+    pub(crate) executor: Arc<dyn Executor>,
+
+    /// Known addresses.
+    pub known_addresses: Vec<(PeerId, Vec<Multiaddr>)>,
 }

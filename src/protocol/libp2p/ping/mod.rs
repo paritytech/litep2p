@@ -43,7 +43,7 @@ mod config;
 // TODO: handle max failures
 
 /// Log target for the file.
-const LOG_TARGET: &str = "ipfs::ping";
+const LOG_TARGET: &str = "litep2p::ipfs::ping";
 
 /// Events emitted by the ping protocol.
 #[derive(Debug)]

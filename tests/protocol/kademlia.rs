@@ -42,9 +42,7 @@ async fn spawn_litep2p(port: u16) {
 
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
-    loop {
-        let _ = litep2p1.next_event().await;
-    }
+    tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
 }
 
 #[tokio::test]
@@ -67,7 +65,7 @@ async fn kademlia_supported() {
     let mut litep2p1 = Litep2p::new(config1).await.unwrap();
 
     for port in 9000..9003 {
-        tokio::spawn(spawn_litep2p(port));
+        spawn_litep2p(port);
     }
 
     loop {

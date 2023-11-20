@@ -22,14 +22,28 @@ use crate::{
     protocol::notification::handle::NotificationSink, types::protocol::ProtocolName, PeerId,
 };
 
+use tokio::sync::oneshot;
+
+use std::collections::HashSet;
+
 /// Default channel size for synchronous notifications.
-pub(super) const SYNC_CHANNEL_SIZE: usize = 16;
+pub(super) const SYNC_CHANNEL_SIZE: usize = 10_000;
 
 /// Default channel size for asynchronous notifications.
 pub(super) const ASYNC_CHANNEL_SIZE: usize = 8;
 
+/// Direction of the connection.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Direction {
+    /// Connection is considered inbound, i.e., it was initiated by the remote node.
+    Inbound,
+
+    /// Connection is considered outbound, i.e., it was initiated by the local node.
+    Outbound,
+}
+
 /// Validation result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ValidationResult {
     /// Accept the inbound substream.
     Accept,
@@ -49,10 +63,16 @@ pub enum NotificationError {
 
     /// Synchronous notification channel is clogged.
     ChannelClogged,
+
+    /// Failed to dial peer.
+    DialFailure,
+
+    /// Notification protocol has been closed.
+    EssentialTaskClosed,
 }
 
 /// Notification events.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) enum InnerNotificationEvent {
     /// Validate substream.
     ValidateSubstream {
@@ -67,6 +87,9 @@ pub(crate) enum InnerNotificationEvent {
 
         /// Handshake.
         handshake: Vec<u8>,
+
+        /// `oneshot::Sender` for sending the validation result back to the protocol.
+        tx: oneshot::Sender<ValidationResult>,
     },
 
     /// Notification stream opened.
@@ -76,6 +99,9 @@ pub(crate) enum InnerNotificationEvent {
 
         /// Fallback, if the substream was negotiated using a fallback protocol.
         fallback: Option<ProtocolName>,
+
+        /// Direction of the substream.
+        direction: Direction,
 
         /// Peer ID.
         peer: PeerId,
@@ -129,6 +155,14 @@ pub enum NotificationEvent {
         /// Fallback, if the substream was negotiated using a fallback protocol.
         fallback: Option<ProtocolName>,
 
+        /// Direction of the substream.
+        ///
+        /// [`Direction::Inbound`](crate::protocol::Direction::Outbound) indicates that the
+        /// substream was opened by the remote peer and
+        /// [`Direction::Outbound`](crate::protocol::Direction::Outbound) that it was
+        /// opened by the local node.
+        direction: Direction,
+
         /// Peer ID.
         peer: PeerId,
 
@@ -163,31 +197,16 @@ pub enum NotificationEvent {
 
 /// Notification commands sent by the [`NotificationService`] to the protocol.
 pub(crate) enum NotificationCommand {
-    /// Open substream to peer.
+    /// Open substreams to one or more peers.
     OpenSubstream {
-        /// Peer ID.
-        peer: PeerId,
+        /// Peer IDs.
+        peers: HashSet<PeerId>,
     },
 
-    /// Close substream to peer.
+    /// Close substreams to one or more peers.
     CloseSubstream {
-        /// Peer ID.
-        peer: PeerId,
-    },
-
-    /// Set handshake.
-    SetHandshake {
-        /// Handshake.
-        handshake: Vec<u8>,
-    },
-
-    /// Send validation result for the inbound protocol.
-    SubstreamValidated {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Validation result.
-        result: ValidationResult,
+        /// Peer IDs.
+        peers: HashSet<PeerId>,
     },
 }
 
@@ -199,6 +218,7 @@ impl From<InnerNotificationEvent> for NotificationEvent {
                 fallback,
                 peer,
                 handshake,
+                ..
             } => NotificationEvent::ValidateSubstream {
                 protocol,
                 fallback,
@@ -208,12 +228,14 @@ impl From<InnerNotificationEvent> for NotificationEvent {
             InnerNotificationEvent::NotificationStreamOpened {
                 protocol,
                 fallback,
+                direction,
                 peer,
                 handshake,
                 ..
             } => NotificationEvent::NotificationStreamOpened {
                 protocol,
                 fallback,
+                direction,
                 peer,
                 handshake,
             },

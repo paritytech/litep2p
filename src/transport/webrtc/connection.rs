@@ -53,7 +53,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "webrtc::connection";
+const LOG_TARGET: &str = "litep2p::webrtc::connection";
 
 /// Create Noise prologue.
 fn noise_prologue_new(local_fingerprint: Vec<u8>, remote_fingerprint: Vec<u8>) -> Vec<u8> {

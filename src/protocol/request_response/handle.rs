@@ -23,9 +23,14 @@ use crate::{
     PeerId,
 };
 
-use tokio::sync::mpsc::{Receiver, Sender};
+use futures::channel;
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
 
 use std::{
+    collections::HashMap,
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -35,7 +40,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "request-response::handle";
+const LOG_TARGET: &str = "litep2p::request-response::handle";
 
 /// Request-response error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +62,89 @@ pub enum RequestResponseError {
 }
 
 /// Request-response events.
+#[derive(Debug)]
+pub(super) enum InnerRequestResponseEvent {
+    /// Request received from remote
+    RequestReceived {
+        /// Peer Id.
+        peer: PeerId,
+
+        /// Fallback protocol, if the substream was negotiated using a fallback.
+        fallback: Option<ProtocolName>,
+
+        /// Request ID.
+        request_id: RequestId,
+
+        /// Received request.
+        request: Vec<u8>,
+
+        /// `oneshot::Sender` for response.
+        response_tx: oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>,
+    },
+
+    /// Response received.
+    ResponseReceived {
+        /// Peer Id.
+        peer: PeerId,
+
+        /// Request ID.
+        request_id: RequestId,
+
+        /// Received request.
+        response: Vec<u8>,
+    },
+
+    /// Request failed.
+    RequestFailed {
+        /// Peer Id.
+        peer: PeerId,
+
+        /// Request ID.
+        request_id: RequestId,
+
+        /// Request-response error.
+        error: RequestResponseError,
+    },
+}
+
+impl From<InnerRequestResponseEvent> for RequestResponseEvent {
+    fn from(event: InnerRequestResponseEvent) -> Self {
+        match event {
+            InnerRequestResponseEvent::RequestReceived {
+                peer,
+                fallback,
+                request_id,
+                request,
+                ..
+            } => RequestResponseEvent::RequestReceived {
+                peer,
+                fallback,
+                request_id,
+                request,
+            },
+            InnerRequestResponseEvent::ResponseReceived {
+                peer,
+                request_id,
+                response,
+            } => RequestResponseEvent::ResponseReceived {
+                peer,
+                request_id,
+                response,
+            },
+            InnerRequestResponseEvent::RequestFailed {
+                peer,
+                request_id,
+                error,
+            } => RequestResponseEvent::RequestFailed {
+                peer,
+                request_id,
+                error,
+            },
+        }
+    }
+}
+
+/// Request-response events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestResponseEvent {
     /// Request received from remote
@@ -68,6 +156,10 @@ pub enum RequestResponseEvent {
         fallback: Option<ProtocolName>,
 
         /// Request ID.
+        ///
+        /// While `request_id` is guaranteed to be unique for this protocols, the request IDs are
+        /// not unique across different request-response protocols, meaning two different
+        /// request-response protocols can both assign `RequestId(123)` for any given request.
         request_id: RequestId,
 
         /// Received request.
@@ -138,23 +230,6 @@ pub(crate) enum RequestResponseCommand {
         dial_options: DialOptions,
     },
 
-    /// Send response.
-    SendResponse {
-        /// Request ID.
-        ///
-        /// This is the request ID that was received in [`RequestResponseEvent::RequestReceived`].
-        request_id: RequestId,
-
-        /// Response.
-        response: Vec<u8>,
-    },
-
-    /// Reject inbound request.
-    RejectRequest {
-        /// Request ID.
-        request_id: RequestId,
-    },
-
     /// Cancel outbound request.
     CancelRequest {
         /// Request ID.
@@ -166,10 +241,14 @@ pub(crate) enum RequestResponseCommand {
 /// protocol.
 pub struct RequestResponseHandle {
     /// TX channel for sending commands to the request-response protocol.
-    event_rx: Receiver<RequestResponseEvent>,
+    event_rx: Receiver<InnerRequestResponseEvent>,
 
     /// RX channel for receiving events from the request-response protocol.
     command_tx: Sender<RequestResponseCommand>,
+
+    /// Pending responses.
+    pending_responses:
+        HashMap<RequestId, oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>>,
 
     /// Next ephemeral request ID.
     next_request_id: Arc<AtomicUsize>,
@@ -177,8 +256,8 @@ pub struct RequestResponseHandle {
 
 impl RequestResponseHandle {
     /// Create new [`RequestResponseHandle`].
-    pub(crate) fn new(
-        event_rx: Receiver<RequestResponseEvent>,
+    pub(super) fn new(
+        event_rx: Receiver<InnerRequestResponseEvent>,
         command_tx: Sender<RequestResponseCommand>,
         next_request_id: Arc<AtomicUsize>,
     ) -> Self {
@@ -186,6 +265,7 @@ impl RequestResponseHandle {
             event_rx,
             command_tx,
             next_request_id,
+            pending_responses: HashMap::new(),
         }
     }
 
@@ -193,10 +273,16 @@ impl RequestResponseHandle {
     ///
     /// Reject request received from a remote peer. The substream is dropped which signals
     /// to the remote peer that request was rejected.
-    pub async fn reject_request(&mut self, request_id: RequestId) {
-        tracing::trace!(target: LOG_TARGET, ?request_id, "reject request");
-
-        let _ = self.command_tx.send(RequestResponseCommand::RejectRequest { request_id }).await;
+    pub fn reject_request(&mut self, request_id: RequestId) {
+        match self.pending_responses.remove(&request_id) {
+            None => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "rejected request doesn't exist")
+            }
+            Some(sender) => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "reject request");
+                drop(sender);
+            }
+        }
     }
 
     /// Cancel an outbound request.
@@ -218,6 +304,11 @@ impl RequestResponseHandle {
     }
 
     /// Send request to remote peer.
+    ///
+    /// While the returned `RequestId` is guaranteed to be unique for this request-response
+    /// protocol, it's not unique across all installed request-response protocols. That is,
+    /// multiple request-response protocols can return the same `RequestId` and this must be
+    /// handled by the calling code correctly if the `RequestId`s are stored somewhere.
     pub async fn send_request(
         &mut self,
         peer: PeerId,
@@ -240,20 +331,47 @@ impl RequestResponseHandle {
     }
 
     /// Send response to remote peer.
-    pub async fn send_response(
+    pub fn send_response(&mut self, request_id: RequestId, response: Vec<u8>) {
+        match self.pending_responses.remove(&request_id) {
+            None => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "pending response doens't exist");
+            }
+            Some(response_tx) => {
+                tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
+
+                if let Err(_) = response_tx.send((response, None)) {
+                    tracing::debug!(target: LOG_TARGET, ?request_id, "substream closed");
+                }
+            }
+        }
+    }
+
+    /// Send response to remote peer with feedback.
+    ///
+    /// The feedback system is inherited from Polkadot SDK's `sc-network` and it's used to notify
+    /// the sender the response whether it was sent successfully or not. Once the response has been
+    /// sent over the substream successfully, `()` will be sent over the feedback channel to the
+    /// sender to notify them about it. If the substream has been closed or the substream failed
+    /// while sending the response, the feedback channel will be dropped, notifying the sender
+    /// that sending the response failed.
+    pub fn send_response_with_feedback(
         &mut self,
         request_id: RequestId,
         response: Vec<u8>,
-    ) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
+        feedback: channel::oneshot::Sender<()>,
+    ) {
+        match self.pending_responses.remove(&request_id) {
+            None => {
+                tracing::debug!(target: LOG_TARGET, ?request_id, "pending response doens't exist");
+            }
+            Some(response_tx) => {
+                tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
 
-        self.command_tx
-            .send(RequestResponseCommand::SendResponse {
-                request_id,
-                response,
-            })
-            .await
-            .map_err(From::from)
+                if let Err(_) = response_tx.send((response, Some(feedback))) {
+                    tracing::debug!(target: LOG_TARGET, ?request_id, "substream closed");
+                }
+            }
+        }
     }
 }
 
@@ -261,6 +379,26 @@ impl futures::Stream for RequestResponseHandle {
     type Item = RequestResponseEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.event_rx.poll_recv(cx)
+        match futures::ready!(self.event_rx.poll_recv(cx)) {
+            None => return Poll::Ready(None),
+            Some(event) => match event {
+                InnerRequestResponseEvent::RequestReceived {
+                    peer,
+                    fallback,
+                    request_id,
+                    request,
+                    response_tx,
+                } => {
+                    self.pending_responses.insert(request_id, response_tx);
+                    Poll::Ready(Some(RequestResponseEvent::RequestReceived {
+                        peer,
+                        fallback,
+                        request_id,
+                        request,
+                    }))
+                }
+                event => Poll::Ready(Some(event.into())),
+            },
+        }
     }
 }

@@ -21,6 +21,7 @@
 //! Protocol name.
 
 use std::{
+    fmt::Display,
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -29,7 +30,7 @@ use std::{
 #[derive(Debug, Clone)]
 pub enum ProtocolName {
     Static(&'static str),
-    Allocated(Arc<String>),
+    Allocated(Arc<str>),
 }
 
 impl ProtocolName {
@@ -44,9 +45,24 @@ impl From<&'static str> for ProtocolName {
     }
 }
 
+impl Display for ProtocolName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Static(protocol) => protocol.fmt(f),
+            Self::Allocated(protocol) => protocol.fmt(f),
+        }
+    }
+}
+
 impl From<String> for ProtocolName {
     fn from(protocol: String) -> Self {
-        ProtocolName::Allocated(Arc::new(protocol))
+        ProtocolName::Allocated(Arc::from(protocol))
+    }
+}
+
+impl From<Arc<str>> for ProtocolName {
+    fn from(protocol: Arc<str>) -> Self {
+        Self::Allocated(protocol)
     }
 }
 
@@ -56,7 +72,7 @@ impl std::ops::Deref for ProtocolName {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Static(protocol) => protocol,
-            Self::Allocated(protocol) => protocol.as_str(),
+            Self::Allocated(protocol) => protocol,
         }
     }
 }

@@ -52,7 +52,7 @@ mod connection;
 pub mod config;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "quic";
+const LOG_TARGET: &str = "litep2p::quic";
 
 /// Convert `SocketAddr` to `Multiaddr`
 fn socket_addr_to_multi_addr(address: &SocketAddr) -> Multiaddr {

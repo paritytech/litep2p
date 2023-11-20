@@ -69,7 +69,7 @@ impl WebSocketError {
 }
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "websocket";
+const LOG_TARGET: &str = "litep2p::websocket";
 
 /// WebSocket transport.
 pub(crate) struct WebSocketTransport {
@@ -236,8 +236,8 @@ impl Transport for WebSocketTransport {
             tokio::select! {
                 connection = self.listener.accept() => match connection {
                     Ok((stream, address)) => {
-                        let context = self.context.protocol_set();
                         let connection_id = self.context.next_connection_id();
+                        let context = self.context.protocol_set(connection_id);
                         let yamux_config = self.config.yamux_config.clone();
                         let bandwidth_sink = self.context.bandwidth_sink.clone();
 
@@ -266,8 +266,24 @@ impl Transport for WebSocketTransport {
                 },
                 command = self.context.next() => match command.ok_or(Error::EssentialTaskClosed)? {
                     TransportManagerCommand::Dial { address, connection } => {
-                        let context = self.context.protocol_set();
+                        let context = self.context.protocol_set(connection);
                         let yamux_config = self.config.yamux_config.clone();
+                        let peer = match address.iter().find(
+                            |protocol| std::matches!(protocol, Protocol::P2p(_))
+                        ) {
+                            Some(Protocol::P2p(peer)) => PeerId::from_multihash(peer).expect("to succeed"),
+                            _ => {
+                                tracing::error!(target: LOG_TARGET, ?address, "state mismatch: multiaddress doesn't contain peer id");
+                                debug_assert!(false);
+
+                                self.context.report_dial_failure(
+                                    connection,
+                                    address.clone(),
+                                    Error::AddressError(AddressError::PeerIdMissing)
+                                ).await;
+                                continue;
+                            }
+                        };
 
                         // try to convert the multiaddress into a `Url` and if it fails, report dial failure immediately
                         let ws_address = match Self::multiaddr_into_url(address.clone()) {
@@ -288,6 +304,7 @@ impl Transport for WebSocketTransport {
                             match tokio::time::timeout(Duration::from_secs(10), async move {
                                 WebSocketConnection::open_connection(
                                     address,
+                                    Some(peer),
                                     ws_address,
                                     connection,
                                     yamux_config,
@@ -296,7 +313,6 @@ impl Transport for WebSocketTransport {
                                 )
                                 .await
                                 .map_err(|error| {
-                                    tracing::warn!("connection failed: {error:?}");
                                     WebSocketError::new(error, Some(connection))
                                 })
                             }).await {
@@ -313,11 +329,11 @@ impl Transport for WebSocketTransport {
                             let _peer = *connection.peer();
                             let _address = connection.address().clone();
 
-                            tokio::spawn(async move {
+                            self.context.executor.run(Box::pin(async move {
                                 if let Err(error) = connection.start().await {
                                     tracing::debug!(target: LOG_TARGET, ?error, "connection failed");
                                 }
-                            });
+                            }))
                         }
                         Err(error) => match error.connection_id {
                             Some(connection_id) => match self.pending_dials.remove(&connection_id) {

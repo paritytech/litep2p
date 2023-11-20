@@ -49,7 +49,7 @@ const MSG_PROTOCOL_NA: &[u8] = b"na\n";
 /// The encoded form of a multistream-select 'ls' message.
 const MSG_LS: &[u8] = b"ls\n";
 /// Logging target.
-const LOG_TARGET: &str = "multistream-select";
+const LOG_TARGET: &str = "litep2p::multistream-select";
 
 /// The multistream-select header lines preceeding negotiation.
 ///

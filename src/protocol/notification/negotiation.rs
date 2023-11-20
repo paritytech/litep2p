@@ -24,16 +24,18 @@ use crate::{substream::Substream, PeerId};
 
 use futures::{FutureExt, Sink, Stream};
 use futures_timer::Delay;
+use parking_lot::RwLock;
 
 use std::{
     collections::{HashMap, VecDeque},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "notification::negotiation";
+const LOG_TARGET: &str = "litep2p::notification::negotiation";
 
 /// Maximum timeout wait before for handshake before operation is considered failed.
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -105,7 +107,7 @@ enum HandshakeState {
 #[derive(Debug)]
 pub(crate) struct HandshakeService {
     /// Handshake.
-    handshake: Vec<u8>,
+    handshake: Arc<RwLock<Vec<u8>>>,
 
     /// Pending outbound substreams.
     /// Substreams:
@@ -117,17 +119,12 @@ pub(crate) struct HandshakeService {
 
 impl HandshakeService {
     /// Create new [`HandshakeService`].
-    pub fn new(handshake: Vec<u8>) -> Self {
+    pub fn new(handshake: Arc<RwLock<Vec<u8>>>) -> Self {
         Self {
             handshake,
             ready: VecDeque::new(),
             substreams: HashMap::new(),
         }
-    }
-
-    /// Set handshake for the protocol.
-    pub fn set_handshake(&mut self, handshake: Vec<u8>) {
-        self.handshake = handshake;
     }
 
     /// Remove outbound substream from [`HandshakeService`].
@@ -273,7 +270,7 @@ impl Stream for HandshakeService {
                         Poll::Pending => continue 'outer,
                     },
                     HandshakeState::SinkReady => {
-                        match pinned.start_send(inner.handshake.clone().into()) {
+                        match pinned.start_send((*inner.handshake.read()).clone().into()) {
                             Ok(()) => {
                                 *state = HandshakeState::HandshakeSent;
                                 continue;

@@ -46,7 +46,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "mdns";
+const LOG_TARGET: &str = "litep2p::mdns";
 
 /// IPv4 multicast address.
 const IPV4_MULTICAST_ADDRESS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
@@ -288,7 +288,7 @@ impl Mdns {
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(self.query_interval) => {
-                    tracing::info!(target: LOG_TARGET, "timeout expired");
+                    tracing::trace!(target: LOG_TARGET, "timeout expired");
 
                     if let Err(error) = self.on_outbound_request().await {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
@@ -346,7 +346,8 @@ mod tests {
             .try_init();
 
         let (config1, mut stream1) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle1) = TransportManager::new(Keypair::generate(), BandwidthSink::new());
+        let (_manager1, handle1) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
 
         let mdns1 = Mdns::new(
             handle1,
@@ -363,7 +364,8 @@ mod tests {
         .unwrap();
 
         let (config2, mut stream2) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle2) = TransportManager::new(Keypair::generate(), BandwidthSink::new());
+        let (_manager1, handle2) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
 
         let mdns2 = Mdns::new(
             handle2,

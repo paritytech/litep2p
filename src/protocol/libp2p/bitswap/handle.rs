@@ -77,7 +77,7 @@ pub(super) enum BitswapCommand {
         peer: PeerId,
 
         /// CIDs.
-        cids: Vec<(Cid, ResponseType)>,
+        responses: Vec<ResponseType>,
     },
 }
 
@@ -104,8 +104,8 @@ impl BitswapHandle {
     }
 
     /// Send `response` to `peer`.
-    pub async fn send_response(&self, peer: PeerId, cids: Vec<(Cid, ResponseType)>) {
-        let _ = self.cmd_tx.send(BitswapCommand::SendResponse { peer, cids }).await;
+    pub async fn send_response(&self, peer: PeerId, responses: Vec<ResponseType>) {
+        let _ = self.cmd_tx.send(BitswapCommand::SendResponse { peer, responses }).await;
     }
 }
 

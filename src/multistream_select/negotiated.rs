@@ -35,7 +35,7 @@ use std::{
     task::{Context, Poll},
 };
 
-const LOG_TARGET: &str = "multistream-select";
+const LOG_TARGET: &str = "litep2p::multistream-select";
 
 /// An I/O stream that has settled on an (application-layer) protocol to use.
 ///

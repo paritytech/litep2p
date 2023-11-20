@@ -21,26 +21,31 @@
 use crate::{
     error::Error,
     protocol::notification::types::{
-        InnerNotificationEvent, NotificationCommand, NotificationError, NotificationEvent,
-        ValidationResult,
+        Direction, InnerNotificationEvent, NotificationCommand, NotificationError,
+        NotificationEvent, ValidationResult,
     },
     types::protocol::ProtocolName,
     PeerId,
 };
 
-use futures::{future::Either, pin_mut};
-use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
+use futures::Stream;
+use parking_lot::RwLock;
+use tokio::sync::{
+    mpsc::{error::TrySendError, Receiver, Sender},
+    oneshot,
+};
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "notification::handle";
+const LOG_TARGET: &str = "litep2p::notification::handle";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct NotificationEventHandle {
     tx: Sender<InnerNotificationEvent>,
 }
@@ -58,6 +63,7 @@ impl NotificationEventHandle {
         fallback: Option<ProtocolName>,
         peer: PeerId,
         handshake: Vec<u8>,
+        tx: oneshot::Sender<ValidationResult>,
     ) {
         let _ = self
             .tx
@@ -66,6 +72,7 @@ impl NotificationEventHandle {
                 fallback,
                 peer,
                 handshake,
+                tx,
             })
             .await;
     }
@@ -75,6 +82,7 @@ impl NotificationEventHandle {
         &self,
         protocol: ProtocolName,
         fallback: Option<ProtocolName>,
+        direction: Direction,
         peer: PeerId,
         handshake: Vec<u8>,
         sink: NotificationSink,
@@ -84,6 +92,7 @@ impl NotificationEventHandle {
             .send(InnerNotificationEvent::NotificationStreamOpened {
                 protocol,
                 fallback,
+                direction,
                 peer,
                 handshake,
                 sink,
@@ -137,10 +146,7 @@ impl NotificationSink {
     /// Send notification to peer synchronously.
     ///
     /// If the channel is clogged, [`NotificationError::ChannelClogged`] is returned.
-    pub fn send_sync_notification(
-        &mut self,
-        notification: Vec<u8>,
-    ) -> Result<(), NotificationError> {
+    pub fn send_sync_notification(&self, notification: Vec<u8>) -> Result<(), NotificationError> {
         match self.sync_tx.try_send(notification) {
             Ok(_) => Ok(()),
             Err(error) => match error {
@@ -154,7 +160,7 @@ impl NotificationSink {
     ///
     /// Returns [`Error::PeerDoesntExist(PeerId)`](crate::error::Error::PeerDoesntExist)
     /// if the connection has been closed.
-    pub async fn send_async_notification(&mut self, notification: Vec<u8>) -> crate::Result<()> {
+    pub async fn send_async_notification(&self, notification: Vec<u8>) -> crate::Result<()> {
         self.async_tx
             .send(notification)
             .await
@@ -163,11 +169,12 @@ impl NotificationSink {
 }
 
 /// Handle allowing the user protocol to interact with the notification protocol.
+#[derive(Debug)]
 pub struct NotificationHandle {
     /// RX channel for receiving events from the notification protocol.
     event_rx: Receiver<InnerNotificationEvent>,
 
-    /// RX channel for receiving notifications from peers.
+    /// RX channel for receiving notifications from connection handlers.
     notif_rx: Receiver<(PeerId, Vec<u8>)>,
 
     /// TX channel for sending commands to the notification protocol.
@@ -175,20 +182,29 @@ pub struct NotificationHandle {
 
     /// Peers.
     peers: HashMap<PeerId, NotificationSink>,
+
+    /// Pending validations.
+    pending_validations: HashMap<PeerId, oneshot::Sender<ValidationResult>>,
+
+    /// Handshake.
+    handshake: Arc<RwLock<Vec<u8>>>,
 }
 
 impl NotificationHandle {
     /// Create new [`NotificationHandle`].
     pub(crate) fn new(
         event_rx: Receiver<InnerNotificationEvent>,
-        command_tx: Sender<NotificationCommand>,
         notif_rx: Receiver<(PeerId, Vec<u8>)>,
+        command_tx: Sender<NotificationCommand>,
+        handshake: Arc<RwLock<Vec<u8>>>,
     ) -> Self {
         Self {
             event_rx,
-            command_tx,
             notif_rx,
+            command_tx,
+            handshake,
             peers: HashMap::new(),
+            pending_validations: HashMap::new(),
         }
     }
 
@@ -204,9 +220,46 @@ impl NotificationHandle {
         }
 
         self.command_tx
-            .send(NotificationCommand::OpenSubstream { peer })
+            .send(NotificationCommand::OpenSubstream {
+                peers: HashSet::from_iter([peer]),
+            })
             .await
             .map_or(Ok(()), |_| Ok(()))
+    }
+
+    /// Open substreams to multiple peers.
+    ///
+    /// Similar to [`NotificationHandle::open_substream()`] but multiple connections are initiated
+    /// using a single call to `NotificationProtocol`.
+    ///
+    /// Peers who are already connected are ignored and returned as `Err(HashSet<PeerId>>)`.
+    pub async fn open_substream_batch(
+        &self,
+        peers: impl Iterator<Item = PeerId>,
+    ) -> Result<(), HashSet<PeerId>> {
+        let (to_add, to_ignore): (Vec<_>, Vec<_>) = peers
+            .map(|peer| match self.peers.contains_key(&peer) {
+                true => (None, Some(peer)),
+                false => (Some(peer), None),
+            })
+            .unzip();
+
+        let to_add = to_add.into_iter().flatten().collect::<HashSet<_>>();
+        let to_ignore = to_ignore.into_iter().flatten().collect::<HashSet<_>>();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            peers_to_add = ?to_add.len(),
+            peers_to_ignore = ?to_ignore.len(),
+            "open substream",
+        );
+
+        let _ = self.command_tx.send(NotificationCommand::OpenSubstream { peers: to_add }).await;
+
+        match to_ignore.is_empty() {
+            true => Ok(()),
+            false => Err(to_ignore),
+        }
     }
 
     /// Close substream to `peer`.
@@ -217,24 +270,48 @@ impl NotificationHandle {
             return;
         }
 
-        let _ = self.command_tx.send(NotificationCommand::CloseSubstream { peer }).await;
+        let _ = self
+            .command_tx
+            .send(NotificationCommand::CloseSubstream {
+                peers: HashSet::from_iter([peer]),
+            })
+            .await;
+    }
+
+    /// Close substream to multiple peers.
+    ///
+    /// Similar to [`NotificationHandle::close_substream()`] but multiple connections are closed
+    /// using a single call to `NotificationProtocol`.
+    pub async fn close_substream_batch(&self, peers: impl Iterator<Item = PeerId>) {
+        let peers = peers
+            .filter_map(|peer| self.peers.contains_key(&peer).then_some(peer))
+            .collect::<HashSet<_>>();
+
+        if peers.is_empty() {
+            return;
+        }
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peers,
+            "close substreams",
+        );
+
+        let _ = self.command_tx.send(NotificationCommand::CloseSubstream { peers }).await;
     }
 
     /// Set new handshake.
-    pub async fn set_handshake(&mut self, handshake: Vec<u8>) {
+    pub fn set_handshake(&mut self, handshake: Vec<u8>) {
         tracing::trace!(target: LOG_TARGET, ?handshake, "set handshake");
 
-        let _ = self.command_tx.send(NotificationCommand::SetHandshake { handshake }).await;
+        *self.handshake.write() = handshake;
     }
 
     /// Send validation result to the notification protocol for the inbound substream.
-    pub async fn send_validation_result(&self, peer: PeerId, result: ValidationResult) {
+    pub fn send_validation_result(&mut self, peer: PeerId, result: ValidationResult) {
         tracing::trace!(target: LOG_TARGET, ?peer, ?result, "send validation result");
 
-        let _ = self
-            .command_tx
-            .send(NotificationCommand::SubstreamValidated { peer, result })
-            .await;
+        self.pending_validations.remove(&peer).map(|tx| tx.send(result));
     }
 
     /// Send synchronous notification to `peer`.
@@ -245,8 +322,6 @@ impl NotificationHandle {
         peer: PeerId,
         notification: Vec<u8>,
     ) -> Result<(), NotificationError> {
-        tracing::trace!(target: LOG_TARGET, ?peer, "send sync notification");
-
         match self.peers.get_mut(&peer) {
             Some(sink) => sink.send_sync_notification(notification),
             None => Ok(()),
@@ -262,8 +337,6 @@ impl NotificationHandle {
         peer: PeerId,
         notification: Vec<u8>,
     ) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?peer, "send async notification");
-
         match self.peers.get_mut(&peer) {
             Some(sink) => sink.send_async_notification(notification).await,
             None => Err(Error::PeerDoesntExist(peer)),
@@ -276,60 +349,70 @@ impl NotificationHandle {
     }
 }
 
-use std::future::Future;
-
-impl futures::Stream for NotificationHandle {
+impl Stream for NotificationHandle {
     type Item = NotificationEvent;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = Pin::into_inner(self);
-        let fut = async {
-            tokio::select! {
-                event = this.event_rx.recv() => Either::Right(event),
-                event = this.notif_rx.recv() => Either::Left(event),
-            }
-        };
-        pin_mut!(fut);
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match self.event_rx.poll_recv(cx) {
+                Poll::Pending => {}
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Ready(Some(event)) => match event {
+                    InnerNotificationEvent::NotificationStreamOpened {
+                        protocol,
+                        fallback,
+                        direction,
+                        peer,
+                        handshake,
+                        sink,
+                    } => {
+                        self.peers.insert(peer, sink);
 
-        match fut.poll(cx) {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(either) => match either {
-                Either::Right(event) => match event {
-                    None => return Poll::Ready(None),
-                    Some(event) => match event {
-                        InnerNotificationEvent::NotificationStreamOpened {
+                        return Poll::Ready(Some(NotificationEvent::NotificationStreamOpened {
+                            protocol,
+                            fallback,
+                            direction,
+                            peer,
+                            handshake,
+                        }));
+                    }
+                    InnerNotificationEvent::NotificationStreamClosed { peer } => {
+                        self.peers.remove(&peer);
+
+                        return Poll::Ready(Some(NotificationEvent::NotificationStreamClosed {
+                            peer,
+                        }));
+                    }
+                    InnerNotificationEvent::ValidateSubstream {
+                        protocol,
+                        fallback,
+                        peer,
+                        handshake,
+                        tx,
+                    } => {
+                        self.pending_validations.insert(peer, tx);
+
+                        return Poll::Ready(Some(NotificationEvent::ValidateSubstream {
                             protocol,
                             fallback,
                             peer,
                             handshake,
-                            sink,
-                        } => {
-                            this.peers.insert(peer, sink);
-
-                            Poll::Ready(Some(NotificationEvent::NotificationStreamOpened {
-                                protocol,
-                                fallback,
-                                peer,
-                                handshake,
-                            }))
-                        }
-                        InnerNotificationEvent::NotificationStreamClosed { peer } => {
-                            this.peers.remove(&peer);
-
-                            Poll::Ready(Some(NotificationEvent::NotificationStreamClosed { peer }))
-                        }
-                        event => Poll::Ready(Some(event.into())),
-                    },
+                        }));
+                    }
+                    event => return Poll::Ready(Some(event.into())),
                 },
-                Either::Left(event) => match event {
-                    None => return Poll::Ready(None),
-                    Some((peer, notification)) =>
-                        Poll::Ready(Some(NotificationEvent::NotificationReceived {
+            }
+
+            match futures::ready!(self.notif_rx.poll_recv(cx)) {
+                None => return Poll::Ready(None),
+                Some((peer, notification)) =>
+                    if self.peers.contains_key(&peer) {
+                        return Poll::Ready(Some(NotificationEvent::NotificationReceived {
                             peer,
                             notification,
-                        })),
-                },
-            },
+                        }));
+                    },
+            }
         }
     }
 }

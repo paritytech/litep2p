@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{Record, RecordKey},
+    protocol::libp2p::kademlia::{QueryId, Record, RecordKey},
     PeerId,
 };
 
@@ -49,6 +49,16 @@ pub enum Quorum {
     N(NonZeroUsize),
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum RoutingTableUpdateMode {
+    /// Don't insert discovered peers automatically to the routing tables but
+    /// allow user to do that by calling [`KademliaHandle::add_known_peer()`].
+    Manual,
+
+    /// Automatically add all discovered peers to routing tables.
+    Automatic,
+}
+
 /// Kademlia commands.
 #[derive(Debug)]
 pub(crate) enum KademliaCommand {
@@ -65,12 +75,18 @@ pub(crate) enum KademliaCommand {
     FindNode {
         /// Peer ID.
         peer: PeerId,
+
+        /// Query ID for the query.
+        query_id: QueryId,
     },
 
     /// Store record to DHT.
     PutRecord {
         /// Record.
         record: Record,
+
+        /// Query ID for the query.
+        query_id: QueryId,
     },
 
     /// Get record from DHT.
@@ -80,6 +96,9 @@ pub(crate) enum KademliaCommand {
 
         /// [`Quorum`] for the query.
         quorum: Quorum,
+
+        /// Query ID for the query.
+        query_id: QueryId,
     },
 }
 
@@ -87,7 +106,10 @@ pub(crate) enum KademliaCommand {
 #[derive(Debug, Clone)]
 pub enum KademliaEvent {
     /// Result for the issued `FIND_NODE` query.
-    FindNodeResult {
+    FindNodeSuccess {
+        /// Query ID.
+        query_id: QueryId,
+
         /// Target of the query
         target: PeerId,
 
@@ -95,10 +117,41 @@ pub enum KademliaEvent {
         peers: Vec<(PeerId, Vec<Multiaddr>)>,
     },
 
-    /// Get the result of a `GET_VALUE` query.
-    GetRecordResult {
+    /// Routing table update.
+    ///
+    /// Kademlia has discovered one or more peers that should be added to the routing table.
+    /// If [`RoutingTableUpdateMode`] is `Automatic`, user can ignore this event unless some
+    /// upper-level protocols has user for this information.
+    ///
+    /// If the mode was set to `Manual`, user should call [`KademliaHandle::add_known_peer()`]
+    /// in order to add the peers to routing table.
+    RoutingTableUpdate {
+        /// Discovered peers.
+        peers: Vec<PeerId>,
+    },
+
+    /// `GET_VALUE` query succeeded.
+    GetRecordSuccess {
+        /// Query ID.
+        query_id: QueryId,
+
         /// Found record.
         record: Record,
+    },
+
+    /// `PUT_VALUE` query succeeded.
+    PutRecordSucess {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Record key.
+        key: RecordKey,
+    },
+
+    /// Query failed.
+    QueryFailed {
+        /// Query ID.
+        query_id: QueryId,
     },
 }
 
@@ -109,12 +162,27 @@ pub struct KademliaHandle {
 
     /// RX channel for receiving events from `Kademlia`.
     event_rx: Receiver<KademliaEvent>,
+
+    /// Next query ID.
+    next_query_id: usize,
 }
 
 impl KademliaHandle {
     /// Create new [`KademliaHandle`].
     pub(super) fn new(cmd_tx: Sender<KademliaCommand>, event_rx: Receiver<KademliaEvent>) -> Self {
-        Self { cmd_tx, event_rx }
+        Self {
+            cmd_tx,
+            event_rx,
+            next_query_id: 0usize,
+        }
+    }
+
+    /// Allocate next query ID.
+    fn next_query_id(&mut self) -> QueryId {
+        let query_id = self.next_query_id;
+        self.next_query_id += 1;
+
+        QueryId(query_id)
     }
 
     /// Add known peer.
@@ -123,18 +191,72 @@ impl KademliaHandle {
     }
 
     /// Send `FIND_NODE` query to known peers.
-    pub async fn find_node(&mut self, peer: PeerId) {
-        let _ = self.cmd_tx.send(KademliaCommand::FindNode { peer }).await;
+    pub async fn find_node(&mut self, peer: PeerId) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::FindNode { peer, query_id }).await;
+
+        query_id
     }
 
     /// Store record to DHT.
-    pub async fn put_record(&mut self, record: Record) {
-        let _ = self.cmd_tx.send(KademliaCommand::PutRecord { record }).await;
+    pub async fn put_record(&mut self, record: Record) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::PutRecord { record, query_id }).await;
+
+        query_id
     }
 
     /// Get record from DHT.
-    pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) {
-        let _ = self.cmd_tx.send(KademliaCommand::GetRecord { key, quorum }).await;
+    pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::GetRecord {
+                key,
+                quorum,
+                query_id,
+            })
+            .await;
+
+        query_id
+    }
+
+    /// Try to add known peer and if the channel is clogged, return an error.
+    pub fn try_add_known_peer(&self, peer: PeerId, addresses: Vec<Multiaddr>) -> Result<(), ()> {
+        self.cmd_tx
+            .try_send(KademliaCommand::AddKnownPeer { peer, addresses })
+            .map_err(|_| ())
+    }
+
+    /// Try to initiate `FIND_NODE` query and if the channel is clogged, return an error.
+    pub fn try_find_node(&mut self, peer: PeerId) -> Result<QueryId, ()> {
+        let query_id = self.next_query_id();
+        self.cmd_tx
+            .try_send(KademliaCommand::FindNode { peer, query_id })
+            .map(|_| query_id)
+            .map_err(|_| ())
+    }
+
+    /// Try to initiate `PUT_VALUE` query and if the channel is clogged, return an error.
+    pub fn try_put_record(&mut self, record: Record) -> Result<QueryId, ()> {
+        let query_id = self.next_query_id();
+        self.cmd_tx
+            .try_send(KademliaCommand::PutRecord { record, query_id })
+            .map(|_| query_id)
+            .map_err(|_| ())
+    }
+
+    /// Try to initiate `GET_VALUE` query and if the channel is clogged, return an error.
+    pub fn try_get_record(&mut self, key: RecordKey, quorum: Quorum) -> Result<QueryId, ()> {
+        let query_id = self.next_query_id();
+        self.cmd_tx
+            .try_send(KademliaCommand::GetRecord {
+                key,
+                quorum,
+                query_id,
+            })
+            .map(|_| query_id)
+            .map_err(|_| ())
     }
 }
 

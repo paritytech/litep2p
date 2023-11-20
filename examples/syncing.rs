@@ -78,7 +78,7 @@ impl SyncingEngine {
 
     /// Initialize notification protocol for block announcements
     fn init_block_announce() -> (NotificationConfig, NotificationHandle) {
-        NotificationConfigBuilder::new(ProtocolName::from("/sync/block-announce/1"))
+        NotificationConfigBuilder::new(ProtocolName::from("/notif/block-announce/1"))
             .with_max_size(1024usize)
             .with_handshake(vec![1, 2, 3, 4])
             .build()

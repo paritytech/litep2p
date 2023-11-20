@@ -27,10 +27,10 @@ use crate::{
     PeerId,
 };
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "ipfs::kademlia::query::find_node";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_node";
 
 /// Context for `FIND_NODE` queries.
 #[derive(Debug)]
@@ -48,10 +48,10 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     ///
     /// These are the peers for whom the query has already been sent
     /// and who have either returned their closest peers or failed to answer.
-    pub queried: HashMap<PeerId, KademliaPeer>,
+    pub queried: HashSet<PeerId>,
 
     /// Candidates.
-    pub candidates: VecDeque<KademliaPeer>,
+    pub candidates: BTreeMap<Distance, KademliaPeer>,
 
     /// Responses.
     pub responses: BTreeMap<Distance, KademliaPeer>,
@@ -68,16 +68,23 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     pub fn new(
         query: QueryId,
         target: Key<T>,
-        candidates: VecDeque<KademliaPeer>,
+        in_peers: VecDeque<KademliaPeer>,
         replication_factor: usize,
         parallelism_factor: usize,
     ) -> Self {
+        let mut candidates = BTreeMap::new();
+
+        for candidate in &in_peers {
+            let distance = target.distance(&candidate.key);
+            candidates.insert(distance, candidate.clone());
+        }
+
         Self {
             query,
             target,
             candidates,
             pending: HashMap::new(),
-            queried: HashMap::new(),
+            queried: HashSet::new(),
             responses: BTreeMap::new(),
             replication_factor,
             parallelism_factor,
@@ -87,12 +94,11 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "pending peer doesn't exist");
-            debug_assert!(false);
+            tracing::debug!(target: LOG_TARGET, ?peer, "pending peer doesn't exist");
             return;
         };
 
-        self.queried.insert(peer.peer, peer);
+        self.queried.insert(peer.peer);
     }
 
     /// Register `FIND_NODE` response from `peer`.
@@ -108,6 +114,9 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         //  b) it can replace some other peer that has a higher distance
         let distance = self.target.distance(&peer.key);
 
+        // always mark the peer as queried to prevent it getting queried again
+        self.queried.insert(peer.peer);
+
         // TODO: could this be written in another way?
         // TODO: only insert nodes from whom a response was received
         match self.responses.len() < self.replication_factor {
@@ -122,10 +131,15 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             }
         }
 
-        self.candidates.extend(peers.clone());
-        self.candidates
-            .make_contiguous()
-            .sort_by(|a, b| self.target.distance(&a.key).cmp(&self.target.distance(&b.key)));
+        // filter already queried peers and extend the set of candidates
+        for candidate in peers {
+            if !self.queried.contains(&candidate.peer)
+                && !self.pending.contains_key(&candidate.peer)
+            {
+                let distance = self.target.distance(&candidate.key);
+                self.candidates.insert(distance, candidate);
+            }
+        }
     }
 
     /// Get next action for `peer`.
@@ -141,8 +155,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     pub fn schedule_next_peer(&mut self) -> QueryAction {
         tracing::trace!(target: LOG_TARGET, query = ?self.query, "get next peer");
 
-        let candidate = self.candidates.pop_front().expect("entry to exist");
-        tracing::trace!(target: LOG_TARGET, ?candidate, "current candidate");
+        let (_, candidate) = self.candidates.pop_first().expect("entry to exist");
         self.pending.insert(candidate.peer, candidate.clone());
 
         QueryAction::SendMessage {
@@ -177,19 +190,36 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
 
         // check if any candidate has lower distance thant the current worst
+        // `expect()` is ok because both `candidates` and `responses` have been confirmed to contain
+        // entries
         if !self.candidates.is_empty() {
-            let first_candidate_distance = self.target.distance(&self.candidates[0].key);
-            let worst_response_candidate = self.responses.last_entry().unwrap().key().clone();
+            let first_candidate_distance = self
+                .target
+                .distance(&self.candidates.first_key_value().expect("candidate to exist").1.key);
+            let worst_response_candidate =
+                self.responses.last_entry().expect("response to exist").key().clone();
 
-            if first_candidate_distance < worst_response_candidate {
+            if first_candidate_distance < worst_response_candidate
+                && self.pending.len() < self.parallelism_factor
+            {
                 return Some(self.schedule_next_peer());
             }
 
-            // TODO: this is probably not correct
-            return Some(QueryAction::QueryFailed { query: self.query });
+            return Some(QueryAction::QuerySucceeded { query: self.query });
         }
 
-        // TODO: probably not correct
+        if self.responses.len() == self.replication_factor {
+            return Some(QueryAction::QuerySucceeded { query: self.query });
+        }
+
+        tracing::error!(
+            target: LOG_TARGET,
+            candidates_len = ?self.candidates.len(),
+            pending_len = ?self.pending.len(),
+            responses_len = ?self.responses.len(),
+            "unhandled state"
+        );
+
         unreachable!();
     }
 }

@@ -35,7 +35,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite
 use quinn::{Connection as QuinnConnection, RecvStream, SendStream};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "quic::connection";
+const LOG_TARGET: &str = "litep2p::quic::connection";
 
 /// QUIC connection error.
 #[derive(Debug)]

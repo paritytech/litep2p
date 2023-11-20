@@ -703,7 +703,7 @@ where
                 entry.insert(substream);
             }
             Entry::Occupied(_) => {
-                tracing::error!(?key, "substream alraedy exists");
+                tracing::error!(?key, "substream already exists");
                 debug_assert!(false);
             }
         }
@@ -715,8 +715,14 @@ where
     }
 
     /// Get mutable reference to stored substream.
+    #[cfg(test)]
     pub fn get_mut(&mut self, key: &K) -> Option<&mut S> {
         self.substreams.get_mut(key)
+    }
+
+    /// Get size of [`SubstreamSet`].
+    pub fn len(&self) -> usize {
+        self.substreams.len()
     }
 }
 

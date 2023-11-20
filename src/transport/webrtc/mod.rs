@@ -68,7 +68,7 @@ mod schema {
 }
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "webrtc";
+const LOG_TARGET: &str = "litep2p::webrtc";
 
 /// Hardcoded remote fingerprint.
 const REMOTE_FINGERPRINT: &str =
@@ -238,19 +238,23 @@ impl WebRtcTransport {
                     .expect("client to handle input successfully");
 
                     let (tx, rx) = channel(64);
+                    let connection_id = self.context.next_connection_id();
+
                     let connection = WebRtcConnection::new(
                         rtc,
-                        self.context.next_connection_id(),
+                        connection_id,
                         noise_channel_id,
                         self.context.keypair.clone(),
-                        self.context.protocol_set(),
+                        self.context.protocol_set(connection_id),
                         source,
                         self.listen_address,
                         Arc::clone(&self.socket),
                         rx,
                     );
 
-                    tokio::spawn(connection.run());
+                    self.context.executor.run(Box::pin(async move {
+                        let _ = connection.run().await;
+                    }));
                     self.peers.insert(source, tx);
                 }
             }

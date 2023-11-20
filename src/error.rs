@@ -114,6 +114,8 @@ pub enum Error {
     Quinn(quinn::ConnectionError),
     #[error("Invalid certificate")]
     InvalidCertificate,
+    #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]
+    PeerIdMismatch(PeerId, PeerId),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -170,6 +172,16 @@ pub enum NotificationError {
     NotificationsClogged,
     #[error("Notification stream closed")]
     NotificationStreamClosed(PeerId),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DialError {
+    #[error("Tried to dial self")]
+    TriedToDialSelf,
+    #[error("Already connected to peer")]
+    AlreadyConnected,
+    #[error("Peer doens't have any known addresses")]
+    NoAddressAvailable(PeerId),
 }
 
 impl From<MultihashGeneric<64>> for Error {

@@ -23,8 +23,8 @@ use litep2p::{
     crypto::ed25519::Keypair,
     error::Error,
     protocol::notification::{
-        Config as NotificationConfig, ConfigBuilder, NotificationError, NotificationEvent,
-        ValidationResult,
+        Config as NotificationConfig, ConfigBuilder, Direction, NotificationError,
+        NotificationEvent, NotificationHandle, ValidationResult,
     },
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
@@ -47,7 +47,7 @@ enum Transport {
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let address = litep2p2.listen_addresses().next().unwrap().clone();
-    litep2p1.connect(address).await.unwrap();
+    litep2p1.dial_address(address).await.unwrap();
 
     let mut litep2p1_connected = false;
     let mut litep2p2_connected = false;
@@ -74,6 +74,30 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+}
+
+async fn make_default_litep2p(transport: Transport) -> (Litep2p, NotificationHandle) {
+    let (notif_config, handle) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+        false,
+        64,
+        64,
+    );
+    let config = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config);
+
+    let config = match transport {
+        Transport::Tcp(transport_config) => config.with_tcp(transport_config),
+        Transport::Quic(transport_config) => config.with_quic(transport_config),
+        Transport::WebSocket(transport_config) => config.with_websocket(transport_config),
+    }
+    .build();
+
+    (Litep2p::new(config).await.unwrap(), handle)
 }
 
 #[tokio::test]
@@ -130,6 +154,8 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -148,6 +174,8 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -188,7 +216,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -199,12 +227,13 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
             fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
@@ -215,6 +244,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -293,6 +323,8 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -311,6 +343,8 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -351,7 +385,7 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Reject).await;
+    handle2.send_validation_result(peer1, ValidationResult::Reject);
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -416,6 +450,8 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -434,6 +470,8 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -474,7 +512,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -485,13 +523,14 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -501,6 +540,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -586,6 +626,8 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -604,6 +646,8 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -646,7 +690,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     // accept the inbound substreams
     assert_eq!(
@@ -658,13 +702,14 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -674,6 +719,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -704,7 +750,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
@@ -715,7 +761,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     // verify that both peers get the open event
     assert_eq!(
@@ -723,6 +769,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -732,6 +779,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -811,6 +859,8 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -829,6 +879,8 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -871,7 +923,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     // accept the substreams
     assert_eq!(
@@ -883,13 +935,14 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -899,6 +952,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -918,8 +972,8 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
     }
 
     // set new handshakes and open the substream
-    handle1.set_handshake(vec![5, 5, 5, 5]).await;
-    handle2.set_handshake(vec![6, 6, 6, 6]).await;
+    handle1.set_handshake(vec![5, 5, 5, 5]);
+    handle2.set_handshake(vec![6, 6, 6, 6]);
     handle2.open_substream(peer1).await.unwrap();
 
     // accept the substreams
@@ -932,7 +986,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
             handshake: vec![6, 6, 6, 6],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     // accept the substreams
     assert_eq!(
@@ -944,7 +998,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
             handshake: vec![5, 5, 5, 5],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     // verify that both peers get the open event
     assert_eq!(
@@ -952,6 +1006,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer1,
             handshake: vec![5, 5, 5, 5],
         }
@@ -961,6 +1016,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer2,
             handshake: vec![6, 6, 6, 6],
         }
@@ -1021,6 +1077,8 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1039,6 +1097,8 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1082,7 +1142,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     // accept the substreams
     assert_eq!(
@@ -1094,13 +1154,14 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1110,6 +1171,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1194,6 +1256,8 @@ async fn both_nodes_open_substream_one_rejects_substreams(
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1212,6 +1276,8 @@ async fn both_nodes_open_substream_one_rejects_substreams(
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1255,7 +1321,7 @@ async fn both_nodes_open_substream_one_rejects_substreams(
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     // the second peer rejects the substream
     assert_eq!(
@@ -1267,7 +1333,7 @@ async fn both_nodes_open_substream_one_rejects_substreams(
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Reject).await;
+    handle2.send_validation_result(peer1, ValidationResult::Reject);
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -1317,6 +1383,8 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1379,6 +1447,8 @@ async fn send_async_notification_to_non_existent_peer(transport1: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1444,6 +1514,8 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1472,7 +1544,7 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpenFailure {
             peer,
-            error: NotificationError::NoConnection
+            error: NotificationError::DialFailure,
         }
     );
 }
@@ -1514,6 +1586,8 @@ async fn try_to_disconnect_non_existent_peer(transport1: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1593,6 +1667,8 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1611,6 +1687,8 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1652,7 +1730,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -1663,13 +1741,14 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1679,6 +1758,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -1745,6 +1825,8 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1763,6 +1845,8 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2028,7 +2112,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
@@ -2038,13 +2122,14 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
             fallback: None,
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -2054,6 +2139,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/2"),
             fallback: Some(ProtocolName::from("/notif/1")),
+            direction: Direction::Outbound,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
@@ -2168,7 +2254,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::ValidateSubstream {
@@ -2178,13 +2264,14 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/2"),
             fallback: Some(ProtocolName::from("/notif/1")),
+            direction: Direction::Inbound,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
         }
@@ -2193,6 +2280,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Outbound,
             fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
@@ -2254,6 +2342,8 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         true,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2272,6 +2362,8 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2312,12 +2404,13 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
             fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
@@ -2327,6 +2420,7 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Outbound,
             fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
@@ -2406,6 +2500,8 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2424,6 +2520,8 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         vec![1, 2, 3, 4],
         Vec::new(),
         false,
+        64,
+        64,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2464,7 +2562,7 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle2.send_validation_result(peer1, ValidationResult::Accept).await;
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
 
     assert_eq!(
         handle1.next().await.unwrap(),
@@ -2475,12 +2573,13 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
             handshake: vec![1, 2, 3, 4],
         }
     );
-    handle1.send_validation_result(peer2, ValidationResult::Accept).await;
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
 
     assert_eq!(
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
             fallback: None,
             peer: peer1,
             handshake: vec![1, 2, 3, 4],
@@ -2490,14 +2589,15 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationStreamOpened {
             protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Outbound,
             fallback: None,
             peer: peer2,
             handshake: vec![1, 2, 3, 4],
         }
     );
 
-    let mut sink1 = handle1.notification_sink(peer2).unwrap();
-    let mut sink2 = handle2.notification_sink(peer1).unwrap();
+    let sink1 = handle1.notification_sink(peer2).unwrap();
+    let sink2 = handle2.notification_sink(peer1).unwrap();
 
     sink1.send_sync_notification(vec![1, 3, 3, 7]).unwrap();
     sink2.send_sync_notification(vec![1, 3, 3, 8]).unwrap();
@@ -2527,4 +2627,654 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         sink1.send_sync_notification(vec![1, 3, 3, 7]),
         Err(NotificationError::NoConnection),
     );
+}
+
+#[tokio::test]
+async fn dial_peer_when_opening_substream_tcp() {
+    dial_peer_when_opening_substream(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn dial_peer_when_opening_substream_quic() {
+    dial_peer_when_opening_substream(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dial_peer_when_opening_substream_websocket() {
+    dial_peer_when_opening_substream(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+        false,
+        64,
+        64,
+    );
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (notif_config2, mut handle2) = NotificationConfig::new(
+        ProtocolName::from("/notif/1"),
+        1024usize,
+        vec![1, 2, 3, 4],
+        Vec::new(),
+        false,
+        64,
+        64,
+    );
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    litep2p1.add_known_address(peer2, std::iter::once(address));
+
+    // add `peer2` known address for `peer1` and spawn the litep2p objects in the background
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Outbound,
+            fallback: None,
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    let sink1 = handle1.notification_sink(peer2).unwrap();
+    let sink2 = handle2.notification_sink(peer1).unwrap();
+
+    sink1.send_sync_notification(vec![1, 3, 3, 7]).unwrap();
+    sink2.send_sync_notification(vec![1, 3, 3, 8]).unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer1,
+            notification: vec![1, 3, 3, 7],
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer2,
+            notification: vec![1, 3, 3, 8],
+        }
+    );
+
+    // close the substream to `peer1` and try to send notification using `sink1`
+    handle2.close_substream(peer1).await;
+
+    // allow `peer1` to detect that the substream has been closed
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    assert_eq!(
+        sink1.send_sync_notification(vec![1, 3, 3, 7]),
+        Err(NotificationError::NoConnection),
+    );
+}
+
+#[tokio::test]
+async fn open_and_close_batched_tcp() {
+    open_and_close_batched(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn open_and_close_batched_quic() {
+    open_and_close_batched(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_and_close_batched_websocket() {
+    open_and_close_batched(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn open_and_close_batched(
+    transport1: Transport,
+    transport2: Transport,
+    transport3: Transport,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut litep2p1, mut handle1) = make_default_litep2p(transport1).await;
+    let (mut litep2p2, mut handle2) = make_default_litep2p(transport2).await;
+    let (mut litep2p3, mut handle3) = make_default_litep2p(transport3).await;
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+    let peer3 = *litep2p3.local_peer_id();
+
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+    let address3 = litep2p3.listen_addresses().next().unwrap().clone();
+    litep2p1.add_known_address(peer2, std::iter::once(address2));
+    litep2p1.add_known_address(peer3, std::iter::once(address3));
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+                _ = litep2p3.next_event() => {},
+            }
+        }
+    });
+
+    // open substreams to `peer2` and `peer3`
+    handle1.open_substream_batch(vec![peer3, peer2].into_iter()).await.unwrap();
+
+    // accept for `peer2`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
+
+    // accept for `peer3`
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle3.send_validation_result(peer1, ValidationResult::Accept);
+
+    // accept inbound substream for `peer2` and `peer3`
+    let mut peer2_validated = false;
+    let mut peer3_validated = false;
+    let mut peer2_opened = false;
+    let mut peer3_opened = false;
+
+    while !peer2_validated || !peer3_validated || !peer2_opened || !peer3_opened {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::ValidateSubstream {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(handshake, vec![1, 2, 3, 4]);
+                assert_eq!(fallback, None);
+
+                if peer == peer2 && !peer2_validated {
+                    peer2_validated = true;
+                } else if peer == peer3 && !peer3_validated {
+                    peer3_validated = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+
+                handle1.send_validation_result(peer, ValidationResult::Accept);
+            }
+            NotificationEvent::NotificationStreamOpened { peer, .. } => {
+                if peer == peer2 && !peer2_opened {
+                    peer2_opened = true;
+                } else if peer == peer3 && !peer3_opened {
+                    peer3_opened = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
+
+    // verify the substream is opened for `peer2` and `peer3`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // close substreams to `peer2` and `peer3`
+    handle1.close_substream_batch(vec![peer2, peer3].into_iter()).await;
+
+    // verify the substream is closed for `peer2` and `peer3`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamClosed { peer: peer1 }
+    );
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::NotificationStreamClosed { peer: peer1 }
+    );
+
+    // verify `peer1` receives close events for both peers
+    let mut peer2_closed = false;
+    let mut peer3_closed = false;
+
+    while !peer2_closed || !peer3_closed {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::NotificationStreamClosed { peer } => {
+                if peer == peer2 && !peer2_closed {
+                    peer2_closed = true;
+                } else if peer == peer3 && !peer3_closed {
+                    peer3_closed = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn open_and_close_batched_duplicate_peer_tcp() {
+    open_and_close_batched_duplicate_peer(
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn open_and_close_batched_duplicate_peer_quic() {
+    open_and_close_batched_duplicate_peer(
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_and_close_batched_duplicate_peer_websocket() {
+    open_and_close_batched_duplicate_peer(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            ..Default::default()
+        }),
+    )
+    .await;
+}
+
+async fn open_and_close_batched_duplicate_peer(
+    transport1: Transport,
+    transport2: Transport,
+    transport3: Transport,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut litep2p1, mut handle1) = make_default_litep2p(transport1).await;
+    let (mut litep2p2, mut handle2) = make_default_litep2p(transport2).await;
+    let (mut litep2p3, mut handle3) = make_default_litep2p(transport3).await;
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+    let peer3 = *litep2p3.local_peer_id();
+
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+    let address3 = litep2p3.listen_addresses().next().unwrap().clone();
+    litep2p1.add_known_address(peer2, std::iter::once(address2));
+    litep2p1.add_known_address(peer3, std::iter::once(address3));
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+                _ = litep2p3.next_event() => {},
+            }
+        }
+    });
+
+    // open substream to `peer2`.
+    handle1.open_substream_batch(vec![peer2].into_iter()).await.unwrap();
+
+    // accept for `peer2`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
+
+    // accept inbound substream for `peer2`
+    let mut peer2_validated = false;
+    let mut peer2_opened = false;
+
+    while !peer2_validated || !peer2_opened {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::ValidateSubstream {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(handshake, vec![1, 2, 3, 4]);
+                assert_eq!(fallback, None);
+                assert_eq!(peer, peer2);
+
+                if !peer2_validated {
+                    peer2_validated = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+
+                handle1.send_validation_result(peer, ValidationResult::Accept);
+            }
+            NotificationEvent::NotificationStreamOpened { peer, .. } => {
+                assert_eq!(peer, peer2);
+
+                if !peer2_opened {
+                    peer2_opened = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
+
+    // verify the substream is opened for `peer2`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // batch another substream open command but this time include `peer2` for which
+    // a connection is already open
+    match handle1.open_substream_batch(vec![peer2, peer3].into_iter()).await {
+        Err(ignored) => {
+            assert_eq!(ignored.len(), 1);
+            assert!(ignored.contains(&peer2));
+        }
+        _ => panic!("call was supposed to fail"),
+    }
+
+    // accept for `peer3`
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle3.send_validation_result(peer1, ValidationResult::Accept);
+
+    // accept inbound substream for `peer3`
+    let mut peer3_validated = false;
+    let mut peer3_opened = false;
+
+    while !peer3_validated || !peer3_opened {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::ValidateSubstream {
+                protocol,
+                fallback,
+                peer,
+                handshake,
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(handshake, vec![1, 2, 3, 4]);
+                assert_eq!(fallback, None);
+                assert_eq!(peer, peer3);
+
+                if !peer3_validated {
+                    peer3_validated = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+
+                handle1.send_validation_result(peer, ValidationResult::Accept);
+            }
+            NotificationEvent::NotificationStreamOpened { peer, .. } => {
+                assert_eq!(peer, peer3);
+
+                if !peer3_opened {
+                    peer3_opened = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
+
+    // verify the substream is opened for `peer2` and `peer3`
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    // close substreams to `peer2` and `peer3`
+    handle1.close_substream_batch(vec![peer2, peer3].into_iter()).await;
+
+    // verify the substream is closed for `peer2` and `peer3`
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamClosed { peer: peer1 }
+    );
+    assert_eq!(
+        handle3.next().await.unwrap(),
+        NotificationEvent::NotificationStreamClosed { peer: peer1 }
+    );
+
+    // verify `peer1` receives close events for both peers
+    let mut peer2_closed = false;
+    let mut peer3_closed = false;
+
+    while !peer2_closed || !peer3_closed {
+        match handle1.next().await.unwrap() {
+            NotificationEvent::NotificationStreamClosed { peer } => {
+                if peer == peer2 && !peer2_closed {
+                    peer2_closed = true;
+                } else if peer == peer3 && !peer3_closed {
+                    peer3_closed = true;
+                } else {
+                    panic!("received an event from an unexpected peer");
+                }
+            }
+            _ => panic!("invalid event"),
+        }
+    }
 }

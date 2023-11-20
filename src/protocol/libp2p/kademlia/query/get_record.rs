@@ -31,10 +31,10 @@ use crate::{
     PeerId,
 };
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "ipfs::kademlia::query::get_value";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_record";
 
 #[derive(Debug)]
 pub struct GetRecordContext {
@@ -57,10 +57,10 @@ pub struct GetRecordContext {
     ///
     /// These are the peers for whom the query has already been sent
     /// and who have either returned their closest peers or failed to answer.
-    pub queried: HashMap<PeerId, KademliaPeer>,
+    pub queried: HashSet<PeerId>,
 
     /// Candidates.
-    pub candidates: VecDeque<KademliaPeer>,
+    pub candidates: BTreeMap<Distance, KademliaPeer>,
 
     /// Found records.
     pub found_records: Vec<Record>,
@@ -77,13 +77,19 @@ impl GetRecordContext {
     pub fn new(
         query: QueryId,
         target: Key<RecordKey>,
-        candidates: VecDeque<KademliaPeer>,
+        in_peers: VecDeque<KademliaPeer>,
         replication_factor: usize,
         parallelism_factor: usize,
         quorum: Quorum,
-        // TODO: this makes no sense
         record_count: usize,
     ) -> Self {
+        let mut candidates = BTreeMap::new();
+
+        for candidate in &in_peers {
+            let distance = target.distance(&candidate.key);
+            candidates.insert(distance, candidate.clone());
+        }
+
         Self {
             query,
             target,
@@ -93,7 +99,7 @@ impl GetRecordContext {
             replication_factor,
             parallelism_factor,
             pending: HashMap::new(),
-            queried: HashMap::new(),
+            queried: HashSet::new(),
             found_records: Vec::new(),
         }
     }
@@ -106,13 +112,11 @@ impl GetRecordContext {
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "pending peer doesn't exist");
-            debug_assert!(false);
+            tracing::trace!(target: LOG_TARGET, ?peer, "pending peer doesn't exist");
             return;
         };
 
-        // TODO: send `PUT_VALUE` to `peer`
-        self.queried.insert(peer.peer, peer);
+        self.queried.insert(peer.peer);
     }
 
     /// Register `GET_VALUE` response from `peer`.
@@ -123,8 +127,7 @@ impl GetRecordContext {
         peers: Vec<KademliaPeer>,
     ) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "received response from peer but didn't expect it");
-            debug_assert!(false);
+            tracing::trace!(target: LOG_TARGET, ?peer, "received response from peer but didn't expect it");
             return;
         };
 
@@ -133,10 +136,18 @@ impl GetRecordContext {
             self.found_records.push(record);
         }
 
-        self.candidates.extend(peers.clone());
-        self.candidates
-            .make_contiguous()
-            .sort_by(|a, b| self.target.distance(&a.key).cmp(&self.target.distance(&b.key)));
+        // add the queried peer to `queried` and all new peers which haven't been
+        // queried to `candidates`
+        self.queried.insert(peer.peer);
+
+        for candidate in peers {
+            if !self.queried.contains(&candidate.peer)
+                && !self.pending.contains_key(&candidate.peer)
+            {
+                let distance = self.target.distance(&candidate.key);
+                self.candidates.insert(distance, candidate);
+            }
+        }
     }
 
     /// Get next action for `peer`.
@@ -153,13 +164,15 @@ impl GetRecordContext {
     pub fn schedule_next_peer(&mut self) -> QueryAction {
         tracing::trace!(target: LOG_TARGET, query = ?self.query, "get next peer");
 
-        let candidate = self.candidates.pop_front().expect("entry to exist");
-        tracing::trace!(target: LOG_TARGET, ?candidate, "current candidate");
-        self.pending.insert(candidate.peer, candidate.clone());
+        let (_, candidate) = self.candidates.pop_first().expect("entry to exist");
+        let peer = candidate.peer;
+
+        tracing::trace!(target: LOG_TARGET, ?peer, "current candidate");
+        self.pending.insert(candidate.peer, candidate);
 
         QueryAction::SendMessage {
             query: self.query,
-            peer: candidate.peer,
+            peer,
             message: KademliaMessage::get_record(self.target.clone().into_preimage()),
         }
     }
@@ -183,8 +196,14 @@ impl GetRecordContext {
                 (self.record_count + self.found_records.len() < num_responses.into()),
         };
 
+        // if enough replicas for the record have been received (defined by the quorum size),
+        /// mark the query as succeeded
+        if !continue_search {
+            return Some(QueryAction::QuerySucceeded { query: self.query });
+        }
+
         // if the search must continue, try to schedule next outbound message if possible
-        if continue_search && (!self.pending.is_empty() || !self.candidates.is_empty()) {
+        if !self.pending.is_empty() || !self.candidates.is_empty() {
             if self.pending.len() == self.parallelism_factor || self.candidates.is_empty() {
                 return None;
             }
@@ -199,6 +218,7 @@ impl GetRecordContext {
             num_candidates = ?self.candidates.len(),
             num_records = ?(self.record_count + self.found_records.len()),
             quorum = ?self.quorum,
+            ?continue_search,
             "unreachable condition for `GET_VALUE` search"
         );
 

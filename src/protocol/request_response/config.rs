@@ -21,7 +21,7 @@
 use crate::{
     codec::ProtocolCodec,
     protocol::request_response::{
-        handle::{RequestResponseCommand, RequestResponseEvent, RequestResponseHandle},
+        handle::{InnerRequestResponseEvent, RequestResponseCommand, RequestResponseHandle},
         REQUEST_TIMEOUT,
     },
     types::protocol::ProtocolName,
@@ -51,13 +51,16 @@ pub struct Config {
     pub(crate) codec: ProtocolCodec,
 
     /// TX channel for sending events to the user protocol.
-    pub(crate) event_tx: Sender<RequestResponseEvent>,
+    pub(super) event_tx: Sender<InnerRequestResponseEvent>,
 
     /// RX channel for receiving commands from the user protocol.
     pub(crate) command_rx: Receiver<RequestResponseCommand>,
 
     /// Next ephemeral request ID.
     pub(crate) next_request_id: Arc<AtomicUsize>,
+
+    /// Maximum number of concurrent inbound requests.
+    pub(crate) max_concurrent_inbound_request: Option<usize>,
 }
 
 impl Config {
@@ -67,6 +70,7 @@ impl Config {
         fallback_names: Vec<ProtocolName>,
         max_message_size: usize,
         timeout: Duration,
+        max_concurrent_inbound_request: Option<usize>,
     ) -> (Self, RequestResponseHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -81,6 +85,7 @@ impl Config {
                 fallback_names,
                 next_request_id,
                 timeout,
+                max_concurrent_inbound_request,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
             },
             handle,
@@ -106,6 +111,9 @@ pub struct ConfigBuilder {
 
     /// Timeout for outbound requests.
     timeout: Option<Duration>,
+
+    /// Maximum number of concurrent inbound requests.
+    max_concurrent_inbound_request: Option<usize>,
 }
 
 impl ConfigBuilder {
@@ -116,6 +124,7 @@ impl ConfigBuilder {
             fallback_names: Vec::new(),
             max_message_size: None,
             timeout: Some(REQUEST_TIMEOUT),
+            max_concurrent_inbound_request: None,
         }
     }
 
@@ -137,6 +146,19 @@ impl ConfigBuilder {
         self
     }
 
+    /// Specify the maximum number of concurrent inbound requests. By default the number of inbound
+    /// requests is not limited.
+    ///
+    /// If another request is received while the number of requests is already at a maximum,
+    /// the request is dropped.
+    pub fn with_max_concurrent_inbound_requests(
+        mut self,
+        max_concurrent_inbound_requests: usize,
+    ) -> Self {
+        self.max_concurrent_inbound_request = Some(max_concurrent_inbound_requests);
+        self
+    }
+
     /// Build [`Config`].
     pub fn build(mut self) -> (Config, RequestResponseHandle) {
         Config::new(
@@ -144,6 +166,7 @@ impl ConfigBuilder {
             self.fallback_names,
             self.max_message_size.take().expect("maximum message size to be set"),
             self.timeout.take().expect("timeout to exist"),
+            self.max_concurrent_inbound_request,
         )
     }
 }

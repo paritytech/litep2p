@@ -22,13 +22,18 @@ use crate::{
     codec::ProtocolCodec,
     protocol::notification::{
         handle::NotificationHandle,
-        types::{InnerNotificationEvent, NotificationCommand},
+        types::{
+            InnerNotificationEvent, NotificationCommand, ASYNC_CHANNEL_SIZE, SYNC_CHANNEL_SIZE,
+        },
     },
     types::protocol::ProtocolName,
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
+use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+use std::sync::Arc;
 
 /// Notification configuration.
 #[derive(Debug)]
@@ -43,7 +48,7 @@ pub struct Config {
     _max_notification_size: usize,
 
     /// Handshake bytes.
-    pub(crate) handshake: Vec<u8>,
+    pub(crate) handshake: Arc<RwLock<Vec<u8>>>,
 
     /// Auto accept inbound substream.
     pub(super) auto_accept: bool,
@@ -54,11 +59,17 @@ pub struct Config {
     /// TX channel passed to the protocol used for sending events.
     pub(crate) event_tx: Sender<InnerNotificationEvent>,
 
-    /// TX channel passed to the substream handler for sending notifications to user.
+    /// TX channel for sending notifications from the connection handlers.
     pub(crate) notif_tx: Sender<(PeerId, Vec<u8>)>,
 
     /// RX channel passed to the protocol used for receiving commands.
     pub(crate) command_rx: Receiver<NotificationCommand>,
+
+    /// Synchronous channel size.
+    pub(crate) sync_channel_size: usize,
+
+    /// Asynchronous channel size.
+    pub(crate) async_channel_size: usize,
 }
 
 impl Config {
@@ -69,11 +80,15 @@ impl Config {
         handshake: Vec<u8>,
         fallback_names: Vec<ProtocolName>,
         auto_accept: bool,
+        sync_channel_size: usize,
+        async_channel_size: usize,
     ) -> (Self, NotificationHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (notif_tx, notif_rx) = channel(DEFAULT_CHANNEL_SIZE);
-        let handle = NotificationHandle::new(event_rx, command_tx, notif_rx);
+        let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let handshake = Arc::new(RwLock::new(handshake));
+        let handle =
+            NotificationHandle::new(event_rx, notif_rx, command_tx, Arc::clone(&handshake));
 
         (
             Self {
@@ -86,6 +101,8 @@ impl Config {
                 event_tx,
                 notif_tx,
                 command_rx,
+                sync_channel_size,
+                async_channel_size,
             },
             handle,
         )
@@ -94,6 +111,15 @@ impl Config {
     /// Get protocol name.
     pub(crate) fn protocol_name(&self) -> &ProtocolName {
         &self.protocol_name
+    }
+
+    /// Set handshake for the protocol.
+    ///
+    /// This function is used to work around an issue in Polkadot SDK and users
+    /// should not depend on its continued existence.
+    pub fn set_handshake(&mut self, handshake: Vec<u8>) {
+        let mut inner = self.handshake.write();
+        *inner = handshake;
     }
 }
 
@@ -113,6 +139,12 @@ pub struct ConfigBuilder {
 
     /// Auto accept inbound substream.
     auto_accept_inbound_for_initiated: bool,
+
+    /// Synchronous channel size.
+    sync_channel_size: usize,
+
+    /// Asynchronous channel size.
+    async_channel_size: usize,
 }
 
 impl ConfigBuilder {
@@ -124,6 +156,8 @@ impl ConfigBuilder {
             handshake: None,
             fallback_names: Vec::new(),
             auto_accept_inbound_for_initiated: false,
+            sync_channel_size: SYNC_CHANNEL_SIZE,
+            async_channel_size: ASYNC_CHANNEL_SIZE,
         }
     }
 
@@ -170,6 +204,22 @@ impl ConfigBuilder {
         self
     }
 
+    /// Configure size of the channel for sending synchronous notifications.
+    ///
+    /// Default value is `16`.
+    pub fn with_sync_channel_size(mut self, size: usize) -> Self {
+        self.sync_channel_size = size;
+        self
+    }
+
+    /// Configure size of the channel for sending asynchronous notifications.
+    ///
+    /// Default value is `8`.
+    pub fn with_async_channel_size(mut self, size: usize) -> Self {
+        self.async_channel_size = size;
+        self
+    }
+
     /// Build notification configuration.
     pub fn build(mut self) -> (Config, NotificationHandle) {
         Config::new(
@@ -178,6 +228,8 @@ impl ConfigBuilder {
             self.handshake.take().expect("handshake to be specified"),
             self.fallback_names,
             self.auto_accept_inbound_for_initiated,
+            self.sync_channel_size,
+            self.async_channel_size,
         )
     }
 }

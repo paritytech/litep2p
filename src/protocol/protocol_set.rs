@@ -38,7 +38,7 @@ use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     fmt::Debug,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -48,11 +48,9 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "protocol-set";
+const LOG_TARGET: &str = "litep2p::protocol-set";
 
-/// Maximum connections per peer.
-const MAX_CONNECTIONS_PER_PEER: usize = 2;
-
+/// Events emitted by the underlying transport protocols.
 pub enum InnerTransportEvent {
     /// Connection established to `peer`.
     ConnectionEstablished {
@@ -163,8 +161,59 @@ impl From<InnerTransportEvent> for TransportEvent {
     }
 }
 
-/// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact with the underlying
-/// transport protocols.
+/// Connection context for the peer.
+///
+/// Each peer is allowed to have at most two connections open. The first open connection is the
+/// primary connections which the local node uses to open substreams to remote. Secondary connection
+/// may be open if local and remote opened connections at the same time.
+///
+/// Secondary connection may be promoted to a primary connection if the primary connections closes
+/// while the secondary connections remains open.
+#[derive(Debug)]
+struct ConnectionContext {
+    /// Primary connection.
+    primary: ConnectionHandle,
+
+    /// Secondary connection, if it exists.
+    secondary: Option<ConnectionHandle>,
+}
+
+impl ConnectionContext {
+    /// Create new [`ConnectionContext`].
+    fn new(primary: ConnectionHandle) -> Self {
+        Self {
+            primary,
+            secondary: None,
+        }
+    }
+
+    /// Downgrade connection to non-active which means it will be closed
+    /// if there are no substreams open over it.
+    fn downgrade(&mut self, connection_id: &ConnectionId) {
+        if self.primary.connection_id() == connection_id {
+            self.primary.close();
+            return;
+        }
+
+        if let Some(handle) = &mut self.secondary {
+            if handle.connection_id() == connection_id {
+                handle.close();
+                return;
+            }
+        }
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            primary = ?self.primary.connection_id(),
+            secondary = ?self.secondary.as_ref().map(|handle| handle.connection_id()),
+            ?connection_id,
+            "connection doesn't exist, cannot downgrade",
+        );
+    }
+}
+
+/// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact
+/// with the underlying transport protocols.
 #[derive(Debug)]
 pub struct TransportService {
     /// Local peer ID.
@@ -177,8 +226,7 @@ pub struct TransportService {
     fallback_names: Vec<ProtocolName>,
 
     /// Open connections.
-    // TODO: this can be refactored
-    connections: HashMap<PeerId, Vec<(ConnectionHandle, ConnectionId)>>,
+    connections: HashMap<PeerId, ConnectionContext>,
 
     /// Transport handle.
     transport_handle: TransportManagerHandle,
@@ -224,51 +272,117 @@ impl TransportService {
         &mut self,
         peer: PeerId,
         address: Multiaddr,
-        connection: ConnectionId,
+        connection_id: ConnectionId,
         handle: ConnectionHandle,
     ) -> Option<TransportEvent> {
         tracing::debug!(
             target: LOG_TARGET,
             ?peer,
+            protocol = %self.protocol,
             ?address,
-            ?connection,
-            "connection established"
+            ?connection_id,
+            "connection established",
         );
 
-        let event = match self.connections.entry(peer) {
-            Entry::Occupied(entry) => {
-                let entry = entry.into_mut();
-                if entry.len() == MAX_CONNECTIONS_PER_PEER {
-                    tracing::warn!(
+        match self.connections.get_mut(&peer) {
+            Some(context) => match context.secondary {
+                Some(_) => {
+                    tracing::debug!(
                         target: LOG_TARGET,
                         ?peer,
+                        ?connection_id,
                         ?address,
-                        ?connection,
-                        "connection established but already at maximum"
+                        "ignoring third connection",
                     );
-                    return None;
+                    None
                 }
+                None => {
+                    self.keep_alive_timeouts.push(Box::pin(async move {
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        (peer, connection_id)
+                    }));
+                    context.secondary = Some(handle);
 
-                tracing::trace!(target: LOG_TARGET, ?peer, ?connection, "secondary connection");
+                    None
+                }
+            },
+            None => {
+                self.connections.insert(peer, ConnectionContext::new(handle));
+                self.keep_alive_timeouts.push(Box::pin(async move {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    (peer, connection_id)
+                }));
 
-                // user is not notified of the second connection
-                entry.push((handle, connection));
-                None
-            }
-            Entry::Vacant(entry) => {
-                tracing::trace!(target: LOG_TARGET, ?peer, ?connection, "inform protocol");
-
-                entry.insert(vec![(handle, connection)]);
                 Some(TransportEvent::ConnectionEstablished { peer, address })
             }
+        }
+    }
+
+    /// Handle connection closed event.
+    fn on_connection_closed(
+        &mut self,
+        peer: PeerId,
+        connection_id: ConnectionId,
+    ) -> Option<TransportEvent> {
+        let Some(context) = self.connections.get_mut(&peer) else {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                "connection closed to a non-existent peer",
+            );
+
+            debug_assert!(false);
+            return None;
         };
 
-        self.keep_alive_timeouts.push(Box::pin(async move {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            (peer, connection)
-        }));
+        // if the primary connection was closed, check if there exist a secondary connection
+        // and if it does, convert the secondary connection a primary connection
+        if context.primary.connection_id() == &connection_id {
+            tracing::trace!(target: LOG_TARGET, ?peer, ?connection_id, "primary connection closed");
 
-        event
+            match context.secondary.take() {
+                None => {
+                    self.connections.remove(&peer);
+                    return Some(TransportEvent::ConnectionClosed { peer });
+                }
+                Some(handle) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?connection_id,
+                        "switch to secondary connection",
+                    );
+
+                    context.primary = handle;
+                    return None;
+                }
+            }
+        }
+
+        match context.secondary.take() {
+            Some(handle) if handle.connection_id() == &connection_id => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    "secondary connection closed",
+                );
+
+                return None;
+            }
+            connection_state => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?connection_state,
+                    "connection closed but it doesn't exist",
+                );
+
+                return None;
+            }
+        }
     }
 }
 
@@ -297,14 +411,9 @@ impl Transport for TransportService {
     }
 
     async fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
-        // always prefer the first connection
-        let connection = &mut self
-            .connections
-            .get_mut(&peer)
-            .ok_or(Error::PeerDoesntExist(peer))?
-            .get_mut(0)
-            .ok_or(Error::PeerDoesntExist(peer))?
-            .0;
+        // always prefer the primary connection
+        let connection =
+            &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?.primary;
 
         let permit = connection.try_get_permit().ok_or(Error::ConnectionClosed)?;
         let substream_id =
@@ -312,13 +421,12 @@ impl Transport for TransportService {
 
         tracing::trace!(
             target: LOG_TARGET,
-            protocol = ?self.protocol,
             ?peer,
+            protocol = %self.protocol,
             ?substream_id,
             "open substream",
         );
 
-        // TODO: so much clonin
         connection
             .open_substream(
                 self.protocol.clone(),
@@ -344,30 +452,26 @@ impl Transport for TransportService {
                             return Some(event)
                         }
                     }
-                    InnerTransportEvent::ConnectionClosed { peer, connection } => match self.connections.get_mut(&peer) {
-                        Some(connections) => {
-                            connections.retain(|(_, id)| &connection != id);
-                            return Some(TransportEvent::ConnectionClosed { peer })
-                        }
-                        None => {
-                            tracing::warn!(target: LOG_TARGET, ?peer, ?connection, "closed connection doesn't exist");
+                    InnerTransportEvent::ConnectionClosed { peer, connection } => {
+                        if let Some(event) = self.on_connection_closed(peer, connection) {
+                            return Some(event)
                         }
                     }
                     event => return Some(event.into()),
                 },
                 peer = self.keep_alive_timeouts.next(), if !self.keep_alive_timeouts.is_empty() => {
                     match peer {
-                        None => {
-                            tracing::warn!(target: LOG_TARGET, "read `None` from `keep_alive_timeouts`");
-                        }
-                        Some((peer, connection)) => {
-                            if let Some(connections) = self.connections.get_mut(&peer) {
-                                tracing::debug!(target: LOG_TARGET, ?peer, "keep-alive timeout over, downgrade connection");
+                        None => tracing::warn!(target: LOG_TARGET, "read `None` from `keep_alive_timeouts`"),
+                        Some((peer, connection_id)) => {
+                            if let Some(context) = self.connections.get_mut(&peer) {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?connection_id,
+                                    "keep-alive timeout over, downgrade connection",
+                                );
 
-                                match connections.iter_mut().find(|(_, id)| id == &connection) {
-                                    Some((connection, _)) => connection.close(),
-                                    None => tracing::warn!(target: LOG_TARGET, ?peer, ?connection, "connection not found"),
-                                }
+                                context.downgrade(&connection_id);
                             }
                         }
                     }
@@ -435,6 +539,7 @@ pub struct ProtocolSet {
 impl ProtocolSet {
     pub fn new(
         keypair: Keypair,
+        connection_id: ConnectionId,
         mgr_tx: Sender<TransportManagerEvent>,
         next_substream_id: Arc<AtomicUsize>,
         protocols: HashMap<ProtocolName, ProtocolContext>,
@@ -460,7 +565,7 @@ impl ProtocolSet {
             protocols,
             next_substream_id,
             fallback_names,
-            connection: ConnectionHandle::new(tx),
+            connection: ConnectionHandle::new(connection_id, tx),
         }
     }
 
@@ -491,7 +596,7 @@ impl ProtocolSet {
         direction: Direction,
         substream: Substream,
     ) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?peer, "substream opened");
+        tracing::debug!(target: LOG_TARGET, %protocol, ?peer, ?direction, "substream opened");
 
         let (protocol, fallback) = match self.fallback_names.get(&protocol) {
             Some(main_protocol) => (main_protocol.clone(), Some(protocol)),
@@ -548,30 +653,50 @@ impl ProtocolSet {
         }
     }
 
-    // TODO: documentation
+    /// Report to protocols that a connection was established.
     pub(crate) async fn report_connection_established(
         &mut self,
-        connection: ConnectionId,
+        connection_id: ConnectionId,
         peer: PeerId,
         address: Multiaddr,
     ) -> crate::Result<()> {
         let connection_handle = self.connection.downgrade();
+        let mut futures = self
+            .protocols
+            .iter()
+            .map(|(_, sender)| {
+                let address = address.clone();
+                let connection_handle = connection_handle.clone();
 
-        for (_, sender) in &self.protocols {
-            let _ = sender
-                .tx
-                .send(InnerTransportEvent::ConnectionEstablished {
-                    peer,
-                    connection,
-                    address: address.clone(),
-                    sender: connection_handle.clone(),
-                })
-                .await?;
+                async move {
+                    sender
+                        .tx
+                        .send(InnerTransportEvent::ConnectionEstablished {
+                            peer,
+                            connection: connection_id,
+                            address,
+                            sender: connection_handle,
+                        })
+                        .await
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        while !futures.is_empty() {
+            if let Some(Err(error)) = futures.next().await {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?error,
+                    "failed to report closed connection",
+                );
+            }
         }
 
         self.mgr_tx
             .send(TransportManagerEvent::ConnectionEstablished {
-                connection,
+                connection: connection_id,
                 peer,
                 address,
             })
@@ -579,21 +704,43 @@ impl ProtocolSet {
             .map_err(From::from)
     }
 
-    /// Report to `Litep2p` that a peer disconnected.
+    /// Report to protocols that a connection was closed.
     pub(crate) async fn report_connection_closed(
         &mut self,
         peer: PeerId,
-        connection: ConnectionId,
+        connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        for (_, sender) in &self.protocols {
-            let _ = sender
-                .tx
-                .send(InnerTransportEvent::ConnectionClosed { peer, connection })
-                .await?;
+        let mut futures = self
+            .protocols
+            .iter()
+            .map(|(_, sender)| async move {
+                sender
+                    .tx
+                    .send(InnerTransportEvent::ConnectionClosed {
+                        peer,
+                        connection: connection_id,
+                    })
+                    .await
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        while !futures.is_empty() {
+            if let Some(Err(error)) = futures.next().await {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?error,
+                    "failed to report closed connection",
+                );
+            }
         }
 
         self.mgr_tx
-            .send(TransportManagerEvent::ConnectionClosed { peer, connection })
+            .send(TransportManagerEvent::ConnectionClosed {
+                peer,
+                connection: connection_id,
+            })
             .await
             .map_err(From::from)
     }
@@ -606,8 +753,13 @@ impl ProtocolSet {
 
 #[cfg(test)]
 mod tests {
+    use futures::FutureExt;
+    use parking_lot::RwLock;
+
     use super::*;
-    use crate::mock::substream::MockSubstream;
+    use crate::{
+        mock::substream::MockSubstream, transport::manager::handle::InnerTransportManagerCommand,
+    };
 
     #[tokio::test]
     async fn fallback_is_provided() {
@@ -616,6 +768,7 @@ mod tests {
 
         let mut protocol_set = ProtocolSet::new(
             Keypair::generate(),
+            ConnectionId::from(0usize),
             tx,
             Default::default(),
             HashMap::from_iter([(
@@ -659,6 +812,7 @@ mod tests {
 
         let mut protocol_set = ProtocolSet::new(
             Keypair::generate(),
+            ConnectionId::from(0usize),
             tx,
             Default::default(),
             HashMap::from_iter([(
@@ -702,6 +856,7 @@ mod tests {
 
         let mut protocol_set = ProtocolSet::new(
             Keypair::generate(),
+            ConnectionId::from(0usize),
             tx,
             Default::default(),
             HashMap::from_iter([(
@@ -735,6 +890,447 @@ mod tests {
                 assert_eq!(protocol, ProtocolName::from("/notif/1"));
             }
             _ => panic!("invalid event received"),
+        }
+    }
+
+    /// Create new `TransportService`
+    fn transport_service() -> (
+        TransportService,
+        Sender<InnerTransportEvent>,
+        Receiver<InnerTransportManagerCommand>,
+    ) {
+        let (cmd_tx, cmd_rx) = channel(64);
+        let handle = TransportManagerHandle::new(
+            Arc::new(RwLock::new(HashMap::new())),
+            cmd_tx,
+            HashSet::new(),
+        );
+
+        let (service, sender) = TransportService::new(
+            PeerId::random(),
+            ProtocolName::from("/notif/1"),
+            Vec::new(),
+            Arc::new(AtomicUsize::new(0usize)),
+            handle,
+        );
+
+        (service, sender, cmd_rx)
+    }
+
+    #[tokio::test]
+    async fn secondary_connection_stored() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            address: connected_addr,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(connected_addr, Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // register secondary connection
+        let (cmd_tx2, _cmd_rx2) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
+            })
+            .await
+            .unwrap();
+
+        futures::future::poll_fn(|cx| match service.next_event().poll_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        let context = service.connections.get(&peer).unwrap();
+        assert_eq!(context.primary.connection_id(), &ConnectionId::from(0usize));
+        assert_eq!(
+            context.secondary.as_ref().unwrap().connection_id(),
+            &ConnectionId::from(1usize)
+        );
+    }
+
+    #[tokio::test]
+    async fn tertiary_connection_ignored() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            address: connected_addr,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(connected_addr, Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // register secondary connection
+        let (cmd_tx2, _cmd_rx2) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
+            })
+            .await
+            .unwrap();
+
+        futures::future::poll_fn(|cx| match service.next_event().poll_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        let context = service.connections.get(&peer).unwrap();
+        assert_eq!(context.primary.connection_id(), &ConnectionId::from(0usize));
+        assert_eq!(
+            context.secondary.as_ref().unwrap().connection_id(),
+            &ConnectionId::from(1usize)
+        );
+
+        // try to register tertiary connection and verify it's ignored
+        let (cmd_tx3, mut cmd_rx3) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(2usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(2usize), cmd_tx3),
+            })
+            .await
+            .unwrap();
+
+        futures::future::poll_fn(|cx| match service.next_event().poll_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        let context = service.connections.get(&peer).unwrap();
+        assert_eq!(context.primary.connection_id(), &ConnectionId::from(0usize));
+        assert_eq!(
+            context.secondary.as_ref().unwrap().connection_id(),
+            &ConnectionId::from(1usize)
+        );
+        assert!(cmd_rx3.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn secondary_closing_doesnt_emit_event() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            address: connected_addr,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(connected_addr, Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // register secondary connection
+        let (cmd_tx2, _cmd_rx2) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
+            })
+            .await
+            .unwrap();
+
+        futures::future::poll_fn(|cx| match service.next_event().poll_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        let context = service.connections.get(&peer).unwrap();
+        assert_eq!(context.primary.connection_id(), &ConnectionId::from(0usize));
+        assert_eq!(
+            context.secondary.as_ref().unwrap().connection_id(),
+            &ConnectionId::from(1usize)
+        );
+
+        // close the secondary connection
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(1usize),
+            })
+            .await
+            .unwrap();
+
+        // verify that the protocol is not notified
+        futures::future::poll_fn(|cx| match service.next_event().poll_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        // verify that the secondary connection doesn't exist anymore
+        let context = service.connections.get(&peer).unwrap();
+        assert_eq!(context.primary.connection_id(), &ConnectionId::from(0usize));
+        assert!(context.secondary.is_none());
+    }
+
+    #[tokio::test]
+    async fn convert_secondary_to_primary() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            address: connected_addr,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(connected_addr, Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // register secondary connection
+        let (cmd_tx2, mut cmd_rx2) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
+            })
+            .await
+            .unwrap();
+
+        futures::future::poll_fn(|cx| match service.next_event().poll_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        let context = service.connections.get(&peer).unwrap();
+        assert_eq!(context.primary.connection_id(), &ConnectionId::from(0usize));
+        assert_eq!(
+            context.secondary.as_ref().unwrap().connection_id(),
+            &ConnectionId::from(1usize)
+        );
+
+        // close the primary connection
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(0usize),
+            })
+            .await
+            .unwrap();
+
+        // verify that the protocol is not notified
+        futures::future::poll_fn(|cx| match service.next_event().poll_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        // verify that the primary connection has been replaced
+        let context = service.connections.get(&peer).unwrap();
+        assert_eq!(context.primary.connection_id(), &ConnectionId::from(1usize));
+        assert!(context.secondary.is_none());
+        assert!(cmd_rx1.try_recv().is_err());
+
+        // close the secondary connection as well
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(1usize),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionClosed {
+            peer: disconnected_peer,
+        }) = service.next_event().await
+        {
+            assert_eq!(disconnected_peer, peer);
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify that the primary connection has been replaced
+        assert!(service.connections.get(&peer).is_none());
+        assert!(cmd_rx2.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn keep_alive_timeout_expires_for_a_stale_connection() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1337usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            address: connected_addr,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(connected_addr, Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(service.keep_alive_timeouts.len(), 1);
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        // close the primary connection
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(1337usize),
+            })
+            .await
+            .unwrap();
+
+        // verify that the protocols are notified of the connection closing as well
+        if let Some(TransportEvent::ConnectionClosed {
+            peer: connected_peer,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+        } else {
+            panic!("expected event from `TransportService`");
+        }
+
+        // verify that the keep-alive timeout still exists for the peer but the peer itself
+        // doesn't exist anymore
+        //
+        // the peer is removed because there is no connection to them
+        assert_eq!(service.keep_alive_timeouts.len(), 1);
+        assert!(service.connections.get(&peer).is_none());
+
+        // register new primary connection but verify that there are now two pending keep-alive
+        // timeouts
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1338usize),
+                address: Multiaddr::empty(),
+                sender: ConnectionHandle::new(ConnectionId::from(1338usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            address: connected_addr,
+        }) = service.next_event().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(connected_addr, Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(service.keep_alive_timeouts.len(), 2);
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1338usize)
+                );
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        match tokio::time::timeout(Duration::from_secs(10), service.next_event()).await {
+            Ok(event) => panic!("didn't expect an event: {event:?}"),
+            Err(_) => {}
         }
     }
 }

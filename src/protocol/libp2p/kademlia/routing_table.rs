@@ -36,7 +36,7 @@ use multihash::Multihash;
 const NUM_BUCKETS: usize = 256;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "ipfs::kademlia::routing_table";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::routing_table";
 
 pub struct RoutingTable {
     /// Local key.

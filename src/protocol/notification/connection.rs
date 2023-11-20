@@ -18,7 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{substream::Substream, PeerId};
+use crate::{
+    protocol::notification::handle::NotificationEventHandle, substream::Substream, PeerId,
+};
 
 use futures::StreamExt;
 use tokio::sync::{
@@ -27,7 +29,7 @@ use tokio::sync::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "notification::connection";
+const LOG_TARGET: &str = "litep2p::notification::connection";
 
 /// Bidirectional substream pair representing a connection to a remote peer.
 pub(crate) struct Connection {
@@ -40,12 +42,15 @@ pub(crate) struct Connection {
     /// Outbound substream for sending notifications.
     outbound: Substream,
 
-    /// TX channel for sending received notifications to user.
-    notif_tx: Sender<(PeerId, Vec<u8>)>,
+    /// Handle for sending notification events to user.
+    event_handle: NotificationEventHandle,
 
     /// TX channel used to notify [`NotificationProtocol`](super::NotificationProtocol)
     /// that the connection has been closed.
     conn_closed_tx: Sender<PeerId>,
+
+    /// TX channel for sending notifications.
+    notif_tx: Sender<(PeerId, Vec<u8>)>,
 
     /// Receiver for asynchronously sent notifications.
     async_rx: Receiver<Vec<u8>>,
@@ -74,8 +79,9 @@ impl Connection {
         peer: PeerId,
         inbound: Substream,
         outbound: Substream,
-        notif_tx: Sender<(PeerId, Vec<u8>)>,
+        event_handle: NotificationEventHandle,
         conn_closed_tx: Sender<PeerId>,
+        notif_tx: Sender<(PeerId, Vec<u8>)>,
         async_rx: Receiver<Vec<u8>>,
         sync_rx: Receiver<Vec<u8>>,
     ) -> (Self, oneshot::Sender<()>) {
@@ -85,11 +91,12 @@ impl Connection {
             Self {
                 rx,
                 peer,
+                sync_rx,
+                async_rx,
                 inbound,
                 outbound,
                 notif_tx,
-                async_rx,
-                sync_rx,
+                event_handle,
                 conn_closed_tx,
             },
             tx,
@@ -101,43 +108,35 @@ impl Connection {
     /// If [`NotificationProtocol`](super::NotificationProtocol) was the one that initiated
     /// shut down, it's not notified of connection getting closed.
     async fn close_connection(self, notify_protocol: NotifyProtocol) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            peer = ?self.peer,
+            ?notify_protocol,
+            "close notification protocol",
+        );
+
         let _ = self.inbound.close().await;
         let _ = self.outbound.close().await;
 
         if std::matches!(notify_protocol, NotifyProtocol::Yes) {
             let _ = self.conn_closed_tx.send(self.peer).await;
         }
+
+        self.event_handle.report_notification_stream_closed(self.peer).await;
     }
 
     /// Start [`Connection`] event loop.
     pub async fn start(mut self) {
         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "start connection event loop");
 
+        let mut next_notification: Option<Vec<u8>> = None;
         loop {
             tokio::select! {
+                biased;
+
                 _ = &mut self.rx => {
                     tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "closing connection");
                     return self.close_connection(NotifyProtocol::No).await;
-                },
-                event = self.inbound.next() => match event {
-                    None | Some(Err(_)) => {
-                        tracing::trace!(target: LOG_TARGET, peer = ?self.peer, "inbound substream closed");
-                        return self.close_connection(NotifyProtocol::Yes).await;
-                    }
-                    Some(Ok(notification)) => {
-                        let _ = self.notif_tx.send((self.peer, notification.freeze().into())).await;
-                    }
-                },
-                // outbound substream never yields any events but it's polled so that if either one of the substreams
-                // is closed by remote, it can be detected
-                event = self.outbound.next() => match event {
-                    Some(_) => {
-                        tracing::warn!(target: LOG_TARGET, peer = ?self.peer, "read data from the outbound substream");
-                    }
-                    None => {
-                        tracing::trace!(target: LOG_TARGET, peer = ?self.peer, "inbound substream closed");
-                        return self.close_connection(NotifyProtocol::Yes).await;
-                    }
                 },
                 notification = self.async_rx.recv() => match notification {
                     Some(notification) => if let Err(_) = self.outbound.send_framed(notification.into()).await {
@@ -156,7 +155,33 @@ impl Connection {
                         tracing::trace!(target: LOG_TARGET, peer = ?self.peer, "notification sink closed");
                         return self.close_connection(NotifyProtocol::Yes).await;
                     }
-                }
+                },
+                value = self.notif_tx.clone().reserve_owned(), if next_notification.is_some() => match value {
+                    Ok(permit) => {
+                        permit.send((self.peer, next_notification.take().expect("notification must exist")));
+                    }
+                    Err(_) => {}
+                },
+                event = self.inbound.next(), if next_notification.is_none() => match event {
+                    None | Some(Err(_)) => {
+                        tracing::trace!(target: LOG_TARGET, peer = ?self.peer, "inbound substream closed");
+                        return self.close_connection(NotifyProtocol::Yes).await;
+                    }
+                    Some(Ok(notification)) => {
+                        next_notification = Some(notification.freeze().into());
+                    }
+                },
+                // outbound substream never yields any events but it's polled so that if either one of the substreams
+                // is closed by remote, it can be detected
+                event = self.outbound.next() => match event {
+                    Some(_) => {
+                        tracing::warn!(target: LOG_TARGET, peer = ?self.peer, "read data from the outbound substream");
+                    }
+                    None => {
+                        tracing::trace!(target: LOG_TARGET, peer = ?self.peer, "inbound substream closed");
+                        return self.close_connection(NotifyProtocol::Yes).await;
+                    }
+                },
             }
         }
     }

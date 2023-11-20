@@ -40,7 +40,7 @@ use std::{
     task::{Context, Poll},
 };
 
-const LOG_TARGET: &str = "multistream-select";
+const LOG_TARGET: &str = "litep2p::multistream-select";
 
 /// Returns a `Future` that negotiates a protocol on the given I/O stream
 /// for a peer acting as the _dialer_ (or _initiator_).
