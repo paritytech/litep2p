@@ -322,8 +322,6 @@ impl NotificationHandle {
         peer: PeerId,
         notification: Vec<u8>,
     ) -> Result<(), NotificationError> {
-        tracing::trace!(target: LOG_TARGET, ?peer, "send sync notification");
-
         match self.peers.get_mut(&peer) {
             Some(sink) => sink.send_sync_notification(notification),
             None => Ok(()),
@@ -339,8 +337,6 @@ impl NotificationHandle {
         peer: PeerId,
         notification: Vec<u8>,
     ) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?peer, "send async notification");
-
         match self.peers.get_mut(&peer) {
             Some(sink) => sink.send_async_notification(notification).await,
             None => Err(Error::PeerDoesntExist(peer)),
