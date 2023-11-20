@@ -109,3 +109,55 @@ async fn disconnect_peer_has_active_inbound_substream() {
     // verify the substream has been removed from `pending_inbound_requests`
     assert!(protocol.pending_inbound_requests.get_mut(&(peer, request_id)).is_none());
 }
+
+// when user initiates an outbound request and `RequestResponseProtocol` tries to open an outbound
+// substream to them and it fails, the failure should be reported to the user. When the remote peer
+// later disconnects, this failure should not be reported again.
+#[tokio::test]
+async fn request_failure_reported_once() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut protocol, mut handle, _manager, _tx) = protocol();
+
+    // register new peer
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+
+    // initiate outbound request
+    //
+    // since the peer wasn't properly registered, opening substream to them will fail
+    protocol
+        .on_send_request(
+            peer,
+            RequestId::from(1337usize),
+            vec![1, 2, 3, 4],
+            DialOptions::Reject,
+        )
+        .await
+        .unwrap();
+
+    match handle.next().await {
+        Some(RequestResponseEvent::RequestFailed {
+            peer: request_peer,
+            request_id,
+            error,
+        }) => {
+            assert_eq!(request_peer, peer);
+            assert_eq!(request_id, RequestId::from(1337usize));
+            assert_eq!(error, RequestResponseError::Rejected);
+        }
+        event => panic!("unexpected event: {event:?}"),
+    }
+
+    // disconnect the peer and verify that no events are read from the handle
+    // since the outbound request failure was already reported
+    protocol.on_connection_closed(peer).await;
+
+    futures::future::poll_fn(|cx| match handle.poll_next_unpin(cx) {
+        Poll::Pending => Poll::Ready(()),
+        event => panic!("read an unexpected event from handle: {event:?}"),
+    })
+    .await;
+}

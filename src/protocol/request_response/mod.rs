@@ -665,27 +665,28 @@ impl RequestResponseProtocol {
             }
         };
 
-        if !context.active.insert(request_id) {
-            tracing::error!(
-                target: LOG_TARGET,
-                ?peer,
-                protocol = %self.protocol,
-                ?request_id,
-                "state mismatch: reused request id",
-            );
-            debug_assert!(false);
-        }
-
         // open substream and push it pending outbound substreams
         // once the substream is opened, send the request.
         match self.service.open_substream(peer).await {
             Ok(substream_id) => {
+                let unique_request_id = context.active.insert(request_id);
+                debug_assert!(unique_request_id);
+
                 self.pending_outbound
                     .insert(substream_id, RequestContext::new(peer, request_id, request));
+
                 Ok(())
             }
             Err(error) => {
-                tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, ?request_id, ?error, "failed to open substream");
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    ?request_id,
+                    ?error,
+                    "failed to open substream",
+                );
+
                 self.report_request_failure(peer, request_id, RequestResponseError::Rejected)
                     .await
             }
