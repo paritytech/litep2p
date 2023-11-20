@@ -56,6 +56,8 @@ pub use handle::{DialOptions, RequestResponseError, RequestResponseEvent, Reques
 
 mod config;
 mod handle;
+#[cfg(test)]
+mod tests;
 
 // TODO: add ability to specify limit for inbound requests?
 // TODO: convert inbound/outbound substreams to use `oneshot:Sender<()>` for sending/rejecting
@@ -273,6 +275,7 @@ impl RequestResponseProtocol {
             return;
         };
 
+        // sent failure events for all pending outbound requests
         for request_id in context.active {
             let _ = self
                 .event_tx
@@ -282,6 +285,11 @@ impl RequestResponseProtocol {
                     error: RequestResponseError::Rejected,
                 })
                 .await;
+        }
+
+        // remove all pending inbound requests
+        for (request_id, _) in context.active_inbound {
+            self.pending_inbound_requests.remove(&(peer, request_id));
         }
     }
 
