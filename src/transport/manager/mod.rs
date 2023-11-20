@@ -648,6 +648,8 @@ impl TransportManager {
                             "secondary connection already exists, ignoring connection",
                         );
                         context.addresses.insert_with_score(address.clone(), SCORE_DIAL_SUCCESS);
+
+                        return Ok(false);
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, ?peer, ?connection_id, ?address, "secondary connection");
@@ -820,15 +822,20 @@ impl TransportManager {
                 false => match context.secondary_connection.take() {
                     Some(secondary_connection) => {
                         if secondary_connection.connection_id != Some(*connection_id) {
-                            tracing::warn!(
+                            tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
                                 ?connection_id,
-                                "unknown connection was closed",
+                                "unknown connection was closed, potentially ignored tertiary connection",
                             );
 
-                            debug_assert!(false);
-                            return Err(Error::InvalidState);
+                            context.secondary_connection = Some(secondary_connection);
+                            context.state = PeerState::Connected {
+                                record,
+                                dial_record: actual_dial_record,
+                            };
+
+                            return Ok(false);
                         }
 
                         tracing::trace!(
@@ -1744,5 +1751,113 @@ mod tests {
             }
             state => panic!("invalid state: {state:?}"),
         }
+    }
+
+    // two connections already exist and a third was opened which is ignored by
+    // `on_connection_established()`, when that connection is closed, verify that
+    // it's handled gracefully
+    #[tokio::test]
+    async fn tertiary_connection_closed() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) =
+            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let _handle =
+            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+
+        let peer = PeerId::random();
+        let address1 = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        let address2 = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        let address3 = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
+            .with(Protocol::Tcp(9999))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        // remote peer connected to local node
+        let emit_event = manager
+            .on_connection_established(&peer, &ConnectionId::from(0usize), &address1)
+            .unwrap();
+        assert!(emit_event);
+
+        // verify that the peer state is `Connected` with no seconary connection
+        {
+            let peers = manager.peers.read();
+            let peer = peers.get(&peer).unwrap();
+
+            match &peer.state {
+                PeerState::Connected {
+                    dial_record: None, ..
+                } => {
+                    assert!(peer.secondary_connection.is_none());
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
+
+        // second connection is established, verify that the seconary connection is tracked
+        let emit_event = manager
+            .on_connection_established(&peer, &ConnectionId::from(1usize), &address2)
+            .unwrap();
+        assert!(emit_event);
+
+        let peers = manager.peers.read();
+        let context = peers.get(&peer).unwrap();
+
+        match &context.state {
+            PeerState::Connected {
+                dial_record: None, ..
+            } => {
+                let seconary_connection = context.secondary_connection.as_ref().unwrap();
+                assert_eq!(seconary_connection.address, address2);
+                assert_eq!(seconary_connection.score, SCORE_DIAL_SUCCESS);
+            }
+            state => panic!("invalid state: {state:?}"),
+        }
+        drop(peers);
+
+        // third connection is established, verify that it's discarded
+        let emit_event = manager
+            .on_connection_established(&peer, &ConnectionId::from(2usize), &address3)
+            .unwrap();
+        assert!(!emit_event);
+
+        let peers = manager.peers.read();
+        let context = peers.get(&peer).unwrap();
+        assert!(context.addresses.contains(&address3));
+        drop(peers);
+
+        // close the tertiary connection that was ignored
+        let emit_event = manager.on_connection_closed(&peer, &ConnectionId::from(2usize)).unwrap();
+        assert!(!emit_event);
+
+        // verify that the state remains unchanged
+        let peers = manager.peers.read();
+        let context = peers.get(&peer).unwrap();
+
+        match &context.state {
+            PeerState::Connected {
+                dial_record: None, ..
+            } => {
+                let seconary_connection = context.secondary_connection.as_ref().unwrap();
+                assert_eq!(seconary_connection.address, address2);
+                assert_eq!(seconary_connection.score, SCORE_DIAL_SUCCESS);
+            }
+            state => panic!("invalid state: {state:?}"),
+        }
+        drop(peers);
     }
 }
