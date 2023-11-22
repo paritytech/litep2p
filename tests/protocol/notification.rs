@@ -3294,19 +3294,18 @@ async fn no_listener_address_for_one_peer_tcp() {
     .await
 }
 
-// TODO: enable when quic supports zero addresses
-// #[tokio::test]
-// async fn no_listener_address_for_one_peer_quic() {
-//     no_listener_address_for_one_peer(
-//         Transport::Quic(QuicTransportConfig {
-//             listen_addresses: vec![],
-//         }),
-//         Transport::Quic(QuicTransportConfig {
-//             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-//         }),
-//     )
-//     .await;
-// }
+#[tokio::test]
+async fn no_listener_address_for_one_peer_quic() {
+    no_listener_address_for_one_peer(
+        Transport::Quic(QuicTransportConfig {
+            listen_addresses: vec![],
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+        }),
+    )
+    .await;
+}
 
 // TODO: enable when websocket supports zero addresses
 // #[tokio::test]

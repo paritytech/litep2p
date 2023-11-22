@@ -988,25 +988,24 @@ async fn multiple_listen_addresses_tcp() {
     .await
 }
 
-// TODO: enable when quic supported is added
-// #[tokio::test]
-// async fn multiple_listen_addresses_quic() {
-//     multiple_listen_addresses(
-//         Transport::Quic(QuicTransportConfig {
-//             listen_addresses: vec![
-//                 "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-//                 "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
-//             ],
-//         }),
-//         Transport::Quic(QuicTransportConfig {
-//             listen_addresses: vec![],
-//         }),
-//         Transport::Quic(QuicTransportConfig {
-//             listen_addresses: vec![],
-//         }),
-//     )
-//     .await;
-// }
+#[tokio::test]
+async fn multiple_listen_addresses_quic() {
+    multiple_listen_addresses(
+        Transport::Quic(QuicTransportConfig {
+            listen_addresses: vec![
+                "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+                "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
+            ],
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_addresses: vec![],
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_addresses: vec![],
+        }),
+    )
+    .await;
+}
 
 // TODO: enable when websocket supported is added
 // #[tokio::test]
