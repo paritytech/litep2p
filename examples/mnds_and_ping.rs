@@ -27,7 +27,6 @@ use litep2p::{
         libp2p::ping::{Config as PingConfig, PingEvent},
         mdns::{Config as MdnsConfig, MdnsEvent},
     },
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
     Litep2p,
 };
 
@@ -71,10 +70,8 @@ async fn make_litep2p() -> (
 
     // build `Litep2p`, passing in configurations for IPFS and mDNS
     let litep2p_config = Litep2pConfigBuilder::new()
-        .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            ..Default::default()
-        })
+        // `litep2p` will bind to `/ip6/::1/tcp/0` by default
+        .with_tcp(Default::default())
         .with_libp2p_ping(ping_config)
         .with_mdns(mdns_config)
         .build();

@@ -105,7 +105,7 @@ async fn main() {
             .with_notification_protocol(notif_config)
             .with_executor(Arc::new(TaskExecutorHandle { tx: sender.clone() }))
             .with_tcp(TcpTransportConfig {
-                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
                 ..Default::default()
             })
             .build(),

@@ -26,13 +26,13 @@ use multiaddr::Multiaddr;
 #[derive(Debug, Clone)]
 pub struct TransportConfig {
     /// Listen address for the transport.
-    pub listen_address: Multiaddr,
+    pub listen_addresses: Vec<Multiaddr>,
 }
 
 impl Default for TransportConfig {
     fn default() -> Self {
         Self {
-            listen_address: "/ip6/::/udp/0/quic-v1".parse().expect("valid address"),
+            listen_addresses: vec!["/ip6/::/udp/0/quic-v1".parse().expect("valid address")],
         }
     }
 }

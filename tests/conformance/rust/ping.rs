@@ -47,7 +47,7 @@ async fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Se
         Litep2pConfigBuilder::new()
             .with_keypair(keypair)
             .with_tcp(TcpTransportConfig {
-                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
                 ..Default::default()
             })
             .with_libp2p_ping(ping_config)

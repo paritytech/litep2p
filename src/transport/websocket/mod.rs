@@ -203,11 +203,11 @@ impl Transport for WebSocketTransport {
     {
         tracing::info!(
             target: LOG_TARGET,
-            listen_address = ?config.listen_address,
+            listen_addresses = ?config.listen_addresses,
             "start websocket transport",
         );
 
-        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
+        let (listen_address, _) = Self::get_socket_address(&config.listen_addresses[0])?;
         let listener = TcpListener::bind(listen_address).await?;
         let listen_address = listener.local_addr()?;
         let listen_address = Multiaddr::empty()
@@ -226,8 +226,8 @@ impl Transport for WebSocketTransport {
     }
 
     /// Get assigned listen address.
-    fn listen_address(&self) -> Multiaddr {
-        self.listen_address.clone()
+    fn listen_address(&self) -> Vec<Multiaddr> {
+        vec![self.listen_address.clone()]
     }
 
     /// Poll next connection.

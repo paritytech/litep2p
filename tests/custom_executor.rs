@@ -118,7 +118,7 @@ async fn custom_executor() {
         .with_request_response_protocol(req_resp_config1)
         .with_executor(Arc::new(handle))
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .build();
@@ -144,7 +144,7 @@ async fn custom_executor() {
         .with_request_response_protocol(req_resp_config2)
         .with_executor(Arc::new(handle))
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .build();

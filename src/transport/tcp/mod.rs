@@ -21,31 +21,28 @@
 //! TCP transport.
 
 use crate::{
-    error::{AddressError, Error},
+    error::Error,
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
-        tcp::{config::TransportConfig, connection::TcpConnection},
+        tcp::{config::TransportConfig, connection::TcpConnection, listener::TcpListener},
         Transport,
     },
     types::ConnectionId,
-    PeerId,
 };
 
 use futures::{
     future::BoxFuture,
     stream::{FuturesUnordered, StreamExt},
 };
-use multiaddr::{Multiaddr, Protocol};
-use tokio::net::{TcpListener, TcpStream};
+use multiaddr::Multiaddr;
+use tokio::net::TcpStream;
 
-use std::{
-    collections::HashMap,
-    net::{IpAddr, SocketAddr},
-};
+use std::{collections::HashMap, net::SocketAddr};
 
 pub(crate) use substream::Substream;
 
 mod connection;
+mod listener;
 mod substream;
 
 pub mod config;
@@ -82,9 +79,6 @@ pub(crate) struct TcpTransport {
     /// TCP listener.
     listener: TcpListener,
 
-    /// Assigned listen addresss.
-    listen_address: SocketAddr,
-
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
@@ -92,82 +86,7 @@ pub(crate) struct TcpTransport {
     pending_connections: FuturesUnordered<BoxFuture<'static, Result<TcpConnection, TcpError>>>,
 }
 
-/// Address type.
-#[derive(Debug)]
-enum AddressType {
-    /// Socket address.
-    Socket(SocketAddr),
-
-    /// DNS address.
-    Dns(String, u16),
-}
-
 impl TcpTransport {
-    /// Extract socket address and `PeerId`, if found, from `address`.
-    fn get_socket_address(address: &Multiaddr) -> crate::Result<(AddressType, Option<PeerId>)> {
-        tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
-
-        let mut iter = address.iter();
-        let socket_address = match iter.next() {
-            Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) =>
-                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) =>
-                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            Some(Protocol::Dns(address))
-            | Some(Protocol::Dns4(address))
-            | Some(Protocol::Dns6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => AddressType::Dns(address.to_string(), port),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            protocol => {
-                tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
-
-        let maybe_peer = match iter.next() {
-            Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
-            None => None,
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid protocol, expected `P2p` or `None`"
-                );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
-
-        Ok((socket_address, maybe_peer))
-    }
-
     /// Handle inbound TCP connection.
     fn on_inbound_connection(&mut self, connection: TcpStream, address: SocketAddr) {
         let connection_id = self.context.next_connection_id();
@@ -231,7 +150,7 @@ impl TcpTransport {
         tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, "open connection");
 
         let protocol_set = self.context.protocol_set(connection_id);
-        let (socket_address, peer) = Self::get_socket_address(&address)?;
+        let (socket_address, peer) = listener::TcpListener::get_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -262,45 +181,36 @@ impl Transport for TcpTransport {
     type Config = TransportConfig;
 
     /// Create new [`TcpTransport`].
-    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self> {
+    async fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self> {
         tracing::info!(
             target: LOG_TARGET,
-            listen_address = ?config.listen_address,
+            listen_addresses = ?config.listen_addresses,
             "start tcp transport",
         );
 
-        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
-        let listener = match listen_address {
-            AddressType::Socket(socket_address) => TcpListener::bind(socket_address).await?,
-            AddressType::Dns(_, _) =>
-                return Err(Error::TransportNotSupported(config.listen_address)),
-        };
-        let listen_address = listener.local_addr()?;
-
         Ok(Self {
+            listener: TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new()))
+                .await?,
             config,
             context,
-            listener,
-            listen_address,
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
     }
 
     /// Get assigned listen address.
-    fn listen_address(&self) -> Multiaddr {
-        Multiaddr::empty()
-            .with(Protocol::from(self.listen_address.ip()))
-            .with(Protocol::Tcp(self.listen_address.port()))
+    fn listen_address(&self) -> Vec<Multiaddr> {
+        self.listener.listen_addresses().cloned().collect()
     }
 
     /// Start TCP transport event loop.
     async fn start(mut self) -> crate::Result<()> {
         loop {
             tokio::select! {
-                connection = self.listener.accept() => match connection {
-                    Ok((connection, address)) => self.on_inbound_connection(connection, address),
-                    Err(error) => {
+                connection = self.listener.next() => match connection {
+                    None => return Err(Error::EssentialTaskClosed),
+                    Some(Ok((connection, address))) => self.on_inbound_connection(connection, address),
+                    Some(Err(error)) => {
                         tracing::debug!(target: LOG_TARGET, ?error, "tcp listener shut down");
                         return Ok(())
                     }
@@ -331,8 +241,6 @@ impl Transport for TcpTransport {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, sync::Arc};
-
     use super::*;
     use crate::{
         codec::ProtocolCodec,
@@ -343,46 +251,12 @@ mod tests {
             TransportManagerEvent,
         },
         types::protocol::ProtocolName,
-        BandwidthSink,
+        BandwidthSink, PeerId,
     };
+    use multiaddr::Protocol;
     use multihash::Multihash;
+    use std::{collections::HashSet, sync::Arc};
     use tokio::sync::mpsc::channel;
-
-    #[test]
-    fn parse_multiaddresses() {
-        assert!(TcpTransport::get_socket_address(
-            &"/ip6/::1/tcp/8888".parse().expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip6/::1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_err());
-        assert!(TcpTransport::get_socket_address(
-            &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_err());
-    }
 
     #[tokio::test]
     async fn connect_and_accept_works() {
@@ -416,13 +290,13 @@ mod tests {
             )]),
         };
         let transport_config1 = TransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
 
         let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
 
-        let listen_address = Transport::listen_address(&transport1);
+        let listen_address = Transport::listen_address(&transport1)[0].clone();
         tokio::spawn(async move {
             let _ = transport1.start().await;
         });
@@ -452,7 +326,7 @@ mod tests {
             )]),
         };
         let transport_config2 = TransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
 
@@ -517,7 +391,7 @@ mod tests {
             )]),
         };
         let transport_config1 = TransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
 
@@ -550,7 +424,7 @@ mod tests {
             )]),
         };
         let transport_config2 = TransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
 
@@ -601,7 +475,7 @@ mod tests {
         let mut transport = TcpTransport::new(
             handle,
             TransportConfig {
-                listen_address: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+                listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
                 ..Default::default()
             },
         )

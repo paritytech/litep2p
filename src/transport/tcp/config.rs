@@ -29,7 +29,7 @@ use yamux::Config;
 #[derive(Debug, Clone)]
 pub struct TransportConfig {
     /// Listen address for the transport.
-    pub listen_address: Multiaddr,
+    pub listen_addresses: Vec<Multiaddr>,
 
     /// Yamux configuration.
     pub yamux_config: Config,
@@ -58,7 +58,7 @@ pub struct TransportConfig {
 impl Default for TransportConfig {
     fn default() -> Self {
         Self {
-            listen_address: "/ip6/::/tcp/0".parse().expect("valid address"),
+            listen_addresses: vec!["/ip6/::/tcp/0".parse().expect("valid address")],
             yamux_config: Default::default(),
             noise_read_ahead_frame_count: MAX_READ_AHEAD_FACTOR,
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,

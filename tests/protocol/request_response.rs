@@ -85,11 +85,11 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
 async fn send_request_receive_response_tcp() {
     send_request_receive_response(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -100,10 +100,10 @@ async fn send_request_receive_response_tcp() {
 async fn send_request_receive_response_quic() {
     send_request_receive_response(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -113,11 +113,11 @@ async fn send_request_receive_response_quic() {
 async fn send_request_receive_response_websocket() {
     send_request_receive_response(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -213,11 +213,11 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
 async fn reject_request_tcp() {
     reject_request(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -228,10 +228,10 @@ async fn reject_request_tcp() {
 async fn reject_request_quic() {
     reject_request(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -241,11 +241,11 @@ async fn reject_request_quic() {
 async fn reject_request_websocket() {
     reject_request(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -344,11 +344,11 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
 async fn multiple_simultaneous_requests_tcp() {
     multiple_simultaneous_requests(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -359,10 +359,10 @@ async fn multiple_simultaneous_requests_tcp() {
 async fn multiple_simultaneous_requests_quic() {
     multiple_simultaneous_requests(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -372,11 +372,11 @@ async fn multiple_simultaneous_requests_quic() {
 async fn multiple_simultaneous_requests_websocket() {
     multiple_simultaneous_requests(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -511,11 +511,11 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
 async fn request_timeout_tcp() {
     request_timeout(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -526,10 +526,10 @@ async fn request_timeout_tcp() {
 async fn request_timeout_quic() {
     request_timeout(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -539,11 +539,11 @@ async fn request_timeout_quic() {
 async fn request_timeout_websocket() {
     request_timeout(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -631,11 +631,11 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
 async fn protocol_not_supported_tcp() {
     protocol_not_supported(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -646,10 +646,10 @@ async fn protocol_not_supported_tcp() {
 async fn protocol_not_supported_quic() {
     protocol_not_supported(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -659,11 +659,11 @@ async fn protocol_not_supported_quic() {
 async fn protocol_not_supported_websocket() {
     protocol_not_supported(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -749,11 +749,11 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
 async fn connection_close_while_request_is_pending_tcp() {
     connection_close_while_request_is_pending(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -764,10 +764,10 @@ async fn connection_close_while_request_is_pending_tcp() {
 async fn connection_close_while_request_is_pending_quic() {
     connection_close_while_request_is_pending(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -777,11 +777,11 @@ async fn connection_close_while_request_is_pending_quic() {
 async fn connection_close_while_request_is_pending_websocket() {
     connection_close_while_request_is_pending(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -866,11 +866,11 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
 async fn request_too_big_tcp() {
     request_too_big(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -881,10 +881,10 @@ async fn request_too_big_tcp() {
 async fn request_too_big_quic() {
     request_too_big(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -894,11 +894,11 @@ async fn request_too_big_quic() {
 async fn request_too_big_websocket() {
     request_too_big(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -979,11 +979,11 @@ async fn request_too_big(transport1: Transport, transport2: Transport) {
 async fn response_too_big_tcp() {
     response_too_big(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -994,10 +994,10 @@ async fn response_too_big_tcp() {
 async fn response_too_big_quic() {
     response_too_big(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1007,11 +1007,11 @@ async fn response_too_big_quic() {
 async fn response_too_big_websocket() {
     response_too_big(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1121,7 +1121,7 @@ async fn too_many_pending_requests() {
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .with_request_response_protocol(req_resp_config1)
@@ -1140,7 +1140,7 @@ async fn too_many_pending_requests() {
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .with_request_response_protocol(req_resp_config2)
@@ -1221,11 +1221,11 @@ async fn too_many_pending_requests() {
 async fn dialer_fallback_protocol_works_tcp() {
     dialer_fallback_protocol_works(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1236,10 +1236,10 @@ async fn dialer_fallback_protocol_works_tcp() {
 async fn dialer_fallback_protocol_works_quic() {
     dialer_fallback_protocol_works(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1249,11 +1249,11 @@ async fn dialer_fallback_protocol_works_quic() {
 async fn dialer_fallback_protocol_works_websocket() {
     dialer_fallback_protocol_works(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1349,11 +1349,11 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
 async fn listener_fallback_protocol_works_tcp() {
     listener_fallback_protocol_works(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1364,10 +1364,10 @@ async fn listener_fallback_protocol_works_tcp() {
 async fn listener_fallback_protocol_works_quic() {
     listener_fallback_protocol_works(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1377,11 +1377,11 @@ async fn listener_fallback_protocol_works_quic() {
 async fn listener_fallback_protocol_works_websocket() {
     listener_fallback_protocol_works(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1477,11 +1477,11 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
 async fn dial_peer_when_sending_request_tcp() {
     dial_peer_when_sending_request(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1492,10 +1492,10 @@ async fn dial_peer_when_sending_request_tcp() {
 async fn dial_peer_when_sending_request_quic() {
     dial_peer_when_sending_request(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1505,11 +1505,11 @@ async fn dial_peer_when_sending_request_quic() {
 async fn dial_peer_when_sending_request_websocket() {
     dial_peer_when_sending_request(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1605,11 +1605,11 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
 async fn dial_peer_but_no_known_address_tcp() {
     dial_peer_but_no_known_address(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1620,10 +1620,10 @@ async fn dial_peer_but_no_known_address_tcp() {
 async fn dial_peer_but_no_known_address_quic() {
     dial_peer_but_no_known_address(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1633,11 +1633,11 @@ async fn dial_peer_but_no_known_address_quic() {
 async fn dial_peer_but_no_known_address_websocket() {
     dial_peer_but_no_known_address(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1716,11 +1716,11 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
 async fn cancel_request_tcp() {
     cancel_request(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1731,10 +1731,10 @@ async fn cancel_request_tcp() {
 async fn cancel_request_quic() {
     cancel_request(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1744,11 +1744,11 @@ async fn cancel_request_quic() {
 async fn cancel_request_websocket() {
     cancel_request(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1845,11 +1845,11 @@ async fn cancel_request(transport1: Transport, transport2: Transport) {
 async fn substream_open_failure_reported_once_tcp() {
     substream_open_failure_reported_once(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1860,10 +1860,10 @@ async fn substream_open_failure_reported_once_tcp() {
 async fn substream_open_failure_reported_once_quic() {
     substream_open_failure_reported_once(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1873,11 +1873,11 @@ async fn substream_open_failure_reported_once_quic() {
 async fn substream_open_failure_reported_once_websocket() {
     substream_open_failure_reported_once(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1974,11 +1974,11 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
 async fn excess_inbound_request_rejected_tcp() {
     excess_inbound_request_rejected(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1989,10 +1989,10 @@ async fn excess_inbound_request_rejected_tcp() {
 async fn excess_inbound_request_rejected_quic() {
     excess_inbound_request_rejected(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -2002,11 +2002,11 @@ async fn excess_inbound_request_rejected_quic() {
 async fn excess_inbound_request_rejected_websocket() {
     excess_inbound_request_rejected(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2099,11 +2099,11 @@ async fn excess_inbound_request_rejected(transport1: Transport, transport2: Tran
 async fn feedback_received_for_succesful_response_tcp() {
     feedback_received_for_succesful_response(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2114,10 +2114,10 @@ async fn feedback_received_for_succesful_response_tcp() {
 async fn feedback_received_for_succesful_response_quic() {
     feedback_received_for_succesful_response(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -2127,11 +2127,11 @@ async fn feedback_received_for_succesful_response_quic() {
 async fn feedback_received_for_succesful_response_websocket() {
     feedback_received_for_succesful_response(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2223,11 +2223,11 @@ async fn feedback_received_for_succesful_response(transport1: Transport, transpo
 async fn feedback_not_received_for_failed_response_tcp() {
     feedback_not_received_for_failed_response(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2238,10 +2238,10 @@ async fn feedback_not_received_for_failed_response_tcp() {
 async fn feedback_not_received_for_failed_response_quic() {
     feedback_not_received_for_failed_response(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -2251,11 +2251,11 @@ async fn feedback_not_received_for_failed_response_quic() {
 async fn feedback_not_received_for_failed_response_websocket() {
     feedback_not_received_for_failed_response(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )

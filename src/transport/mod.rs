@@ -43,7 +43,7 @@ pub(crate) trait Transport {
         Self: Sized;
 
     /// Get assigned listen address.
-    fn listen_address(&self) -> Multiaddr;
+    fn listen_address(&self) -> Vec<Multiaddr>;
 
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()>;

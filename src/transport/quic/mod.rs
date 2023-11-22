@@ -279,11 +279,11 @@ impl Transport for QuicTransport {
     {
         tracing::info!(
             target: LOG_TARGET,
-            listen_address = ?config.listen_address,
+            listen_addresses = ?config.listen_addresses,
             "start quic transport",
         );
 
-        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
+        let (listen_address, _) = Self::get_socket_address(&config.listen_addresses[0])?;
         let crypto_config = Arc::new(make_server_config(&context.keypair).expect("to succeed"));
         let server_config = ServerConfig::with_crypto(crypto_config);
 
@@ -306,12 +306,12 @@ impl Transport for QuicTransport {
     }
 
     /// Get assigned listen address.
-    fn listen_address(&self) -> Multiaddr {
+    fn listen_address(&self) -> Vec<Multiaddr> {
         let mut multiaddr = Multiaddr::from(self.listen_address.ip());
         multiaddr.push(Protocol::Udp(self.listen_address.port()));
         multiaddr.push(Protocol::QuicV1);
 
-        multiaddr
+        vec![multiaddr]
     }
 
     /// Start [`QuicTransport`] event loop.
@@ -397,12 +397,12 @@ mod tests {
             )]),
         };
         let transport_config1 = QuicTransportConfig {
-            listen_address: "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
         };
 
         let transport1 = QuicTransport::new(handle1, transport_config1).await.unwrap();
 
-        let listen_address = Transport::listen_address(&transport1);
+        let listen_address = Transport::listen_address(&transport1)[0].clone();
 
         tokio::spawn(async move {
             let _ = transport1.start().await;
@@ -433,7 +433,7 @@ mod tests {
             )]),
         };
         let transport_config2 = QuicTransportConfig {
-            listen_address: "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
         };
 
         let transport2 = QuicTransport::new(handle2, transport_config2).await.unwrap();

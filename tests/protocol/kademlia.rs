@@ -34,7 +34,7 @@ async fn spawn_litep2p(port: u16) {
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: format!("/ip6/::1/tcp/{port}").parse().unwrap(),
+            listen_addresses: vec![format!("/ip6/::1/tcp/{port}").parse().unwrap()],
             ..Default::default()
         })
         .with_libp2p_kademlia(kad_config1)
@@ -56,7 +56,7 @@ async fn kademlia_supported() {
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .with_libp2p_kademlia(kad_config1)
@@ -91,7 +91,7 @@ async fn put_value() {
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .with_libp2p_kademlia(kad_config1)

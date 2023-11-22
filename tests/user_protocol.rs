@@ -93,7 +93,6 @@ async fn user_protocol() {
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             ..Default::default()
         })
         .with_user_protocol(custom_protocol1)
@@ -103,7 +102,6 @@ async fn user_protocol() {
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             ..Default::default()
         })
         .with_user_protocol(custom_protocol2)

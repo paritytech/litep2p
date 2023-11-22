@@ -278,10 +278,12 @@ impl Litep2p {
             );
             let transport = <TcpTransport as Transport>::new(service, config).await?;
 
-            transport_manager.register_listen_address(transport.listen_address());
-            listen_addresses.push(transport.listen_address().with(Protocol::P2p(
-                Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
-            )));
+            for address in transport.listen_address() {
+                transport_manager.register_listen_address(address.clone());
+                listen_addresses.push(address.with(Protocol::P2p(
+                    Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
+                )));
+            }
 
             litep2p_config.executor.run(Box::pin(async move {
                 if let Err(error) = transport.start().await {
@@ -298,10 +300,12 @@ impl Litep2p {
             );
             let transport = <QuicTransport as Transport>::new(service, config).await?;
 
-            transport_manager.register_listen_address(transport.listen_address());
-            listen_addresses.push(transport.listen_address().with(Protocol::P2p(
-                Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
-            )));
+            for address in transport.listen_address() {
+                transport_manager.register_listen_address(address.clone());
+                listen_addresses.push(address.with(Protocol::P2p(
+                    Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
+                )));
+            }
 
             litep2p_config.executor.run(Box::pin(async move {
                 if let Err(error) = transport.start().await {
@@ -318,10 +322,12 @@ impl Litep2p {
             );
             let transport = <WebRtcTransport as Transport>::new(service, config).await?;
 
-            transport_manager.register_listen_address(transport.listen_address());
-            listen_addresses.push(transport.listen_address().with(Protocol::P2p(
-                Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
-            )));
+            for address in transport.listen_address() {
+                transport_manager.register_listen_address(address.clone());
+                listen_addresses.push(address.with(Protocol::P2p(
+                    Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
+                )));
+            }
 
             litep2p_config.executor.run(Box::pin(async move {
                 if let Err(error) = transport.start().await {
@@ -338,10 +344,12 @@ impl Litep2p {
             );
             let transport = <WebSocketTransport as Transport>::new(service, config).await?;
 
-            transport_manager.register_listen_address(transport.listen_address());
-            listen_addresses.push(transport.listen_address().with(Protocol::P2p(
-                Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
-            )));
+            for address in transport.listen_address() {
+                transport_manager.register_listen_address(address.clone());
+                listen_addresses.push(address.with(Protocol::P2p(
+                    Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
+                )));
+            }
 
             litep2p_config.executor.run(Box::pin(async move {
                 if let Err(error) = transport.start().await {
@@ -371,9 +379,16 @@ impl Litep2p {
             }));
         }
 
+        if transport_manager.installed_transports().count() == 0 {
+            return Err(Error::Other("No transport specified".to_string()));
+        }
+
         // verify that at least one transport is specified
         if listen_addresses.is_empty() {
-            return Err(Error::Other(String::from("No transport specified")));
+            tracing::warn!(
+                target: LOG_TARGET,
+                "litep2p started with no listen addresses, cannot accept inbound connections",
+            );
         }
 
         Ok(Self {
@@ -513,11 +528,11 @@ mod tests {
 
         let config = Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
-                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
                 ..Default::default()
             })
             .with_quic(crate::transport::quic::config::TransportConfig {
-                listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+                listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
             })
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
@@ -590,11 +605,11 @@ mod tests {
 
         let config = Litep2pConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
-                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
                 ..Default::default()
             })
             .with_quic(crate::transport::quic::config::TransportConfig {
-                listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+                listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
             })
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)

@@ -52,7 +52,6 @@ async fn go_libp2p_dials() {
         Litep2pConfigBuilder::new()
             .with_keypair(keypair)
             .with_tcp(TcpTransportConfig {
-                listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
                 ..Default::default()
             })
             .with_libp2p_ping(ping_config)
