@@ -23,11 +23,11 @@
 //! QUIC transport.
 
 use crate::{
-    crypto::tls::{make_client_config, make_server_config},
+    crypto::tls::make_client_config,
     error::{AddressError, Error},
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
-        quic::config::TransportConfig as QuicTransportConfig,
+        quic::{config::TransportConfig as QuicTransportConfig, listener::QuicListener},
         Transport,
     },
     types::ConnectionId,
@@ -36,7 +36,7 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use quinn::{ClientConfig, Connecting, Connection, Endpoint, ServerConfig};
+use quinn::{ClientConfig, Connecting, Connection, Endpoint};
 
 use std::{
     collections::HashMap,
@@ -47,6 +47,7 @@ use std::{
 pub(crate) use substream::Substream;
 
 mod connection;
+mod listener;
 mod substream;
 
 pub mod config;
@@ -65,17 +66,11 @@ struct NegotiatedConnection {
 
 /// QUIC transport object.
 pub(crate) struct QuicTransport {
-    /// QUIC server.
-    server: Endpoint,
-
     /// Transport handle.
     context: TransportHandle,
 
-    /// Assigned listen address.
-    listen_address: SocketAddr,
-
-    /// Listen address assigned for clients.
-    client_listen_address: SocketAddr,
+    /// QUIC listener.
+    listener: QuicListener,
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
@@ -86,68 +81,18 @@ pub(crate) struct QuicTransport {
 }
 
 impl QuicTransport {
-    /// Extract socket address and `PeerId`, if found, from `address`.
-    fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
-        tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
-
-        let mut iter = address.iter();
-        let socket_address = match iter.next() {
-            Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V6(address), port),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `QuicV1`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V4(address), port),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `QuicV1`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            protocol => {
-                tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
-
-        // verify that quic exists
-        match iter.next() {
-            Some(Protocol::QuicV1) => {}
-            _ => return Err(Error::AddressError(AddressError::InvalidProtocol)),
-        }
-
-        let maybe_peer = match iter.next() {
-            Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
-            None => None,
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid protocol, expected `P2p` or `None`"
-                );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
-
-        Ok((socket_address, maybe_peer))
-    }
-
     /// Accept QUIC conenction.
     async fn accept_connection(
         &mut self,
         connection_id: ConnectionId,
         connection: Connecting,
     ) -> crate::Result<()> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?connection_id,
+            "accept connection",
+        );
+
         self.pending_connections.push(Box::pin(async move {
             let connection = match connection.await {
                 Ok(connection) => connection,
@@ -237,18 +182,32 @@ impl QuicTransport {
         address: Multiaddr,
         connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        let Ok((socket_address, Some(peer))) = Self::get_socket_address(&address) else {
+        let Ok((socket_address, Some(peer))) = QuicListener::get_socket_address(&address) else {
             return Err(Error::AddressError(AddressError::PeerIdMissing));
         };
 
         let crypto_config =
             Arc::new(make_client_config(&self.context.keypair, Some(peer)).expect("to succeed"));
         let client_config = ClientConfig::new(crypto_config);
-        let client = Endpoint::client(self.client_listen_address)
+        let client_listen_address = match address.iter().next() {
+            Some(Protocol::Ip6(_)) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+            Some(Protocol::Ip4(_)) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            _ => return Err(Error::AddressError(AddressError::InvalidProtocol)),
+        };
+
+        let client = Endpoint::client(client_listen_address)
             .map_err(|error| Error::Other(error.to_string()))?;
         let connection = client
             .connect_with(client_config, socket_address, "l")
             .map_err(|error| Error::Other(error.to_string()))?;
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?address,
+            ?peer,
+            ?client_listen_address,
+            "dial peer",
+        );
 
         self.pending_dials.insert(connection_id, address);
         self.pending_connections.push(Box::pin(async move {
@@ -279,46 +238,30 @@ impl Transport for QuicTransport {
     {
         tracing::info!(
             target: LOG_TARGET,
-            listen_address = ?config.listen_address,
+            listen_addresses = ?config.listen_addresses,
             "start quic transport",
         );
 
-        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
-        let crypto_config = Arc::new(make_server_config(&context.keypair).expect("to succeed"));
-        let server_config = ServerConfig::with_crypto(crypto_config);
-
-        let server = Endpoint::server(server_config, listen_address).unwrap();
-
-        let listen_address = server.local_addr()?;
-        let client_listen_address = match listen_address.ip() {
-            std::net::IpAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-            std::net::IpAddr::V6(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-        };
+        let listener = QuicListener::new(&context.keypair, config.listen_addresses)?;
 
         Ok(Self {
-            server,
             context,
-            listen_address,
-            client_listen_address,
+            listener,
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
     }
 
     /// Get assigned listen address.
-    fn listen_address(&self) -> Multiaddr {
-        let mut multiaddr = Multiaddr::from(self.listen_address.ip());
-        multiaddr.push(Protocol::Udp(self.listen_address.port()));
-        multiaddr.push(Protocol::QuicV1);
-
-        multiaddr
+    fn listen_address(&self) -> Vec<Multiaddr> {
+        self.listener.listen_addresses().cloned().collect()
     }
 
     /// Start [`QuicTransport`] event loop.
     async fn start(mut self) -> crate::Result<()> {
         loop {
             tokio::select! {
-                connection = self.server.accept() => match connection {
+                connection = self.listener.next() => match connection {
                     Some(connection) => {
                         let connection_id = self.context.next_connection_id();
 
@@ -397,12 +340,12 @@ mod tests {
             )]),
         };
         let transport_config1 = QuicTransportConfig {
-            listen_address: "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
         };
 
         let transport1 = QuicTransport::new(handle1, transport_config1).await.unwrap();
 
-        let listen_address = Transport::listen_address(&transport1);
+        let listen_address = Transport::listen_address(&transport1)[0].clone();
 
         tokio::spawn(async move {
             let _ = transport1.start().await;
@@ -433,7 +376,7 @@ mod tests {
             )]),
         };
         let transport_config2 = QuicTransportConfig {
-            listen_address: "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
         };
 
         let transport2 = QuicTransport::new(handle2, transport_config2).await.unwrap();

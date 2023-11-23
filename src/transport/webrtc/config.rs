@@ -26,5 +26,5 @@ use multiaddr::Multiaddr;
 #[derive(Debug)]
 pub struct TransportConfig {
     /// WebRTC listening address.
-    pub listen_address: Multiaddr,
+    pub listen_addresses: Vec<Multiaddr>,
 }

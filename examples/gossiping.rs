@@ -206,7 +206,7 @@ async fn full_peer() -> (Litep2p, BlockProtocolHandle, TransactionProtocolHandle
     // build `Litep2pConfig`
     let config = Litep2pConfigBuilder::new()
         .with_quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         })
         .with_notification_protocol(block_announce_config)
         .with_notification_protocol(tx_announce_config)
@@ -241,7 +241,7 @@ async fn main() {
     // build `Litep2pConfig`
     let config = Litep2pConfigBuilder::new()
         .with_quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         })
         .with_notification_protocol(block_announce_config)
         .build();

@@ -36,7 +36,7 @@ async fn ping_supported() {
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .with_libp2p_ping(ping_config1)
@@ -46,7 +46,7 @@ async fn ping_supported() {
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .with_libp2p_ping(ping_config2)
@@ -93,7 +93,7 @@ async fn ping_supported_quic() {
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         })
         .with_libp2p_ping(ping_config1)
         .build();
@@ -102,7 +102,7 @@ async fn ping_supported_quic() {
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         })
         .with_libp2p_ping(ping_config2)
         .build();

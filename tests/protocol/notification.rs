@@ -104,11 +104,11 @@ async fn make_default_litep2p(transport: Transport) -> (Litep2p, NotificationHan
 async fn open_substreams_tcp() {
     open_substreams(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -119,10 +119,10 @@ async fn open_substreams_tcp() {
 async fn open_substreams_quic() {
     open_substreams(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -132,11 +132,11 @@ async fn open_substreams_quic() {
 async fn open_substreams_websocket() {
     open_substreams(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -273,11 +273,11 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
 async fn reject_substream_tcp() {
     reject_substream(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -288,10 +288,10 @@ async fn reject_substream_tcp() {
 async fn reject_substream_quic() {
     reject_substream(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -301,11 +301,11 @@ async fn reject_substream_quic() {
 async fn reject_substream_websocket() {
     reject_substream(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -400,11 +400,11 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
 async fn notification_stream_closed_tcp() {
     notification_stream_closed(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -415,10 +415,10 @@ async fn notification_stream_closed_tcp() {
 async fn notification_stream_closed_quic() {
     notification_stream_closed(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -428,11 +428,11 @@ async fn notification_stream_closed_quic() {
 async fn notification_stream_closed_websocket() {
     notification_stream_closed(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -576,11 +576,11 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
 async fn reconnect_after_disconnect_tcp() {
     reconnect_after_disconnect(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -591,10 +591,10 @@ async fn reconnect_after_disconnect_tcp() {
 async fn reconnect_after_disconnect_quic() {
     reconnect_after_disconnect(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -604,11 +604,11 @@ async fn reconnect_after_disconnect_quic() {
 async fn reconnect_after_disconnect_websocket() {
     reconnect_after_disconnect(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -809,11 +809,11 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
 async fn set_new_handshake_tcp() {
     set_new_handshake(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -824,10 +824,10 @@ async fn set_new_handshake_tcp() {
 async fn set_new_handshake_quic() {
     set_new_handshake(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -837,11 +837,11 @@ async fn set_new_handshake_quic() {
 async fn set_new_handshake_websocket() {
     set_new_handshake(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1027,11 +1027,11 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
 async fn both_nodes_open_substreams_tcp() {
     both_nodes_open_substreams(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1042,10 +1042,10 @@ async fn both_nodes_open_substreams_tcp() {
 async fn both_nodes_open_substreams_quic() {
     both_nodes_open_substreams(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1055,11 +1055,11 @@ async fn both_nodes_open_substreams_quic() {
 async fn both_nodes_open_substreams_websocket() {
     both_nodes_open_substreams(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1201,11 +1201,11 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
 async fn both_nodes_open_substream_one_rejects_substreams_tcp() {
     both_nodes_open_substream_one_rejects_substreams(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1217,10 +1217,10 @@ async fn both_nodes_open_substream_one_rejects_substreams_tcp() {
 async fn both_nodes_open_substream_one_rejects_substreams_quic() {
     both_nodes_open_substream_one_rejects_substreams(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1231,11 +1231,11 @@ async fn both_nodes_open_substream_one_rejects_substreams_quic() {
 async fn both_nodes_open_substream_one_rejects_substreams_websocket() {
     both_nodes_open_substream_one_rejects_substreams(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1349,7 +1349,7 @@ async fn both_nodes_open_substream_one_rejects_substreams(
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_tcp() {
     send_sync_notification_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
-        listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
         ..Default::default()
     }))
     .await
@@ -1358,7 +1358,7 @@ async fn send_sync_notification_to_non_existent_peer_tcp() {
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_quic() {
     send_sync_notification_to_non_existent_peer(Transport::Quic(QuicTransportConfig {
-        listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
     }))
     .await;
 }
@@ -1366,7 +1366,7 @@ async fn send_sync_notification_to_non_existent_peer_quic() {
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_websocket() {
     send_sync_notification_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
-        listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+        listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
         ..Default::default()
     }))
     .await;
@@ -1413,7 +1413,7 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport) {
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_tcp() {
     send_async_notification_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
-        listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
         ..Default::default()
     }))
     .await
@@ -1422,7 +1422,7 @@ async fn send_async_notification_to_non_existent_peer_tcp() {
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_quic() {
     send_async_notification_to_non_existent_peer(Transport::Quic(QuicTransportConfig {
-        listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
     }))
     .await;
 }
@@ -1430,7 +1430,7 @@ async fn send_async_notification_to_non_existent_peer_quic() {
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_websocket() {
     send_async_notification_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
-        listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+        listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
         ..Default::default()
     }))
     .await;
@@ -1480,7 +1480,7 @@ async fn send_async_notification_to_non_existent_peer(transport1: Transport) {
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_tcp() {
     try_to_connect_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
-        listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
         ..Default::default()
     }))
     .await
@@ -1489,7 +1489,7 @@ async fn try_to_connect_to_non_existent_peer_tcp() {
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_quic() {
     try_to_connect_to_non_existent_peer(Transport::Quic(QuicTransportConfig {
-        listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
     }))
     .await;
 }
@@ -1497,7 +1497,7 @@ async fn try_to_connect_to_non_existent_peer_quic() {
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_websocket() {
     try_to_connect_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
-        listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+        listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
         ..Default::default()
     }))
     .await;
@@ -1552,7 +1552,7 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_tcp() {
     try_to_disconnect_non_existent_peer(Transport::Tcp(TcpTransportConfig {
-        listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+        listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
         ..Default::default()
     }))
     .await
@@ -1561,7 +1561,7 @@ async fn try_to_disconnect_non_existent_peer_tcp() {
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_quic() {
     try_to_disconnect_non_existent_peer(Transport::Quic(QuicTransportConfig {
-        listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
     }))
     .await;
 }
@@ -1569,7 +1569,7 @@ async fn try_to_disconnect_non_existent_peer_quic() {
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_websocket() {
     try_to_disconnect_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
-        listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+        listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
         ..Default::default()
     }))
     .await;
@@ -1617,11 +1617,11 @@ async fn try_to_disconnect_non_existent_peer(transport1: Transport) {
 async fn try_to_reopen_substream_tcp() {
     try_to_reopen_substream(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1632,10 +1632,10 @@ async fn try_to_reopen_substream_tcp() {
 async fn try_to_reopen_substream_quic() {
     try_to_reopen_substream(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1645,11 +1645,11 @@ async fn try_to_reopen_substream_quic() {
 async fn try_to_reopen_substream_websocket() {
     try_to_reopen_substream(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1775,11 +1775,11 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
 async fn substream_validation_timeout_tcp() {
     substream_validation_timeout(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1790,10 +1790,10 @@ async fn substream_validation_timeout_tcp() {
 async fn substream_validation_timeout_quic() {
     substream_validation_timeout(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1803,11 +1803,11 @@ async fn substream_validation_timeout_quic() {
 async fn substream_validation_timeout_websocket() {
     substream_validation_timeout(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1902,11 +1902,11 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
 async fn unsupported_protocol_tcp() {
     unsupported_protocol(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -1917,10 +1917,10 @@ async fn unsupported_protocol_tcp() {
 async fn unsupported_protocol_quic() {
     unsupported_protocol(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -1930,11 +1930,11 @@ async fn unsupported_protocol_quic() {
 async fn unsupported_protocol_websocket() {
     unsupported_protocol(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2008,11 +2008,11 @@ async fn unsupported_protocol(transport1: Transport, transport2: Transport) {
 async fn dialer_fallback_protocol_works_tcp() {
     dialer_fallback_protocol_works(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2023,10 +2023,10 @@ async fn dialer_fallback_protocol_works_tcp() {
 async fn dialer_fallback_protocol_works_quic() {
     dialer_fallback_protocol_works(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -2036,11 +2036,11 @@ async fn dialer_fallback_protocol_works_quic() {
 async fn dialer_fallback_protocol_works_websocket() {
     dialer_fallback_protocol_works(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2150,11 +2150,11 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
 async fn listener_fallback_protocol_works_tcp() {
     listener_fallback_protocol_works(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2165,10 +2165,10 @@ async fn listener_fallback_protocol_works_tcp() {
 async fn listener_fallback_protocol_works_quic() {
     listener_fallback_protocol_works(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -2178,11 +2178,11 @@ async fn listener_fallback_protocol_works_quic() {
 async fn listener_fallback_protocol_works_websocket() {
     listener_fallback_protocol_works(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2292,11 +2292,11 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
 async fn enable_auto_accept_tcp() {
     enable_auto_accept(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2307,10 +2307,10 @@ async fn enable_auto_accept_tcp() {
 async fn enable_auto_accept_quic() {
     enable_auto_accept(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -2320,11 +2320,11 @@ async fn enable_auto_accept_quic() {
 async fn enable_auto_accept_websocket() {
     enable_auto_accept(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2450,11 +2450,11 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
 async fn send_using_notification_sink_tcp() {
     send_using_notification_sink(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2465,10 +2465,10 @@ async fn send_using_notification_sink_tcp() {
 async fn send_using_notification_sink_quic() {
     send_using_notification_sink(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -2478,11 +2478,11 @@ async fn send_using_notification_sink_quic() {
 async fn send_using_notification_sink_websocket() {
     send_using_notification_sink(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2633,11 +2633,11 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
 async fn dial_peer_when_opening_substream_tcp() {
     dial_peer_when_opening_substream(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2648,10 +2648,10 @@ async fn dial_peer_when_opening_substream_tcp() {
 async fn dial_peer_when_opening_substream_quic() {
     dial_peer_when_opening_substream(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -2661,11 +2661,11 @@ async fn dial_peer_when_opening_substream_quic() {
 async fn dial_peer_when_opening_substream_websocket() {
     dial_peer_when_opening_substream(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2818,15 +2818,15 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
 async fn open_and_close_batched_tcp() {
     open_and_close_batched(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -2837,13 +2837,13 @@ async fn open_and_close_batched_tcp() {
 async fn open_and_close_batched_quic() {
     open_and_close_batched(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -2853,15 +2853,15 @@ async fn open_and_close_batched_quic() {
 async fn open_and_close_batched_websocket() {
     open_and_close_batched(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -3027,15 +3027,15 @@ async fn open_and_close_batched(
 async fn open_and_close_batched_duplicate_peer_tcp() {
     open_and_close_batched_duplicate_peer(
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
         Transport::Tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -3046,13 +3046,13 @@ async fn open_and_close_batched_duplicate_peer_tcp() {
 async fn open_and_close_batched_duplicate_peer_quic() {
     open_and_close_batched_duplicate_peer(
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
         Transport::Quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
         }),
     )
     .await;
@@ -3062,15 +3062,15 @@ async fn open_and_close_batched_duplicate_peer_quic() {
 async fn open_and_close_batched_duplicate_peer_websocket() {
     open_and_close_batched_duplicate_peer(
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
         Transport::WebSocket(WebSocketTransportConfig {
-            listen_address: "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
     )
@@ -3277,4 +3277,135 @@ async fn open_and_close_batched_duplicate_peer(
             _ => panic!("invalid event"),
         }
     }
+}
+
+#[tokio::test]
+async fn no_listener_address_for_one_peer_tcp() {
+    no_listener_address_for_one_peer(
+        Transport::Tcp(TcpTransportConfig {
+            listen_addresses: vec![],
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpTransportConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn no_listener_address_for_one_peer_quic() {
+    no_listener_address_for_one_peer(
+        Transport::Quic(QuicTransportConfig {
+            listen_addresses: vec![],
+        }),
+        Transport::Quic(QuicTransportConfig {
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+        }),
+    )
+    .await;
+}
+
+// TODO: enable when websocket supports zero addresses
+// #[tokio::test]
+// async fn no_listener_address_for_one_peer_websocket() {
+//     no_listener_address_for_one_peer(
+//         Transport::WebSocket(WebSocketTransportConfig {
+//             listen_addresses: vec![],
+//             ..Default::default()
+//         }),
+//         Transport::WebSocket(WebSocketTransportConfig {
+//             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
+//             ..Default::default()
+//         }),
+//     )
+//     .await;
+// }
+
+async fn no_listener_address_for_one_peer(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut litep2p1, mut handle1) = make_default_litep2p(transport1).await;
+    let (mut litep2p2, mut handle2) = make_default_litep2p(transport2).await;
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+    litep2p1.add_known_address(peer2, std::iter::once(address2));
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    handle1.open_substream(peer2).await.unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle1.send_validation_result(peer2, ValidationResult::Accept);
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            direction: Direction::Outbound,
+            peer: peer2,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]).unwrap();
+    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]).unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer1,
+            notification: vec![1, 3, 3, 7],
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer2,
+            notification: vec![1, 3, 3, 8],
+        }
+    );
 }

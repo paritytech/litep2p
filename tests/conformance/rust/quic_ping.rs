@@ -48,7 +48,7 @@ async fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Se
         Litep2pConfigBuilder::new()
             .with_keypair(keypair)
             .with_quic(QuicTransportConfig {
-                listen_address: "/ip4/127.0.0.1/udp/8888/quic-v1".parse().unwrap(),
+                listen_addresses: vec!["/ip4/127.0.0.1/udp/8888/quic-v1".parse().unwrap()],
             })
             .with_libp2p_ping(ping_config)
             .build(),

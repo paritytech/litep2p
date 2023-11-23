@@ -51,7 +51,7 @@ async fn webrtc_test() {
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_webrtc(TransportConfig {
-            listen_address: "/ip4/192.168.1.173/udp/8888/webrtc-direct".parse().unwrap(),
+            listen_addresses: vec!["/ip4/192.168.1.173/udp/8888/webrtc-direct".parse().unwrap()],
         })
         .with_libp2p_ping(ping_config)
         .with_notification_protocol(notif_config)

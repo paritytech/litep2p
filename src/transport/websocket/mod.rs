@@ -24,7 +24,9 @@ use crate::{
     error::{AddressError, Error},
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
-        websocket::{config::TransportConfig, connection::WebSocketConnection},
+        websocket::{
+            config::TransportConfig, connection::WebSocketConnection, listener::WebSocketListener,
+        },
         Transport,
     },
     types::ConnectionId,
@@ -33,18 +35,14 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use tokio::net::TcpListener;
 use url::Url;
 
-use std::{
-    collections::HashMap,
-    net::{IpAddr, SocketAddr},
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 pub(crate) use substream::Substream;
 
 mod connection;
+mod listener;
 mod stream;
 mod substream;
 
@@ -79,11 +77,8 @@ pub(crate) struct WebSocketTransport {
     /// Transport configuration.
     config: TransportConfig,
 
-    /// TCP listener.
-    listener: TcpListener,
-
-    /// Assigned listen addresss.
-    listen_address: Multiaddr,
+    /// WebSocket listener.
+    listener: WebSocketListener,
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
@@ -94,70 +89,6 @@ pub(crate) struct WebSocketTransport {
 }
 
 impl WebSocketTransport {
-    /// Extract socket address and `PeerId`, if found, from `address`.
-    fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
-        tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
-
-        let mut iter = address.iter();
-        let socket_address = match iter.next() {
-            Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V6(address), port),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V4(address), port),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            protocol => {
-                tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
-
-        // verify that `/ws`/`/wss` is part of the multi address
-        match iter.next() {
-            Some(Protocol::Ws(_address)) => {}
-            Some(Protocol::Wss(_address)) => unimplemented!("secure websocket not implemented"),
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid protocol, expected `Ws` or `Wss`"
-                );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
-
-        let maybe_peer = match iter.next() {
-            Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
-            None => None,
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid protocol, expected `P2p` or `None`"
-                );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
-
-        Ok((socket_address, maybe_peer))
-    }
-
     /// Convert `Multiaddr` into `url::Url`
     fn multiaddr_into_url(address: Multiaddr) -> crate::Result<Url> {
         let mut protocol_stack = address.iter();
@@ -197,45 +128,42 @@ impl Transport for WebSocketTransport {
     type Config = TransportConfig;
 
     /// Create new [`Transport`] object.
-    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
+    async fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized,
     {
         tracing::info!(
             target: LOG_TARGET,
-            listen_address = ?config.listen_address,
+            listen_addresses = ?config.listen_addresses,
             "start websocket transport",
         );
 
-        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
-        let listener = TcpListener::bind(listen_address).await?;
-        let listen_address = listener.local_addr()?;
-        let listen_address = Multiaddr::empty()
-            .with(Protocol::from(listen_address.ip()))
-            .with(Protocol::Tcp(listen_address.port()))
-            .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())));
-
         Ok(Self {
+            listener: WebSocketListener::new(std::mem::replace(
+                &mut config.listen_addresses,
+                Vec::new(),
+            ))
+            .await?,
             config,
             context,
-            listener,
-            listen_address,
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
     }
 
     /// Get assigned listen address.
-    fn listen_address(&self) -> Multiaddr {
-        self.listen_address.clone()
+    fn listen_address(&self) -> Vec<Multiaddr> {
+        self.listener.listen_addresses().cloned().collect()
     }
 
     /// Poll next connection.
     async fn start(mut self) -> crate::Result<()> {
         loop {
             tokio::select! {
-                connection = self.listener.accept() => match connection {
-                    Ok((stream, address)) => {
+                connection = self.listener.next() => match connection {
+                    None => return Err(Error::EssentialTaskClosed),
+                    Some(Err(error)) => return Err(error.into()),
+                    Some(Ok((stream, address))) => {
                         let connection_id = self.context.next_connection_id();
                         let context = self.context.protocol_set(connection_id);
                         let yamux_config = self.config.yamux_config.clone();
@@ -259,9 +187,6 @@ impl Transport for WebSocketTransport {
                                 Ok(Ok(result)) => Ok(result),
                             }
                         }));
-                    }
-                    Err(error) => {
-                        tracing::error!(target: LOG_TARGET, ?error, "failed to accept connection");
                     }
                 },
                 command = self.context.next() => match command.ok_or(Error::EssentialTaskClosed)? {

@@ -283,11 +283,11 @@ impl Transport for WebRtcTransport {
     {
         tracing::info!(
             target: LOG_TARGET,
-            listen_address = ?config.listen_address,
+            listen_addresses = ?config.listen_addresses,
             "start webrtc transport",
         );
 
-        let (listen_address, _) = Self::get_socket_address(&config.listen_address)?;
+        let (listen_address, _) = Self::get_socket_address(&config.listen_addresses[0])?;
         let socket = UdpSocket::bind(listen_address).await?;
         let listen_address = socket.local_addr()?;
         let dtls_cert = DtlsCert::new();
@@ -302,18 +302,18 @@ impl Transport for WebRtcTransport {
     }
 
     /// Get assigned listen address.
-    fn listen_address(&self) -> Multiaddr {
+    fn listen_address(&self) -> Vec<Multiaddr> {
         let fingerprint = self.dtls_cert.fingerprint().bytes;
 
         const MULTIHASH_SHA256_CODE: u64 = 0x12;
         let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
             .expect("fingerprint's len to be 32 bytes");
 
-        Multiaddr::empty()
+        vec![Multiaddr::empty()
             .with(Protocol::from(self.listen_address.ip()))
             .with(Protocol::Udp(self.listen_address.port()))
             .with(Protocol::WebRTC)
-            .with(Protocol::Certhash(certificate))
+            .with(Protocol::Certhash(certificate))]
     }
 
     /// Start transport event loop.

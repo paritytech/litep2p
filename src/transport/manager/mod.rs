@@ -239,9 +239,14 @@ impl TransportManager {
         )
     }
 
-    /// Get iterato to installed protocols.
+    /// Get iterator to installed protocols.
     pub fn protocols(&self) -> impl Iterator<Item = &ProtocolName> {
         self.protocols.keys()
+    }
+
+    /// Get iterator to installed transports
+    pub fn installed_transports(&self) -> impl Iterator<Item = &SupportedTransport> {
+        self.transports.keys()
     }
 
     /// Get next connection ID.
