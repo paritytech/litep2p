@@ -34,8 +34,7 @@ use litep2p::{
         quic::config::TransportConfig as QuicTransportConfig,
         tcp::config::TransportConfig as TcpTransportConfig,
     },
-    types::protocol::ProtocolName,
-    Litep2p,
+    Litep2p, ProtocolName,
 };
 
 // simple example which enables `/ipfs/ping/1.0.0` and `/request/1` protocols
@@ -47,18 +46,19 @@ async fn main() {
 
     // enable `/request/1` request-response protocol
     let (req_resp_config, mut req_resp_handle) =
-        ConfigBuilder::new(ProtocolName::from("/request/1"))
-            .with_max_size(1024)
-            .build();
+        ConfigBuilder::new(ProtocolName::from("/request/1")).with_max_size(1024).build();
 
     // build `Litep2pConfig` object
     let config = Litep2pConfigBuilder::new()
         .with_tcp(TcpTransportConfig {
-            listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
-            yamux_config: yamux::Config::default(),
+            listen_addresses: vec![
+                "/ip6/::1/tcp/0".parse().expect("valid address"),
+                "/ip4/127.0.0.1/tcp/0".parse().expect("valid address"),
+            ],
+            ..Default::default()
         })
         .with_quic(QuicTransportConfig {
-            listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().expect("valid address")],
         })
         .with_libp2p_ping(ping_config)
         .with_request_response_protocol(req_resp_config)

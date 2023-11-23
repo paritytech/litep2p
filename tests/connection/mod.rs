@@ -1007,28 +1007,27 @@ async fn multiple_listen_addresses_quic() {
     .await;
 }
 
-// TODO: enable when websocket supported is added
-// #[tokio::test]
-// async fn multiple_listen_addresses_websocket() {
-//     multiple_listen_addresses(
-//         Transport::WebSocket(WebSocketTransportConfig {
-//             listen_addresses: vec![
-//                 "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
-//                 "/ip6/::1/tcp/0/ws".parse().unwrap(),
-//             ],
-//             ..Default::default()
-//         }),
-//         Transport::WebSocket(WebSocketTransportConfig {
-//             listen_addresses: vec![],
-//             ..Default::default()
-//         }),
-//         Transport::WebSocket(WebSocketTransportConfig {
-//             listen_addresses: vec![],
-//             ..Default::default()
-//         }),
-//     )
-//     .await;
-// }
+#[tokio::test]
+async fn multiple_listen_addresses_websocket() {
+    multiple_listen_addresses(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_addresses: vec![
+                "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
+                "/ip6/::1/tcp/0/ws".parse().unwrap(),
+            ],
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_addresses: vec![],
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_addresses: vec![],
+            ..Default::default()
+        }),
+    )
+    .await;
+}
 
 async fn make_dummy_litep2p(
     transport: Transport,
