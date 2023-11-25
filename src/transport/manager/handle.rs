@@ -93,7 +93,13 @@ impl TransportManagerHandle {
 
         if !std::matches!(
             iter.next(),
-            Some(Protocol::Ip4(_) | Protocol::Ip6(_) | Protocol::Dns(_))
+            Some(
+                Protocol::Ip4(_)
+                    | Protocol::Ip6(_)
+                    | Protocol::Dns(_)
+                    | Protocol::Dns4(_)
+                    | Protocol::Dns6(_)
+            )
         ) {
             return false;
         }
@@ -106,7 +112,7 @@ impl TransportManagerHandle {
             ) {
                 (Some(Protocol::Ws(_)), true) => true,
                 (Some(Protocol::Wss(_)), true) => true,
-                (Some(Protocol::P2p(_)), false) =>
+                (Some(Protocol::P2p(_)), _) =>
                     self.supported_transport.contains(&SupportedTransport::Tcp),
                 _ => return false,
             },
@@ -141,6 +147,12 @@ impl TransportManagerHandle {
         // if all of the added addresses belonged to unsupported transports, exit early
         let num_added = addresses.len();
         if num_added == 0 {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "didn't add any addreseses for peer because transport is not supported",
+            );
+
             return 0usize;
         }
 
@@ -323,5 +335,41 @@ impl TransportHandle {
     /// Get next transport command.
     pub async fn next(&mut self) -> Option<TransportManagerCommand> {
         self.rx.recv().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc::channel;
+
+    use super::*;
+
+    fn make_transport_manager_handle() -> (
+        TransportManagerHandle,
+        Receiver<InnerTransportManagerCommand>,
+    ) {
+        let (cmd_tx, cmd_rx) = channel(64);
+
+        (
+            TransportManagerHandle {
+                cmd_tx,
+                peers: Default::default(),
+                supported_transport: HashSet::new(),
+            },
+            cmd_rx,
+        )
+    }
+
+    #[tokio::test]
+    async fn tcp_and_websocket_supported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Tcp);
+        handle.supported_transport.insert(SupportedTransport::WebSocket);
+
+        let address =
+            "/dns4/google.com/tcp/24928/ws/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
+                .parse()
+                .unwrap();
+        assert!(handle.supported_transport(&address));
     }
 }
