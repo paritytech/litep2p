@@ -27,7 +27,10 @@ use crate::{
         Direction, Transport, TransportEvent,
     },
     substream::Substream,
-    transport::manager::{ProtocolContext, TransportManagerEvent, TransportManagerHandle},
+    transport::{
+        manager::{ProtocolContext, TransportManagerEvent, TransportManagerHandle},
+        Endpoint,
+    },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
@@ -60,8 +63,8 @@ pub enum InnerTransportEvent {
         /// Connection ID.
         connection: ConnectionId,
 
-        /// Address of remote peer.
-        address: Multiaddr,
+        /// Endpoint.
+        endpoint: Endpoint,
 
         /// Handle for communicating with the connection.
         sender: ConnectionHandle,
@@ -136,8 +139,8 @@ pub enum InnerTransportEvent {
 impl From<InnerTransportEvent> for TransportEvent {
     fn from(event: InnerTransportEvent) -> Self {
         match event {
-            InnerTransportEvent::ConnectionEstablished { peer, address, .. } =>
-                TransportEvent::ConnectionEstablished { peer, address },
+            InnerTransportEvent::ConnectionEstablished { peer, endpoint, .. } =>
+                TransportEvent::ConnectionEstablished { peer, endpoint },
             InnerTransportEvent::ConnectionClosed { peer, .. } =>
                 TransportEvent::ConnectionClosed { peer },
             InnerTransportEvent::DialFailure { peer, address } =>
@@ -271,7 +274,7 @@ impl TransportService {
     fn on_connection_established(
         &mut self,
         peer: PeerId,
-        address: Multiaddr,
+        endpoint: Endpoint,
         connection_id: ConnectionId,
         handle: ConnectionHandle,
     ) -> Option<TransportEvent> {
@@ -279,7 +282,7 @@ impl TransportService {
             target: LOG_TARGET,
             ?peer,
             protocol = %self.protocol,
-            ?address,
+            ?endpoint,
             ?connection_id,
             "connection established",
         );
@@ -291,7 +294,7 @@ impl TransportService {
                         target: LOG_TARGET,
                         ?peer,
                         ?connection_id,
-                        ?address,
+                        ?endpoint,
                         "ignoring third connection",
                     );
                     None
@@ -313,7 +316,7 @@ impl TransportService {
                     (peer, connection_id)
                 }));
 
-                Some(TransportEvent::ConnectionEstablished { peer, address })
+                Some(TransportEvent::ConnectionEstablished { peer, endpoint })
             }
         }
     }
@@ -444,11 +447,11 @@ impl Transport for TransportService {
                 event = self.rx.recv() => match event? {
                     InnerTransportEvent::ConnectionEstablished {
                         peer,
-                        address,
+                        endpoint,
                         sender,
                         connection,
                     } => {
-                        if let Some(event) = self.on_connection_established(peer, address, connection, sender) {
+                        if let Some(event) = self.on_connection_established(peer, endpoint, connection, sender) {
                             return Some(event)
                         }
                     }
@@ -658,14 +661,14 @@ impl ProtocolSet {
         &mut self,
         connection_id: ConnectionId,
         peer: PeerId,
-        address: Multiaddr,
+        endpoint: Endpoint,
     ) -> crate::Result<()> {
         let connection_handle = self.connection.downgrade();
         let mut futures = self
             .protocols
             .iter()
             .map(|(_, sender)| {
-                let address = address.clone();
+                let endpoint = endpoint.clone();
                 let connection_handle = connection_handle.clone();
 
                 async move {
@@ -674,7 +677,7 @@ impl ProtocolSet {
                         .send(InnerTransportEvent::ConnectionEstablished {
                             peer,
                             connection: connection_id,
-                            address,
+                            endpoint,
                             sender: connection_handle,
                         })
                         .await
@@ -698,7 +701,7 @@ impl ProtocolSet {
             .send(TransportManagerEvent::ConnectionEstablished {
                 connection: connection_id,
                 peer,
-                address,
+                endpoint,
             })
             .await
             .map_err(From::from)
@@ -928,7 +931,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(0usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::listener(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
             })
             .await
@@ -936,11 +939,11 @@ mod tests {
 
         if let Some(TransportEvent::ConnectionEstablished {
             peer: connected_peer,
-            address: connected_addr,
+            endpoint,
         }) = service.next_event().await
         {
             assert_eq!(connected_peer, peer);
-            assert_eq!(connected_addr, Multiaddr::empty());
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
         } else {
             panic!("expected event from `TransportService`");
         };
@@ -951,7 +954,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::listener(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
             })
             .await
@@ -982,7 +985,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(0usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::dialer(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
             })
             .await
@@ -990,11 +993,11 @@ mod tests {
 
         if let Some(TransportEvent::ConnectionEstablished {
             peer: connected_peer,
-            address: connected_addr,
+            endpoint,
         }) = service.next_event().await
         {
             assert_eq!(connected_peer, peer);
-            assert_eq!(connected_addr, Multiaddr::empty());
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
         } else {
             panic!("expected event from `TransportService`");
         };
@@ -1005,7 +1008,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::dialer(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
             })
             .await
@@ -1030,7 +1033,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(2usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::listener(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(2usize), cmd_tx3),
             })
             .await
@@ -1062,7 +1065,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(0usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::dialer(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
             })
             .await
@@ -1070,11 +1073,11 @@ mod tests {
 
         if let Some(TransportEvent::ConnectionEstablished {
             peer: connected_peer,
-            address: connected_addr,
+            endpoint,
         }) = service.next_event().await
         {
             assert_eq!(connected_peer, peer);
-            assert_eq!(connected_addr, Multiaddr::empty());
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
         } else {
             panic!("expected event from `TransportService`");
         };
@@ -1085,7 +1088,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::dialer(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
             })
             .await
@@ -1137,7 +1140,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(0usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::dialer(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
             })
             .await
@@ -1145,11 +1148,11 @@ mod tests {
 
         if let Some(TransportEvent::ConnectionEstablished {
             peer: connected_peer,
-            address: connected_addr,
+            endpoint,
         }) = service.next_event().await
         {
             assert_eq!(connected_peer, peer);
-            assert_eq!(connected_addr, Multiaddr::empty());
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
         } else {
             panic!("expected event from `TransportService`");
         };
@@ -1160,7 +1163,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::listener(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
             })
             .await
@@ -1235,7 +1238,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1337usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::dialer(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
             })
             .await
@@ -1243,11 +1246,11 @@ mod tests {
 
         if let Some(TransportEvent::ConnectionEstablished {
             peer: connected_peer,
-            address: connected_addr,
+            endpoint,
         }) = service.next_event().await
         {
             assert_eq!(connected_peer, peer);
-            assert_eq!(connected_addr, Multiaddr::empty());
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
         } else {
             panic!("expected event from `TransportService`");
         };
@@ -1298,7 +1301,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1338usize),
-                address: Multiaddr::empty(),
+                endpoint: Endpoint::listener(Multiaddr::empty()),
                 sender: ConnectionHandle::new(ConnectionId::from(1338usize), cmd_tx1),
             })
             .await
@@ -1306,11 +1309,11 @@ mod tests {
 
         if let Some(TransportEvent::ConnectionEstablished {
             peer: connected_peer,
-            address: connected_addr,
+            endpoint,
         }) = service.next_event().await
         {
             assert_eq!(connected_peer, peer);
-            assert_eq!(connected_addr, Multiaddr::empty());
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
         } else {
             panic!("expected event from `TransportService`");
         };

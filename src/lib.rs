@@ -39,6 +39,7 @@ use crate::{
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
+use transport::Endpoint;
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -82,8 +83,8 @@ pub enum Litep2pEvent {
         /// Remote peer ID.
         peer: PeerId,
 
-        /// Remote address.
-        address: Multiaddr,
+        /// Endpoint.
+        endpoint: Endpoint,
     },
 
     /// Connection closed to remote peer.
@@ -477,8 +478,8 @@ impl Litep2p {
     /// Poll next event.
     pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
         match self.transport_manager.next().await? {
-            TransportManagerEvent::ConnectionEstablished { peer, address, .. } =>
-                Some(Litep2pEvent::ConnectionEstablished { peer, address }),
+            TransportManagerEvent::ConnectionEstablished { peer, endpoint, .. } =>
+                Some(Litep2pEvent::ConnectionEstablished { peer, endpoint }),
             TransportManagerEvent::ConnectionClosed { peer, .. } =>
                 Some(Litep2pEvent::ConnectionClosed { peer }),
             TransportManagerEvent::DialFailure { address, error, .. } =>

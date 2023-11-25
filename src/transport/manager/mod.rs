@@ -24,10 +24,13 @@ use crate::{
     error::{AddressError, Error},
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
-    transport::manager::{
-        address::{AddressRecord, AddressStore},
-        handle::InnerTransportManagerCommand,
-        types::{PeerContext, PeerState},
+    transport::{
+        manager::{
+            address::{AddressRecord, AddressStore},
+            handle::InnerTransportManagerCommand,
+            types::{PeerContext, PeerState},
+        },
+        Endpoint,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -86,8 +89,8 @@ pub enum TransportManagerEvent {
         /// Connection ID.
         connection: ConnectionId,
 
-        /// Remote address.
-        address: Multiaddr,
+        /// Endpoint.
+        endpoint: Endpoint,
     },
 
     /// Connection closed to remote peer.
@@ -626,7 +629,7 @@ impl TransportManager {
         &mut self,
         peer: &PeerId,
         connection_id: &ConnectionId,
-        address: &Multiaddr,
+        endpoint: &Endpoint,
     ) -> crate::Result<bool> {
         if let Some(dialed_peer) = self.pending_connections.remove(&connection_id) {
             if &dialed_peer != peer {
@@ -649,19 +652,27 @@ impl TransportManager {
                             target: LOG_TARGET,
                             ?peer,
                             ?connection_id,
-                            ?address,
+                            ?endpoint,
                             "secondary connection already exists, ignoring connection",
                         );
-                        context.addresses.insert_with_score(address.clone(), SCORE_DIAL_SUCCESS);
+                        context
+                            .addresses
+                            .insert_with_score(endpoint.address().clone(), SCORE_DIAL_SUCCESS);
 
                         return Ok(false);
                     }
                     None => {
-                        tracing::debug!(target: LOG_TARGET, ?peer, ?connection_id, ?address, "secondary connection");
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?connection_id,
+                            address = ?endpoint.address(),
+                            "secondary connection",
+                        );
 
                         context.secondary_connection = Some(AddressRecord {
                             score: SCORE_DIAL_SUCCESS,
-                            address: address.clone(),
+                            address: endpoint.address().clone(),
                             connection_id: Some(*connection_id),
                         });
                     }
@@ -673,7 +684,7 @@ impl TransportManager {
                                 target: LOG_TARGET,
                                 ?peer,
                                 ?connection_id,
-                                ?address,
+                                ?endpoint,
                                 "connection opened to remote",
                             );
 
@@ -687,14 +698,14 @@ impl TransportManager {
                                 target: LOG_TARGET,
                                 ?peer,
                                 ?connection_id,
-                                ?address,
+                                ?endpoint,
                                 "connection opened by remote while local node was dialing",
                             );
 
                             context.state = PeerState::Connected {
                                 record: AddressRecord {
                                     score: SCORE_DIAL_SUCCESS,
-                                    address: address.clone(),
+                                    address: endpoint.address().clone(),
                                     connection_id: Some(*connection_id),
                                 },
                                 dial_record: Some(record.clone()),
@@ -709,20 +720,20 @@ impl TransportManager {
                         target: LOG_TARGET,
                         ?peer,
                         ?connection_id,
-                        ?address,
+                        ?endpoint,
                         ?dial_record,
                         "connection opened by remote or delayed dial succeeded",
                     );
 
                     let (record, dial_record) = match dial_record.take() {
                         Some(dial_record) =>
-                            if &dial_record.address == address {
+                            if &dial_record.address == endpoint.address() {
                                 (dial_record, None)
                             } else {
                                 (
                                     AddressRecord {
                                         score: SCORE_DIAL_SUCCESS,
-                                        address: address.clone(),
+                                        address: endpoint.address().clone(),
                                         connection_id: Some(*connection_id),
                                     },
                                     Some(dial_record),
@@ -731,7 +742,7 @@ impl TransportManager {
                         None => (
                             AddressRecord {
                                 score: SCORE_DIAL_SUCCESS,
-                                address: address.clone(),
+                                address: endpoint.address().clone(),
                                 connection_id: Some(*connection_id),
                             },
                             None,
@@ -751,7 +762,7 @@ impl TransportManager {
                         state: PeerState::Connected {
                             record: AddressRecord {
                                 score: SCORE_DIAL_SUCCESS,
-                                address: address.clone(),
+                                address: endpoint.address().clone(),
                                 connection_id: Some(*connection_id),
                             },
                             dial_record: None,
@@ -913,8 +924,8 @@ impl TransportManager {
                         TransportManagerEvent::ConnectionEstablished {
                             peer,
                             connection,
-                            address,
-                        } => self.on_connection_established(&peer, &connection, &address),
+                            endpoint,
+                        } => self.on_connection_established(&peer, &connection, &endpoint),
                         TransportManagerEvent::ConnectionClosed {
                             peer,
                             connection: connection_id,
@@ -1102,7 +1113,11 @@ mod tests {
         }
 
         handle
-            ._report_connection_established(ConnectionId::from(0usize), peer, dial_address)
+            ._report_connection_established(
+                ConnectionId::from(0usize),
+                peer,
+                Endpoint::dialer(dial_address),
+            )
             .await;
     }
 
@@ -1303,7 +1318,11 @@ mod tests {
 
         // remote peer connected to local node from a different address that was dialed
         manager
-            .on_connection_established(&peer, &ConnectionId::from(1usize), &connect_address)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(1usize),
+                &Endpoint::dialer(connect_address),
+            )
             .unwrap();
 
         // dialing the peer failed
@@ -1368,7 +1387,11 @@ mod tests {
 
         // remote peer connected to local node from a different address that was dialed
         manager
-            .on_connection_established(&peer, &ConnectionId::from(1usize), &connect_address)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(1usize),
+                &Endpoint::listener(connect_address),
+            )
             .unwrap();
 
         // connection to remote was closed while the dial was still in progress
@@ -1453,7 +1476,11 @@ mod tests {
 
         // remote peer connected to local node from a different address that was dialed
         manager
-            .on_connection_established(&peer, &ConnectionId::from(1usize), &connect_address)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(1usize),
+                &Endpoint::listener(connect_address),
+            )
             .unwrap();
 
         // connection to remote was closed while the dial was still in progress
@@ -1477,7 +1504,11 @@ mod tests {
 
         // the original dial succeeded
         manager
-            .on_connection_established(&peer, &ConnectionId::from(0usize), &dial_address)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(0usize),
+                &Endpoint::dialer(dial_address),
+            )
             .unwrap();
 
         let peers = manager.peers.read();
@@ -1524,7 +1555,11 @@ mod tests {
 
         // remote peer connected to local node
         manager
-            .on_connection_established(&peer, &ConnectionId::from(0usize), &address1)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(0usize),
+                &Endpoint::listener(address1),
+            )
             .unwrap();
 
         // verify that the peer state is `Connected` with no seconary connection
@@ -1544,7 +1579,11 @@ mod tests {
 
         // second connection is established, verify that the seconary connection is tracked
         manager
-            .on_connection_established(&peer, &ConnectionId::from(1usize), &address2)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(1usize),
+                &Endpoint::listener(address2.clone()),
+            )
             .unwrap();
 
         let peers = manager.peers.read();
@@ -1564,7 +1603,11 @@ mod tests {
 
         // tertiary connection is ignored
         manager
-            .on_connection_established(&peer, &ConnectionId::from(2usize), &address3)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(2usize),
+                &Endpoint::listener(address3.clone()),
+            )
             .unwrap();
 
         let peers = manager.peers.read();
@@ -1610,7 +1653,11 @@ mod tests {
 
         // remote peer connected to local node
         let emit_event = manager
-            .on_connection_established(&peer, &ConnectionId::from(0usize), &address1)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(0usize),
+                &Endpoint::listener(address1),
+            )
             .unwrap();
         assert!(emit_event);
 
@@ -1631,7 +1678,11 @@ mod tests {
 
         // second connection is established, verify that the seconary connection is tracked
         let emit_event = manager
-            .on_connection_established(&peer, &ConnectionId::from(1usize), &address2)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(1usize),
+                &Endpoint::dialer(address2.clone()),
+            )
             .unwrap();
         assert!(emit_event);
 
@@ -1697,7 +1748,11 @@ mod tests {
 
         // remote peer connected to local node
         let emit_event = manager
-            .on_connection_established(&peer, &ConnectionId::from(0usize), &address1)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(0usize),
+                &Endpoint::listener(address1.clone()),
+            )
             .unwrap();
         assert!(emit_event);
 
@@ -1718,7 +1773,11 @@ mod tests {
 
         // second connection is established, verify that the seconary connection is tracked
         let emit_event = manager
-            .on_connection_established(&peer, &ConnectionId::from(1usize), &address2)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(1usize),
+                &Endpoint::dialer(address2.clone()),
+            )
             .unwrap();
         assert!(emit_event);
 
@@ -1794,7 +1853,11 @@ mod tests {
 
         // remote peer connected to local node
         let emit_event = manager
-            .on_connection_established(&peer, &ConnectionId::from(0usize), &address1)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(0usize),
+                &Endpoint::listener(address1),
+            )
             .unwrap();
         assert!(emit_event);
 
@@ -1815,7 +1878,11 @@ mod tests {
 
         // second connection is established, verify that the seconary connection is tracked
         let emit_event = manager
-            .on_connection_established(&peer, &ConnectionId::from(1usize), &address2)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(1usize),
+                &Endpoint::dialer(address2.clone()),
+            )
             .unwrap();
         assert!(emit_event);
 
@@ -1836,7 +1903,11 @@ mod tests {
 
         // third connection is established, verify that it's discarded
         let emit_event = manager
-            .on_connection_established(&peer, &ConnectionId::from(2usize), &address3)
+            .on_connection_established(
+                &peer,
+                &ConnectionId::from(2usize),
+                &Endpoint::dialer(address3.clone()),
+            )
             .unwrap();
         assert!(!emit_event);
 

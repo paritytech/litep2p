@@ -34,6 +34,7 @@ use crate::{
         InnerTransportEvent, ProtocolCommand,
     },
     substream::Substream,
+    transport::Endpoint,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
@@ -197,7 +198,7 @@ async fn register_peer(
         .send(InnerTransportEvent::ConnectionEstablished {
             peer,
             connection: ConnectionId::new(),
-            address: Multiaddr::empty(),
+            endpoint: Endpoint::dialer(Multiaddr::empty()),
             sender: ConnectionHandle::new(ConnectionId::from(0usize), conn_tx),
         })
         .await

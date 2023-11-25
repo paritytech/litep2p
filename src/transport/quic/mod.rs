@@ -133,21 +133,23 @@ impl QuicTransport {
 
         match result {
             Ok(connection) => {
-                let address = maybe_address.map_or(
+                let endpoint = maybe_address.map_or(
                     {
                         let address = connection.connection.remote_address();
-                        Multiaddr::empty()
-                            .with(Protocol::from(address.ip()))
-                            .with(Protocol::Udp(address.port()))
-                            .with(Protocol::QuicV1)
+                        crate::transport::Endpoint::listener(
+                            Multiaddr::empty()
+                                .with(Protocol::from(address.ip()))
+                                .with(Protocol::Udp(address.port()))
+                                .with(Protocol::QuicV1),
+                        )
                     },
-                    |address| address,
+                    |address| crate::transport::Endpoint::dialer(address),
                 );
 
                 let bandwidth_sink = self.context.bandwidth_sink.clone();
                 let mut protocol_set = self.context.protocol_set(connection_id);
                 protocol_set
-                    .report_connection_established(connection_id, connection.peer, address)
+                    .report_connection_established(connection_id, connection.peer, endpoint)
                     .await?;
 
                 self.context.executor.run(Box::pin(async move {

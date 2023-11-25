@@ -28,7 +28,10 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
-    transport::tcp::{listener::AddressType, substream::Substream},
+    transport::{
+        tcp::{listener::AddressType, substream::Substream},
+        Endpoint,
+    },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     BandwidthSink, PeerId,
 };
@@ -380,8 +383,13 @@ impl TcpConnection {
                 .with(Protocol::Dns(Cow::Owned(address)))
                 .with(Protocol::Tcp(port)),
         };
+        let endpoint = match role {
+            Role::Dialer => Endpoint::dialer(address),
+            Role::Listener => Endpoint::listener(address),
+        };
+
         protocol_set
-            .report_connection_established(connection_id, peer, address.clone())
+            .report_connection_established(connection_id, peer, endpoint)
             .await?;
 
         Ok(Self {

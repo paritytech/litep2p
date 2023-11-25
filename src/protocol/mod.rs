@@ -24,6 +24,7 @@ use crate::{
     codec::ProtocolCodec,
     error::Error,
     substream::Substream,
+    transport::Endpoint,
     types::{protocol::ProtocolName, SubstreamId},
     PeerId,
 };
@@ -63,8 +64,8 @@ pub enum TransportEvent {
         /// Peer ID.
         peer: PeerId,
 
-        /// Address of remote peer.
-        address: Multiaddr,
+        /// Endpoint.
+        endpoint: Endpoint,
     },
 
     /// Connection closed.

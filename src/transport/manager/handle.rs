@@ -23,10 +23,13 @@ use crate::{
     error::{AddressError, Error},
     executor::Executor,
     protocol::{InnerTransportEvent, ProtocolSet},
-    transport::manager::{
-        address::{AddressRecord, AddressStore},
-        types::{PeerContext, PeerState, SupportedTransport},
-        ProtocolContext, TransportManagerCommand, TransportManagerEvent, LOG_TARGET,
+    transport::{
+        manager::{
+            address::{AddressRecord, AddressStore},
+            types::{PeerContext, PeerState, SupportedTransport},
+            ProtocolContext, TransportManagerCommand, TransportManagerEvent, LOG_TARGET,
+        },
+        Endpoint,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -273,14 +276,14 @@ impl TransportHandle {
         &mut self,
         connection: ConnectionId,
         peer: PeerId,
-        address: Multiaddr,
+        endpoint: Endpoint,
     ) {
         let _ = self
             .tx
             .send(TransportManagerEvent::ConnectionEstablished {
                 connection,
                 peer,
-                address,
+                endpoint,
             })
             .await;
     }

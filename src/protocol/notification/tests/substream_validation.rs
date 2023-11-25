@@ -32,6 +32,7 @@ use crate::{
         InnerTransportEvent, ProtocolCommand,
     },
     substream::Substream,
+    transport::Endpoint,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
@@ -73,7 +74,7 @@ async fn substream_accepted() {
     let (proto_tx, mut proto_rx) = channel(256);
     tx.send(InnerTransportEvent::ConnectionEstablished {
         peer,
-        address: Multiaddr::empty(),
+        endpoint: Endpoint::dialer(Multiaddr::empty()),
         sender: ConnectionHandle::new(ConnectionId::from(0usize), proto_tx.clone()),
         connection: ConnectionId::from(0usize),
     })
@@ -249,7 +250,7 @@ async fn accept_fails_due_to_closed_substream() {
     let (proto_tx, _proto_rx) = channel(256);
     tx.send(InnerTransportEvent::ConnectionEstablished {
         peer,
-        address: Multiaddr::empty(),
+        endpoint: Endpoint::dialer(Multiaddr::empty()),
         sender: ConnectionHandle::new(ConnectionId::from(0usize), proto_tx),
         connection: ConnectionId::from(0usize),
     })
@@ -335,7 +336,7 @@ async fn accept_fails_due_to_closed_connection() {
     let (proto_tx, proto_rx) = channel(256);
     tx.send(InnerTransportEvent::ConnectionEstablished {
         peer,
-        address: Multiaddr::empty(),
+        endpoint: Endpoint::dialer(Multiaddr::empty()),
         sender: ConnectionHandle::new(ConnectionId::from(0usize), proto_tx),
         connection: ConnectionId::from(0usize),
     })

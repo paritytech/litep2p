@@ -27,10 +27,13 @@ use crate::{
     multistream_select::{listener_negotiate, DialerState, HandshakeResult},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream,
-    transport::webrtc::{
-        substream::SubstreamBackend,
-        util::{SubstreamContext, WebRtcMessage},
-        WebRtcEvent,
+    transport::{
+        webrtc::{
+            substream::SubstreamBackend,
+            util::{SubstreamContext, WebRtcMessage},
+            WebRtcEvent,
+        },
+        Endpoint,
     },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
@@ -436,7 +439,11 @@ impl WebRtcConnection {
             .with(Protocol::P2p(PeerId::from(public_key).into()));
 
         self.protocol_set
-            .report_connection_established(self.connection_id, remote_peer_id, address)
+            .report_connection_established(
+                self.connection_id,
+                remote_peer_id,
+                Endpoint::listener(address),
+            )
             .await?;
 
         self.state = State::Open {

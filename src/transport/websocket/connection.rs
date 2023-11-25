@@ -25,7 +25,10 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
-    transport::websocket::{stream::BufferedStream, substream::Substream},
+    transport::{
+        websocket::{stream::BufferedStream, substream::Substream},
+        Endpoint,
+    },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     BandwidthSink, PeerId,
 };
@@ -199,7 +202,7 @@ impl WebSocketConnection {
         let (control, connection) = yamux::Control::new(connection);
 
         protocol_set
-            .report_connection_established(connection_id, peer, address.clone())
+            .report_connection_established(connection_id, peer, Endpoint::dialer(address.clone()))
             .await?;
 
         Ok(Self {
@@ -264,8 +267,9 @@ impl WebSocketConnection {
             .with(Protocol::Tcp(address.port()))
             .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())))
             .with(Protocol::P2p(Multihash::from(peer)));
+
         protocol_set
-            .report_connection_established(connection_id, peer, address.clone())
+            .report_connection_established(connection_id, peer, Endpoint::listener(address.clone()))
             .await?;
 
         Ok(Self {

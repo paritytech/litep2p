@@ -26,6 +26,7 @@ use crate::{
     error::{Error, SubstreamError},
     protocol::{Direction, Transport, TransportEvent, TransportService},
     substream::Substream,
+    transport::Endpoint,
     types::{protocol::ProtocolName, SubstreamId},
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
@@ -123,7 +124,7 @@ pub(crate) struct Identify {
     tx: Sender<IdentifyEvent>,
 
     /// Connected peers and their observed addresses.
-    peers: HashMap<PeerId, Multiaddr>,
+    peers: HashMap<PeerId, Endpoint>,
 
     // Public key of the local node, filled by `Litep2p`.
     public: PublicKey,
@@ -166,13 +167,13 @@ impl Identify {
     async fn on_connection_established(
         &mut self,
         peer: PeerId,
-        observed_address: Multiaddr,
+        endpoint: Endpoint,
     ) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
+        tracing::trace!(target: LOG_TARGET, ?peer, ?endpoint, "connection established");
 
         let substream_id = self.service.open_substream(peer).await?;
         self.pending_opens.insert(substream_id, peer);
-        self.peers.insert(peer, observed_address);
+        self.peers.insert(peer, endpoint);
 
         Ok(())
     }
@@ -199,7 +200,7 @@ impl Identify {
         );
 
         let observed_addr = match self.peers.get(&peer) {
-            Some(address) => Some(address.to_vec()),
+            Some(endpoint) => Some(endpoint.address().to_vec()),
             None => {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -284,8 +285,8 @@ impl Identify {
             tokio::select! {
                 event = self.service.next_event() => match event {
                     None => return,
-                    Some(TransportEvent::ConnectionEstablished { peer, address }) => {
-                        if let Err(error) = self.on_connection_established(peer, address).await {
+                    Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
+                        if let Err(error) = self.on_connection_established(peer, endpoint).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,

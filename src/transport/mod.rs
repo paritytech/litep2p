@@ -33,6 +33,51 @@ pub mod websocket;
 
 pub(crate) mod manager;
 
+/// Connection endpoint.
+#[derive(Debug, Clone)]
+pub enum Endpoint {
+    /// Successful outbound connection.
+    Dialer {
+        /// Address that was dialed.
+        address: Multiaddr,
+    },
+
+    /// Successful inbound connection.
+    Listener {
+        /// Local connection address.
+        address: Multiaddr,
+    },
+}
+
+impl Endpoint {
+    /// Get `Multiaddr` of the [`Endpoint`].
+    pub fn address(&self) -> &Multiaddr {
+        match self {
+            Self::Dialer { address } => &address,
+            Self::Listener { address } => &address,
+        }
+    }
+
+    /// Crate dialer.
+    pub fn dialer(address: Multiaddr) -> Self {
+        Endpoint::Dialer { address }
+    }
+
+    /// Create listener.
+    pub fn listener(address: Multiaddr) -> Self {
+        Endpoint::Listener { address }
+    }
+}
+
+impl Into<Multiaddr> for Endpoint {
+    fn into(self) -> Multiaddr {
+        match self {
+            Self::Dialer { address } => address,
+            Self::Listener { address } => address,
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub(crate) trait Transport {
     type Config: Debug;
