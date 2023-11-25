@@ -24,6 +24,7 @@ use crate::{error::AddressError, Error, PeerId};
 
 use futures::Stream;
 use multiaddr::{Multiaddr, Protocol};
+use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
 use std::{
@@ -62,12 +63,34 @@ impl TcpListener {
         let mut listen_addresses = Vec::new();
 
         for address in addresses.into_iter() {
-            let (listen_address, _) = Self::get_socket_address(&address)?;
-            let listener = match listen_address {
-                AddressType::Socket(socket_address) =>
-                    TokioTcpListener::bind(socket_address).await?,
+            let socket = match Self::get_socket_address(&address)?.0 {
                 AddressType::Dns(_, _) => return Err(Error::TransportNotSupported(address)),
+                AddressType::Socket(address) => match address.is_ipv4() {
+                    false => {
+                        let socket =
+                            Socket::new(Domain::IPV6, Type::STREAM, Some(socket2::Protocol::TCP))?;
+                        socket.set_only_v6(true)?;
+                        socket.bind(&address.into())?;
+                        socket
+                    }
+                    true => {
+                        let socket =
+                            Socket::new(Domain::IPV4, Type::STREAM, Some(socket2::Protocol::TCP))?;
+                        socket.bind(&address.into())?;
+
+                        socket
+                    }
+                },
             };
+
+            socket.listen(1024)?;
+            socket.set_reuse_address(true)?;
+            socket.set_nonblocking(true)?;
+            #[cfg(unix)]
+            socket.set_reuse_port(true)?;
+
+            let socket: std::net::TcpListener = socket.into();
+            let listener = TokioTcpListener::from_std(socket)?;
 
             let listen_address = listener.local_addr()?;
             listen_addresses.push(
