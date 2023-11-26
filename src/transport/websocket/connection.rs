@@ -202,7 +202,11 @@ impl WebSocketConnection {
         let (control, connection) = yamux::Control::new(connection);
 
         protocol_set
-            .report_connection_established(connection_id, peer, Endpoint::dialer(address.clone()))
+            .report_connection_established(
+                connection_id,
+                peer,
+                Endpoint::dialer(address.clone(), connection_id),
+            )
             .await?;
 
         Ok(Self {
@@ -269,7 +273,11 @@ impl WebSocketConnection {
             .with(Protocol::P2p(Multihash::from(peer)));
 
         protocol_set
-            .report_connection_established(connection_id, peer, Endpoint::listener(address.clone()))
+            .report_connection_established(
+                connection_id,
+                peer,
+                Endpoint::listener(address.clone(), connection_id),
+            )
             .await?;
 
         Ok(Self {

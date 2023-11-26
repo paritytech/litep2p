@@ -198,7 +198,7 @@ async fn register_peer(
         .send(InnerTransportEvent::ConnectionEstablished {
             peer,
             connection: ConnectionId::new(),
-            endpoint: Endpoint::dialer(Multiaddr::empty()),
+            endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
             sender: ConnectionHandle::new(ConnectionId::from(0usize), conn_tx),
         })
         .await

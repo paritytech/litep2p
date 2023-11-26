@@ -931,7 +931,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(0usize),
-                endpoint: Endpoint::listener(Multiaddr::empty()),
+                endpoint: Endpoint::listener(Multiaddr::empty(), ConnectionId::from(0usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
             })
             .await
@@ -954,7 +954,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1usize),
-                endpoint: Endpoint::listener(Multiaddr::empty()),
+                endpoint: Endpoint::listener(Multiaddr::empty(), ConnectionId::from(1usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
             })
             .await
@@ -985,7 +985,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(0usize),
-                endpoint: Endpoint::dialer(Multiaddr::empty()),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
             })
             .await
@@ -1008,7 +1008,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1usize),
-                endpoint: Endpoint::dialer(Multiaddr::empty()),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
             })
             .await
@@ -1033,7 +1033,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(2usize),
-                endpoint: Endpoint::listener(Multiaddr::empty()),
+                endpoint: Endpoint::listener(Multiaddr::empty(), ConnectionId::from(2usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(2usize), cmd_tx3),
             })
             .await
@@ -1065,7 +1065,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(0usize),
-                endpoint: Endpoint::dialer(Multiaddr::empty()),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
             })
             .await
@@ -1088,7 +1088,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1usize),
-                endpoint: Endpoint::dialer(Multiaddr::empty()),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
             })
             .await
@@ -1140,7 +1140,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(0usize),
-                endpoint: Endpoint::dialer(Multiaddr::empty()),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
             })
             .await
@@ -1163,7 +1163,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1usize),
-                endpoint: Endpoint::listener(Multiaddr::empty()),
+                endpoint: Endpoint::listener(Multiaddr::empty(), ConnectionId::from(1usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
             })
             .await
@@ -1238,7 +1238,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1337usize),
-                endpoint: Endpoint::dialer(Multiaddr::empty()),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1337usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
             })
             .await
@@ -1301,7 +1301,7 @@ mod tests {
             .send(InnerTransportEvent::ConnectionEstablished {
                 peer,
                 connection: ConnectionId::from(1338usize),
-                endpoint: Endpoint::listener(Multiaddr::empty()),
+                endpoint: Endpoint::listener(Multiaddr::empty(), ConnectionId::from(1338usize)),
                 sender: ConnectionHandle::new(ConnectionId::from(1338usize), cmd_tx1),
             })
             .await

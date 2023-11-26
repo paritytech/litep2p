@@ -141,9 +141,10 @@ impl QuicTransport {
                                 .with(Protocol::from(address.ip()))
                                 .with(Protocol::Udp(address.port()))
                                 .with(Protocol::QuicV1),
+                            connection_id,
                         )
                     },
-                    |address| crate::transport::Endpoint::dialer(address),
+                    |address| crate::transport::Endpoint::dialer(address, connection_id),
                 );
 
                 let bandwidth_sink = self.context.bandwidth_sink.clone();

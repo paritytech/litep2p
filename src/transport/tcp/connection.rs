@@ -384,8 +384,8 @@ impl TcpConnection {
                 .with(Protocol::Tcp(port)),
         };
         let endpoint = match role {
-            Role::Dialer => Endpoint::dialer(address),
-            Role::Listener => Endpoint::listener(address),
+            Role::Dialer => Endpoint::dialer(address, connection_id),
+            Role::Listener => Endpoint::listener(address, connection_id),
         };
 
         protocol_set

@@ -1116,7 +1116,7 @@ mod tests {
             ._report_connection_established(
                 ConnectionId::from(0usize),
                 peer,
-                Endpoint::dialer(dial_address),
+                Endpoint::dialer(dial_address, ConnectionId::from(0usize)),
             )
             .await;
     }
@@ -1321,7 +1321,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(1usize),
-                &Endpoint::dialer(connect_address),
+                &Endpoint::dialer(connect_address, ConnectionId::from(1usize)),
             )
             .unwrap();
 
@@ -1390,7 +1390,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(1usize),
-                &Endpoint::listener(connect_address),
+                &Endpoint::listener(connect_address, ConnectionId::from(1usize)),
             )
             .unwrap();
 
@@ -1479,7 +1479,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(1usize),
-                &Endpoint::listener(connect_address),
+                &Endpoint::listener(connect_address, ConnectionId::from(1usize)),
             )
             .unwrap();
 
@@ -1507,7 +1507,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(0usize),
-                &Endpoint::dialer(dial_address),
+                &Endpoint::dialer(dial_address, ConnectionId::from(0usize)),
             )
             .unwrap();
 
@@ -1558,7 +1558,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(0usize),
-                &Endpoint::listener(address1),
+                &Endpoint::listener(address1, ConnectionId::from(0usize)),
             )
             .unwrap();
 
@@ -1582,7 +1582,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(1usize),
-                &Endpoint::listener(address2.clone()),
+                &Endpoint::listener(address2.clone(), ConnectionId::from(1usize)),
             )
             .unwrap();
 
@@ -1606,7 +1606,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(2usize),
-                &Endpoint::listener(address3.clone()),
+                &Endpoint::listener(address3.clone(), ConnectionId::from(2usize)),
             )
             .unwrap();
 
@@ -1656,7 +1656,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(0usize),
-                &Endpoint::listener(address1),
+                &Endpoint::listener(address1, ConnectionId::from(0usize)),
             )
             .unwrap();
         assert!(emit_event);
@@ -1681,7 +1681,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(1usize),
-                &Endpoint::dialer(address2.clone()),
+                &Endpoint::dialer(address2.clone(), ConnectionId::from(1usize)),
             )
             .unwrap();
         assert!(emit_event);
@@ -1751,7 +1751,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(0usize),
-                &Endpoint::listener(address1.clone()),
+                &Endpoint::listener(address1.clone(), ConnectionId::from(0usize)),
             )
             .unwrap();
         assert!(emit_event);
@@ -1776,7 +1776,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(1usize),
-                &Endpoint::dialer(address2.clone()),
+                &Endpoint::dialer(address2.clone(), ConnectionId::from(1usize)),
             )
             .unwrap();
         assert!(emit_event);
@@ -1856,7 +1856,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(0usize),
-                &Endpoint::listener(address1),
+                &Endpoint::listener(address1, ConnectionId::from(0usize)),
             )
             .unwrap();
         assert!(emit_event);
@@ -1881,7 +1881,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(1usize),
-                &Endpoint::dialer(address2.clone()),
+                &Endpoint::dialer(address2.clone(), ConnectionId::from(1usize)),
             )
             .unwrap();
         assert!(emit_event);
@@ -1906,7 +1906,7 @@ mod tests {
             .on_connection_established(
                 &peer,
                 &ConnectionId::from(2usize),
-                &Endpoint::dialer(address3.clone()),
+                &Endpoint::dialer(address3.clone(), ConnectionId::from(2usize)),
             )
             .unwrap();
         assert!(!emit_event);

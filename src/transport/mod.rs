@@ -20,7 +20,7 @@
 
 //! Transport protocol implementations provided by [`Litep2p`](`crate::Litep2p`).
 
-use crate::transport::manager::TransportHandle;
+use crate::{transport::manager::TransportHandle, types::ConnectionId};
 
 use multiaddr::Multiaddr;
 
@@ -40,12 +40,18 @@ pub enum Endpoint {
     Dialer {
         /// Address that was dialed.
         address: Multiaddr,
+
+        /// Connection ID.
+        connection_id: ConnectionId,
     },
 
     /// Successful inbound connection.
     Listener {
         /// Local connection address.
         address: Multiaddr,
+
+        /// Connection ID.
+        connection_id: ConnectionId,
     },
 }
 
@@ -53,27 +59,33 @@ impl Endpoint {
     /// Get `Multiaddr` of the [`Endpoint`].
     pub fn address(&self) -> &Multiaddr {
         match self {
-            Self::Dialer { address } => &address,
-            Self::Listener { address } => &address,
+            Self::Dialer { address, .. } => &address,
+            Self::Listener { address, .. } => &address,
         }
     }
 
     /// Crate dialer.
-    pub fn dialer(address: Multiaddr) -> Self {
-        Endpoint::Dialer { address }
+    pub fn dialer(address: Multiaddr, connection_id: ConnectionId) -> Self {
+        Endpoint::Dialer {
+            address,
+            connection_id,
+        }
     }
 
     /// Create listener.
-    pub fn listener(address: Multiaddr) -> Self {
-        Endpoint::Listener { address }
+    pub fn listener(address: Multiaddr, connection_id: ConnectionId) -> Self {
+        Endpoint::Listener {
+            address,
+            connection_id,
+        }
     }
 }
 
 impl Into<Multiaddr> for Endpoint {
     fn into(self) -> Multiaddr {
         match self {
-            Self::Dialer { address } => address,
-            Self::Listener { address } => address,
+            Self::Dialer { address, .. } => address,
+            Self::Listener { address, .. } => address,
         }
     }
 }
