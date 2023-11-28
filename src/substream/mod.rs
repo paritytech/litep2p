@@ -182,6 +182,8 @@ pub struct Substream {
     offset: usize,
     pending_frames: VecDeque<BytesMut>,
     current_frame_size: Option<usize>,
+
+    size_vec: BytesMut,
 }
 
 impl Substream {
@@ -200,6 +202,7 @@ impl Substream {
             pending_out_bytes: 0usize,
             pending_out_frames: VecDeque::new(),
             pending_out_frame: None,
+            size_vec: BytesMut::zeroed(10),
         }
     }
     /// Create new [`Substream`] for WebSocket.
@@ -221,6 +224,7 @@ impl Substream {
             pending_out_bytes: 0usize,
             pending_out_frames: VecDeque::new(),
             pending_out_frame: None,
+            size_vec: BytesMut::zeroed(10),
         }
     }
     /// Create new [`Substream`] for QUIC.
@@ -238,6 +242,7 @@ impl Substream {
             pending_out_bytes: 0usize,
             pending_out_frames: VecDeque::new(),
             pending_out_frame: None,
+            size_vec: BytesMut::zeroed(10),
         }
     }
 
@@ -260,6 +265,7 @@ impl Substream {
             pending_out_bytes: 0usize,
             pending_out_frames: VecDeque::new(),
             pending_out_frame: None,
+            size_vec: BytesMut::zeroed(10),
         }
     }
 
@@ -442,6 +448,7 @@ impl tokio::io::AsyncWrite for Substream {
     }
 }
 
+#[derive(Debug)]
 enum ReadError {
     Overflow,
     NotEnoughBytes,
@@ -518,66 +525,82 @@ impl Stream for Substream {
                             return Poll::Ready(Some(Ok(frame)));
                         }
 
-                        // if there are no pending frames, read more data from the underlying socket
-                        let mut read_buf = ReadBuf::new(&mut this.read_buffer[this.offset..]);
+                        match this.current_frame_size.take() {
+                            Some(frame_size) => {
+                                let mut read_buf =
+                                    ReadBuf::new(&mut this.read_buffer[this.offset..]);
+                                this.current_frame_size = Some(frame_size);
 
-                        let nread = match futures::ready!(poll_read!(
-                            &mut this.substream,
-                            cx,
-                            &mut read_buf
-                        )) {
-                            Err(_error) => return Poll::Ready(None),
-                            Ok(_) => match read_buf.filled().len() {
-                                0 => {
-                                    tracing::trace!(
-                                        target: LOG_TARGET,
-                                        peer = ?this.peer,
-                                        "read zero bytes, substream closed"
-                                    );
-                                    return Poll::Ready(None);
+                                match futures::ready!(poll_read!(
+                                    &mut this.substream,
+                                    cx,
+                                    &mut read_buf
+                                )) {
+                                    Err(_error) => return Poll::Ready(None),
+                                    Ok(_) => {
+                                        let nread = match read_buf.filled().len() {
+                                            0 => return Poll::Ready(None),
+                                            nread => nread,
+                                        };
+
+                                        this.offset += nread;
+
+                                        if this.offset == frame_size {
+                                            let out_frame = std::mem::replace(
+                                                &mut this.read_buffer,
+                                                BytesMut::new(),
+                                            );
+                                            this.offset = 0;
+                                            this.current_frame_size = None;
+
+                                            return Poll::Ready(Some(Ok(out_frame)));
+                                        } else {
+                                            this.current_frame_size = Some(frame_size);
+                                            continue;
+                                        }
+                                    }
                                 }
-                                nread => nread,
-                            },
-                        };
+                            }
+                            None => {
+                                let mut read_buf =
+                                    ReadBuf::new(&mut this.size_vec[this.offset..this.offset + 1]);
 
-                        this.offset += nread;
-                        this.read_buffer.truncate(this.offset);
+                                match futures::ready!(poll_read!(
+                                    &mut this.substream,
+                                    cx,
+                                    &mut read_buf
+                                )) {
+                                    Err(_error) => return Poll::Ready(None),
+                                    Ok(_) => {
+                                        if read_buf.filled().is_empty() {
+                                            return Poll::Ready(None);
+                                        }
+                                        this.offset += 1;
 
-                        let size_hint = loop {
-                            // get frame size, either from current or previous iteration
-                            let frame_size = match this.current_frame_size.take() {
-                                Some(frame_size) => frame_size,
-                                None => match read_payload_size(&this.read_buffer) {
-                                    Ok((size, num_bytes)) => {
-                                        if let Some(max_size) = max_size {
-                                            if max_size < num_bytes {
-                                                return Poll::Ready(None);
+                                        match read_payload_size(&this.size_vec[..this.offset]) {
+                                            Err(ReadError::NotEnoughBytes) => continue,
+                                            Err(_) =>
+                                                return Poll::Ready(Some(Err(Error::InvalidData))),
+                                            Ok((size, num_bytes)) => {
+                                                debug_assert_eq!(num_bytes, this.offset);
+
+                                                if let Some(max_size) = max_size {
+                                                    if size > max_size {
+                                                        return Poll::Ready(Some(Err(
+                                                            Error::InvalidData,
+                                                        )));
+                                                    }
+                                                }
+
+                                                this.offset = 0;
+                                                this.current_frame_size = Some(size);
+                                                this.read_buffer = BytesMut::zeroed(size);
                                             }
                                         }
-
-                                        this.offset -= num_bytes;
-                                        this.read_buffer.advance(num_bytes);
-                                        size
                                     }
-                                    Err(ReadError::Overflow | ReadError::DecodeError) =>
-                                        return Poll::Ready(None),
-                                    Err(ReadError::NotEnoughBytes) => break None,
-                                },
-                            };
-
-                            if this.read_buffer.len() < frame_size {
-                                this.current_frame_size = Some(frame_size);
-                                break Some(frame_size);
+                                }
                             }
-
-                            let frame = this.read_buffer.split_to(frame_size);
-                            this.offset -= frame.len();
-                            this.pending_frames.push_back(frame);
-                        };
-
-                        // TODO: can this be optimized?
-                        this.read_buffer
-                            .resize(this.read_buffer.len() + size_hint.unwrap_or(1024), 0u8);
+                        }
                     }
                 }
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
