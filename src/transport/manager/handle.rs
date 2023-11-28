@@ -143,7 +143,8 @@ impl TransportManagerHandle {
         let mut peers = self.peers.write();
         let addresses = addresses
             .filter_map(|address| {
-                self.supported_transport(&address).then_some(AddressRecord::from(address))
+                self.supported_transport(&address)
+                    .then_some(AddressRecord::from_multiaddr(address)?)
             })
             .collect::<HashSet<_>>();
 
@@ -162,7 +163,7 @@ impl TransportManagerHandle {
         match peers.get_mut(&peer) {
             Some(context) =>
                 for record in addresses {
-                    if !context.addresses.contains(&record.address) {
+                    if !context.addresses.contains(record.address()) {
                         context.addresses.insert(record);
                     }
                 },

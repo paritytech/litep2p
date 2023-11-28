@@ -18,17 +18,23 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::types::ConnectionId;
+use crate::{types::ConnectionId, PeerId};
 
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 
 use std::collections::{BinaryHeap, HashSet};
 
 #[derive(Debug, Clone, Hash)]
 pub struct AddressRecord {
-    pub score: i32,
-    pub address: Multiaddr,
-    pub connection_id: Option<ConnectionId>,
+    /// Address score.
+    score: i32,
+
+    /// Address.
+    address: Multiaddr,
+
+    /// Connection ID, if specifed.
+    connection_id: Option<ConnectionId>,
 }
 
 impl AsRef<Multiaddr> for AddressRecord {
@@ -37,17 +43,62 @@ impl AsRef<Multiaddr> for AddressRecord {
     }
 }
 
-impl From<Multiaddr> for AddressRecord {
-    fn from(address: Multiaddr) -> Self {
+impl AddressRecord {
+    /// Create new `AddressRecord` and if `address` doesn't contain `P2p`,
+    /// append the provided `PeerId` to the address.
+    pub fn new(
+        peer: &PeerId,
+        address: Multiaddr,
+        score: i32,
+        connection_id: Option<ConnectionId>,
+    ) -> Self {
+        let address = if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
+            address.with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).ok().expect("valid peer id"),
+            ))
+        } else {
+            address
+        };
+
         Self {
+            address,
+            score,
+            connection_id,
+        }
+    }
+
+    /// Create `AddressRecord` from `Multiaddr`.
+    ///
+    /// If `address` doesn't contain `PeerId`, return `None` to indicate that this
+    /// an invalid `Multiaddr` from the perspective of the `TransportManager`.
+    pub fn from_multiaddr(address: Multiaddr) -> Option<AddressRecord> {
+        if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
+            return None;
+        }
+
+        Some(AddressRecord {
             address,
             score: 0i32,
             connection_id: None,
-        }
+        })
     }
-}
 
-impl AddressRecord {
+    /// Get address score.
+    #[cfg(test)]
+    pub fn score(&self) -> i32 {
+        self.score
+    }
+
+    /// Get address.
+    pub fn address(&self) -> &Multiaddr {
+        &self.address
+    }
+
+    /// Get connection ID.
+    pub fn connection_id(&self) -> &Option<ConnectionId> {
+        &self.connection_id
+    }
+
     /// Update score of an address.
     pub fn update_score(&mut self, score: i32) {
         self.score += score;
@@ -93,7 +144,9 @@ impl FromIterator<Multiaddr> for AddressStore {
     fn from_iter<T: IntoIterator<Item = Multiaddr>>(iter: T) -> Self {
         let mut store = AddressStore::new();
         for address in iter {
-            store.insert(address.into());
+            if let Some(address) = AddressRecord::from_multiaddr(address) {
+                store.insert(address.into());
+            }
         }
 
         store
