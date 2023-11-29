@@ -30,6 +30,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
+use bytes::BytesMut;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -60,7 +61,7 @@ pub struct Config {
     pub(crate) event_tx: Sender<InnerNotificationEvent>,
 
     /// TX channel for sending notifications from the connection handlers.
-    pub(crate) notif_tx: Sender<(PeerId, Vec<u8>)>,
+    pub(crate) notif_tx: Sender<(PeerId, BytesMut)>,
 
     /// RX channel passed to the protocol used for receiving commands.
     pub(crate) command_rx: Receiver<NotificationCommand>,

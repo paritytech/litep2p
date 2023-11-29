@@ -22,6 +22,7 @@ use crate::{
     protocol::notification::handle::NotificationSink, types::protocol::ProtocolName, PeerId,
 };
 
+use bytes::BytesMut;
 use tokio::sync::oneshot;
 
 use std::collections::HashSet;
@@ -191,7 +192,7 @@ pub enum NotificationEvent {
         peer: PeerId,
 
         /// Notification.
-        notification: Vec<u8>,
+        notification: BytesMut,
     },
 }
 

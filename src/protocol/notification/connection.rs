@@ -22,6 +22,7 @@ use crate::{
     protocol::notification::handle::NotificationEventHandle, substream::Substream, PeerId,
 };
 
+use bytes::BytesMut;
 use futures::StreamExt;
 use tokio::sync::{
     mpsc::{Receiver, Sender},
@@ -50,7 +51,7 @@ pub(crate) struct Connection {
     conn_closed_tx: Sender<PeerId>,
 
     /// TX channel for sending notifications.
-    notif_tx: Sender<(PeerId, Vec<u8>)>,
+    notif_tx: Sender<(PeerId, BytesMut)>,
 
     /// Receiver for asynchronously sent notifications.
     async_rx: Receiver<Vec<u8>>,
@@ -81,7 +82,7 @@ impl Connection {
         outbound: Substream,
         event_handle: NotificationEventHandle,
         conn_closed_tx: Sender<PeerId>,
-        notif_tx: Sender<(PeerId, Vec<u8>)>,
+        notif_tx: Sender<(PeerId, BytesMut)>,
         async_rx: Receiver<Vec<u8>>,
         sync_rx: Receiver<Vec<u8>>,
     ) -> (Self, oneshot::Sender<()>) {
@@ -129,7 +130,7 @@ impl Connection {
     pub async fn start(mut self) {
         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "start connection event loop");
 
-        let mut next_notification: Option<Vec<u8>> = None;
+        let mut next_notification: Option<BytesMut> = None;
         loop {
             tokio::select! {
                 biased;
@@ -168,7 +169,7 @@ impl Connection {
                         return self.close_connection(NotifyProtocol::Yes).await;
                     }
                     Some(Ok(notification)) => {
-                        next_notification = Some(notification.freeze().into());
+                        next_notification = Some(notification);
                     }
                 },
                 // outbound substream never yields any events but it's polled so that if either one of the substreams

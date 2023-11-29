@@ -102,7 +102,7 @@ async fn server_event_loop(mut litep2p: Litep2p, mut handle: NotificationHandle)
                     handle.send_validation_result(peer, ValidationResult::Accept);
                 }
                 NotificationEvent::NotificationReceived { peer, notification } => {
-                    handle.send_async_notification(peer, notification).await.unwrap();
+                    handle.send_async_notification(peer, notification.freeze().into()).await.unwrap();
                 }
                 _ => {},
             },

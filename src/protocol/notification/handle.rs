@@ -28,6 +28,7 @@ use crate::{
     PeerId,
 };
 
+use bytes::BytesMut;
 use futures::Stream;
 use parking_lot::RwLock;
 use tokio::sync::{
@@ -147,13 +148,10 @@ impl NotificationSink {
     ///
     /// If the channel is clogged, [`NotificationError::ChannelClogged`] is returned.
     pub fn send_sync_notification(&self, notification: Vec<u8>) -> Result<(), NotificationError> {
-        match self.sync_tx.try_send(notification) {
-            Ok(_) => Ok(()),
-            Err(error) => match error {
-                TrySendError::Closed(_) => Err(NotificationError::NoConnection),
-                TrySendError::Full(_) => Err(NotificationError::ChannelClogged),
-            },
-        }
+        self.sync_tx.try_send(notification).map_err(|error| match error {
+            TrySendError::Closed(_) => NotificationError::NoConnection,
+            TrySendError::Full(_) => NotificationError::ChannelClogged,
+        })
     }
 
     /// Send notification to peer asynchronously.
@@ -175,7 +173,7 @@ pub struct NotificationHandle {
     event_rx: Receiver<InnerNotificationEvent>,
 
     /// RX channel for receiving notifications from connection handlers.
-    notif_rx: Receiver<(PeerId, Vec<u8>)>,
+    notif_rx: Receiver<(PeerId, BytesMut)>,
 
     /// TX channel for sending commands to the notification protocol.
     command_tx: Sender<NotificationCommand>,
@@ -194,7 +192,7 @@ impl NotificationHandle {
     /// Create new [`NotificationHandle`].
     pub(crate) fn new(
         event_rx: Receiver<InnerNotificationEvent>,
-        notif_rx: Receiver<(PeerId, Vec<u8>)>,
+        notif_rx: Receiver<(PeerId, BytesMut)>,
         command_tx: Sender<NotificationCommand>,
         handshake: Arc<RwLock<Vec<u8>>>,
     ) -> Self {

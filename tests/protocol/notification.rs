@@ -35,6 +35,7 @@ use litep2p::{
     Litep2p, Litep2pEvent, PeerId,
 };
 
+use bytes::BytesMut;
 use futures::StreamExt;
 
 use std::time::Duration;
@@ -257,14 +258,14 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
-            notification: vec![1, 3, 3, 7],
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
         }
     );
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
-            notification: vec![1, 3, 3, 8],
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
 }
@@ -553,14 +554,14 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
-            notification: vec![1, 3, 3, 7],
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
         }
     );
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
-            notification: vec![1, 3, 3, 8],
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
 
@@ -793,14 +794,14 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
-            notification: vec![1, 3, 3, 7],
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
         }
     );
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
-            notification: vec![1, 3, 3, 8],
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
 }
@@ -1184,14 +1185,14 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
-            notification: vec![1, 3, 3, 7],
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
         }
     );
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
-            notification: vec![1, 3, 3, 8],
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
 }
@@ -2434,14 +2435,14 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
-            notification: vec![1, 3, 3, 7],
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
         }
     );
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
-            notification: vec![1, 3, 3, 8],
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
 }
@@ -2606,14 +2607,14 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
-            notification: vec![1, 3, 3, 7],
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
         }
     );
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
-            notification: vec![1, 3, 3, 8],
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
 
@@ -2791,14 +2792,14 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
-            notification: vec![1, 3, 3, 7],
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
         }
     );
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
-            notification: vec![1, 3, 3, 8],
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
 
@@ -3398,14 +3399,14 @@ async fn no_listener_address_for_one_peer(transport1: Transport, transport2: Tra
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
-            notification: vec![1, 3, 3, 7],
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
         }
     );
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
-            notification: vec![1, 3, 3, 8],
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
 }

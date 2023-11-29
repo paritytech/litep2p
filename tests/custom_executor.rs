@@ -35,6 +35,7 @@ use litep2p::{
     Litep2p, Litep2pEvent,
 };
 
+use bytes::BytesMut;
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -243,14 +244,14 @@ async fn custom_executor() {
         handle2.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer1,
-            notification: vec![1, 3, 3, 7],
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
         }
     );
     assert_eq!(
         handle1.next().await.unwrap(),
         NotificationEvent::NotificationReceived {
             peer: peer2,
-            notification: vec![1, 3, 3, 8],
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
 

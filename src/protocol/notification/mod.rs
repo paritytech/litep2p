@@ -38,6 +38,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
+use bytes::BytesMut;
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::{
@@ -216,7 +217,7 @@ pub(crate) struct NotificationProtocol {
     command_rx: Receiver<NotificationCommand>,
 
     /// TX channel given to connection handlers for sending notifications.
-    notif_tx: Sender<(PeerId, Vec<u8>)>,
+    notif_tx: Sender<(PeerId, BytesMut)>,
 
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
