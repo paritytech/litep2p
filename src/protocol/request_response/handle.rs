@@ -20,7 +20,7 @@
 
 use crate::{
     types::{protocol::ProtocolName, RequestId},
-    PeerId,
+    Error, PeerId,
 };
 
 use futures::channel;
@@ -328,6 +328,33 @@ impl RequestResponseHandle {
             .await
             .map(|_| request_id)
             .map_err(From::from)
+    }
+
+    /// Attempt to send request to peer and if the channel is clogged, return
+    /// `Error::ChannelClogged`.
+    ///
+    /// While the returned `RequestId` is guaranteed to be unique for this request-response
+    /// protocol, it's not unique across all installed request-response protocols. That is,
+    /// multiple request-response protocols can return the same `RequestId` and this must be
+    /// handled by the calling code correctly if the `RequestId`s are stored somewhere.
+    pub fn try_send_request(
+        &mut self,
+        peer: PeerId,
+        request: Vec<u8>,
+        dial_options: DialOptions,
+    ) -> crate::Result<RequestId> {
+        tracing::trace!(target: LOG_TARGET, ?peer, "send request to peer");
+
+        let request_id = self.next_request_id();
+        self.command_tx
+            .try_send(RequestResponseCommand::SendRequest {
+                peer,
+                request_id,
+                request,
+                dial_options,
+            })
+            .map(|_| request_id)
+            .map_err(|_| Error::ChannelClogged)
     }
 
     /// Send response to remote peer.

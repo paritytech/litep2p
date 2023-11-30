@@ -116,6 +116,8 @@ pub enum Error {
     InvalidCertificate,
     #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]
     PeerIdMismatch(PeerId, PeerId),
+    #[error("Channel is clogged")]
+    ChannelClogged,
 }
 
 #[derive(Debug, thiserror::Error)]
