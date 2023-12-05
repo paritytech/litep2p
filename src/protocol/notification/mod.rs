@@ -46,7 +46,7 @@ use tokio::sync::{
     oneshot,
 };
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{NotificationHandle, NotificationSink};
@@ -240,6 +240,9 @@ pub(crate) struct NotificationProtocol {
 
     /// Pending substream validations.
     pending_validations: FuturesUnordered<BoxFuture<'static, (PeerId, ValidationResult)>>,
+
+    /// Timers for pending outbound substreams.
+    timers: FuturesUnordered<BoxFuture<'static, PeerId>>,
 }
 
 impl NotificationProtocol {
@@ -259,6 +262,7 @@ impl NotificationProtocol {
             protocol: config.protocol_name,
             auto_accept: config.auto_accept,
             pending_validations: FuturesUnordered::new(),
+            timers: FuturesUnordered::new(),
             event_handle: NotificationEventHandle::new(config.event_tx),
             notif_tx: config.notif_tx,
             command_rx: config.command_rx,
@@ -517,16 +521,17 @@ impl NotificationProtocol {
         peer: PeerId,
         substream: Substream,
     ) -> crate::Result<()> {
+        // peer must exist since an inbound substream was received from them
+        let context = self.peers.get_mut(&peer).expect("peer to exist");
+
         tracing::debug!(
             target: LOG_TARGET,
             ?peer,
             %protocol,
             ?fallback,
+            state = ?context.state,
             "handle inbound substream",
         );
-
-        // peer must exist since an inbound substream was received from them
-        let context = self.peers.get_mut(&peer).expect("peer to exist");
 
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
             // the peer state is closed so this is a fresh inbound substream.
@@ -719,6 +724,13 @@ impl NotificationProtocol {
                     return Err(error);
                 }
                 Ok(()) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        "started to dial peer",
+                    );
+
                     self.peers.insert(
                         peer,
                         PeerContext {
@@ -949,7 +961,13 @@ impl NotificationProtocol {
             return;
         };
 
-        tracing::trace!(target: LOG_TARGET, ?peer, protocol = %self.protocol, ?event, "handle handshake event");
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            protocol = %self.protocol,
+            ?event,
+            "handle handshake event",
+        );
 
         match event {
             // outbound substream was negotiated, the only valid state for peer is `Validating`
@@ -1212,7 +1230,21 @@ impl NotificationProtocol {
                     connection.start().await;
                 }));
             }
-            state => context.state = state,
+            state => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    ?state,
+                    "validation for substream still pending",
+                );
+                self.timers.push(Box::pin(async move {
+                    futures_timer::Delay::new(Duration::from_secs(5)).await;
+                    peer
+                }));
+
+                context.state = state;
+            }
         }
     }
 
@@ -1256,6 +1288,50 @@ impl NotificationProtocol {
                         context.state = PeerState::Closed { pending_open: None };
                     }
                 }
+            },
+            // TODO: this could be combined with `Negotiation`
+            peer = self.timers.next(), if !self.timers.is_empty() => match peer {
+                Some(peer) => {
+                    match self.peers.get_mut(&peer) {
+                        Some(context) => match std::mem::replace(&mut context.state, PeerState::Poisoned) {
+                            PeerState::Validating {
+                                outbound: OutboundState::Open { outbound, .. },
+                                inbound: InboundState::Closed,
+                                ..
+                            } => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    protocol = %self.protocol,
+                                    "peer didn't answer in 10 seconds, canceling substream",
+                                );
+                                context.state = PeerState::Closed { pending_open: None };
+
+                                let _ = outbound.close().await;
+                                self.event_handle
+                                    .report_notification_stream_open_failure(peer, NotificationError::Rejected)
+                                    .await;
+                            }
+                            state => {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    protocol = %self.protocol,
+                                    ?state,
+                                    "ignore expired timer for peer",
+                                );
+                                context.state = state;
+                            }
+                        }
+                        None => tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            "peer doesn't exist anymore",
+                        ),
+                    }
+                }
+                None => return,
             },
             event = self.service.next_event() => match event {
                 Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
