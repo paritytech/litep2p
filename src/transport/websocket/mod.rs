@@ -142,8 +142,7 @@ impl Transport for WebSocketTransport {
             listener: WebSocketListener::new(std::mem::replace(
                 &mut config.listen_addresses,
                 Vec::new(),
-            ))
-            .await?,
+            )),
             config,
             context,
             pending_dials: HashMap::new(),

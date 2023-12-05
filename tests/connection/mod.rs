@@ -1114,3 +1114,27 @@ async fn port_in_use_tcp() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn port_in_use_websocket() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let listener = TcpListener::bind("[::1]:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let _litep2p = Litep2p::new(
+        Litep2pConfigBuilder::new()
+            .with_websocket(WebSocketTransportConfig {
+                listen_addresses: vec![Multiaddr::empty()
+                    .with(Protocol::from(address.ip()))
+                    .with(Protocol::Tcp(address.port()))
+                    .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))],
+                ..Default::default()
+            })
+            .build(),
+    )
+    .await
+    .unwrap();
+}
