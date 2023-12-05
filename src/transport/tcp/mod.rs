@@ -189,8 +189,7 @@ impl Transport for TcpTransport {
         );
 
         Ok(Self {
-            listener: TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new()))
-                .await?,
+            listener: TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new())),
             config,
             context,
             pending_dials: HashMap::new(),

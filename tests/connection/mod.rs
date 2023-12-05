@@ -1091,3 +1091,26 @@ async fn multiple_listen_addresses(
         Some(Litep2pEvent::ConnectionEstablished { .. })
     ));
 }
+
+#[tokio::test]
+async fn port_in_use_tcp() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let listener = TcpListener::bind("[::1]:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let _litep2p = Litep2p::new(
+        Litep2pConfigBuilder::new()
+            .with_tcp(TcpTransportConfig {
+                listen_addresses: vec![Multiaddr::empty()
+                    .with(Protocol::from(address.ip()))
+                    .with(Protocol::Tcp(address.port()))],
+                ..Default::default()
+            })
+            .build(),
+    )
+    .await
+    .unwrap();
+}
