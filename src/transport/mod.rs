@@ -20,7 +20,7 @@
 
 //! Transport protocol implementations provided by [`Litep2p`](`crate::Litep2p`).
 
-use crate::{transport::manager::TransportHandle, types::ConnectionId};
+use crate::{transport::manager::TransportHandle, types::ConnectionId, Error, PeerId};
 
 use multiaddr::Multiaddr;
 
@@ -88,6 +88,39 @@ impl Into<Multiaddr> for Endpoint {
             Self::Listener { address, .. } => address,
         }
     }
+}
+
+/// Transport event.
+pub(crate) enum TransportEvent {
+    /// Connection established to remote peer.
+    ConnectionEstablished {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Endpoint.
+        endpoint: Endpoint,
+    },
+
+    /// Connection closed to remote peer.
+    ConnectionClosed {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Connection ID.
+        connection_id: ConnectionId,
+    },
+
+    /// Failed to dial remote peer.
+    DialFailure {
+        /// Connection ID.
+        connection_id: ConnectionId,
+
+        /// Dialed address.
+        address: Multiaddr,
+
+        /// Error.
+        error: Error,
+    },
 }
 
 #[async_trait::async_trait]
