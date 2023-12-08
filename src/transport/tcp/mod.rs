@@ -25,7 +25,7 @@ use crate::{
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         tcp::{config::TransportConfig, connection::TcpConnection, listener::TcpListener},
-        Transport,
+        Transport, TransportEvent,
     },
     types::ConnectionId,
 };
@@ -37,7 +37,12 @@ use futures::{
 use multiaddr::Multiaddr;
 use tokio::net::TcpStream;
 
-use std::{collections::HashMap, net::SocketAddr};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 pub(crate) use substream::Substream;
 
@@ -49,24 +54,6 @@ pub mod config;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::tcp";
-
-#[derive(Debug)]
-pub(super) struct TcpError {
-    /// Error.
-    error: Error,
-
-    /// Connection ID.
-    connection_id: Option<ConnectionId>,
-}
-
-impl TcpError {
-    pub fn new(error: Error, connection_id: Option<ConnectionId>) -> Self {
-        Self {
-            error,
-            connection_id,
-        }
-    }
-}
 
 /// TCP transport.
 pub(crate) struct TcpTransport {
@@ -83,7 +70,8 @@ pub(crate) struct TcpTransport {
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending connections.
-    pending_connections: FuturesUnordered<BoxFuture<'static, Result<TcpConnection, TcpError>>>,
+    pending_connections:
+        FuturesUnordered<BoxFuture<'static, Result<TcpConnection, (ConnectionId, Error)>>>,
 }
 
 impl TcpTransport {
@@ -108,55 +96,26 @@ impl TcpTransport {
                 bandwidth_sink,
             )
             .await
-            .map_err(|error| TcpError::new(error, Some(connection_id)))
+            .map_err(|error| (connection_id, error))
         }));
     }
 
-    /// Handle established TCP connection.
-    async fn on_connection_established(&mut self, connection: Result<TcpConnection, TcpError>) {
-        tracing::trace!(target: LOG_TARGET, failed = ?connection.is_err(), "handle finished tcp connection");
-
-        match connection {
-            Ok(connection) => {
-                self.context.executor.run(Box::pin(async move {
-                    if let Err(error) = connection.start().await {
-                        tracing::trace!(target: LOG_TARGET, ?error, "connection failure");
-                    }
-                }));
-            }
-            Err(error) => match error.connection_id {
-                Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                    Some(address) =>
-                        self.context.report_dial_failure(connection_id, address, error.error).await,
-                    None => tracing::debug!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "failed to establish connection"
-                    ),
-                },
-                None => {
-                    tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
-                }
-            },
-        }
-    }
-
     /// Dial remote peer.
-    async fn on_dial_peer(
+    fn on_dial_peer(
         &mut self,
-        address: Multiaddr,
+        address: &Multiaddr,
         connection_id: ConnectionId,
     ) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, "open connection");
 
         let protocol_set = self.context.protocol_set(connection_id);
-        let (socket_address, peer) = listener::TcpListener::get_socket_address(&address)?;
+        let (socket_address, peer) = listener::TcpListener::get_socket_address(address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let bandwidth_sink = self.context.bandwidth_sink.clone();
 
-        self.pending_dials.insert(connection_id, address);
+        self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::open_connection(
                 protocol_set,
@@ -169,7 +128,7 @@ impl TcpTransport {
                 bandwidth_sink,
             )
             .await
-            .map_err(|error| TcpError::new(error, Some(connection_id)))
+            .map_err(|error| (connection_id, error))
         }));
 
         Ok(())
@@ -204,37 +163,73 @@ impl Transport for TcpTransport {
 
     /// Start TCP transport event loop.
     async fn start(mut self) -> crate::Result<()> {
-        loop {
-            tokio::select! {
-                connection = self.listener.next() => match connection {
-                    None => return Err(Error::EssentialTaskClosed),
-                    Some(Ok((connection, address))) => self.on_inbound_connection(connection, address),
-                    Some(Err(error)) => {
-                        tracing::debug!(target: LOG_TARGET, ?error, "tcp listener shut down");
-                        return Ok(())
-                    }
-                },
-                connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
-                    self.on_connection_established(connection).await;
-                }
-                command = self.context.next() => match command {
-                    None => return Err(Error::EssentialTaskClosed),
-                    Some(command) => match command {
-                        TransportManagerCommand::Dial { address, connection } => {
-                            if let Err(error) = self.on_dial_peer(address.clone(), connection).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?address,
-                                    ?connection,
-                                    ?error,
-                                    "failed to dial peer"
-                                );
-                            }
-                        }
-                    }
+        while let Some(event) = self.next().await {
+            match event {
+                TransportEvent::ConnectionEstablished { .. } => {}
+                TransportEvent::ConnectionClosed { .. } => {}
+                TransportEvent::DialFailure {
+                    connection_id,
+                    address,
+                    error,
+                } => {
+                    self.context.report_dial_failure(connection_id, address, error).await;
                 }
             }
         }
+
+        Ok(())
+    }
+}
+
+impl Stream for TcpTransport {
+    type Item = TransportEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        while let Poll::Ready(command) = self.context.poll_next_unpin(cx) {
+            match command {
+                None => return Poll::Ready(None),
+                Some(TransportManagerCommand::Dial {
+                    address,
+                    connection: connection_id,
+                }) =>
+                    if let Err(error) = self.on_dial_peer(&address, connection_id) {
+                        return Poll::Ready(Some(TransportEvent::DialFailure {
+                            connection_id,
+                            address,
+                            error,
+                        }));
+                    },
+            }
+        }
+
+        while let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
+            match event {
+                None | Some(Err(_)) => return Poll::Ready(None),
+                Some(Ok((connection, address))) => {
+                    self.on_inbound_connection(connection, address);
+                }
+            }
+        }
+
+        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
+            match connection {
+                Ok(connection) => self.context.executor.run(Box::pin(async move {
+                    if let Err(error) = connection.start().await {
+                        tracing::debug!(target: LOG_TARGET, ?error, "connection failure");
+                    }
+                })),
+                Err((connection_id, error)) =>
+                    if let Some(address) = self.pending_dials.remove(&connection_id) {
+                        return Poll::Ready(Some(TransportEvent::DialFailure {
+                            connection_id,
+                            address,
+                            error,
+                        }));
+                    },
+            }
+        }
+
+        Poll::Pending
     }
 }
 
@@ -493,24 +488,20 @@ mod tests {
 
         assert!(transport.pending_dials.is_empty());
 
-        match transport.on_dial_peer(multiaddr.clone(), ConnectionId::from(0usize)).await {
+        match transport.on_dial_peer(&multiaddr, ConnectionId::from(0usize)) {
             Ok(()) => {}
             _ => panic!("invalid result for `on_dial_peer()`"),
         }
 
         assert!(!transport.pending_dials.is_empty());
+        transport.pending_connections.push(Box::pin(async move {
+            Err((ConnectionId::from(0usize), Error::Unknown))
+        }));
 
-        let _ = transport
-            .on_connection_established(Err(TcpError {
-                error: Error::Unknown,
-                connection_id: Some(ConnectionId::from(0usize)),
-            }))
-            .await;
-
-        assert!(transport.pending_dials.is_empty());
         assert!(std::matches!(
-            manager.next().await,
-            Some(TransportManagerEvent::DialFailure { .. })
+            transport.next().await,
+            Some(TransportEvent::DialFailure { .. })
         ));
+        assert!(transport.pending_dials.is_empty());
     }
 }
