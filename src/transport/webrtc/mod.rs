@@ -32,6 +32,7 @@ use crate::{
     PeerId,
 };
 
+use futures::StreamExt;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
     change::{DtlsCert, IceCreds},

@@ -35,16 +35,19 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
+use futures::Stream;
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
+    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    task::{Context, Poll},
 };
 
 /// Inner commands sent from [`TransportManagerHandle`] to [`TransportManager`].
@@ -335,10 +338,13 @@ impl TransportHandle {
             })
             .await;
     }
+}
 
-    /// Get next transport command.
-    pub async fn next(&mut self) -> Option<TransportManagerCommand> {
-        self.rx.recv().await
+impl Stream for TransportHandle {
+    type Item = TransportManagerCommand;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.rx.poll_recv(cx)
     }
 }
 

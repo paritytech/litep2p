@@ -32,7 +32,7 @@ use crate::{
 
 use futures::{
     future::BoxFuture,
-    stream::{FuturesUnordered, StreamExt},
+    stream::{FuturesUnordered, Stream, StreamExt},
 };
 use multiaddr::Multiaddr;
 use tokio::net::TcpStream;

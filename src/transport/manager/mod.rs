@@ -965,6 +965,7 @@ impl TransportManager {
 mod tests {
     use super::*;
     use crate::{crypto::ed25519::Keypair, executor::DefaultExecutor};
+    use futures::StreamExt;
     use std::{
         net::{Ipv4Addr, Ipv6Addr},
         sync::Arc,
