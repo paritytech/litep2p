@@ -276,6 +276,7 @@ impl TransportHandle {
         ConnectionId::from(connection_id)
     }
 
+    // TODO: report to protocols as well
     pub async fn _report_connection_established(
         &mut self,
         connection: ConnectionId,

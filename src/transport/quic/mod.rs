@@ -28,20 +28,22 @@ use crate::{
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         quic::{config::TransportConfig as QuicTransportConfig, listener::QuicListener},
-        Transport,
+        Transport, TransportEvent,
     },
     types::ConnectionId,
     PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use quinn::{ClientConfig, Connecting, Connection, Endpoint};
+use quinn::{ClientConfig, Connection, Endpoint};
 
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
 };
 
 pub(crate) use substream::Substream;
@@ -81,34 +83,6 @@ pub(crate) struct QuicTransport {
 }
 
 impl QuicTransport {
-    /// Accept QUIC conenction.
-    async fn accept_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        connection: Connecting,
-    ) -> crate::Result<()> {
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?connection_id,
-            "accept connection",
-        );
-
-        self.pending_connections.push(Box::pin(async move {
-            let connection = match connection.await {
-                Ok(connection) => connection,
-                Err(error) => return (connection_id, Err(error.into())),
-            };
-
-            let Some(peer) = Self::extract_peer_id(&connection) else {
-                return (connection_id, Err(Error::InvalidCertificate));
-            };
-
-            (connection_id, Ok(NegotiatedConnection { peer, connection }))
-        }));
-
-        Ok(())
-    }
-
     /// Attempt to extract `PeerId` from connection certificates.
     fn extract_peer_id(connection: &Connection) -> Option<PeerId> {
         let certificates: Box<Vec<rustls::Certificate>> =
@@ -120,11 +94,11 @@ impl QuicTransport {
     }
 
     /// Handle established connection.
-    async fn on_connection_established(
+    fn on_connection_established(
         &mut self,
         connection_id: ConnectionId,
         result: crate::Result<NegotiatedConnection>,
-    ) -> crate::Result<()> {
+    ) -> Option<TransportEvent> {
         tracing::debug!(target: LOG_TARGET, ?connection_id, success = result.is_ok(), "connection established");
 
         // `on_connection_established()` is called for both inbound and outbound connections
@@ -149,11 +123,12 @@ impl QuicTransport {
 
                 let bandwidth_sink = self.context.bandwidth_sink.clone();
                 let mut protocol_set = self.context.protocol_set(connection_id);
-                protocol_set
-                    .report_connection_established(connection_id, connection.peer, endpoint)
-                    .await?;
 
                 self.context.executor.run(Box::pin(async move {
+                    let _ = protocol_set
+                        .report_connection_established(connection_id, connection.peer, endpoint)
+                        .await;
+
                     let _ = connection::Connection::new(
                         connection.peer,
                         connection_id,
@@ -171,16 +146,20 @@ impl QuicTransport {
                 // since the address was found from `pending_dials`,
                 // report the error to protocols and `TransportManager`
                 if let Some(address) = maybe_address {
-                    self.context.report_dial_failure(connection_id, address, error).await;
+                    return Some(TransportEvent::DialFailure {
+                        connection_id,
+                        address,
+                        error,
+                    });
                 }
             }
         }
 
-        Ok(())
+        None
     }
 
     /// Dial remote peer.
-    async fn on_dial_peer(
+    fn on_dial_peer(
         &mut self,
         address: Multiaddr,
         connection_id: ConnectionId,
@@ -260,41 +239,99 @@ impl Transport for QuicTransport {
         self.listener.listen_addresses().cloned().collect()
     }
 
-    /// Start [`QuicTransport`] event loop.
     async fn start(mut self) -> crate::Result<()> {
-        loop {
-            tokio::select! {
-                connection = self.listener.next() => match connection {
-                    Some(connection) => {
-                        let connection_id = self.context.next_connection_id();
+        while let Some(event) = self.next().await {
+            match event {
+                TransportEvent::ConnectionEstablished { .. } => {}
+                TransportEvent::ConnectionClosed { .. } => {}
+                TransportEvent::DialFailure {
+                    connection_id,
+                    address,
+                    error,
+                } => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?address,
+                        ?error,
+                        "failed to dial peer",
+                    );
 
-                        if let Err(error) = self.accept_connection(connection_id, connection).await {
-                            tracing::error!(target: LOG_TARGET, ?error, "failed to accept quic connection");
-                            return Err(error);
-                        }
-                    },
-                    None => {
-                        tracing::error!(target: LOG_TARGET, "failed to accept connection, closing quic transport");
-                        return Ok(())
-                    }
-                },
-                connection = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
-                    let (connection_id, result) = connection;
-
-                    if let Err(error) = self.on_connection_established(connection_id, result).await {
-                        tracing::debug!(target: LOG_TARGET, ?connection_id, ?error, "failed to handle established connection");
-                    }
-                }
-                command = self.context.next() => match command.ok_or(Error::EssentialTaskClosed)? {
-                    TransportManagerCommand::Dial { address, connection } => {
-                        if let Err(error) = self.on_dial_peer(address.clone(), connection).await {
-                            tracing::debug!(target: LOG_TARGET, ?address, ?connection, ?error, "failed to dial peer");
-                            let _ = self.context.report_dial_failure(connection, address, error).await;
-                        }
-                    }
+                    let _ = self.context.report_dial_failure(connection_id, address, error).await;
                 }
             }
         }
+
+        Ok(())
+    }
+}
+
+impl Stream for QuicTransport {
+    type Item = TransportEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        while let Poll::Ready(Some(command)) = self.context.poll_next_unpin(cx) {
+            match command {
+                TransportManagerCommand::Dial {
+                    address,
+                    connection: connection_id,
+                } =>
+                    if let Err(error) = self.on_dial_peer(address.clone(), connection_id) {
+                        tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, ?error, "failed to dial peer");
+
+                        return Poll::Ready(Some(TransportEvent::DialFailure {
+                            connection_id,
+                            address,
+                            error,
+                        }));
+                    },
+            }
+        }
+
+        while let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
+            let connection_id = self.context.next_connection_id();
+
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "accept connection",
+            );
+
+            self.pending_connections.push(Box::pin(async move {
+                let connection = match connection.await {
+                    Ok(connection) => connection,
+                    Err(error) => return (connection_id, Err(error.into())),
+                };
+
+                let Some(peer) = Self::extract_peer_id(&connection) else {
+                    return (connection_id, Err(Error::InvalidCertificate));
+                };
+
+                (connection_id, Ok(NegotiatedConnection { peer, connection }))
+            }));
+        }
+
+        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
+            let (connection_id, result) = connection;
+
+            match self.on_connection_established(connection_id, result) {
+                None => {}
+                Some(TransportEvent::DialFailure {
+                    connection_id,
+                    address,
+                    error,
+                }) => {
+                    return Poll::Ready(Some(TransportEvent::DialFailure {
+                        connection_id,
+                        address,
+                        error,
+                    }));
+                }
+                _ => todo!(),
+            }
+        }
+
+        Poll::Pending
     }
 }
 
