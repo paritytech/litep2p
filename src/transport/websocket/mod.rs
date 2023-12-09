@@ -27,17 +27,22 @@ use crate::{
         websocket::{
             config::TransportConfig, connection::WebSocketConnection, listener::WebSocketListener,
         },
-        Transport,
+        Transport, TransportEvent,
     },
     types::ConnectionId,
     PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use url::Url;
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 pub(crate) use substream::Substream;
 
@@ -155,120 +160,156 @@ impl Transport for WebSocketTransport {
         self.listener.listen_addresses().cloned().collect()
     }
 
-    /// Poll next connection.
     async fn start(mut self) -> crate::Result<()> {
-        loop {
-            tokio::select! {
-                connection = self.listener.next() => match connection {
-                    None => return Err(Error::EssentialTaskClosed),
-                    Some(Err(error)) => return Err(error.into()),
-                    Some(Ok((stream, address))) => {
-                        let connection_id = self.context.next_connection_id();
-                        let context = self.context.protocol_set(connection_id);
-                        let yamux_config = self.config.yamux_config.clone();
-                        let bandwidth_sink = self.context.bandwidth_sink.clone();
-
-                        self.pending_connections.push(Box::pin(async move {
-                            match tokio::time::timeout(Duration::from_secs(10), async move {
-                                WebSocketConnection::accept_connection(
-                                    stream,
-                                    address,
-                                    connection_id,
-                                    yamux_config,
-                                    bandwidth_sink,
-                                    context,
-                                )
-                                .await
-                                .map_err(|error| WebSocketError::new(error, None))
-                            }).await {
-                                Err(_) => Err(WebSocketError::new(Error::Timeout, None)),
-                                Ok(Err(error)) => Err(error),
-                                Ok(Ok(result)) => Ok(result),
-                            }
-                        }));
-                    }
-                },
-                command = self.context.next() => match command.ok_or(Error::EssentialTaskClosed)? {
-                    TransportManagerCommand::Dial { address, connection } => {
-                        let context = self.context.protocol_set(connection);
-                        let yamux_config = self.config.yamux_config.clone();
-                        let peer = match address.iter().find(
-                            |protocol| std::matches!(protocol, Protocol::P2p(_))
-                        ) {
-                            Some(Protocol::P2p(peer)) => PeerId::from_multihash(peer).expect("to succeed"),
-                            _ => {
-                                tracing::error!(target: LOG_TARGET, ?address, "state mismatch: multiaddress doesn't contain peer id");
-                                debug_assert!(false);
-
-                                self.context.report_dial_failure(
-                                    connection,
-                                    address.clone(),
-                                    Error::AddressError(AddressError::PeerIdMissing)
-                                ).await;
-                                continue;
-                            }
-                        };
-
-                        // try to convert the multiaddress into a `Url` and if it fails, report dial failure immediately
-                        let ws_address = match Self::multiaddr_into_url(address.clone()) {
-                            Ok(address) => address,
-                            Err(error) => {
-                                self.context.report_dial_failure(connection, address, error).await;
-                                continue;
-                            }
-                        };
-
-                        tracing::debug!(target: LOG_TARGET, ?address, ?connection, "open connection");
-
-                        // TODO: make timeout configurable
-                        let bandwidth_sink = self.context.bandwidth_sink.clone();
-                        self.pending_dials.insert(connection, address.clone());
-
-                        self.pending_connections.push(Box::pin(async move {
-                            match tokio::time::timeout(Duration::from_secs(10), async move {
-                                WebSocketConnection::open_connection(
-                                    address,
-                                    Some(peer),
-                                    ws_address,
-                                    connection,
-                                    yamux_config,
-                                    bandwidth_sink,
-                                    context,
-                                )
-                                .await
-                                .map_err(|error| {
-                                    WebSocketError::new(error, Some(connection))
-                                })
-                            }).await {
-                                Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection))),
-                                Ok(Err(error)) => Err(error),
-                                Ok(Ok(result)) => Ok(result),
-                            }
-                        }));
-                    }
-                },
-                event = self.pending_connections.select_next_some(), if !self.pending_connections.is_empty() => {
-                    match event {
-                        Ok(connection) => {
-                            let _peer = *connection.peer();
-                            let _address = connection.address().clone();
-
-                            self.context.executor.run(Box::pin(async move {
-                                if let Err(error) = connection.start().await {
-                                    tracing::debug!(target: LOG_TARGET, ?error, "connection failed");
-                                }
-                            }))
-                        }
-                        Err(error) => match error.connection_id {
-                            Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                                Some(address) => self.context.report_dial_failure(connection_id, address, error.error).await,
-                                None => tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),
-                            }
-                            None => tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),
-                        }
-                    }
+        while let Some(event) = self.next().await {
+            match event {
+                TransportEvent::ConnectionEstablished { .. } => {}
+                TransportEvent::ConnectionClosed { .. } => {}
+                TransportEvent::DialFailure {
+                    connection_id,
+                    address,
+                    error,
+                } => {
+                    self.context.report_dial_failure(connection_id, address, error).await;
                 }
             }
         }
+
+        Ok(())
+    }
+}
+
+impl Stream for WebSocketTransport {
+    type Item = TransportEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        while let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
+            match connection {
+                Err(_) => return Poll::Ready(None),
+                Ok((stream, address)) => {
+                    let connection_id = self.context.next_connection_id();
+                    let context = self.context.protocol_set(connection_id);
+                    let yamux_config = self.config.yamux_config.clone();
+                    let bandwidth_sink = self.context.bandwidth_sink.clone();
+
+                    self.pending_connections.push(Box::pin(async move {
+                        match tokio::time::timeout(Duration::from_secs(10), async move {
+                            WebSocketConnection::accept_connection(
+                                stream,
+                                address,
+                                connection_id,
+                                yamux_config,
+                                bandwidth_sink,
+                                context,
+                            )
+                            .await
+                            .map_err(|error| WebSocketError::new(error, None))
+                        })
+                        .await
+                        {
+                            Err(_) => Err(WebSocketError::new(Error::Timeout, None)),
+                            Ok(Err(error)) => Err(error),
+                            Ok(Ok(result)) => Ok(result),
+                        }
+                    }));
+                }
+            }
+        }
+
+        while let Poll::Ready(Some(command)) = self.context.poll_next_unpin(cx) {
+            match command {
+                TransportManagerCommand::Dial {
+                    address,
+                    connection: connection_id,
+                } => {
+                    let context = self.context.protocol_set(connection_id);
+                    let yamux_config = self.config.yamux_config.clone();
+                    let peer = match address
+                        .iter()
+                        .find(|protocol| std::matches!(protocol, Protocol::P2p(_)))
+                    {
+                        Some(Protocol::P2p(peer)) =>
+                            PeerId::from_multihash(peer).expect("to succeed"),
+                        _ => {
+                            tracing::error!(target: LOG_TARGET, ?address, "state mismatch: multiaddress doesn't contain peer id");
+                            debug_assert!(false);
+
+                            return Poll::Ready(Some(TransportEvent::DialFailure {
+                                connection_id,
+                                address,
+                                error: Error::AddressError(AddressError::PeerIdMissing),
+                            }));
+                        }
+                    };
+
+                    // try to convert the multiaddress into a `Url` and if it fails, report dial
+                    // failure immediately
+                    let ws_address = match Self::multiaddr_into_url(address.clone()) {
+                        Ok(address) => address,
+                        Err(error) => {
+                            return Poll::Ready(Some(TransportEvent::DialFailure {
+                                connection_id,
+                                address,
+                                error,
+                            }));
+                        }
+                    };
+
+                    tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, "open connection");
+
+                    // TODO: make timeout configurable
+                    let bandwidth_sink = self.context.bandwidth_sink.clone();
+                    self.pending_dials.insert(connection_id, address.clone());
+
+                    self.pending_connections.push(Box::pin(async move {
+                        match tokio::time::timeout(Duration::from_secs(10), async move {
+                            WebSocketConnection::open_connection(
+                                address,
+                                Some(peer),
+                                ws_address,
+                                connection_id,
+                                yamux_config,
+                                bandwidth_sink,
+                                context,
+                            )
+                            .await
+                            .map_err(|error| WebSocketError::new(error, Some(connection_id)))
+                        })
+                        .await
+                        {
+                            Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection_id))),
+                            Ok(Err(error)) => Err(error),
+                            Ok(Ok(result)) => Ok(result),
+                        }
+                    }));
+                }
+            }
+        }
+
+        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
+            match connection {
+                Ok(connection) => self.context.executor.run(Box::pin(async move {
+                    if let Err(error) = connection.start().await {
+                        tracing::debug!(target: LOG_TARGET, ?error, "connection failed");
+                    }
+                })),
+                Err(error) => match error.connection_id {
+                    Some(connection_id) => match self.pending_dials.remove(&connection_id) {
+                        Some(address) =>
+                            return Poll::Ready(Some(TransportEvent::DialFailure {
+                                connection_id,
+                                address,
+                                error: error.error,
+                            })),
+                        None =>
+                            tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),
+                    },
+                    None =>
+                        tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),
+                },
+            }
+        }
+
+        Poll::Pending
     }
 }

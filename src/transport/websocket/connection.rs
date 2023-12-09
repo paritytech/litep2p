@@ -108,9 +108,6 @@ pub(crate) struct WebSocketConnection {
     /// Connection ID.
     connection_id: ConnectionId,
 
-    /// Remote address.
-    address: Multiaddr,
-
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
 
@@ -120,16 +117,6 @@ pub(crate) struct WebSocketConnection {
 }
 
 impl WebSocketConnection {
-    /// Get remote peer ID.
-    pub(crate) fn peer(&self) -> &PeerId {
-        &self.peer
-    }
-
-    /// Get remote address.
-    pub(crate) fn address(&self) -> &Multiaddr {
-        &self.address
-    }
-
     /// Negotiate protocol.
     async fn negotiate_protocol<S: AsyncRead + AsyncWrite + Unpin>(
         stream: S,
@@ -217,7 +204,6 @@ impl WebSocketConnection {
             protocol_set,
             bandwidth_sink,
             pending_substreams: FuturesUnordered::new(),
-            address,
         })
     }
 
@@ -288,7 +274,6 @@ impl WebSocketConnection {
             protocol_set,
             bandwidth_sink,
             pending_substreams: FuturesUnordered::new(),
-            address,
         })
     }
 
