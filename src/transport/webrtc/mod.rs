@@ -27,12 +27,12 @@ use crate::{
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         webrtc::{config::TransportConfig, connection::WebRtcConnection},
-        Transport,
+        Transport, TransportEvent,
     },
     PeerId,
 };
 
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
     change::{DtlsCert, IceCreds},
@@ -41,6 +41,7 @@ use str0m::{
     Candidate, Input, Rtc,
 };
 use tokio::{
+    io::ReadBuf,
     net::UdpSocket,
     sync::mpsc::{channel, Sender},
 };
@@ -48,7 +49,9 @@ use tokio::{
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     time::Instant,
 };
 
@@ -197,11 +200,18 @@ impl WebRtcTransport {
     }
 
     /// Handle socket input.
-    async fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<()> {
+    fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<()> {
         // if the `Rtc` object already exists for `souce`, pass the message directly to that
         // connection.
         if let Some(tx) = self.peers.get_mut(&source) {
-            return tx.send(buffer).await.map_err(From::from);
+            // TODO: implement properly
+            match tx.try_send(buffer) {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, ?error, "failed to send datagram to connection");
+                    return Ok(());
+                }
+            }
         }
 
         // if the peer doesn't exist, decode the message and expect to receive `Stun`
@@ -317,32 +327,58 @@ impl Transport for WebRtcTransport {
             .with(Protocol::Certhash(certificate))]
     }
 
-    /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()> {
-        loop {
-            // TODO: correct buf size + don't reallocate
-            let mut buf = vec![0; 16384];
+        while let Some(event) = self.next().await {}
 
-            tokio::select! {
-                result = self.socket.recv_from(&mut buf) => match result {
-                    Ok((n, source)) => {
-                        buf.truncate(n);
+        Ok(())
+    }
+}
 
-                        if let Err(error) = self.on_socket_input(source, buf).await {
-                            tracing::error!(target: LOG_TARGET, ?error, "failed to handle input");
-                        }
+impl Stream for WebRtcTransport {
+    type Item = TransportEvent;
 
-                    }
-                    Err(_error) => return Err(Error::EssentialTaskClosed),
-                },
-                event = self.context.next() => match event {
-                    Some(TransportManagerCommand::Dial { .. }) => {
-                        tracing::warn!(target: LOG_TARGET, "webrtc cannot dial peers");
-                    }
-                    None => return Err(Error::EssentialTaskClosed),
-                },
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // TODO: optimizations
+        let mut buf = vec![0u8; 16384];
+        let mut read_buf = ReadBuf::new(&mut buf);
+
+        match self.socket.poll_recv_from(cx, &mut read_buf) {
+            Poll::Pending => {}
+            Poll::Ready(Ok(source)) => {
+                let nread = read_buf.filled().len();
+                buf.truncate(nread);
+
+                if let Err(error) = self.on_socket_input(source, buf) {
+                    tracing::error!(target: LOG_TARGET, ?error, "failed to handle input");
+                }
+            }
+            Poll::Ready(Err(error)) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to read from webrtc socket",
+                );
+
+                return Poll::Ready(None);
             }
         }
+
+        while let Poll::Ready(Some(command)) = self.context.poll_next_unpin(cx) {
+            match command {
+                TransportManagerCommand::Dial {
+                    address,
+                    connection: connection_id,
+                } => {
+                    return Poll::Ready(Some(TransportEvent::DialFailure {
+                        connection_id,
+                        address,
+                        error: Error::NotSupported(format!("webrtc cannot dial peers")),
+                    }));
+                }
+            }
+        }
+
+        Poll::Pending
     }
 }
 
