@@ -22,6 +22,7 @@
 
 use crate::{transport::manager::TransportHandle, types::ConnectionId, Error, PeerId};
 
+use futures::Stream;
 use multiaddr::Multiaddr;
 
 use std::fmt::Debug;
@@ -124,7 +125,7 @@ pub(crate) enum TransportEvent {
 }
 
 #[async_trait::async_trait]
-pub(crate) trait Transport {
+pub(crate) trait Transport: Stream {
     type Config: Debug;
 
     /// Create new [`Transport`] object.
