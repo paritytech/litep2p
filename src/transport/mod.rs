@@ -125,8 +125,9 @@ pub(crate) enum TransportEvent {
 }
 
 #[async_trait::async_trait]
-pub(crate) trait Transport: Stream {
+pub(crate) trait TransportBuilder {
     type Config: Debug;
+    type Transport: Transport;
 
     /// Create new [`Transport`] object.
     async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
@@ -138,4 +139,10 @@ pub(crate) trait Transport: Stream {
 
     /// Start transport event loop.
     async fn start(mut self) -> crate::Result<()>;
+}
+
+#[async_trait::async_trait]
+pub(crate) trait Transport: Stream {
+    /// Dial `address`.
+    async fn dial(&mut self, address: Multiaddr) -> crate::Result<()>;
 }

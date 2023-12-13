@@ -33,7 +33,7 @@ use crate::{
         tcp::TcpTransport,
         webrtc::WebRtcTransport,
         websocket::WebSocketTransport,
-        Transport,
+        TransportBuilder,
     },
 };
 
@@ -277,7 +277,7 @@ impl Litep2p {
                 SupportedTransport::Tcp,
                 Arc::clone(&litep2p_config.executor),
             );
-            let transport = <TcpTransport as Transport>::new(service, config).await?;
+            let transport = <TcpTransport as TransportBuilder>::new(service, config).await?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -299,7 +299,7 @@ impl Litep2p {
                 SupportedTransport::Quic,
                 Arc::clone(&litep2p_config.executor),
             );
-            let transport = <QuicTransport as Transport>::new(service, config).await?;
+            let transport = <QuicTransport as TransportBuilder>::new(service, config).await?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -321,7 +321,7 @@ impl Litep2p {
                 SupportedTransport::WebRtc,
                 Arc::clone(&litep2p_config.executor),
             );
-            let transport = <WebRtcTransport as Transport>::new(service, config).await?;
+            let transport = <WebRtcTransport as TransportBuilder>::new(service, config).await?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -343,7 +343,7 @@ impl Litep2p {
                 SupportedTransport::WebSocket,
                 Arc::clone(&litep2p_config.executor),
             );
-            let transport = <WebSocketTransport as Transport>::new(service, config).await?;
+            let transport = <WebSocketTransport as TransportBuilder>::new(service, config).await?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());

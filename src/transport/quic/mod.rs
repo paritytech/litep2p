@@ -28,7 +28,7 @@ use crate::{
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         quic::{config::TransportConfig as QuicTransportConfig, listener::QuicListener},
-        Transport, TransportEvent,
+        Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
     PeerId,
@@ -210,8 +210,9 @@ impl QuicTransport {
 }
 
 #[async_trait::async_trait]
-impl Transport for QuicTransport {
+impl TransportBuilder for QuicTransport {
     type Config = QuicTransportConfig;
+    type Transport = QuicTransport;
 
     /// Create new [`QuicTransport`] object.
     async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
@@ -263,6 +264,13 @@ impl Transport for QuicTransport {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl Transport for QuicTransport {
+    async fn dial(&mut self, _address: Multiaddr) -> crate::Result<()> {
+        todo!();
     }
 }
 
@@ -385,7 +393,7 @@ mod tests {
 
         let transport1 = QuicTransport::new(handle1, transport_config1).await.unwrap();
 
-        let listen_address = Transport::listen_address(&transport1)[0].clone();
+        let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
 
         tokio::spawn(async move {
             let _ = transport1.start().await;

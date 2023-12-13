@@ -27,7 +27,7 @@ use crate::{
         websocket::{
             config::TransportConfig, connection::WebSocketConnection, listener::WebSocketListener,
         },
-        Transport, TransportEvent,
+        Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
     PeerId,
@@ -129,8 +129,9 @@ impl WebSocketTransport {
 }
 
 #[async_trait::async_trait]
-impl Transport for WebSocketTransport {
+impl TransportBuilder for WebSocketTransport {
     type Config = TransportConfig;
+    type Transport = WebSocketTransport;
 
     /// Create new [`Transport`] object.
     async fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self>
@@ -176,6 +177,13 @@ impl Transport for WebSocketTransport {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl Transport for WebSocketTransport {
+    async fn dial(&mut self, _address: Multiaddr) -> crate::Result<()> {
+        todo!();
     }
 }
 
@@ -301,11 +309,13 @@ impl Stream for WebSocketTransport {
                                 address,
                                 error: error.error,
                             })),
-                        None =>
-                            tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),
+                        None => {
+                            tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
+                        }
                     },
-                    None =>
-                        tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection"),
+                    None => {
+                        tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
+                    }
                 },
             }
         }

@@ -27,7 +27,7 @@ use crate::{
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         webrtc::{config::TransportConfig, connection::WebRtcConnection},
-        Transport, TransportEvent,
+        Transport, TransportBuilder, TransportEvent,
     },
     PeerId,
 };
@@ -284,8 +284,9 @@ impl WebRtcTransport {
 }
 
 #[async_trait::async_trait]
-impl Transport for WebRtcTransport {
+impl TransportBuilder for WebRtcTransport {
     type Config = TransportConfig;
+    type Transport = WebRtcTransport;
 
     /// Create new [`Transport`] object.
     async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
@@ -331,6 +332,13 @@ impl Transport for WebRtcTransport {
         while let Some(event) = self.next().await {}
 
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl Transport for WebRtcTransport {
+    async fn dial(&mut self, address: Multiaddr) -> crate::Result<()> {
+        todo!();
     }
 }
 

@@ -25,7 +25,7 @@ use crate::{
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
         tcp::{config::TransportConfig, connection::TcpConnection, listener::TcpListener},
-        Transport, TransportEvent,
+        Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
 };
@@ -136,8 +136,9 @@ impl TcpTransport {
 }
 
 #[async_trait::async_trait]
-impl Transport for TcpTransport {
+impl TransportBuilder for TcpTransport {
     type Config = TransportConfig;
+    type Transport = TcpTransport;
 
     /// Create new [`TcpTransport`].
     async fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self> {
@@ -181,6 +182,13 @@ impl Transport for TcpTransport {
     }
 }
 
+#[async_trait::async_trait]
+impl Transport for TcpTransport {
+    async fn dial(&mut self, _address: Multiaddr) -> crate::Result<()> {
+        todo!();
+    }
+}
+
 impl Stream for TcpTransport {
     type Item = TransportEvent;
 
@@ -218,14 +226,15 @@ impl Stream for TcpTransport {
                         tracing::debug!(target: LOG_TARGET, ?error, "connection failure");
                     }
                 })),
-                Err((connection_id, error)) =>
+                Err((connection_id, error)) => {
                     if let Some(address) = self.pending_dials.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::DialFailure {
                             connection_id,
                             address,
                             error,
                         }));
-                    },
+                    }
+                }
             }
         }
 
@@ -290,7 +299,7 @@ mod tests {
 
         let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
 
-        let listen_address = Transport::listen_address(&transport1)[0].clone();
+        let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
         tokio::spawn(async move {
             let _ = transport1.start().await;
         });
