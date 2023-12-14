@@ -31,7 +31,6 @@ use crate::{
             handle::InnerTransportManagerCommand,
             types::{PeerContext, PeerState},
         },
-        tcp::TcpTransport,
         Endpoint, Transport, TransportEvent,
     },
     types::{protocol::ProtocolName, ConnectionId},
@@ -213,6 +212,9 @@ pub struct TransportManager {
 
     /// WebSocket transport.
     websocket: Box<dyn Transport<Item = TransportEvent>>,
+
+    /// QUIC transport.
+    quic: Box<dyn Transport<Item = TransportEvent>>,
 }
 
 impl TransportManager {
@@ -248,6 +250,7 @@ impl TransportManager {
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
                 tcp: Box::new(DummyTransport {}),
                 websocket: Box::new(DummyTransport {}),
+                quic: Box::new(DummyTransport {}),
             },
             handle,
         )
@@ -331,8 +334,8 @@ impl TransportManager {
     }
 
     /// Register TCP transport.
-    pub(crate) fn register_tcp(&mut self, transport: TcpTransport) {
-        self.tcp = Box::new(transport);
+    pub(crate) fn register_tcp(&mut self, transport: Box<dyn Transport<Item = TransportEvent>>) {
+        self.tcp = transport;
     }
 
     /// Register WebSocket transport.
@@ -341,6 +344,11 @@ impl TransportManager {
         transport: Box<dyn Transport<Item = TransportEvent>>,
     ) {
         self.websocket = transport;
+    }
+
+    /// Register QUIC transport.
+    pub(crate) fn register_quic(&mut self, transport: Box<dyn Transport<Item = TransportEvent>>) {
+        self.quic = transport;
     }
 
     /// Register local listen address.
@@ -1061,6 +1069,15 @@ impl TransportManager {
                     _ => panic!("event not supported"),
                 },
                 event = self.websocket.next() => match event {
+                    Some(TransportEvent::DialFailure { connection_id, address, error }) => {
+                        if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
+                            return Some(event);
+                        }
+                    }
+                    None => panic!("tcp transport exited"),
+                    _ => panic!("event not supported"),
+                },
+                event = self.quic.next() => match event {
                     Some(TransportEvent::DialFailure { connection_id, address, error }) => {
                         if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
                             return Some(event);

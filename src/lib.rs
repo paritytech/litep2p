@@ -286,7 +286,7 @@ impl Litep2p {
                 )));
             }
 
-            transport_manager.register_tcp(transport);
+            transport_manager.register_tcp(Box::new(transport));
 
             // litep2p_config.executor.run(Box::pin(async move {
             //     if let Err(error) = transport.start().await {
@@ -310,11 +310,13 @@ impl Litep2p {
                 )));
             }
 
-            litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "quic failed");
-                }
-            }));
+            transport_manager.register_quic(Box::new(transport));
+
+            // litep2p_config.executor.run(Box::pin(async move {
+            //     if let Err(error) = transport.start().await {
+            //         tracing::error!(target: LOG_TARGET, ?error, "quic failed");
+            //     }
+            // }));
         }
 
         // enable webrtc transport if the config exists
