@@ -215,6 +215,9 @@ pub struct TransportManager {
 
     /// QUIC transport.
     quic: Box<dyn Transport<Item = TransportEvent>>,
+
+    /// WebRTC transport.
+    webrtc: Box<dyn Transport<Item = TransportEvent>>,
 }
 
 impl TransportManager {
@@ -251,6 +254,7 @@ impl TransportManager {
                 tcp: Box::new(DummyTransport {}),
                 websocket: Box::new(DummyTransport {}),
                 quic: Box::new(DummyTransport {}),
+                webrtc: Box::new(DummyTransport {}),
             },
             handle,
         )
@@ -349,6 +353,11 @@ impl TransportManager {
     /// Register QUIC transport.
     pub(crate) fn register_quic(&mut self, transport: Box<dyn Transport<Item = TransportEvent>>) {
         self.quic = transport;
+    }
+
+    /// Register WebRTC transport.
+    pub(crate) fn register_webrtc(&mut self, transport: Box<dyn Transport<Item = TransportEvent>>) {
+        self.webrtc = transport;
     }
 
     /// Register local listen address.
@@ -1074,7 +1083,7 @@ impl TransportManager {
                             return Some(event);
                         }
                     }
-                    None => panic!("tcp transport exited"),
+                    None => panic!("websocket transport exited"),
                     _ => panic!("event not supported"),
                 },
                 event = self.quic.next() => match event {
@@ -1083,7 +1092,20 @@ impl TransportManager {
                             return Some(event);
                         }
                     }
-                    None => panic!("tcp transport exited"),
+                    None => panic!("quic transport exited"),
+                    _ => panic!("event not supported"),
+                },
+                event = self.webrtc.next() => match event {
+                    Some(TransportEvent::DialFailure { connection_id, address, error }) => {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?address,
+                            ?error,
+                            "state mismatch: dial failure for webrtc but it doesn't support dialing",
+                        );
+                    }
+                    None => panic!("webrtc transport exited"),
                     _ => panic!("event not supported"),
                 }
             }

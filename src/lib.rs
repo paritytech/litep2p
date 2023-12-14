@@ -334,11 +334,13 @@ impl Litep2p {
                 )));
             }
 
-            litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "webrtc failed");
-                }
-            }));
+            transport_manager.register_webrtc(Box::new(transport));
+
+            // litep2p_config.executor.run(Box::pin(async move {
+            //     if let Err(error) = transport.start().await {
+            //         tracing::error!(target: LOG_TARGET, ?error, "webrtc failed");
+            //     }
+            // }));
         }
 
         // enable websocket transport if the config exists
