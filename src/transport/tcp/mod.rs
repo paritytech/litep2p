@@ -182,9 +182,8 @@ impl TransportBuilder for TcpTransport {
     }
 }
 
-#[async_trait::async_trait]
 impl Transport for TcpTransport {
-    async fn dial(&mut self, _address: Multiaddr) -> crate::Result<()> {
+    fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
         todo!();
     }
 }

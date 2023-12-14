@@ -142,8 +142,7 @@ pub(crate) trait TransportBuilder {
     async fn start(mut self) -> crate::Result<()>;
 }
 
-#[async_trait::async_trait]
 pub(crate) trait Transport: Stream + Unpin + Send {
     /// Dial `address`.
-    async fn dial(&mut self, address: Multiaddr) -> crate::Result<()>;
+    fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()>;
 }

@@ -20,7 +20,10 @@
 
 //! Dummy transport.
 
-use crate::transport::{Transport, TransportEvent};
+use crate::{
+    transport::{Transport, TransportEvent},
+    types::ConnectionId,
+};
 
 use futures::Stream;
 use multiaddr::Multiaddr;
@@ -40,9 +43,8 @@ impl Stream for DummyTransport {
     }
 }
 
-#[async_trait::async_trait]
 impl Transport for DummyTransport {
-    async fn dial(&mut self, _: Multiaddr) -> crate::Result<()> {
+    fn dial(&mut self, _: ConnectionId, _: Multiaddr) -> crate::Result<()> {
         Ok(())
     }
 }

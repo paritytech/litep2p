@@ -29,6 +29,7 @@ use crate::{
         webrtc::{config::TransportConfig, connection::WebRtcConnection},
         Transport, TransportBuilder, TransportEvent,
     },
+    types::ConnectionId,
     PeerId,
 };
 
@@ -335,9 +336,8 @@ impl TransportBuilder for WebRtcTransport {
     }
 }
 
-#[async_trait::async_trait]
 impl Transport for WebRtcTransport {
-    async fn dial(&mut self, address: Multiaddr) -> crate::Result<()> {
+    fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
         todo!();
     }
 }
