@@ -32,6 +32,7 @@ pub mod tcp;
 pub mod webrtc;
 pub mod websocket;
 
+pub(crate) mod dummy;
 pub(crate) mod manager;
 
 /// Connection endpoint.
