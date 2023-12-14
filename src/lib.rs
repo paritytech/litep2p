@@ -354,11 +354,13 @@ impl Litep2p {
                 )));
             }
 
-            litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "websocket failed");
-                }
-            }));
+            // litep2p_config.executor.run(Box::pin(async move {
+            //     if let Err(error) = transport.start().await {
+            //         tracing::error!(target: LOG_TARGET, ?error, "websocket failed");
+            //     }
+            // }));
+
+            transport_manager.register_websocket(Box::new(transport));
         }
 
         // enable mdns if the config exists

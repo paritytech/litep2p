@@ -210,6 +210,9 @@ pub struct TransportManager {
 
     /// TCP transport.
     tcp: Box<dyn Transport<Item = TransportEvent>>,
+
+    /// WebSocket transport.
+    websocket: Box<dyn Transport<Item = TransportEvent>>,
 }
 
 impl TransportManager {
@@ -244,6 +247,7 @@ impl TransportManager {
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
                 tcp: Box::new(DummyTransport {}),
+                websocket: Box::new(DummyTransport {}),
             },
             handle,
         )
@@ -329,6 +333,14 @@ impl TransportManager {
     /// Register TCP transport.
     pub(crate) fn register_tcp(&mut self, transport: TcpTransport) {
         self.tcp = Box::new(transport);
+    }
+
+    /// Register WebSocket transport.
+    pub(crate) fn register_websocket(
+        &mut self,
+        transport: Box<dyn Transport<Item = TransportEvent>>,
+    ) {
+        self.websocket = transport;
     }
 
     /// Register local listen address.
@@ -924,6 +936,77 @@ impl TransportManager {
         }
     }
 
+    /// Handle dial failure.
+    async fn on_dial_failure_new(
+        &mut self,
+        connection_id: ConnectionId,
+        address: Multiaddr,
+        error: Error,
+    ) -> Option<TransportManagerEvent> {
+        match self.on_dial_failure(&connection_id, &address, &error) {
+            Ok(true) => {
+                match address.iter().last() {
+                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
+                        Ok(peer) =>
+                            for (_, context) in &self.protocols {
+                                let _ = context
+                                    .tx
+                                    .send(InnerTransportEvent::DialFailure {
+                                        peer,
+                                        address: address.clone(),
+                                    })
+                                    .await;
+                            },
+                        Err(error) => {
+                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
+                            debug_assert!(false);
+                        }
+                    },
+                    _ => {
+                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
+                        debug_assert!(false);
+                    }
+                }
+
+                Some(TransportManagerEvent::DialFailure {
+                    connection: connection_id,
+                    address,
+                    error,
+                })
+            }
+            Err(error) => {
+                match address.iter().last() {
+                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
+                        Ok(peer) =>
+                            for (_, context) in &self.protocols {
+                                let _ = context
+                                    .tx
+                                    .send(InnerTransportEvent::DialFailure {
+                                        peer,
+                                        address: address.clone(),
+                                    })
+                                    .await;
+                            },
+                        Err(error) => {
+                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
+                            debug_assert!(false);
+                        }
+                    },
+                    _ => {
+                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
+                        debug_assert!(false);
+                    }
+                }
+                Some(TransportManagerEvent::DialFailure {
+                    connection: connection_id,
+                    address,
+                    error,
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Poll next event from [`TransportManager`].
     pub async fn next(&mut self) -> Option<TransportManagerEvent> {
         loop {
@@ -970,58 +1053,17 @@ impl TransportManager {
                 },
                 event = self.tcp.next() => match event {
                     Some(TransportEvent::DialFailure { connection_id, address, error }) => {
-                        match self.on_dial_failure(&connection_id, &address, &error) {
-                            Ok(true) => {
-                                match address.iter().last() {
-                                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                                        Ok(peer) =>
-                                            for (_, context) in &self.protocols {
-                                                let _ = context
-                                                    .tx
-                                                    .send(InnerTransportEvent::DialFailure {
-                                                        peer,
-                                                        address: address.clone(),
-                                                    })
-                                                    .await;
-                                            },
-                                        Err(error) => {
-                                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
-                                            debug_assert!(false);
-                                        }
-                                    },
-                                    _ => {
-                                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
-                                        debug_assert!(false);
-                                    }
-                                }
-                                return Some(TransportManagerEvent::DialFailure { connection: connection_id, address, error });
-                            }
-                            Err(error) => {
-                                match address.iter().last() {
-                                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                                        Ok(peer) =>
-                                            for (_, context) in &self.protocols {
-                                                let _ = context
-                                                    .tx
-                                                    .send(InnerTransportEvent::DialFailure {
-                                                        peer,
-                                                        address: address.clone(),
-                                                    })
-                                                    .await;
-                                            },
-                                        Err(error) => {
-                                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
-                                            debug_assert!(false);
-                                        }
-                                    },
-                                    _ => {
-                                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
-                                        debug_assert!(false);
-                                    }
-                                }
-                                return Some(TransportManagerEvent::DialFailure { connection: connection_id, address, error });
-                            }
-                            _ => {}
+                        if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
+                            return Some(event);
+                        }
+                    }
+                    None => panic!("tcp transport exited"),
+                    _ => panic!("event not supported"),
+                },
+                event = self.websocket.next() => match event {
+                    Some(TransportEvent::DialFailure { connection_id, address, error }) => {
+                        if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
+                            return Some(event);
                         }
                     }
                     None => panic!("tcp transport exited"),
