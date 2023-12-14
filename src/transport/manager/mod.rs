@@ -25,17 +25,20 @@ use crate::{
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
     transport::{
+        dummy::DummyTransport,
         manager::{
             address::{AddressRecord, AddressStore},
             handle::InnerTransportManagerCommand,
             types::{PeerContext, PeerState},
         },
-        Endpoint,
+        tcp::TcpTransport,
+        Endpoint, Transport, TransportEvent,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
 };
 
+use futures::StreamExt;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use parking_lot::RwLock;
@@ -204,6 +207,9 @@ pub struct TransportManager {
 
     /// Pending connections.
     pending_connections: HashMap<ConnectionId, PeerId>,
+
+    /// TCP transport.
+    tcp: Box<dyn Transport<Item = TransportEvent>>,
 }
 
 impl TransportManager {
@@ -237,6 +243,7 @@ impl TransportManager {
                 pending_connections: HashMap::new(),
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
+                tcp: Box::new(DummyTransport {}),
             },
             handle,
         )
@@ -317,6 +324,11 @@ impl TransportManager {
             next_substream_id: self.next_substream_id.clone(),
             next_connection_id: self.next_connection_id.clone(),
         }
+    }
+
+    /// Register TCP transport.
+    pub(crate) fn register_tcp(&mut self, transport: TcpTransport) {
+        self.tcp = Box::new(transport);
     }
 
     /// Register local listen address.
@@ -955,6 +967,65 @@ impl TransportManager {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to dial peer")
                         }
                     }
+                },
+                event = self.tcp.next() => match event {
+                    Some(TransportEvent::DialFailure { connection_id, address, error }) => {
+                        match self.on_dial_failure(&connection_id, &address, &error) {
+                            Ok(true) => {
+                                match address.iter().last() {
+                                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
+                                        Ok(peer) =>
+                                            for (_, context) in &self.protocols {
+                                                let _ = context
+                                                    .tx
+                                                    .send(InnerTransportEvent::DialFailure {
+                                                        peer,
+                                                        address: address.clone(),
+                                                    })
+                                                    .await;
+                                            },
+                                        Err(error) => {
+                                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
+                                            debug_assert!(false);
+                                        }
+                                    },
+                                    _ => {
+                                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
+                                        debug_assert!(false);
+                                    }
+                                }
+                                return Some(TransportManagerEvent::DialFailure { connection: connection_id, address, error });
+                            }
+                            Err(error) => {
+                                match address.iter().last() {
+                                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
+                                        Ok(peer) =>
+                                            for (_, context) in &self.protocols {
+                                                let _ = context
+                                                    .tx
+                                                    .send(InnerTransportEvent::DialFailure {
+                                                        peer,
+                                                        address: address.clone(),
+                                                    })
+                                                    .await;
+                                            },
+                                        Err(error) => {
+                                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
+                                            debug_assert!(false);
+                                        }
+                                    },
+                                    _ => {
+                                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
+                                        debug_assert!(false);
+                                    }
+                                }
+                                return Some(TransportManagerEvent::DialFailure { connection: connection_id, address, error });
+                            }
+                            _ => {}
+                        }
+                    }
+                    None => panic!("tcp transport exited"),
+                    _ => panic!("event not supported"),
                 }
             }
         }

@@ -286,11 +286,13 @@ impl Litep2p {
                 )));
             }
 
-            litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "tcp failed");
-                }
-            }));
+            transport_manager.register_tcp(transport);
+
+            // litep2p_config.executor.run(Box::pin(async move {
+            //     if let Err(error) = transport.start().await {
+            //         tracing::error!(target: LOG_TARGET, ?error, "tcp failed");
+            //     }
+            // }));
         }
 
         // enable quic transport if the config exists
