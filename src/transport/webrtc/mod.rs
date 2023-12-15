@@ -337,8 +337,15 @@ impl TransportBuilder for WebRtcTransport {
 }
 
 impl Transport for WebRtcTransport {
-    fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
-        todo!();
+    fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
+        tracing::warn!(
+            target: LOG_TARGET,
+            ?connection_id,
+            ?address,
+            "webrtc cannot dial",
+        );
+
+        Err(Error::NotSupported(format!("webrtc cannot dial peers")))
     }
 }
 

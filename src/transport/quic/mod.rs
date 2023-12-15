@@ -157,56 +157,6 @@ impl QuicTransport {
 
         None
     }
-
-    /// Dial remote peer.
-    fn on_dial_peer(
-        &mut self,
-        address: Multiaddr,
-        connection_id: ConnectionId,
-    ) -> crate::Result<()> {
-        let Ok((socket_address, Some(peer))) = QuicListener::get_socket_address(&address) else {
-            return Err(Error::AddressError(AddressError::PeerIdMissing));
-        };
-
-        let crypto_config =
-            Arc::new(make_client_config(&self.context.keypair, Some(peer)).expect("to succeed"));
-        let client_config = ClientConfig::new(crypto_config);
-        let client_listen_address = match address.iter().next() {
-            Some(Protocol::Ip6(_)) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-            Some(Protocol::Ip4(_)) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-            _ => return Err(Error::AddressError(AddressError::InvalidProtocol)),
-        };
-
-        let client = Endpoint::client(client_listen_address)
-            .map_err(|error| Error::Other(error.to_string()))?;
-        let connection = client
-            .connect_with(client_config, socket_address, "l")
-            .map_err(|error| Error::Other(error.to_string()))?;
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?address,
-            ?peer,
-            ?client_listen_address,
-            "dial peer",
-        );
-
-        self.pending_dials.insert(connection_id, address);
-        self.pending_connections.push(Box::pin(async move {
-            let connection = match connection.await {
-                Ok(connection) => connection,
-                Err(error) => return (connection_id, Err(error.into())),
-            };
-
-            let Some(peer) = Self::extract_peer_id(&connection) else {
-                return (connection_id, Err(Error::InvalidCertificate));
-            };
-
-            (connection_id, Ok(NegotiatedConnection { peer, connection }))
-        }));
-
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]
@@ -268,8 +218,49 @@ impl TransportBuilder for QuicTransport {
 }
 
 impl Transport for QuicTransport {
-    fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
-        todo!();
+    fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
+        let Ok((socket_address, Some(peer))) = QuicListener::get_socket_address(&address) else {
+            return Err(Error::AddressError(AddressError::PeerIdMissing));
+        };
+
+        let crypto_config =
+            Arc::new(make_client_config(&self.context.keypair, Some(peer)).expect("to succeed"));
+        let client_config = ClientConfig::new(crypto_config);
+        let client_listen_address = match address.iter().next() {
+            Some(Protocol::Ip6(_)) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+            Some(Protocol::Ip4(_)) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            _ => return Err(Error::AddressError(AddressError::InvalidProtocol)),
+        };
+
+        let client = Endpoint::client(client_listen_address)
+            .map_err(|error| Error::Other(error.to_string()))?;
+        let connection = client
+            .connect_with(client_config, socket_address, "l")
+            .map_err(|error| Error::Other(error.to_string()))?;
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?address,
+            ?peer,
+            ?client_listen_address,
+            "dial peer",
+        );
+
+        self.pending_dials.insert(connection_id, address);
+        self.pending_connections.push(Box::pin(async move {
+            let connection = match connection.await {
+                Ok(connection) => connection,
+                Err(error) => return (connection_id, Err(error.into())),
+            };
+
+            let Some(peer) = Self::extract_peer_id(&connection) else {
+                return (connection_id, Err(Error::InvalidCertificate));
+            };
+
+            (connection_id, Ok(NegotiatedConnection { peer, connection }))
+        }));
+
+        Ok(())
     }
 }
 
@@ -283,7 +274,7 @@ impl Stream for QuicTransport {
                     address,
                     connection: connection_id,
                 } =>
-                    if let Err(error) = self.on_dial_peer(address.clone(), connection_id) {
+                    if let Err(error) = self.dial(connection_id, address.clone()) {
                         tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, ?error, "failed to dial peer");
 
                         return Poll::Ready(Some(TransportEvent::DialFailure {
