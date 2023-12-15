@@ -99,40 +99,6 @@ impl TcpTransport {
             .map_err(|error| (connection_id, error))
         }));
     }
-
-    /// Dial remote peer.
-    fn on_dial_peer(
-        &mut self,
-        address: &Multiaddr,
-        connection_id: ConnectionId,
-    ) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, "open connection");
-
-        let protocol_set = self.context.protocol_set(connection_id);
-        let (socket_address, peer) = listener::TcpListener::get_socket_address(address)?;
-        let yamux_config = self.config.yamux_config.clone();
-        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
-        let max_write_buffer_size = self.config.noise_write_buffer_size;
-        let bandwidth_sink = self.context.bandwidth_sink.clone();
-
-        self.pending_dials.insert(connection_id, address.clone());
-        self.pending_connections.push(Box::pin(async move {
-            TcpConnection::open_connection(
-                protocol_set,
-                connection_id,
-                socket_address,
-                peer,
-                yamux_config,
-                max_read_ahead_factor,
-                max_write_buffer_size,
-                bandwidth_sink,
-            )
-            .await
-            .map_err(|error| (connection_id, error))
-        }));
-
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]
@@ -183,8 +149,33 @@ impl TransportBuilder for TcpTransport {
 }
 
 impl Transport for TcpTransport {
-    fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
-        todo!();
+    fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
+        tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
+
+        let protocol_set = self.context.protocol_set(connection_id);
+        let (socket_address, peer) = listener::TcpListener::get_socket_address(&address)?;
+        let yamux_config = self.config.yamux_config.clone();
+        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+        let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let bandwidth_sink = self.context.bandwidth_sink.clone();
+
+        self.pending_dials.insert(connection_id, address.clone());
+        self.pending_connections.push(Box::pin(async move {
+            TcpConnection::open_connection(
+                protocol_set,
+                connection_id,
+                socket_address,
+                peer,
+                yamux_config,
+                max_read_ahead_factor,
+                max_write_buffer_size,
+                bandwidth_sink,
+            )
+            .await
+            .map_err(|error| (connection_id, error))
+        }));
+
+        Ok(())
     }
 }
 
@@ -199,7 +190,7 @@ impl Stream for TcpTransport {
                     address,
                     connection: connection_id,
                 }) =>
-                    if let Err(error) = self.on_dial_peer(&address, connection_id) {
+                    if let Err(error) = self.dial(connection_id, address.clone()) {
                         return Poll::Ready(Some(TransportEvent::DialFailure {
                             connection_id,
                             address,
@@ -496,7 +487,7 @@ mod tests {
 
         assert!(transport.pending_dials.is_empty());
 
-        match transport.on_dial_peer(&multiaddr, ConnectionId::from(0usize)) {
+        match transport.dial(ConnectionId::from(0usize), multiaddr) {
             Ok(()) => {}
             _ => panic!("invalid result for `on_dial_peer()`"),
         }
