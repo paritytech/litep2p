@@ -189,7 +189,7 @@ impl TransportContext {
 }
 
 impl Stream for TransportContext {
-    type Item = TransportEvent;
+    type Item = (SupportedTransport, TransportEvent);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let len = match self.transports.len() {
@@ -202,10 +202,11 @@ impl Stream for TransportContext {
             let index = self.index % len;
             self.index += 1;
 
-            let (_, stream) = self.transports.get_index_mut(index).expect("transport to exist");
+            let (key, stream) = self.transports.get_index_mut(index).expect("transport to exist");
             match stream.poll_next_unpin(cx) {
                 Poll::Pending => {}
-                event => return event,
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Ready(Some(event)) => return Poll::Ready(Some((*key, event))),
             }
 
             if self.index == start_index + len {
@@ -1079,14 +1080,17 @@ impl TransportManager {
                         }
                     }
                 },
-                event = self.transports.next() => match event {
-                    Some(TransportEvent::DialFailure { connection_id, address, error }) => {
-                        if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
-                            return Some(event);
+                event = self.transports.next() => {
+                    let (_transport, event) = event?;
+
+                    match event {
+                        TransportEvent::DialFailure { connection_id, address, error } => {
+                            if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
+                                return Some(event);
+                            }
                         }
+                        _ => panic!("event not supported"),
                     }
-                    None => panic!("transports exited"),
-                    _ => panic!("event not supported"),
                 },
             }
         }
