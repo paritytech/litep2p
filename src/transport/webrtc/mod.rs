@@ -35,6 +35,7 @@ use crate::{
 
 use futures::{Stream, StreamExt};
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
+use socket2::{Domain, Socket, Type};
 use str0m::{
     change::{DtlsCert, IceCreds},
     channel::{ChannelConfig, ChannelId},
@@ -301,7 +302,26 @@ impl TransportBuilder for WebRtcTransport {
         );
 
         let (listen_address, _) = Self::get_socket_address(&config.listen_addresses[0])?;
-        let socket = UdpSocket::bind(listen_address).await?;
+        let socket = match listen_address.is_ipv4() {
+            true => {
+                let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
+                socket.bind(&listen_address.into())?;
+                socket
+            }
+            false => {
+                let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?;
+                socket.set_only_v6(true)?;
+                socket.bind(&listen_address.into())?;
+                socket
+            }
+        };
+        socket.listen(1024)?;
+        socket.set_reuse_address(true)?;
+        socket.set_nonblocking(true)?;
+        #[cfg(unix)]
+        socket.set_reuse_port(true)?;
+
+        let socket = UdpSocket::from_std(socket.into())?;
         let listen_address = socket.local_addr()?;
         let dtls_cert = DtlsCert::new();
 
