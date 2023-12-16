@@ -207,6 +207,14 @@ impl Transport for WebSocketTransport {
 
         Ok(())
     }
+
+    fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
 }
 
 impl Stream for WebSocketTransport {

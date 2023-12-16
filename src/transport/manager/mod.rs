@@ -75,6 +75,15 @@ const SCORE_DIAL_SUCCESS: i32 = 100i32;
 /// Score for a non-working address.
 const SCORE_DIAL_FAILURE: i32 = -100i32;
 
+/// TODO:
+enum ConnectionEstablishedResult {
+    /// Accept connection and inform `Litep2p` about the connection.
+    Accept,
+
+    /// Reject connection.
+    Reject,
+}
+
 /// [`TransportManager`] configuration.
 #[derive(Debug)]
 pub struct Config {
@@ -91,6 +100,7 @@ pub enum TransportManagerEvent {
         peer: PeerId,
 
         /// Connection ID.
+        // TODO: remove this
         connection: ConnectionId,
 
         /// Endpoint.
@@ -1036,6 +1046,163 @@ impl TransportManager {
         }
     }
 
+    async fn on_connection_established_new(
+        &mut self,
+        peer: PeerId,
+        endpoint: &Endpoint,
+    ) -> crate::Result<ConnectionEstablishedResult> {
+        if let Some(dialed_peer) = self.pending_connections.remove(&endpoint.connection_id()) {
+            if dialed_peer != peer {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?dialed_peer,
+                    ?peer,
+                    "peer ids do not match but transport was supposed to reject connection"
+                );
+                debug_assert!(false);
+                return Err(Error::InvalidState);
+            }
+        };
+
+        let mut peers = self.peers.write();
+        match peers.get_mut(&peer) {
+            Some(context) => match context.state {
+                PeerState::Connected { .. } => match context.secondary_connection {
+                    Some(_) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            connection_id = ?endpoint.connection_id(),
+                            ?endpoint,
+                            "secondary connection already exists, ignoring connection",
+                        );
+                        context
+                            .addresses
+                            .insert_with_score(endpoint.address().clone(), SCORE_DIAL_SUCCESS);
+
+                        return Ok(ConnectionEstablishedResult::Reject);
+                    }
+                    None => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            connection_id = ?endpoint.connection_id(),
+                            address = ?endpoint.address(),
+                            "secondary connection",
+                        );
+
+                        context.secondary_connection = Some(AddressRecord::new(
+                            &peer,
+                            endpoint.address().clone(),
+                            SCORE_DIAL_SUCCESS,
+                            Some(endpoint.connection_id()),
+                        ));
+                    }
+                },
+                PeerState::Dialing { ref record, .. } => {
+                    match record.connection_id() == &Some(endpoint.connection_id()) {
+                        true => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                connection_id = ?endpoint.connection_id(),
+                                ?endpoint,
+                                "connection opened to remote",
+                            );
+
+                            context.state = PeerState::Connected {
+                                record: record.clone(),
+                                dial_record: None,
+                            };
+                        }
+                        false => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                connection_id = ?endpoint.connection_id(),
+                                ?endpoint,
+                                "connection opened by remote while local node was dialing",
+                            );
+
+                            context.state = PeerState::Connected {
+                                record: AddressRecord::new(
+                                    &peer,
+                                    endpoint.address().clone(),
+                                    SCORE_DIAL_SUCCESS,
+                                    Some(endpoint.connection_id()),
+                                ),
+                                dial_record: Some(record.clone()),
+                            };
+                        }
+                    }
+                }
+                PeerState::Disconnected {
+                    ref mut dial_record,
+                } => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        connection_id = ?endpoint.connection_id(),
+                        ?endpoint,
+                        ?dial_record,
+                        "connection opened by remote or delayed dial succeeded",
+                    );
+
+                    let (record, dial_record) = match dial_record.take() {
+                        Some(dial_record) =>
+                            if dial_record.address() == endpoint.address() {
+                                (dial_record, None)
+                            } else {
+                                (
+                                    AddressRecord::new(
+                                        &peer,
+                                        endpoint.address().clone(),
+                                        SCORE_DIAL_SUCCESS,
+                                        Some(endpoint.connection_id()),
+                                    ),
+                                    Some(dial_record),
+                                )
+                            },
+                        None => (
+                            AddressRecord::new(
+                                &peer,
+                                endpoint.address().clone(),
+                                SCORE_DIAL_SUCCESS,
+                                Some(endpoint.connection_id()),
+                            ),
+                            None,
+                        ),
+                    };
+
+                    context.state = PeerState::Connected {
+                        record,
+                        dial_record,
+                    };
+                }
+            },
+            None => {
+                peers.insert(
+                    peer,
+                    PeerContext {
+                        state: PeerState::Connected {
+                            record: AddressRecord::new(
+                                &peer,
+                                endpoint.address().clone(),
+                                SCORE_DIAL_SUCCESS,
+                                Some(endpoint.connection_id()),
+                            ),
+                            dial_record: None,
+                        },
+                        addresses: AddressStore::new(),
+                        secondary_connection: None,
+                    },
+                );
+            }
+        }
+
+        Ok(ConnectionEstablishedResult::Accept)
+    }
+
     /// Poll next event from [`TransportManager`].
     pub async fn next(&mut self) -> Option<TransportManagerEvent> {
         loop {
@@ -1081,12 +1248,65 @@ impl TransportManager {
                     }
                 },
                 event = self.transports.next() => {
-                    let (_transport, event) = event?;
+                    let (transport, event) = event?;
 
                     match event {
                         TransportEvent::DialFailure { connection_id, address, error } => {
                             if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
                                 return Some(event);
+                            }
+                        }
+                        TransportEvent::ConnectionEstablished { peer, endpoint } => {
+                            match self.on_connection_established_new(peer, &endpoint).await {
+                                Err(error) => {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        ?peer,
+                                        ?endpoint,
+                                        ?error,
+                                        "failed to handle established connection",
+                                    );
+
+                                    let _ = self
+                                        .transports
+                                        .get_mut(&transport)
+                                        .expect("transport to exist")
+                                        .reject(endpoint.connection_id());
+                                }
+                                Ok(ConnectionEstablishedResult::Accept) => {
+                                    tracing::trace!(
+                                        target: LOG_TARGET,
+                                        ?peer,
+                                        ?endpoint,
+                                        "accept connection",
+                                    );
+
+                                    let _ = self
+                                        .transports
+                                        .get_mut(&transport)
+                                        .expect("transport to exist")
+                                        .accept(endpoint.connection_id());
+
+                                    return Some(TransportManagerEvent::ConnectionEstablished {
+                                        peer,
+                                        connection: endpoint.connection_id(),
+                                        endpoint: endpoint,
+                                    });
+                                }
+                                Ok(ConnectionEstablishedResult::Reject) => {
+                                    tracing::trace!(
+                                        target: LOG_TARGET,
+                                        ?peer,
+                                        ?endpoint,
+                                        "reject connection",
+                                    );
+
+                                    let _ = self
+                                        .transports
+                                        .get_mut(&transport)
+                                        .expect("transport to exist")
+                                        .reject(endpoint.connection_id());
+                                }
                             }
                         }
                         _ => panic!("event not supported"),

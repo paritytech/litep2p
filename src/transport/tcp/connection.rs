@@ -93,6 +93,41 @@ enum ConnectionError {
     },
 }
 
+/// Connection context for an opened connection that hasn't yet started its event loop.
+pub struct NegotiatedConnection {
+    /// Connection ID.
+    connection_id: ConnectionId,
+
+    /// Yamux connection.
+    connection: yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
+
+    /// Yamux control.
+    control: yamux::Control,
+
+    /// Remote peer ID.
+    peer: PeerId,
+
+    /// Endpoint.
+    endpoint: Endpoint,
+}
+
+impl NegotiatedConnection {
+    /// Get `ConnectionId` of the negotiated connection.
+    pub fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
+
+    /// Get `PeerId` of the negotiated connection.
+    pub fn peer(&self) -> PeerId {
+        self.peer
+    }
+
+    /// Get `Endpoint` of the negotiated connection.
+    pub fn endpoint(&self) -> Endpoint {
+        self.endpoint.clone()
+    }
+}
+
 /// TCP connection.
 pub struct TcpConnection {
     /// Connection ID.
@@ -109,6 +144,9 @@ pub struct TcpConnection {
 
     /// Remote peer ID.
     peer: PeerId,
+
+    /// Endpoint.
+    endpoint: Endpoint,
 
     /// Next substream ID.
     next_substream_id: SubstreamId,
@@ -131,17 +169,43 @@ impl fmt::Debug for TcpConnection {
 }
 
 impl TcpConnection {
+    /// Create new [`TcpConnection`] from [`NegotiatedConnection`].
+    pub(super) fn new(
+        context: NegotiatedConnection,
+        protocol_set: ProtocolSet,
+        bandwidth_sink: BandwidthSink,
+    ) -> Self {
+        let NegotiatedConnection {
+            connection_id,
+            connection,
+            control,
+            peer,
+            endpoint,
+        } = context;
+
+        Self {
+            connection_id,
+            protocol_set,
+            connection,
+            control,
+            peer,
+            endpoint,
+            bandwidth_sink,
+            next_substream_id: SubstreamId::new(),
+            pending_substreams: FuturesUnordered::new(),
+        }
+    }
+
     /// Open connection to remote peer at `address`.
     pub(super) async fn open_connection(
-        context: ProtocolSet,
         connection_id: ConnectionId,
+        keypair: Keypair,
         address: AddressType,
         peer: Option<PeerId>,
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
-        bandwidth_sink: BandwidthSink,
-    ) -> crate::Result<Self> {
+    ) -> crate::Result<NegotiatedConnection> {
         tracing::debug!(
             target: LOG_TARGET,
             ?address,
@@ -149,7 +213,6 @@ impl TcpConnection {
             "open connection to remote peer",
         );
 
-        let keypair = context.keypair.clone();
         match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             let stream = match &address {
                 AddressType::Socket(socket_address) => TcpStream::connect(socket_address).await?,
@@ -161,14 +224,12 @@ impl TcpConnection {
                 stream,
                 peer,
                 connection_id,
-                context,
                 keypair,
                 Role::Dialer,
                 address,
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
-                bandwidth_sink,
             )
             .await
         })
@@ -223,32 +284,27 @@ impl TcpConnection {
 
     /// Accept a new connection.
     pub(super) async fn accept_connection(
-        context: ProtocolSet,
         stream: TcpStream,
         connection_id: ConnectionId,
+        keypair: Keypair,
         address: SocketAddr,
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
-        bandwidth_sink: BandwidthSink,
-    ) -> crate::Result<Self> {
+    ) -> crate::Result<NegotiatedConnection> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
-        let keypair = context.keypair.clone();
         match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
             Self::negotiate_connection(
                 stream,
                 None,
                 connection_id,
-                context,
-                // noise_config,
                 keypair,
                 Role::Listener,
                 AddressType::Socket(address),
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
-                bandwidth_sink,
             )
             .await
         })
@@ -322,15 +378,13 @@ impl TcpConnection {
         stream: TcpStream,
         dialed_peer: Option<PeerId>,
         connection_id: ConnectionId,
-        mut protocol_set: ProtocolSet,
         keypair: Keypair,
         role: Role,
         address: AddressType,
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
-        bandwidth_sink: BandwidthSink,
-    ) -> crate::Result<Self> {
+    ) -> crate::Result<NegotiatedConnection> {
         tracing::trace!(
             target: LOG_TARGET,
             ?role,
@@ -388,24 +442,21 @@ impl TcpConnection {
             Role::Listener => Endpoint::listener(address, connection_id),
         };
 
-        protocol_set
-            .report_connection_established(connection_id, peer, endpoint)
-            .await?;
-
-        Ok(Self {
+        Ok(NegotiatedConnection {
             peer,
             control,
             connection,
-            protocol_set,
             connection_id,
-            bandwidth_sink,
-            next_substream_id: SubstreamId::new(),
-            pending_substreams: FuturesUnordered::new(),
+            endpoint,
         })
     }
 
     /// Start connection event loop.
     pub(crate) async fn start(mut self) -> crate::Result<()> {
+        self.protocol_set
+            .report_connection_established_new(self.connection_id, self.peer, self.endpoint)
+            .await?;
+
         loop {
             tokio::select! {
                 substream = self.connection.next() => match substream {
@@ -584,7 +635,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -596,19 +647,17 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
-                protocol_set,
                 ConnectionId::from(0usize),
+                keypair,
                 AddressType::Socket(address),
                 None,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -645,7 +694,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -657,7 +706,6 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         let (Ok(mut dialer), Ok((listener, dialer_address))) =
@@ -668,14 +716,13 @@ mod tests {
 
         tokio::spawn(async move {
             match TcpConnection::accept_connection(
-                protocol_set,
                 listener,
                 ConnectionId::from(0usize),
+                keypair,
                 dialer_address,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -711,7 +758,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -723,19 +770,17 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
-                protocol_set,
                 ConnectionId::from(0usize),
+                keypair,
                 AddressType::Socket(address),
                 None,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -776,7 +821,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -788,7 +833,6 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
@@ -799,14 +843,13 @@ mod tests {
 
         tokio::spawn(async move {
             match TcpConnection::accept_connection(
-                protocol_set,
                 listener,
                 ConnectionId::from(0usize),
+                keypair,
                 dialer_address,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -846,7 +889,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -858,7 +901,6 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
@@ -869,14 +911,13 @@ mod tests {
 
         tokio::spawn(async move {
             match TcpConnection::accept_connection(
-                protocol_set,
                 listener,
                 ConnectionId::from(0usize),
+                keypair,
                 dialer_address,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -916,7 +957,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -928,19 +969,17 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
-                protocol_set,
                 ConnectionId::from(0usize),
+                keypair,
                 AddressType::Socket(address),
                 None,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -981,7 +1020,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -993,19 +1032,17 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
-                protocol_set,
                 ConnectionId::from(0usize),
+                keypair,
                 AddressType::Socket(address),
                 None,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -1039,7 +1076,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1051,7 +1088,6 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         let (Ok(_dialer), Ok((listener, dialer_address))) =
@@ -1062,14 +1098,13 @@ mod tests {
 
         tokio::spawn(async move {
             match TcpConnection::accept_connection(
-                protocol_set,
                 listener,
                 ConnectionId::from(0usize),
+                keypair,
                 dialer_address,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -1103,7 +1138,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1115,7 +1150,6 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
@@ -1126,14 +1160,13 @@ mod tests {
 
         tokio::spawn(async move {
             match TcpConnection::accept_connection(
-                protocol_set,
                 listener,
                 ConnectionId::from(0usize),
+                keypair,
                 dialer_address,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -1151,7 +1184,6 @@ mod tests {
             dialer_select_proto(dialer, vec!["/noise"], Version::V1).await.unwrap();
 
         let keypair = Keypair::generate();
-        // let noise_config = NoiseConfiguration::new(&keypair, Role::Dialer, 5, 2);
 
         // do a noise handshake
         let (stream, _peer) =
@@ -1185,7 +1217,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1197,19 +1229,17 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
-                protocol_set,
                 ConnectionId::from(0usize),
+                keypair,
                 AddressType::Socket(address),
                 None,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -1259,7 +1289,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1271,7 +1301,6 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
@@ -1282,14 +1311,13 @@ mod tests {
 
         tokio::spawn(async move {
             match TcpConnection::accept_connection(
-                protocol_set,
                 listener,
                 ConnectionId::from(0usize),
+                keypair,
                 dialer_address,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {
@@ -1337,7 +1365,7 @@ mod tests {
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
         let (mut manager, _handle) =
-            TransportManager::new(keypair, HashSet::new(), bandwidth_sink.clone());
+            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1349,19 +1377,17 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
-        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
-                protocol_set,
                 ConnectionId::from(0usize),
+                keypair,
                 AddressType::Socket(address),
                 None,
                 Default::default(),
                 5,
                 2,
-                bandwidth_sink,
             )
             .await
             {

@@ -47,4 +47,12 @@ impl Transport for DummyTransport {
     fn dial(&mut self, _: ConnectionId, _: Multiaddr) -> crate::Result<()> {
         Ok(())
     }
+
+    fn accept(&mut self, _: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn reject(&mut self, _: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
 }

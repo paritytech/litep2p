@@ -180,6 +180,7 @@ async fn custom_executor() {
         }
 
         if litep2p1_connected && litep2p2_connected {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             break;
         }
     }

@@ -28,7 +28,7 @@
 
 use crate::{
     protocol::Direction,
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
 
@@ -118,6 +118,8 @@ pub enum Error {
     PeerIdMismatch(PeerId, PeerId),
     #[error("Channel is clogged")]
     ChannelClogged,
+    #[error("Connection doesn't exist: `{0:?}`")]
+    ConnectionDoesntExist(ConnectionId),
 }
 
 #[derive(Debug, thiserror::Error)]

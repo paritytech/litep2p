@@ -81,6 +81,14 @@ impl Endpoint {
             connection_id,
         }
     }
+
+    /// Get `ConnectionId` of the `Endpoint`.
+    pub fn connection_id(&self) -> ConnectionId {
+        match self {
+            Self::Dialer { connection_id, .. } => *connection_id,
+            Self::Listener { connection_id, .. } => *connection_id,
+        }
+    }
 }
 
 impl Into<Multiaddr> for Endpoint {
@@ -141,4 +149,10 @@ pub(crate) trait TransportBuilder {
 pub(crate) trait Transport: Stream + Unpin + Send {
     /// Dial `address`.
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()>;
+
+    /// Accept negotiated connection.
+    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+
+    /// Reject negotiated connection.
+    fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
 }

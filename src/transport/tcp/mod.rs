@@ -24,7 +24,11 @@ use crate::{
     error::Error,
     transport::{
         manager::TransportHandle,
-        tcp::{config::TransportConfig, connection::TcpConnection, listener::TcpListener},
+        tcp::{
+            config::TransportConfig,
+            connection::{NegotiatedConnection, TcpConnection},
+            listener::TcpListener,
+        },
         Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
@@ -69,31 +73,33 @@ pub(crate) struct TcpTransport {
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
-    /// Pending connections.
+    /// Pending opening connections.
     pending_connections:
-        FuturesUnordered<BoxFuture<'static, Result<TcpConnection, (ConnectionId, Error)>>>,
+        FuturesUnordered<BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, Error)>>>,
+
+    /// Connections which have been opened and negotiated but are being validated by the
+    /// `TransportManager`.
+    pending_open: HashMap<ConnectionId, NegotiatedConnection>,
 }
 
 impl TcpTransport {
     /// Handle inbound TCP connection.
     fn on_inbound_connection(&mut self, connection: TcpStream, address: SocketAddr) {
         let connection_id = self.context.next_connection_id();
-        let protocol_set = self.context.protocol_set(connection_id);
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
-        let bandwidth_sink = self.context.bandwidth_sink.clone();
+        let keypair = self.context.keypair.clone();
 
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::accept_connection(
-                protocol_set,
                 connection,
                 connection_id,
+                keypair,
                 address,
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
-                bandwidth_sink,
             )
             .await
             .map_err(|error| (connection_id, error))
@@ -117,6 +123,7 @@ impl TransportBuilder for TcpTransport {
             listener: TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new())),
             config,
             context,
+            pending_open: HashMap::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
@@ -132,30 +139,64 @@ impl Transport for TcpTransport {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
-        let protocol_set = self.context.protocol_set(connection_id);
         let (socket_address, peer) = listener::TcpListener::get_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
-        let bandwidth_sink = self.context.bandwidth_sink.clone();
+        let keypair = self.context.keypair.clone();
 
         self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::open_connection(
-                protocol_set,
                 connection_id,
+                keypair,
                 socket_address,
                 peer,
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
-                bandwidth_sink,
             )
             .await
             .map_err(|error| (connection_id, error))
         }));
 
         Ok(())
+    }
+
+    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let context = self
+            .pending_open
+            .remove(&connection_id)
+            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+        let protocol_set = self.context.protocol_set(connection_id);
+        let bandwidth_sink = self.context.bandwidth_sink.clone();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?connection_id,
+            "start connection",
+        );
+
+        self.context.executor.run(Box::pin(async move {
+            if let Err(error) =
+                TcpConnection::new(context, protocol_set, bandwidth_sink).start().await
+            {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?connection_id,
+                    ?error,
+                    "connection exited with error",
+                );
+            }
+        }));
+
+        Ok(())
+    }
+
+    fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.pending_open
+            .remove(&connection_id)
+            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
     }
 }
 
@@ -174,11 +215,16 @@ impl Stream for TcpTransport {
 
         while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
             match connection {
-                Ok(connection) => self.context.executor.run(Box::pin(async move {
-                    if let Err(error) = connection.start().await {
-                        tracing::debug!(target: LOG_TARGET, ?error, "connection failure");
-                    }
-                })),
+                Ok(context) => {
+                    let peer = context.peer();
+                    let endpoint = context.endpoint();
+                    self.pending_open.insert(context.connection_id(), context);
+
+                    return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                        peer,
+                        endpoint,
+                    }));
+                }
                 Err((connection_id, error)) => {
                     if let Some(address) = self.pending_dials.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::DialFailure {
@@ -202,9 +248,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
         executor::DefaultExecutor,
-        transport::manager::{
-            ProtocolContext, SupportedTransport, TransportManager, TransportManagerEvent,
-        },
+        transport::manager::{ProtocolContext, SupportedTransport, TransportManager},
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
     };
@@ -221,7 +265,7 @@ mod tests {
 
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
-        let (event_tx1, mut event_rx1) = channel(64);
+        let (event_tx1, _event_rx1) = channel(64);
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
@@ -248,27 +292,11 @@ mod tests {
         };
 
         let mut transport1 = TcpTransport::new(handle1, transport_config1).unwrap();
-
         let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
-        tokio::spawn(async move {
-            while let Some(event) = transport1.next().await {
-                match event {
-                    TransportEvent::ConnectionEstablished { .. } => {}
-                    TransportEvent::ConnectionClosed { .. } => {}
-                    TransportEvent::DialFailure {
-                        connection_id,
-                        address,
-                        error,
-                    } => {
-                        transport1.context.report_dial_failure(connection_id, address, error).await;
-                    }
-                }
-            }
-        });
 
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
-        let (event_tx2, mut event_rx2) = channel(64);
+        let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
@@ -294,21 +322,17 @@ mod tests {
         };
 
         let mut transport2 = TcpTransport::new(handle2, transport_config2).unwrap();
+        transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
-        tokio::spawn(async move {
-            transport2.dial(ConnectionId::new(), listen_address).unwrap();
-            while let Some(_) = transport2.next().await {}
-        });
-
-        let (res1, res2) = tokio::join!(event_rx1.recv(), event_rx2.recv());
+        let (res1, res2) = tokio::join!(transport1.next(), transport2.next());
 
         assert!(std::matches!(
             res1,
-            Some(TransportManagerEvent::ConnectionEstablished { .. })
+            Some(TransportEvent::ConnectionEstablished { .. })
         ));
         assert!(std::matches!(
             res2,
-            Some(TransportManagerEvent::ConnectionEstablished { .. })
+            Some(TransportEvent::ConnectionEstablished { .. })
         ));
     }
 
