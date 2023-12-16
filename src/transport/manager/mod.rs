@@ -201,6 +201,7 @@ impl Stream for TransportContext {
 
         loop {
             let index = self.index % len;
+            self.index += 1;
 
             let (_, stream) = self.transports.get_index_mut(index).expect("transport to exist");
             match stream.poll_next_unpin(cx) {
@@ -208,7 +209,6 @@ impl Stream for TransportContext {
                 event => return event,
             }
 
-            self.index += 1;
             if self.index == start_index + len {
                 break Poll::Pending;
             }
