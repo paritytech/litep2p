@@ -165,7 +165,7 @@ impl TransportBuilder for QuicTransport {
     type Transport = QuicTransport;
 
     /// Create new [`QuicTransport`] object.
-    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
+    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized,
     {
@@ -361,7 +361,7 @@ mod tests {
             listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
         };
 
-        let transport1 = QuicTransport::new(handle1, transport_config1).await.unwrap();
+        let transport1 = QuicTransport::new(handle1, transport_config1).unwrap();
 
         let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
 
@@ -395,7 +395,7 @@ mod tests {
             listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
         };
 
-        let mut transport2 = QuicTransport::new(handle2, transport_config2).await.unwrap();
+        let mut transport2 = QuicTransport::new(handle2, transport_config2).unwrap();
 
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let _peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));

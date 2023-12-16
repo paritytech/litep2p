@@ -274,7 +274,7 @@ impl Litep2p {
         // enable tcp transport if the config exists
         if let Some(config) = litep2p_config.tcp.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
-            let transport = <TcpTransport as TransportBuilder>::new(handle, config).await?;
+            let transport = <TcpTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -289,7 +289,7 @@ impl Litep2p {
         // enable quic transport if the config exists
         if let Some(config) = litep2p_config.quic.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
-            let transport = <QuicTransport as TransportBuilder>::new(handle, config).await?;
+            let transport = <QuicTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -304,7 +304,7 @@ impl Litep2p {
         // enable webrtc transport if the config exists
         if let Some(config) = litep2p_config.webrtc.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
-            let transport = <WebRtcTransport as TransportBuilder>::new(handle, config).await?;
+            let transport = <WebRtcTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -319,7 +319,7 @@ impl Litep2p {
         // enable websocket transport if the config exists
         if let Some(config) = litep2p_config.websocket.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
-            let transport = <WebSocketTransport as TransportBuilder>::new(handle, config).await?;
+            let transport = <WebSocketTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());

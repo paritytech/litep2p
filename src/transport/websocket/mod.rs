@@ -134,7 +134,7 @@ impl TransportBuilder for WebSocketTransport {
     type Transport = WebSocketTransport;
 
     /// Create new [`Transport`] object.
-    async fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self>
+    fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized,
     {

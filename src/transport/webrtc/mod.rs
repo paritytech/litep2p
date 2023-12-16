@@ -291,7 +291,7 @@ impl TransportBuilder for WebRtcTransport {
     type Transport = WebRtcTransport;
 
     /// Create new [`Transport`] object.
-    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
+    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized,
     {

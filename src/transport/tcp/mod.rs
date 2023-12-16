@@ -107,7 +107,7 @@ impl TransportBuilder for TcpTransport {
     type Transport = TcpTransport;
 
     /// Create new [`TcpTransport`].
-    async fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self> {
+    fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self> {
         tracing::info!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,
@@ -267,7 +267,7 @@ mod tests {
             ..Default::default()
         };
 
-        let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
+        let transport1 = TcpTransport::new(handle1, transport_config1).unwrap();
 
         let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
         tokio::spawn(async move {
@@ -301,7 +301,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
+        let mut transport2 = TcpTransport::new(handle2, transport_config2).unwrap();
 
         tokio::spawn(async move {
             transport2.dial(ConnectionId::new(), listen_address).unwrap();
@@ -354,7 +354,7 @@ mod tests {
             ..Default::default()
         };
 
-        let transport1 = TcpTransport::new(handle1, transport_config1).await.unwrap();
+        let transport1 = TcpTransport::new(handle1, transport_config1).unwrap();
 
         tokio::spawn(transport1.start());
 
@@ -385,7 +385,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
+        let mut transport2 = TcpTransport::new(handle2, transport_config2).unwrap();
 
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
@@ -432,7 +432,6 @@ mod tests {
                 ..Default::default()
             },
         )
-        .await
         .unwrap();
 
         let keypair = Keypair::generate();
