@@ -22,7 +22,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     executor::Executor,
-    protocol::{InnerTransportEvent, ProtocolSet},
+    protocol::ProtocolSet,
     transport::{
         manager::{
             address::{AddressRecord, AddressStore},
@@ -295,6 +295,7 @@ impl TransportHandle {
     }
 
     /// Report to `Litep2p` that dialing a remote peer failed.
+    #[cfg(test)]
     pub async fn report_dial_failure(
         &mut self,
         connection: ConnectionId,
@@ -309,7 +310,7 @@ impl TransportHandle {
                     for (_, context) in &self.protocols {
                         let _ = context
                             .tx
-                            .send(InnerTransportEvent::DialFailure {
+                            .send(crate::protocol::InnerTransportEvent::DialFailure {
                                 peer,
                                 address: address.clone(),
                             })

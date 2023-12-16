@@ -285,7 +285,6 @@ impl WebRtcTransport {
     }
 }
 
-#[async_trait::async_trait]
 impl TransportBuilder for WebRtcTransport {
     type Config = TransportConfig;
     type Transport = WebRtcTransport;
@@ -347,12 +346,6 @@ impl TransportBuilder for WebRtcTransport {
             .with(Protocol::Udp(self.listen_address.port()))
             .with(Protocol::WebRTC)
             .with(Protocol::Certhash(certificate))]
-    }
-
-    async fn start(mut self) -> crate::Result<()> {
-        while let Some(event) = self.next().await {}
-
-        Ok(())
     }
 }
 

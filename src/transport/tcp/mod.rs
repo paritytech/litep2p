@@ -101,7 +101,6 @@ impl TcpTransport {
     }
 }
 
-#[async_trait::async_trait]
 impl TransportBuilder for TcpTransport {
     type Config = TransportConfig;
     type Transport = TcpTransport;
@@ -126,25 +125,6 @@ impl TransportBuilder for TcpTransport {
     /// Get assigned listen address.
     fn listen_address(&self) -> Vec<Multiaddr> {
         self.listener.listen_addresses().cloned().collect()
-    }
-
-    /// Start TCP transport event loop.
-    async fn start(mut self) -> crate::Result<()> {
-        while let Some(event) = self.next().await {
-            match event {
-                TransportEvent::ConnectionEstablished { .. } => {}
-                TransportEvent::ConnectionClosed { .. } => {}
-                TransportEvent::DialFailure {
-                    connection_id,
-                    address,
-                    error,
-                } => {
-                    self.context.report_dial_failure(connection_id, address, error).await;
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -267,11 +247,23 @@ mod tests {
             ..Default::default()
         };
 
-        let transport1 = TcpTransport::new(handle1, transport_config1).unwrap();
+        let mut transport1 = TcpTransport::new(handle1, transport_config1).unwrap();
 
         let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
         tokio::spawn(async move {
-            let _ = transport1.start().await;
+            while let Some(event) = transport1.next().await {
+                match event {
+                    TransportEvent::ConnectionEstablished { .. } => {}
+                    TransportEvent::ConnectionClosed { .. } => {}
+                    TransportEvent::DialFailure {
+                        connection_id,
+                        address,
+                        error,
+                    } => {
+                        transport1.context.report_dial_failure(connection_id, address, error).await;
+                    }
+                }
+            }
         });
 
         let keypair2 = Keypair::generate();
@@ -354,9 +346,23 @@ mod tests {
             ..Default::default()
         };
 
-        let transport1 = TcpTransport::new(handle1, transport_config1).unwrap();
+        let mut transport1 = TcpTransport::new(handle1, transport_config1).unwrap();
 
-        tokio::spawn(transport1.start());
+        tokio::spawn(async move {
+            while let Some(event) = transport1.next().await {
+                match event {
+                    TransportEvent::ConnectionEstablished { .. } => {}
+                    TransportEvent::ConnectionClosed { .. } => {}
+                    TransportEvent::DialFailure {
+                        connection_id,
+                        address,
+                        error,
+                    } => {
+                        transport1.context.report_dial_failure(connection_id, address, error).await;
+                    }
+                }
+            }
+        });
 
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);

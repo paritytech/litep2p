@@ -159,7 +159,6 @@ impl QuicTransport {
     }
 }
 
-#[async_trait::async_trait]
 impl TransportBuilder for QuicTransport {
     type Config = QuicTransportConfig;
     type Transport = QuicTransport;
@@ -188,32 +187,6 @@ impl TransportBuilder for QuicTransport {
     /// Get assigned listen address.
     fn listen_address(&self) -> Vec<Multiaddr> {
         self.listener.listen_addresses().cloned().collect()
-    }
-
-    async fn start(mut self) -> crate::Result<()> {
-        while let Some(event) = self.next().await {
-            match event {
-                TransportEvent::ConnectionEstablished { .. } => {}
-                TransportEvent::ConnectionClosed { .. } => {}
-                TransportEvent::DialFailure {
-                    connection_id,
-                    address,
-                    error,
-                } => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?address,
-                        ?error,
-                        "failed to dial peer",
-                    );
-
-                    let _ = self.context.report_dial_failure(connection_id, address, error).await;
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -361,12 +334,34 @@ mod tests {
             listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
         };
 
-        let transport1 = QuicTransport::new(handle1, transport_config1).unwrap();
-
+        let mut transport1 = QuicTransport::new(handle1, transport_config1).unwrap();
         let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
 
         tokio::spawn(async move {
-            let _ = transport1.start().await;
+            while let Some(event) = transport1.next().await {
+                match event {
+                    TransportEvent::ConnectionEstablished { .. } => {}
+                    TransportEvent::ConnectionClosed { .. } => {}
+                    TransportEvent::DialFailure {
+                        connection_id,
+                        address,
+                        error,
+                    } => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?address,
+                            ?error,
+                            "failed to dial peer",
+                        );
+
+                        let _ = transport1
+                            .context
+                            .report_dial_failure(connection_id, address, error)
+                            .await;
+                    }
+                }
+            }
         });
 
         let keypair2 = Keypair::generate();

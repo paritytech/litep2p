@@ -128,7 +128,6 @@ impl WebSocketTransport {
     }
 }
 
-#[async_trait::async_trait]
 impl TransportBuilder for WebSocketTransport {
     type Config = TransportConfig;
     type Transport = WebSocketTransport;
@@ -159,24 +158,6 @@ impl TransportBuilder for WebSocketTransport {
     /// Get assigned listen address.
     fn listen_address(&self) -> Vec<Multiaddr> {
         self.listener.listen_addresses().cloned().collect()
-    }
-
-    async fn start(mut self) -> crate::Result<()> {
-        while let Some(event) = self.next().await {
-            match event {
-                TransportEvent::ConnectionEstablished { .. } => {}
-                TransportEvent::ConnectionClosed { .. } => {}
-                TransportEvent::DialFailure {
-                    connection_id,
-                    address,
-                    error,
-                } => {
-                    self.context.report_dial_failure(connection_id, address, error).await;
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 

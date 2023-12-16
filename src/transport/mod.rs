@@ -125,7 +125,6 @@ pub(crate) enum TransportEvent {
     },
 }
 
-#[async_trait::async_trait]
 pub(crate) trait TransportBuilder {
     type Config: Debug;
     type Transport: Transport;
@@ -137,9 +136,6 @@ pub(crate) trait TransportBuilder {
 
     /// Get assigned listen address.
     fn listen_address(&self) -> Vec<Multiaddr>;
-
-    /// Start transport event loop.
-    async fn start(mut self) -> crate::Result<()>;
 }
 
 pub(crate) trait Transport: Stream + Unpin + Send {
