@@ -311,7 +311,7 @@ impl Connection {
                         }
                     }
                 }
-                command = self.protocol_set.next_event() => match command {
+                command = self.protocol_set.next() => match command {
                     None => {
                         tracing::debug!(
                             target: LOG_TARGET,

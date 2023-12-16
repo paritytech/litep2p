@@ -454,7 +454,7 @@ impl WebSocketConnection {
                         }
                     }
                 }
-                protocol = self.protocol_set.next_event() => match protocol {
+                protocol = self.protocol_set.next() => match protocol {
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let control = self.control.clone();
 

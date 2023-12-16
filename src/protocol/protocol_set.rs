@@ -35,7 +35,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -43,10 +43,12 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
+    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -747,10 +749,13 @@ impl ProtocolSet {
             .await
             .map_err(From::from)
     }
+}
 
-    /// Poll next substream open query from one of the installed protocols.
-    pub async fn next_event(&mut self) -> Option<ProtocolCommand> {
-        self.rx.recv().await
+impl Stream for ProtocolSet {
+    type Item = ProtocolCommand;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.rx.poll_recv(cx)
     }
 }
 

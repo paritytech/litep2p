@@ -39,6 +39,7 @@ use crate::{
     PeerId,
 };
 
+use futures::StreamExt;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
     change::Fingerprint,
@@ -689,7 +690,7 @@ impl WebRtcConnection {
                         }
                     }
                 }
-                event = self.protocol_set.next_event() => match event {
+                event = self.protocol_set.next() => match event {
                     Some(event) => match event {
                         ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit } => {
                             self.open_substream(protocol, fallback_names, substream_id, permit);
