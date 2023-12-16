@@ -25,7 +25,6 @@ use crate::{
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
     transport::{
-        dummy::DummyTransport,
         manager::{
             address::{AddressRecord, AddressStore},
             handle::InnerTransportManagerCommand,
@@ -262,15 +261,6 @@ pub struct TransportManager {
 
     /// Pending connections.
     pending_connections: HashMap<ConnectionId, PeerId>,
-
-    /// WebSocket transport.
-    websocket: Box<dyn Transport<Item = TransportEvent>>,
-
-    /// QUIC transport.
-    quic: Box<dyn Transport<Item = TransportEvent>>,
-
-    /// WebRTC transport.
-    webrtc: Box<dyn Transport<Item = TransportEvent>>,
 }
 
 impl TransportManager {
@@ -304,9 +294,6 @@ impl TransportManager {
                 pending_connections: HashMap::new(),
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
-                websocket: Box::new(DummyTransport {}),
-                quic: Box::new(DummyTransport {}),
-                webrtc: Box::new(DummyTransport {}),
             },
             handle,
         )
@@ -1101,37 +1088,6 @@ impl TransportManager {
                     None => panic!("transports exited"),
                     _ => panic!("event not supported"),
                 },
-                event = self.websocket.next() => match event {
-                    Some(TransportEvent::DialFailure { connection_id, address, error }) => {
-                        if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
-                            return Some(event);
-                        }
-                    }
-                    None => panic!("websocket transport exited"),
-                    _ => panic!("event not supported"),
-                },
-                event = self.quic.next() => match event {
-                    Some(TransportEvent::DialFailure { connection_id, address, error }) => {
-                        if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
-                            return Some(event);
-                        }
-                    }
-                    None => panic!("quic transport exited"),
-                    _ => panic!("event not supported"),
-                },
-                event = self.webrtc.next() => match event {
-                    Some(TransportEvent::DialFailure { connection_id, address, error }) => {
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            ?connection_id,
-                            ?address,
-                            ?error,
-                            "state mismatch: dial failure for webrtc but it doesn't support dialing",
-                        );
-                    }
-                    None => panic!("webrtc transport exited"),
-                    _ => panic!("event not supported"),
-                }
             }
         }
     }
@@ -1140,7 +1096,9 @@ impl TransportManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{crypto::ed25519::Keypair, executor::DefaultExecutor};
+    use crate::{
+        crypto::ed25519::Keypair, executor::DefaultExecutor, transport::dummy::DummyTransport,
+    };
     use std::{
         net::{Ipv4Addr, Ipv6Addr},
         sync::Arc,
