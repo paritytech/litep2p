@@ -420,8 +420,11 @@ mod tests {
     async fn dial_error_reported_for_outbound_connections() {
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
         let mut transport = TcpTransport::new(
             handle,
             TransportConfig {

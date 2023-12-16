@@ -273,11 +273,8 @@ impl Litep2p {
 
         // enable tcp transport if the config exists
         if let Some(config) = litep2p_config.tcp.take() {
-            let service = transport_manager.register_transport(
-                SupportedTransport::Tcp,
-                Arc::clone(&litep2p_config.executor),
-            );
-            let transport = <TcpTransport as TransportBuilder>::new(service, config).await?;
+            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+            let transport = <TcpTransport as TransportBuilder>::new(handle, config).await?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -286,22 +283,13 @@ impl Litep2p {
                 )));
             }
 
-            transport_manager.register_tcp(Box::new(transport));
-
-            // litep2p_config.executor.run(Box::pin(async move {
-            //     if let Err(error) = transport.start().await {
-            //         tracing::error!(target: LOG_TARGET, ?error, "tcp failed");
-            //     }
-            // }));
+            transport_manager.register_transport(SupportedTransport::Tcp, Box::new(transport));
         }
 
         // enable quic transport if the config exists
         if let Some(config) = litep2p_config.quic.take() {
-            let service = transport_manager.register_transport(
-                SupportedTransport::Quic,
-                Arc::clone(&litep2p_config.executor),
-            );
-            let transport = <QuicTransport as TransportBuilder>::new(service, config).await?;
+            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+            let transport = <QuicTransport as TransportBuilder>::new(handle, config).await?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -310,22 +298,13 @@ impl Litep2p {
                 )));
             }
 
-            transport_manager.register_quic(Box::new(transport));
-
-            // litep2p_config.executor.run(Box::pin(async move {
-            //     if let Err(error) = transport.start().await {
-            //         tracing::error!(target: LOG_TARGET, ?error, "quic failed");
-            //     }
-            // }));
+            transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
         }
 
         // enable webrtc transport if the config exists
         if let Some(config) = litep2p_config.webrtc.take() {
-            let service = transport_manager.register_transport(
-                SupportedTransport::WebRtc,
-                Arc::clone(&litep2p_config.executor),
-            );
-            let transport = <WebRtcTransport as TransportBuilder>::new(service, config).await?;
+            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+            let transport = <WebRtcTransport as TransportBuilder>::new(handle, config).await?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -334,22 +313,13 @@ impl Litep2p {
                 )));
             }
 
-            transport_manager.register_webrtc(Box::new(transport));
-
-            // litep2p_config.executor.run(Box::pin(async move {
-            //     if let Err(error) = transport.start().await {
-            //         tracing::error!(target: LOG_TARGET, ?error, "webrtc failed");
-            //     }
-            // }));
+            transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
         }
 
         // enable websocket transport if the config exists
         if let Some(config) = litep2p_config.websocket.take() {
-            let service = transport_manager.register_transport(
-                SupportedTransport::WebSocket,
-                Arc::clone(&litep2p_config.executor),
-            );
-            let transport = <WebSocketTransport as TransportBuilder>::new(service, config).await?;
+            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+            let transport = <WebSocketTransport as TransportBuilder>::new(handle, config).await?;
 
             for address in transport.listen_address() {
                 transport_manager.register_listen_address(address.clone());
@@ -358,13 +328,8 @@ impl Litep2p {
                 )));
             }
 
-            // litep2p_config.executor.run(Box::pin(async move {
-            //     if let Err(error) = transport.start().await {
-            //         tracing::error!(target: LOG_TARGET, ?error, "websocket failed");
-            //     }
-            // }));
-
-            transport_manager.register_websocket(Box::new(transport));
+            transport_manager
+                .register_transport(SupportedTransport::WebSocket, Box::new(transport));
         }
 
         // enable mdns if the config exists

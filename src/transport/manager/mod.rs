@@ -37,7 +37,8 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
+use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use parking_lot::RwLock;
@@ -45,10 +46,12 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
+    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    task::{Context, Poll},
 };
 
 pub use handle::{TransportHandle, TransportManagerHandle};
@@ -145,6 +148,74 @@ impl ProtocolContext {
     }
 }
 
+/// Transport context for enabled transports.
+struct TransportContext {
+    /// Polling index.
+    index: usize,
+
+    /// Registered transports.
+    transports: IndexMap<SupportedTransport, Box<dyn Transport<Item = TransportEvent>>>,
+}
+
+impl TransportContext {
+    /// Create new [`TransportContext`].
+    pub fn new() -> Self {
+        Self {
+            index: 0usize,
+            transports: IndexMap::new(),
+        }
+    }
+
+    /// Get an iterator of supported transports.
+    pub fn keys(&self) -> impl Iterator<Item = &SupportedTransport> {
+        self.transports.keys()
+    }
+
+    /// Get mutable access to transport.
+    pub fn get_mut(
+        &mut self,
+        key: &SupportedTransport,
+    ) -> Option<&mut Box<dyn Transport<Item = TransportEvent>>> {
+        self.transports.get_mut(key)
+    }
+
+    /// Register `transport` to `TransportContext`.
+    pub fn register_transport(
+        &mut self,
+        name: SupportedTransport,
+        transport: Box<dyn Transport<Item = TransportEvent>>,
+    ) {
+        assert!(self.transports.insert(name, transport).is_none());
+    }
+}
+
+impl Stream for TransportContext {
+    type Item = TransportEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let len = match self.transports.len() {
+            0 => return Poll::Ready(None),
+            len => len,
+        };
+        let start_index = self.index;
+
+        loop {
+            let index = self.index % len;
+
+            let (_, stream) = self.transports.get_index_mut(index).expect("transport to exist");
+            match stream.poll_next_unpin(cx) {
+                Poll::Pending => {}
+                event => return event,
+            }
+
+            self.index += 1;
+            if self.index == start_index + len {
+                break Poll::Pending;
+            }
+        }
+    }
+}
+
 /// Litep2p connection manager.
 pub struct TransportManager {
     /// Local peer ID.
@@ -172,7 +243,7 @@ pub struct TransportManager {
     next_substream_id: Arc<AtomicUsize>,
 
     /// Installed transports.
-    transports: HashMap<SupportedTransport, ()>,
+    transports: TransportContext,
 
     /// Peers
     peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
@@ -191,9 +262,6 @@ pub struct TransportManager {
 
     /// Pending connections.
     pending_connections: HashMap<ConnectionId, PeerId>,
-
-    /// TCP transport.
-    tcp: Box<dyn Transport<Item = TransportEvent>>,
 
     /// WebSocket transport.
     websocket: Box<dyn Transport<Item = TransportEvent>>,
@@ -229,14 +297,13 @@ impl TransportManager {
                 local_peer_id,
                 bandwidth_sink,
                 protocols: HashMap::new(),
-                transports: HashMap::new(),
+                transports: TransportContext::new(),
                 protocol_names: HashSet::new(),
                 listen_addresses: HashSet::new(),
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
-                tcp: Box::new(DummyTransport {}),
                 websocket: Box::new(DummyTransport {}),
                 quic: Box::new(DummyTransport {}),
                 webrtc: Box::new(DummyTransport {}),
@@ -298,16 +365,8 @@ impl TransportManager {
         service
     }
 
-    /// Register transport protocol to [`TransportManager`].
-    pub fn register_transport(
-        &mut self,
-        transport: SupportedTransport,
-        executor: Arc<dyn Executor>,
-    ) -> TransportHandle {
-        assert!(!self.transports.contains_key(&transport));
-
-        self.transports.insert(transport, ());
-
+    /// Acquire `TransportHandle`.
+    pub fn transport_handle(&self, executor: Arc<dyn Executor>) -> TransportHandle {
         TransportHandle {
             tx: self.event_tx.clone(),
             executor,
@@ -320,27 +379,15 @@ impl TransportManager {
         }
     }
 
-    /// Register TCP transport.
-    pub(crate) fn register_tcp(&mut self, transport: Box<dyn Transport<Item = TransportEvent>>) {
-        self.tcp = transport;
-    }
-
-    /// Register WebSocket transport.
-    pub(crate) fn register_websocket(
+    /// Register transport to `TransportManager`.
+    pub(crate) fn register_transport(
         &mut self,
+        name: SupportedTransport,
         transport: Box<dyn Transport<Item = TransportEvent>>,
     ) {
-        self.websocket = transport;
-    }
+        tracing::debug!(target: LOG_TARGET, transport = ?name, "register transport");
 
-    /// Register QUIC transport.
-    pub(crate) fn register_quic(&mut self, transport: Box<dyn Transport<Item = TransportEvent>>) {
-        self.quic = transport;
-    }
-
-    /// Register WebRTC transport.
-    pub(crate) fn register_webrtc(&mut self, transport: Box<dyn Transport<Item = TransportEvent>>) {
-        self.webrtc = transport;
+        self.transports.register_transport(name, transport);
     }
 
     /// Register local listen address.
@@ -538,28 +585,11 @@ impl TransportManager {
             }
         }
 
-        match self.transports.contains_key(&supported_transport) {
-            true => {
-                // TODO: hideous
-                match supported_transport {
-                    SupportedTransport::Tcp =>
-                        self.tcp.dial(connection_id, record.address().clone())?,
-                    SupportedTransport::Quic =>
-                        self.quic.dial(connection_id, record.address().clone())?,
-                    SupportedTransport::WebSocket =>
-                        self.websocket.dial(connection_id, record.address().clone())?,
-                    SupportedTransport::WebRtc => {
-                        tracing::warn!(target: LOG_TARGET, "webrtc cannot dial peers");
-                        return Err(Error::TransportNotSupported(record.address().clone()));
-                    }
-                }
-
-                self.pending_connections.insert(connection_id, remote_peer_id);
-            }
-            false => {
-                return Err(Error::TransportNotSupported(record.address().clone()));
-            }
-        }
+        self.transports
+            .get_mut(&supported_transport)
+            .ok_or(Error::TransportNotSupported(record.address().clone()))?
+            .dial(connection_id, record.address().clone())?;
+        self.pending_connections.insert(connection_id, remote_peer_id);
 
         Ok(())
     }
@@ -1062,13 +1092,13 @@ impl TransportManager {
                         }
                     }
                 },
-                event = self.tcp.next() => match event {
+                event = self.transports.next() => match event {
                     Some(TransportEvent::DialFailure { connection_id, address, error }) => {
                         if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
                             return Some(event);
                         }
                     }
-                    None => panic!("tcp transport exited"),
+                    None => panic!("transports exited"),
                     _ => panic!("event not supported"),
                 },
                 event = self.websocket.next() => match event {
@@ -1193,8 +1223,8 @@ mod tests {
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), sink);
 
-        manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
-        manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
     }
 
     #[tokio::test]
@@ -1211,8 +1241,11 @@ mod tests {
     async fn try_to_dial_over_disabled_transport() {
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
 
         let address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -1236,8 +1269,11 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let mut handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let mut handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1267,8 +1303,11 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1293,8 +1332,11 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
 
         let peer = PeerId::random();
 
@@ -1333,8 +1375,11 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
 
         assert!(manager.dial(&PeerId::random()).await.is_err());
     }
@@ -1347,8 +1392,11 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
 
         let peer = PeerId::random();
         manager.peers.write().insert(
@@ -1428,8 +1476,11 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1497,8 +1548,11 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1586,8 +1640,11 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        manager.register_transport(
+            SupportedTransport::Tcp,
+            Box::new(crate::transport::dummy::DummyTransport {}),
+        );
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1668,8 +1725,7 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
@@ -1772,8 +1828,7 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
@@ -1867,8 +1922,7 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
@@ -1966,8 +2020,7 @@ mod tests {
 
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
-        let _handle =
-            manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
