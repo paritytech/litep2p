@@ -23,7 +23,7 @@
 use crate::{
     error::{AddressError, Error},
     transport::{
-        manager::{TransportHandle, TransportManagerCommand},
+        manager::TransportHandle,
         websocket::{
             config::TransportConfig, connection::WebSocketConnection, listener::WebSocketListener,
         },
@@ -262,22 +262,6 @@ impl Stream for WebSocketTransport {
                         }
                     }));
                 }
-            }
-        }
-
-        while let Poll::Ready(Some(command)) = self.context.poll_next_unpin(cx) {
-            match command {
-                TransportManagerCommand::Dial {
-                    address,
-                    connection: connection_id,
-                } =>
-                    if let Err(error) = self.dial(connection_id, address.clone()) {
-                        return Poll::Ready(Some(TransportEvent::DialFailure {
-                            connection_id,
-                            address,
-                            error,
-                        }));
-                    },
             }
         }
 

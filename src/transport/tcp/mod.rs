@@ -23,7 +23,7 @@
 use crate::{
     error::Error,
     transport::{
-        manager::{TransportHandle, TransportManagerCommand},
+        manager::TransportHandle,
         tcp::{config::TransportConfig, connection::TcpConnection, listener::TcpListener},
         Transport, TransportBuilder, TransportEvent,
     },
@@ -183,23 +183,6 @@ impl Stream for TcpTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        while let Poll::Ready(command) = self.context.poll_next_unpin(cx) {
-            match command {
-                None => return Poll::Ready(None),
-                Some(TransportManagerCommand::Dial {
-                    address,
-                    connection: connection_id,
-                }) =>
-                    if let Err(error) = self.dial(connection_id, address.clone()) {
-                        return Poll::Ready(Some(TransportEvent::DialFailure {
-                            connection_id,
-                            address,
-                            error,
-                        }));
-                    },
-            }
-        }
-
         while let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
             match event {
                 None | Some(Err(_)) => return Poll::Ready(None),
@@ -240,8 +223,7 @@ mod tests {
         crypto::{ed25519::Keypair, PublicKey},
         executor::DefaultExecutor,
         transport::manager::{
-            ProtocolContext, SupportedTransport, TransportManager, TransportManagerCommand,
-            TransportManagerEvent,
+            ProtocolContext, SupportedTransport, TransportManager, TransportManagerEvent,
         },
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
@@ -260,7 +242,6 @@ mod tests {
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
-        let (_cmd_tx1, cmd_rx1) = channel(64);
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
@@ -270,7 +251,6 @@ mod tests {
             next_connection_id: Default::default(),
             keypair: keypair1.clone(),
             tx: event_tx1,
-            rx: cmd_rx1,
             bandwidth_sink: bandwidth_sink.clone(),
 
             protocols: HashMap::from_iter([(
@@ -297,7 +277,6 @@ mod tests {
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
         let (event_tx2, mut event_rx2) = channel(64);
-        let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
@@ -306,7 +285,6 @@ mod tests {
             next_connection_id: Default::default(),
             keypair: keypair2.clone(),
             tx: event_tx2,
-            rx: cmd_rx2,
             bandwidth_sink: bandwidth_sink.clone(),
 
             protocols: HashMap::from_iter([(
@@ -323,22 +301,12 @@ mod tests {
             ..Default::default()
         };
 
-        let transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
+        let mut transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
 
         tokio::spawn(async move {
-            let _ = transport2.start().await;
+            transport2.dial(ConnectionId::new(), listen_address).unwrap();
+            while let Some(_) = transport2.next().await {}
         });
-
-        let _peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
-        let _peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
-
-        cmd_tx2
-            .send(TransportManagerCommand::Dial {
-                address: listen_address,
-                connection: ConnectionId::new(),
-            })
-            .await
-            .unwrap();
 
         let (res1, res2) = tokio::join!(event_rx1.recv(), event_rx2.recv());
 
@@ -361,7 +329,6 @@ mod tests {
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
-        let (_cmd_tx1, cmd_rx1) = channel(64);
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
@@ -371,7 +338,6 @@ mod tests {
             next_connection_id: Default::default(),
             keypair: keypair1.clone(),
             tx: event_tx1,
-            rx: cmd_rx1,
             bandwidth_sink: bandwidth_sink.clone(),
 
             protocols: HashMap::from_iter([(
@@ -394,8 +360,7 @@ mod tests {
 
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
-        let (event_tx2, mut event_rx2) = channel(64);
-        let (cmd_tx2, cmd_rx2) = channel(64);
+        let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
@@ -404,7 +369,6 @@ mod tests {
             next_connection_id: Default::default(),
             keypair: keypair2.clone(),
             tx: event_tx2,
-            rx: cmd_rx2,
             bandwidth_sink: bandwidth_sink.clone(),
 
             protocols: HashMap::from_iter([(
@@ -421,8 +385,7 @@ mod tests {
             ..Default::default()
         };
 
-        let transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
-        tokio::spawn(transport2.start());
+        let mut transport2 = TcpTransport::new(handle2, transport_config2).await.unwrap();
 
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
@@ -438,13 +401,7 @@ mod tests {
                 Multihash::from_bytes(&peer1.to_bytes()).unwrap(),
             ));
 
-        cmd_tx2
-            .send(TransportManagerCommand::Dial {
-                address,
-                connection: ConnectionId::new(),
-            })
-            .await
-            .unwrap();
+        transport2.dial(ConnectionId::new(), address).unwrap();
 
         // spawn the other conection in the background as it won't return anything
         tokio::spawn(async move {
@@ -454,8 +411,8 @@ mod tests {
         });
 
         assert!(std::matches!(
-            event_rx2.recv().await,
-            Some(TransportManagerEvent::DialFailure { .. })
+            transport2.next().await,
+            Some(TransportEvent::DialFailure { .. })
         ));
     }
 

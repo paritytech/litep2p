@@ -25,7 +25,7 @@
 use crate::{
     error::{AddressError, Error},
     transport::{
-        manager::{TransportHandle, TransportManagerCommand},
+        manager::TransportHandle,
         webrtc::{config::TransportConfig, connection::WebRtcConnection},
         Transport, TransportBuilder, TransportEvent,
     },
@@ -375,21 +375,6 @@ impl Stream for WebRtcTransport {
                 );
 
                 return Poll::Ready(None);
-            }
-        }
-
-        while let Poll::Ready(Some(command)) = self.context.poll_next_unpin(cx) {
-            match command {
-                TransportManagerCommand::Dial {
-                    address,
-                    connection: connection_id,
-                } => {
-                    return Poll::Ready(Some(TransportEvent::DialFailure {
-                        connection_id,
-                        address,
-                        error: Error::NotSupported(format!("webrtc cannot dial peers")),
-                    }));
-                }
             }
         }
 

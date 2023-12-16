@@ -26,7 +26,7 @@ use crate::{
     crypto::tls::make_client_config,
     error::{AddressError, Error},
     transport::{
-        manager::{TransportHandle, TransportManagerCommand},
+        manager::TransportHandle,
         quic::{config::TransportConfig as QuicTransportConfig, listener::QuicListener},
         Transport, TransportBuilder, TransportEvent,
     },
@@ -268,24 +268,6 @@ impl Stream for QuicTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        while let Poll::Ready(Some(command)) = self.context.poll_next_unpin(cx) {
-            match command {
-                TransportManagerCommand::Dial {
-                    address,
-                    connection: connection_id,
-                } =>
-                    if let Err(error) = self.dial(connection_id, address.clone()) {
-                        tracing::debug!(target: LOG_TARGET, ?address, ?connection_id, ?error, "failed to dial peer");
-
-                        return Poll::Ready(Some(TransportEvent::DialFailure {
-                            connection_id,
-                            address,
-                            error,
-                        }));
-                    },
-            }
-        }
-
         while let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
             let connection_id = self.context.next_connection_id();
 
@@ -356,7 +338,6 @@ mod tests {
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
         let (event_tx1, mut event_rx1) = channel(64);
-        let (_cmd_tx1, cmd_rx1) = channel(64);
 
         let handle1 = TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
@@ -365,7 +346,6 @@ mod tests {
             next_connection_id: Default::default(),
             keypair: keypair1.clone(),
             tx: event_tx1,
-            rx: cmd_rx1,
             bandwidth_sink: BandwidthSink::new(),
 
             protocols: HashMap::from_iter([(
@@ -392,7 +372,6 @@ mod tests {
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
         let (event_tx2, mut event_rx2) = channel(64);
-        let (cmd_tx2, cmd_rx2) = channel(64);
 
         let handle2 = TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
@@ -401,7 +380,6 @@ mod tests {
             next_connection_id: Default::default(),
             keypair: keypair2.clone(),
             tx: event_tx2,
-            rx: cmd_rx2,
             bandwidth_sink: BandwidthSink::new(),
 
             protocols: HashMap::from_iter([(
@@ -417,11 +395,7 @@ mod tests {
             listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
         };
 
-        let transport2 = QuicTransport::new(handle2, transport_config2).await.unwrap();
-
-        tokio::spawn(async move {
-            let _ = transport2.start().await;
-        });
+        let mut transport2 = QuicTransport::new(handle2, transport_config2).await.unwrap();
 
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let _peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
@@ -429,13 +403,10 @@ mod tests {
             Multihash::from_bytes(&peer1.to_bytes()).unwrap(),
         ));
 
-        cmd_tx2
-            .send(TransportManagerCommand::Dial {
-                address: listen_address,
-                connection: ConnectionId::new(),
-            })
-            .await
-            .unwrap();
+        tokio::spawn(async move {
+            transport2.dial(ConnectionId::new(), listen_address).unwrap();
+            while let Some(_) = transport2.next().await {}
+        });
 
         let (res1, res2) = tokio::join!(event_rx1.recv(), event_rx2.recv());
 

@@ -117,21 +117,6 @@ pub enum TransportManagerEvent {
     },
 }
 
-#[derive(Debug)]
-pub enum TransportManagerCommand {
-    Dial {
-        /// Dial remote peer at `address`
-        address: Multiaddr,
-
-        /// Connection ID.
-        connection: ConnectionId,
-    },
-}
-
-struct TransportContext {
-    tx: Sender<TransportManagerCommand>,
-}
-
 // Protocol context.
 #[derive(Debug, Clone)]
 pub struct ProtocolContext {
@@ -187,7 +172,7 @@ pub struct TransportManager {
     next_substream_id: Arc<AtomicUsize>,
 
     /// Installed transports.
-    transports: HashMap<SupportedTransport, TransportContext>,
+    transports: HashMap<SupportedTransport, ()>,
 
     /// Peers
     peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
@@ -321,11 +306,9 @@ impl TransportManager {
     ) -> TransportHandle {
         assert!(!self.transports.contains_key(&transport));
 
-        let (tx, rx) = channel(256);
-        self.transports.insert(transport, TransportContext { tx });
+        self.transports.insert(transport, ());
 
         TransportHandle {
-            rx,
             tx: self.event_tx.clone(),
             executor,
             keypair: self.keypair.clone(),
@@ -555,17 +538,28 @@ impl TransportManager {
             }
         }
 
-        let _ = self
-            .transports
-            .get_mut(&supported_transport)
-            .ok_or_else(|| Error::TransportNotSupported(record.address().clone()))?
-            .tx
-            .send(TransportManagerCommand::Dial {
-                address: record.address().clone(),
-                connection: connection_id,
-            })
-            .await?;
-        self.pending_connections.insert(connection_id, remote_peer_id);
+        match self.transports.contains_key(&supported_transport) {
+            true => {
+                // TODO: hideous
+                match supported_transport {
+                    SupportedTransport::Tcp =>
+                        self.tcp.dial(connection_id, record.address().clone())?,
+                    SupportedTransport::Quic =>
+                        self.quic.dial(connection_id, record.address().clone())?,
+                    SupportedTransport::WebSocket =>
+                        self.websocket.dial(connection_id, record.address().clone())?,
+                    SupportedTransport::WebRtc => {
+                        tracing::warn!(target: LOG_TARGET, "webrtc cannot dial peers");
+                        return Err(Error::TransportNotSupported(record.address().clone()));
+                    }
+                }
+
+                self.pending_connections.insert(connection_id, remote_peer_id);
+            }
+            false => {
+                return Err(Error::TransportNotSupported(record.address().clone()));
+            }
+        }
 
         Ok(())
     }
@@ -1117,7 +1111,6 @@ impl TransportManager {
 mod tests {
     use super::*;
     use crate::{crypto::ed25519::Keypair, executor::DefaultExecutor};
-    use futures::StreamExt;
     use std::{
         net::{Ipv4Addr, Ipv6Addr},
         sync::Arc,
@@ -1256,17 +1249,6 @@ mod tests {
 
         assert!(manager.dial_address(dial_address.clone()).await.is_ok());
         assert!(!manager.pending_connections.is_empty());
-
-        match handle.next().await {
-            Some(TransportManagerCommand::Dial {
-                address,
-                connection,
-            }) => {
-                assert_eq!(address, dial_address);
-                assert_eq!(connection, ConnectionId::from(0usize));
-            }
-            _ => panic!("invalid command received"),
-        }
 
         handle
             ._report_connection_established(

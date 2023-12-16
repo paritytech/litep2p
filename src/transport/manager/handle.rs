@@ -27,7 +27,7 @@ use crate::{
         manager::{
             address::{AddressRecord, AddressStore},
             types::{PeerContext, PeerState, SupportedTransport},
-            ProtocolContext, TransportManagerCommand, TransportManagerEvent, LOG_TARGET,
+            ProtocolContext, TransportManagerEvent, LOG_TARGET,
         },
         Endpoint,
     },
@@ -35,19 +35,16 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
-use futures::Stream;
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::Sender;
 
 use std::{
     collections::{HashMap, HashSet},
-    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    task::{Context, Poll},
 };
 
 /// Inner commands sent from [`TransportManagerHandle`] to [`TransportManager`].
@@ -249,7 +246,6 @@ impl TransportManagerHandle {
 pub struct TransportHandle {
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,
-    pub rx: Receiver<TransportManagerCommand>,
     pub protocols: HashMap<ProtocolName, ProtocolContext>,
     pub next_connection_id: Arc<AtomicUsize>,
     pub next_substream_id: Arc<AtomicUsize>,
@@ -341,19 +337,10 @@ impl TransportHandle {
     }
 }
 
-impl Stream for TransportHandle {
-    type Item = TransportManagerCommand;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.rx.poll_recv(cx)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc::channel;
-
     use super::*;
+    use tokio::sync::mpsc::{channel, Receiver};
 
     fn make_transport_manager_handle() -> (
         TransportManagerHandle,

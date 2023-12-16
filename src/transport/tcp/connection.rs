@@ -595,7 +595,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -654,7 +653,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         let (Ok(mut dialer), Ok((listener, dialer_address))) =
             tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
@@ -718,7 +716,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -781,7 +778,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
             tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
@@ -849,7 +845,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
             tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
@@ -917,7 +912,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -980,7 +974,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -1036,7 +1029,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         let (Ok(_dialer), Ok((listener, dialer_address))) =
             tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
@@ -1098,7 +1090,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
             tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
@@ -1178,7 +1169,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
@@ -1250,7 +1240,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
             tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
@@ -1326,7 +1315,6 @@ mod tests {
             manager.register_transport(SupportedTransport::Tcp, Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         let _ = manager.dial_address(multiaddr.clone()).await;
-        let _ = handle.next().await.unwrap();
 
         tokio::spawn(async move {
             match TcpConnection::open_connection(
