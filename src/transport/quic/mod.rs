@@ -27,8 +27,11 @@ use crate::{
     error::{AddressError, Error},
     transport::{
         manager::TransportHandle,
-        quic::{config::TransportConfig as QuicTransportConfig, listener::QuicListener},
-        Transport, TransportBuilder, TransportEvent,
+        quic::{
+            config::TransportConfig as QuicTransportConfig, connection::QuicConnection,
+            listener::QuicListener,
+        },
+        Endpoint as Litep2pEndpoint, Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
     PeerId,
@@ -80,6 +83,9 @@ pub(crate) struct QuicTransport {
     /// Pending connections.
     pending_connections:
         FuturesUnordered<BoxFuture<'static, (ConnectionId, Result<NegotiatedConnection, Error>)>>,
+
+    /// Negotiated connections waiting for validation.
+    pending_open: HashMap<ConnectionId, (NegotiatedConnection, Litep2pEndpoint)>,
 }
 
 impl QuicTransport {
@@ -107,10 +113,11 @@ impl QuicTransport {
 
         match result {
             Ok(connection) => {
+                let peer = connection.peer;
                 let endpoint = maybe_address.map_or(
                     {
                         let address = connection.connection.remote_address();
-                        crate::transport::Endpoint::listener(
+                        Litep2pEndpoint::listener(
                             Multiaddr::empty()
                                 .with(Protocol::from(address.ip()))
                                 .with(Protocol::Udp(address.port()))
@@ -118,27 +125,11 @@ impl QuicTransport {
                             connection_id,
                         )
                     },
-                    |address| crate::transport::Endpoint::dialer(address, connection_id),
+                    |address| Litep2pEndpoint::dialer(address, connection_id),
                 );
+                self.pending_open.insert(connection_id, (connection, endpoint.clone()));
 
-                let bandwidth_sink = self.context.bandwidth_sink.clone();
-                let mut protocol_set = self.context.protocol_set(connection_id);
-
-                self.context.executor.run(Box::pin(async move {
-                    let _ = protocol_set
-                        .report_connection_established(connection_id, connection.peer, endpoint)
-                        .await;
-
-                    let _ = connection::Connection::new(
-                        connection.peer,
-                        connection_id,
-                        connection.connection,
-                        protocol_set,
-                        bandwidth_sink,
-                    )
-                    .start()
-                    .await;
-                }));
+                return Some(TransportEvent::ConnectionEstablished { peer, endpoint });
             }
             Err(error) => {
                 tracing::debug!(target: LOG_TARGET, ?connection_id, ?error, "failed to establish connection");
@@ -179,6 +170,7 @@ impl TransportBuilder for QuicTransport {
         Ok(Self {
             context,
             listener,
+            pending_open: HashMap::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
@@ -236,12 +228,40 @@ impl Transport for QuicTransport {
         Ok(())
     }
 
-    fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let (connection, endpoint) = self
+            .pending_open
+            .remove(&connection_id)
+            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+        let bandwidth_sink = self.context.bandwidth_sink.clone();
+        let protocol_set = self.context.protocol_set(connection_id);
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?connection_id,
+            "start connection",
+        );
+
+        self.context.executor.run(Box::pin(async move {
+            let _ = QuicConnection::new(
+                connection.peer,
+                endpoint,
+                connection_id,
+                connection.connection,
+                protocol_set,
+                bandwidth_sink,
+            )
+            .start()
+            .await;
+        }));
+
         Ok(())
     }
 
-    fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-        Ok(())
+    fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.pending_open
+            .remove(&connection_id)
+            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
     }
 }
 
@@ -276,19 +296,8 @@ impl Stream for QuicTransport {
             let (connection_id, result) = connection;
 
             match self.on_connection_established(connection_id, result) {
+                Some(event) => return Poll::Ready(Some(event)),
                 None => {}
-                Some(TransportEvent::DialFailure {
-                    connection_id,
-                    address,
-                    error,
-                }) => {
-                    return Poll::Ready(Some(TransportEvent::DialFailure {
-                        connection_id,
-                        address,
-                        error,
-                    }));
-                }
-                _ => todo!(),
             }
         }
 
@@ -303,7 +312,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::{ed25519::Keypair, PublicKey},
         executor::DefaultExecutor,
-        transport::manager::{ProtocolContext, TransportHandle, TransportManagerEvent},
+        transport::manager::{ProtocolContext, TransportHandle},
         types::protocol::ProtocolName,
         BandwidthSink,
     };
@@ -318,7 +327,7 @@ mod tests {
 
         let keypair1 = Keypair::generate();
         let (tx1, _rx1) = channel(64);
-        let (event_tx1, mut event_rx1) = channel(64);
+        let (event_tx1, _event_rx1) = channel(64);
 
         let handle1 = TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
@@ -345,36 +354,9 @@ mod tests {
         let mut transport1 = QuicTransport::new(handle1, transport_config1).unwrap();
         let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
 
-        tokio::spawn(async move {
-            while let Some(event) = transport1.next().await {
-                match event {
-                    TransportEvent::ConnectionEstablished { .. } => {}
-                    TransportEvent::ConnectionClosed { .. } => {}
-                    TransportEvent::DialFailure {
-                        connection_id,
-                        address,
-                        error,
-                    } => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?connection_id,
-                            ?address,
-                            ?error,
-                            "failed to dial peer",
-                        );
-
-                        let _ = transport1
-                            .context
-                            .report_dial_failure(connection_id, address, error)
-                            .await;
-                    }
-                }
-            }
-        });
-
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
-        let (event_tx2, mut event_rx2) = channel(64);
+        let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
@@ -406,20 +388,16 @@ mod tests {
             Multihash::from_bytes(&peer1.to_bytes()).unwrap(),
         ));
 
-        tokio::spawn(async move {
-            transport2.dial(ConnectionId::new(), listen_address).unwrap();
-            while let Some(_) = transport2.next().await {}
-        });
-
-        let (res1, res2) = tokio::join!(event_rx1.recv(), event_rx2.recv());
+        transport2.dial(ConnectionId::new(), listen_address).unwrap();
+        let (res1, res2) = tokio::join!(transport1.next(), transport2.next());
 
         assert!(std::matches!(
             res1,
-            Some(TransportManagerEvent::ConnectionEstablished { .. })
+            Some(TransportEvent::ConnectionEstablished { .. })
         ));
         assert!(std::matches!(
             res2,
-            Some(TransportManagerEvent::ConnectionEstablished { .. })
+            Some(TransportEvent::ConnectionEstablished { .. })
         ));
     }
 }

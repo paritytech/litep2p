@@ -26,7 +26,10 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
-    transport::quic::substream::{NegotiatingSubstream, Substream},
+    transport::{
+        quic::substream::{NegotiatingSubstream, Substream},
+        Endpoint,
+    },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     BandwidthSink, PeerId,
 };
@@ -80,12 +83,15 @@ struct NegotiatedSubstream {
 }
 
 /// QUIC connection.
-pub struct Connection {
+pub struct QuicConnection {
     /// Remote peer ID.
     peer: PeerId,
 
     /// Connection ID.
     connection_id: ConnectionId,
+
+    /// Endpoint.
+    endpoint: Endpoint,
 
     /// QUIC connection.
     connection: QuinnConnection,
@@ -101,10 +107,11 @@ pub struct Connection {
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
 }
 
-impl Connection {
+impl QuicConnection {
     /// Create new [`Connection`].
     pub fn new(
         peer: PeerId,
+        endpoint: Endpoint,
         connection_id: ConnectionId,
         connection: QuinnConnection,
         protocol_set: ProtocolSet,
@@ -112,6 +119,7 @@ impl Connection {
     ) -> Self {
         Self {
             peer,
+            endpoint,
             connection,
             protocol_set,
             connection_id,
@@ -217,6 +225,10 @@ impl Connection {
 
     /// Start event loop for [`Connection`].
     pub async fn start(mut self) -> crate::Result<()> {
+        self.protocol_set
+            .report_connection_established_new(self.connection_id, self.peer, self.endpoint)
+            .await?;
+
         loop {
             tokio::select! {
                 event = self.connection.accept_bi() => match event {
