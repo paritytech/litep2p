@@ -708,7 +708,6 @@ impl ProtocolSet {
     /// Report to protocols that a connection was established.
     pub(crate) async fn report_connection_established_new(
         &mut self,
-        connection_id: ConnectionId,
         peer: PeerId,
         endpoint: Endpoint,
     ) -> crate::Result<()> {
@@ -725,7 +724,7 @@ impl ProtocolSet {
                         .tx
                         .send(InnerTransportEvent::ConnectionEstablished {
                             peer,
-                            connection: connection_id,
+                            connection: endpoint.connection_id(),
                             endpoint,
                             sender: connection_handle,
                         })
@@ -739,7 +738,7 @@ impl ProtocolSet {
                 tracing::warn!(
                     target: LOG_TARGET,
                     ?peer,
-                    ?connection_id,
+                    connection_id = ?endpoint.connection_id(),
                     ?error,
                     "failed to report closed connection",
                 );

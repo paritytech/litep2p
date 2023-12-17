@@ -246,7 +246,6 @@ impl Transport for QuicTransport {
             let _ = QuicConnection::new(
                 connection.peer,
                 endpoint,
-                connection_id,
                 connection.connection,
                 protocol_set,
                 bandwidth_sink,

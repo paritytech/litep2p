@@ -95,9 +95,6 @@ enum ConnectionError {
 
 /// Connection context for an opened connection that hasn't yet started its event loop.
 pub struct NegotiatedConnection {
-    /// Connection ID.
-    connection_id: ConnectionId,
-
     /// Yamux connection.
     connection: yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
 
@@ -114,7 +111,7 @@ pub struct NegotiatedConnection {
 impl NegotiatedConnection {
     /// Get `ConnectionId` of the negotiated connection.
     pub fn connection_id(&self) -> ConnectionId {
-        self.connection_id
+        self.endpoint.connection_id()
     }
 
     /// Get `PeerId` of the negotiated connection.
@@ -130,9 +127,6 @@ impl NegotiatedConnection {
 
 /// TCP connection.
 pub struct TcpConnection {
-    /// Connection ID.
-    connection_id: ConnectionId,
-
     /// Protocol context.
     protocol_set: ProtocolSet,
 
@@ -176,7 +170,6 @@ impl TcpConnection {
         bandwidth_sink: BandwidthSink,
     ) -> Self {
         let NegotiatedConnection {
-            connection_id,
             connection,
             control,
             peer,
@@ -184,7 +177,6 @@ impl TcpConnection {
         } = context;
 
         Self {
-            connection_id,
             protocol_set,
             connection,
             control,
@@ -446,7 +438,6 @@ impl TcpConnection {
             peer,
             control,
             connection,
-            connection_id,
             endpoint,
         })
     }
@@ -454,7 +445,7 @@ impl TcpConnection {
     /// Start connection event loop.
     pub(crate) async fn start(mut self) -> crate::Result<()> {
         self.protocol_set
-            .report_connection_established_new(self.connection_id, self.peer, self.endpoint)
+            .report_connection_established_new(self.peer, self.endpoint.clone())
             .await?;
 
         loop {
@@ -492,13 +483,13 @@ impl TcpConnection {
                             ?error,
                             "connection closed with error"
                         );
-                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
+                        self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await?;
 
                         return Ok(())
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
-                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
+                        self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await?;
 
                         return Ok(())
                     }
@@ -596,7 +587,7 @@ impl TcpConnection {
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, "protocols have disconnected, closing connection");
-                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
+                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await
                     }
                 }
             }

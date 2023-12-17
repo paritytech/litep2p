@@ -30,7 +30,7 @@ use crate::{
         quic::substream::{NegotiatingSubstream, Substream},
         Endpoint,
     },
-    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    types::{protocol::ProtocolName, SubstreamId},
     BandwidthSink, PeerId,
 };
 
@@ -87,9 +87,6 @@ pub struct QuicConnection {
     /// Remote peer ID.
     peer: PeerId,
 
-    /// Connection ID.
-    connection_id: ConnectionId,
-
     /// Endpoint.
     endpoint: Endpoint,
 
@@ -112,7 +109,6 @@ impl QuicConnection {
     pub fn new(
         peer: PeerId,
         endpoint: Endpoint,
-        connection_id: ConnectionId,
         connection: QuinnConnection,
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
@@ -122,7 +118,6 @@ impl QuicConnection {
             endpoint,
             connection,
             protocol_set,
-            connection_id,
             bandwidth_sink,
             pending_substreams: FuturesUnordered::new(),
         }
@@ -226,7 +221,7 @@ impl QuicConnection {
     /// Start event loop for [`Connection`].
     pub async fn start(mut self) -> crate::Result<()> {
         self.protocol_set
-            .report_connection_established_new(self.connection_id, self.peer, self.endpoint)
+            .report_connection_established_new(self.peer, self.endpoint.clone())
             .await?;
 
         loop {
@@ -261,7 +256,7 @@ impl QuicConnection {
                     }
                     Err(error) => {
                         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, ?error, "failed to accept substream");
-                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await;
+                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await;
                     }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
@@ -328,10 +323,10 @@ impl QuicConnection {
                         tracing::debug!(
                             target: LOG_TARGET,
                             peer = ?self.peer,
-                            connection_id = ?self.connection_id,
+                            connection_id = ?self.endpoint.connection_id(),
                             "protocols have dropped connection"
                         );
-                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await;
+                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await;
                     }
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let connection = self.connection.clone();
