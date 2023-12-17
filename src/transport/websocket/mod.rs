@@ -43,7 +43,6 @@ use std::{
     collections::HashMap,
     pin::Pin,
     task::{Context, Poll},
-    time::Duration,
 };
 
 pub(crate) use substream::Substream;
@@ -184,12 +183,13 @@ impl Transport for WebSocketTransport {
         // report dial failure immediately
         let keypair = self.context.keypair.clone();
         let ws_address = Self::multiaddr_into_url(address.clone())?;
+        let connection_open_timeout = self.config.connection_open_timeout;
         self.pending_dials.insert(connection_id, address.clone());
 
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
         self.pending_connections.push(Box::pin(async move {
-            match tokio::time::timeout(Duration::from_secs(10), async move {
+            match tokio::time::timeout(connection_open_timeout, async move {
                 WebSocketConnection::open_connection(
                     connection_id,
                     keypair,
@@ -219,6 +219,7 @@ impl Transport for WebSocketTransport {
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
         let protocol_set = self.context.protocol_set(connection_id);
         let bandwidth_sink = self.context.bandwidth_sink.clone();
+        let substream_open_timeout = self.config.substream_open_timeout;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -227,8 +228,14 @@ impl Transport for WebSocketTransport {
         );
 
         self.context.executor.run(Box::pin(async move {
-            if let Err(error) =
-                WebSocketConnection::new(context, protocol_set, bandwidth_sink).start().await
+            if let Err(error) = WebSocketConnection::new(
+                context,
+                protocol_set,
+                bandwidth_sink,
+                substream_open_timeout,
+            )
+            .start()
+            .await
             {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -260,9 +267,10 @@ impl Stream for WebSocketTransport {
                     let connection_id = self.context.next_connection_id();
                     let keypair = self.context.keypair.clone();
                     let yamux_config = self.config.yamux_config.clone();
+                    let connection_open_timeout = self.config.connection_open_timeout;
 
                     self.pending_connections.push(Box::pin(async move {
-                        match tokio::time::timeout(Duration::from_secs(10), async move {
+                        match tokio::time::timeout(connection_open_timeout, async move {
                             WebSocketConnection::accept_connection(
                                 stream,
                                 connection_id,

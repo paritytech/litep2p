@@ -43,7 +43,7 @@ use tokio_tungstenite::MaybeTlsStream;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use url::Url;
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 mod schema {
     pub(super) mod noise {
@@ -146,6 +146,9 @@ pub(crate) struct WebSocketConnection {
     /// Endpoint.
     endpoint: Endpoint,
 
+    /// Substream open timeout.
+    substream_open_timeout: Duration,
+
     /// Connection ID.
     connection_id: ConnectionId,
 
@@ -163,6 +166,7 @@ impl WebSocketConnection {
         connection: NegotiatedConnection,
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
+        substream_open_timeout: Duration,
     ) -> Self {
         let NegotiatedConnection {
             connection_id,
@@ -180,6 +184,7 @@ impl WebSocketConnection {
             peer,
             endpoint,
             bandwidth_sink,
+            substream_open_timeout,
             pending_substreams: FuturesUnordered::new(),
         }
     }
@@ -412,10 +417,11 @@ impl WebSocketConnection {
                         let substream = self.protocol_set.next_substream_id();
                         let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
+                        let substream_open_timeout = self.substream_open_timeout;
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                substream_open_timeout,
                                 Self::accept_substream(stream, permit, substream, protocols),
                             )
                             .await
@@ -511,6 +517,7 @@ impl WebSocketConnection {
                 protocol = self.protocol_set.next() => match protocol {
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let control = self.control.clone();
+                        let substream_open_timeout = self.substream_open_timeout;
 
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -521,7 +528,7 @@ impl WebSocketConnection {
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                substream_open_timeout,
                                 Self::open_substream(
                                     control,
                                     permit,

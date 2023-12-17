@@ -369,11 +369,11 @@ impl TcpConnection {
         stream: S,
         role: &Role,
         protocols: Vec<&str>,
-        open_timeout: Duration,
+        substream_open_timeout: Duration,
     ) -> crate::Result<(Negotiated<S>, ProtocolName)> {
         tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
 
-        match tokio::time::timeout(open_timeout, async move {
+        match tokio::time::timeout(substream_open_timeout, async move {
             match role {
                 Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
                 Role::Listener => listener_select_proto(stream, protocols).await,
