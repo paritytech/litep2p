@@ -292,7 +292,7 @@ impl WebSocketConnection {
         );
 
         // negotiate `noise`
-        let (stream, _) = Self::negotiate_protocol(stream, &Role::Dialer, vec!["/noise"]).await?;
+        let (stream, _) = Self::negotiate_protocol(stream, &Role::Listener, vec!["/noise"]).await?;
 
         tracing::trace!(
             target: LOG_TARGET,
