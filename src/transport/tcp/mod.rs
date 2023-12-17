@@ -90,6 +90,7 @@ impl TcpTransport {
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let connection_open_timeout = self.config.connection_open_timeout;
+        let substream_open_timeout = self.config.substream_open_timeout;
         let keypair = self.context.keypair.clone();
 
         self.pending_connections.push(Box::pin(async move {
@@ -102,6 +103,7 @@ impl TcpTransport {
                 max_read_ahead_factor,
                 max_write_buffer_size,
                 connection_open_timeout,
+                substream_open_timeout,
             )
             .await
             .map_err(|error| (connection_id, error))
@@ -146,6 +148,7 @@ impl Transport for TcpTransport {
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let connection_open_timeout = self.config.connection_open_timeout;
+        let substream_open_timeout = self.config.substream_open_timeout;
         let keypair = self.context.keypair.clone();
 
         self.pending_dials.insert(connection_id, address.clone());
@@ -159,6 +162,7 @@ impl Transport for TcpTransport {
                 max_read_ahead_factor,
                 max_write_buffer_size,
                 connection_open_timeout,
+                substream_open_timeout,
             )
             .await
             .map_err(|error| (connection_id, error))

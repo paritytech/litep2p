@@ -22,7 +22,7 @@
 
 use crate::{
     crypto::noise::{MAX_READ_AHEAD_FACTOR, MAX_WRITE_BUFFER_SIZE},
-    transport::CONNECTION_OPEN_TIMEOUT,
+    transport::{CONNECTION_OPEN_TIMEOUT, SUBSTREAM_OPEN_TIMEOUT},
 };
 
 use multiaddr::Multiaddr;
@@ -61,9 +61,15 @@ pub struct TransportConfig {
 
     /// Connection open timeout.
     ///
-    /// How long should litep2p wait for connection to be opend before the host
+    /// How long should litep2p wait for a connection to be opend before the host
     /// is deemed unreachable.
     pub connection_open_timeout: Duration,
+
+    /// Substream open timeout.
+    ///
+    /// How long should litep2p wait for a substream to be opened before considering
+    /// the substream rejected.
+    pub substream_open_timeout: Duration,
 }
 
 impl Default for TransportConfig {
@@ -74,6 +80,7 @@ impl Default for TransportConfig {
             noise_read_ahead_frame_count: MAX_READ_AHEAD_FACTOR,
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,
             connection_open_timeout: CONNECTION_OPEN_TIMEOUT,
+            substream_open_timeout: SUBSTREAM_OPEN_TIMEOUT,
         }
     }
 }

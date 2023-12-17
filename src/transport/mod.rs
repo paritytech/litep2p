@@ -38,6 +38,9 @@ pub(crate) mod manager;
 /// Timeout for opening a connection.
 pub(crate) const CONNECTION_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Timeout for opening a substream.
+pub(crate) const SUBSTREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Connection endpoint.
 #[derive(Debug, Clone)]
 pub enum Endpoint {

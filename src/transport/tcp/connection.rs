@@ -106,6 +106,9 @@ pub struct NegotiatedConnection {
 
     /// Endpoint.
     endpoint: Endpoint,
+
+    /// Substream open timeout.
+    substream_open_timeout: Duration,
 }
 
 impl NegotiatedConnection {
@@ -142,6 +145,9 @@ pub struct TcpConnection {
     /// Endpoint.
     endpoint: Endpoint,
 
+    /// Substream open timeout.
+    substream_open_timeout: Duration,
+
     /// Next substream ID.
     next_substream_id: SubstreamId,
 
@@ -174,6 +180,7 @@ impl TcpConnection {
             control,
             peer,
             endpoint,
+            substream_open_timeout,
         } = context;
 
         Self {
@@ -185,6 +192,7 @@ impl TcpConnection {
             bandwidth_sink,
             next_substream_id: SubstreamId::new(),
             pending_substreams: FuturesUnordered::new(),
+            substream_open_timeout,
         }
     }
 
@@ -198,6 +206,7 @@ impl TcpConnection {
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
         connection_open_timeout: Duration,
+        substream_open_timeout: Duration,
     ) -> crate::Result<NegotiatedConnection> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -223,6 +232,7 @@ impl TcpConnection {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                substream_open_timeout,
             )
             .await
         })
@@ -240,6 +250,7 @@ impl TcpConnection {
         direction: Direction,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
+        open_timeout: Duration,
     ) -> crate::Result<NegotiatedSubstream> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
 
@@ -265,7 +276,8 @@ impl TcpConnection {
             .chain(fallback_names.iter().map(|protocol| &**protocol))
             .collect();
 
-        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Dialer, protocols).await?;
+        let (io, protocol) =
+            Self::negotiate_protocol(stream, &Role::Dialer, protocols, open_timeout).await?;
 
         Ok(NegotiatedSubstream {
             io: io.inner(),
@@ -285,6 +297,7 @@ impl TcpConnection {
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
         connection_open_timeout: Duration,
+        substream_open_timeout: Duration,
     ) -> crate::Result<NegotiatedConnection> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
@@ -299,6 +312,7 @@ impl TcpConnection {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                substream_open_timeout,
             )
             .await
         })
@@ -315,6 +329,7 @@ impl TcpConnection {
         permit: Permit,
         substream_id: SubstreamId,
         protocols: Vec<ProtocolName>,
+        open_timeout: Duration,
     ) -> crate::Result<NegotiatedSubstream> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -323,7 +338,8 @@ impl TcpConnection {
         );
 
         let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
-        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Listener, protocols).await?;
+        let (io, protocol) =
+            Self::negotiate_protocol(stream, &Role::Listener, protocols, open_timeout).await?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -344,10 +360,11 @@ impl TcpConnection {
         stream: S,
         role: &Role,
         protocols: Vec<&str>,
+        open_timeout: Duration,
     ) -> crate::Result<(Negotiated<S>, ProtocolName)> {
         tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
 
-        match tokio::time::timeout(Duration::from_secs(10), async move {
+        match tokio::time::timeout(open_timeout, async move {
             match role {
                 Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
                 Role::Listener => listener_select_proto(stream, protocols).await,
@@ -378,6 +395,7 @@ impl TcpConnection {
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        substream_open_timeout: Duration,
     ) -> crate::Result<NegotiatedConnection> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -389,7 +407,8 @@ impl TcpConnection {
         let stream = TokioAsyncWriteCompatExt::compat_write(stream);
 
         // negotiate `noise`
-        let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/noise"]).await?;
+        let (stream, _) =
+            Self::negotiate_protocol(stream, &role, vec!["/noise"], substream_open_timeout).await?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -417,7 +436,9 @@ impl TcpConnection {
         let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // negotiate `yamux`
-        let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"]).await?;
+        let (stream, _) =
+            Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"], substream_open_timeout)
+                .await?;
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
         let connection = yamux::Connection::new(stream.inner(), yamux_config, role.into());
@@ -441,6 +462,7 @@ impl TcpConnection {
             control,
             connection,
             endpoint,
+            substream_open_timeout,
         })
     }
 
@@ -457,11 +479,12 @@ impl TcpConnection {
                         let substream = self.next_substream_id.next();
                         let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
+                        let open_timeout = self.substream_open_timeout;
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
-                                Self::accept_substream(stream, permit, substream, protocols),
+                                open_timeout,
+                                Self::accept_substream(stream, permit, substream, protocols, open_timeout),
                             )
                             .await
                             {
@@ -559,6 +582,7 @@ impl TcpConnection {
                 protocol = self.protocol_set.next() => match protocol {
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let control = self.control.clone();
+                        let open_timeout = self.substream_open_timeout;
 
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -569,8 +593,15 @@ impl TcpConnection {
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
-                                Self::open_substream(control, permit, Direction::Outbound(substream_id), protocol.clone(), fallback_names),
+                                open_timeout,
+                                Self::open_substream(
+                                    control,
+                                    permit,
+                                    Direction::Outbound(substream_id),
+                                    protocol.clone(),
+                                    fallback_names,
+                                    open_timeout,
+                                ),
                             )
                             .await
                             {
@@ -652,6 +683,7 @@ mod tests {
                 5,
                 2,
                 Duration::from_secs(10),
+                Duration::from_secs(10),
             )
             .await
             {
@@ -718,6 +750,7 @@ mod tests {
                 5,
                 2,
                 Duration::from_secs(10),
+                Duration::from_secs(10),
             )
             .await
             {
@@ -776,6 +809,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
                 Duration::from_secs(10),
             )
             .await
@@ -847,6 +881,7 @@ mod tests {
                 5,
                 2,
                 Duration::from_secs(10),
+                Duration::from_secs(10),
             )
             .await
             {
@@ -916,6 +951,7 @@ mod tests {
                 5,
                 2,
                 Duration::from_secs(10),
+                Duration::from_secs(10),
             )
             .await
             {
@@ -978,6 +1014,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
                 Duration::from_secs(10),
             )
             .await
@@ -1043,6 +1080,7 @@ mod tests {
                 5,
                 2,
                 Duration::from_secs(10),
+                Duration::from_secs(10),
             )
             .await
             {
@@ -1106,6 +1144,7 @@ mod tests {
                 5,
                 2,
                 Duration::from_secs(10),
+                Duration::from_secs(10),
             )
             .await
             {
@@ -1168,6 +1207,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
                 Duration::from_secs(10),
             )
             .await
@@ -1242,6 +1282,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
                 Duration::from_secs(10),
             )
             .await
@@ -1322,6 +1363,7 @@ mod tests {
                 5,
                 2,
                 Duration::from_secs(10),
+                Duration::from_secs(10),
             )
             .await
             {
@@ -1392,6 +1434,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
                 Duration::from_secs(10),
             )
             .await
