@@ -20,10 +20,15 @@
 
 //! TCP transport configuration.
 
-use crate::crypto::noise::{MAX_READ_AHEAD_FACTOR, MAX_WRITE_BUFFER_SIZE};
+use crate::{
+    crypto::noise::{MAX_READ_AHEAD_FACTOR, MAX_WRITE_BUFFER_SIZE},
+    transport::CONNECTION_OPEN_TIMEOUT,
+};
 
 use multiaddr::Multiaddr;
 use yamux::Config;
+
+use std::time::Duration;
 
 /// TCP transport configuration.
 #[derive(Debug, Clone)]
@@ -53,6 +58,12 @@ pub struct TransportConfig {
     /// The write buffer size is separate from  the read-ahead frame count so by default
     /// the Noise code will allocate `2 * 65 KB + 5 * 65 KB = 455 KB` per connection.
     pub noise_write_buffer_size: usize,
+
+    /// Connection open timeout.
+    ///
+    /// How long should litep2p wait for connection to be opend before the host
+    /// is deemed unreachable.
+    pub connection_open_timeout: Duration,
 }
 
 impl Default for TransportConfig {
@@ -62,6 +73,7 @@ impl Default for TransportConfig {
             yamux_config: Default::default(),
             noise_read_ahead_frame_count: MAX_READ_AHEAD_FACTOR,
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,
+            connection_open_timeout: CONNECTION_OPEN_TIMEOUT,
         }
     }
 }

@@ -433,7 +433,7 @@ impl TransportManager {
                         target: LOG_TARGET,
                         ?peer,
                         ?dial_record,
-                        "peer is aready being dialed while",
+                        "peer is aready being dialed",
                     );
                     return Ok(());
                 }

@@ -25,7 +25,7 @@ use crate::{transport::manager::TransportHandle, types::ConnectionId, Error, Pee
 use futures::Stream;
 use multiaddr::Multiaddr;
 
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 
 pub mod quic;
 pub mod tcp;
@@ -34,6 +34,9 @@ pub mod websocket;
 
 pub(crate) mod dummy;
 pub(crate) mod manager;
+
+/// Timeout for opening a connection.
+pub(crate) const CONNECTION_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connection endpoint.
 #[derive(Debug, Clone)]

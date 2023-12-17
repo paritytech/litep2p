@@ -89,6 +89,7 @@ impl TcpTransport {
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let connection_open_timeout = self.config.connection_open_timeout;
         let keypair = self.context.keypair.clone();
 
         self.pending_connections.push(Box::pin(async move {
@@ -100,6 +101,7 @@ impl TcpTransport {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                connection_open_timeout,
             )
             .await
             .map_err(|error| (connection_id, error))
@@ -143,6 +145,7 @@ impl Transport for TcpTransport {
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let connection_open_timeout = self.config.connection_open_timeout;
         let keypair = self.context.keypair.clone();
 
         self.pending_dials.insert(connection_id, address.clone());
@@ -155,6 +158,7 @@ impl Transport for TcpTransport {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                connection_open_timeout,
             )
             .await
             .map_err(|error| (connection_id, error))
@@ -365,12 +369,7 @@ mod tests {
                 },
             )]),
         };
-        let transport_config1 = TransportConfig {
-            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-            ..Default::default()
-        };
-
-        let mut transport1 = TcpTransport::new(handle1, transport_config1).unwrap();
+        let mut transport1 = TcpTransport::new(handle1, Default::default()).unwrap();
 
         tokio::spawn(async move {
             while let Some(event) = transport1.next().await {
@@ -410,12 +409,8 @@ mod tests {
                 },
             )]),
         };
-        let transport_config2 = TransportConfig {
-            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-            ..Default::default()
-        };
 
-        let mut transport2 = TcpTransport::new(handle2, transport_config2).unwrap();
+        let mut transport2 = TcpTransport::new(handle2, Default::default()).unwrap();
 
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));

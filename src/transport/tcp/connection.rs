@@ -197,6 +197,7 @@ impl TcpConnection {
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        connection_open_timeout: Duration,
     ) -> crate::Result<NegotiatedConnection> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -205,7 +206,7 @@ impl TcpConnection {
             "open connection to remote peer",
         );
 
-        match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+        match tokio::time::timeout(connection_open_timeout, async move {
             let stream = match &address {
                 AddressType::Socket(socket_address) => TcpStream::connect(socket_address).await?,
                 AddressType::Dns(address, port) =>
@@ -283,10 +284,11 @@ impl TcpConnection {
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        connection_open_timeout: Duration,
     ) -> crate::Result<NegotiatedConnection> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
-        match tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+        match tokio::time::timeout(connection_open_timeout, async move {
             Self::negotiate_connection(
                 stream,
                 None,
@@ -649,6 +651,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -714,6 +717,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -772,6 +776,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -841,6 +846,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -909,6 +915,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -971,6 +978,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -1034,6 +1042,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -1096,6 +1105,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -1158,6 +1168,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -1231,6 +1242,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -1309,6 +1321,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
@@ -1379,6 +1392,7 @@ mod tests {
                 Default::default(),
                 5,
                 2,
+                Duration::from_secs(10),
             )
             .await
             {
