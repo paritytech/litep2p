@@ -178,6 +178,7 @@ impl Transport for TcpTransport {
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
         let protocol_set = self.context.protocol_set(connection_id);
         let bandwidth_sink = self.context.bandwidth_sink.clone();
+        let next_substream_id = self.context.next_substream_id.clone();
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -187,7 +188,9 @@ impl Transport for TcpTransport {
 
         self.context.executor.run(Box::pin(async move {
             if let Err(error) =
-                TcpConnection::new(context, protocol_set, bandwidth_sink).start().await
+                TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
+                    .start()
+                    .await
             {
                 tracing::debug!(
                     target: LOG_TARGET,

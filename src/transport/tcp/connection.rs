@@ -47,9 +47,17 @@ use tokio_util::compat::{
     Compat, FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt,
 };
 
-use std::{borrow::Cow, fmt, net::SocketAddr, time::Duration};
+use std::{
+    borrow::Cow,
+    fmt,
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
-// TODO: introduce `NegotiatingConnection` to clean up this code a bit?
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::tcp::connection";
 
@@ -149,7 +157,7 @@ pub struct TcpConnection {
     substream_open_timeout: Duration,
 
     /// Next substream ID.
-    next_substream_id: SubstreamId,
+    next_substream_id: Arc<AtomicUsize>,
 
     // Bandwidth sink.
     bandwidth_sink: BandwidthSink,
@@ -174,6 +182,7 @@ impl TcpConnection {
         context: NegotiatedConnection,
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
+        next_substream_id: Arc<AtomicUsize>,
     ) -> Self {
         let NegotiatedConnection {
             connection,
@@ -190,7 +199,7 @@ impl TcpConnection {
             peer,
             endpoint,
             bandwidth_sink,
-            next_substream_id: SubstreamId::new(),
+            next_substream_id,
             pending_substreams: FuturesUnordered::new(),
             substream_open_timeout,
         }
@@ -334,7 +343,7 @@ impl TcpConnection {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
-            "accept inbound substream"
+            "accept inbound substream",
         );
 
         let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
@@ -344,7 +353,7 @@ impl TcpConnection {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
-            "substream accepted and negotiated"
+            "substream accepted and negotiated",
         );
 
         Ok(NegotiatedSubstream {
@@ -412,7 +421,7 @@ impl TcpConnection {
 
         tracing::trace!(
             target: LOG_TARGET,
-            "`multistream-select` and `noise` negotiated"
+            "`multistream-select` and `noise` negotiated",
         );
 
         // perform noise handshake
@@ -476,7 +485,10 @@ impl TcpConnection {
             tokio::select! {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
-                        let substream = self.next_substream_id.next();
+                        let substream_id = {
+                            let substream_id = self.next_substream_id.fetch_add(1usize, Ordering::Relaxed);
+                            SubstreamId::from(substream_id)
+                        };
                         let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
                         let open_timeout = self.substream_open_timeout;
@@ -484,7 +496,7 @@ impl TcpConnection {
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 open_timeout,
-                                Self::accept_substream(stream, permit, substream, protocols, open_timeout),
+                                Self::accept_substream(stream, permit, substream_id, protocols, open_timeout),
                             )
                             .await
                             {
@@ -506,7 +518,7 @@ impl TcpConnection {
                             target: LOG_TARGET,
                             peer = ?self.peer,
                             ?error,
-                            "connection closed with error"
+                            "connection closed with error",
                         );
                         self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await?;
 
@@ -573,7 +585,7 @@ impl TcpConnection {
                                 tracing::error!(
                                     target: LOG_TARGET,
                                     ?error,
-                                    "failed to register opened substream to protocol"
+                                    "failed to register opened substream to protocol",
                                 );
                             }
                         }
@@ -588,7 +600,7 @@ impl TcpConnection {
                             target: LOG_TARGET,
                             ?protocol,
                             ?substream_id,
-                            "open substream"
+                            "open substream",
                         );
 
                         self.pending_substreams.push(Box::pin(async move {
