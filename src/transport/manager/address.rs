@@ -208,4 +208,157 @@ impl AddressStore {
             record
         })
     }
+
+    /// Take at most `limit` `AddressRecord`s from [`AddressStore`].
+    pub fn take(&mut self, limit: usize) -> Vec<AddressRecord> {
+        let mut records = Vec::new();
+
+        for _ in 0..limit {
+            match self.pop() {
+                Some(record) => records.push(record),
+                None => break,
+            }
+        }
+
+        records
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddrV4};
+
+    use super::*;
+    use rand::{rngs::ThreadRng, Rng};
+
+    fn tcp_address_record(rng: &mut ThreadRng) -> AddressRecord {
+        let peer = PeerId::random();
+        let address = std::net::SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(
+                rng.gen_range(1..=255),
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
+            ),
+            rng.gen_range(1..=65535),
+        ));
+        let score: i32 = rng.gen();
+
+        AddressRecord::new(
+            &peer,
+            Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port())),
+            score,
+            None,
+        )
+    }
+
+    fn ws_address_record(rng: &mut ThreadRng) -> AddressRecord {
+        let peer = PeerId::random();
+        let address = std::net::SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(
+                rng.gen_range(1..=255),
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
+            ),
+            rng.gen_range(1..=65535),
+        ));
+        let score: i32 = rng.gen();
+
+        AddressRecord::new(
+            &peer,
+            Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port()))
+                .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string()))),
+            score,
+            None,
+        )
+    }
+
+    fn quic_address_record(rng: &mut ThreadRng) -> AddressRecord {
+        let peer = PeerId::random();
+        let address = std::net::SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(
+                rng.gen_range(1..=255),
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
+            ),
+            rng.gen_range(1..=65535),
+        ));
+        let score: i32 = rng.gen();
+
+        AddressRecord::new(
+            &peer,
+            Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Udp(address.port()))
+                .with(Protocol::QuicV1),
+            score,
+            None,
+        )
+    }
+
+    #[test]
+    fn take_multiple_records() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..rng.gen_range(1..5) {
+            store.insert(tcp_address_record(&mut rng));
+        }
+        for _ in 0..rng.gen_range(1..5) {
+            store.insert(ws_address_record(&mut rng));
+        }
+        for _ in 0..rng.gen_range(1..5) {
+            store.insert(quic_address_record(&mut rng));
+        }
+
+        let known_addresses = store.by_address.len();
+        assert!(known_addresses >= 3);
+
+        let taken = store.take(known_addresses - 2);
+        assert_eq!(known_addresses - 2, taken.len());
+        assert!(!store.is_empty());
+
+        let mut prev: Option<AddressRecord> = None;
+        for record in taken {
+            assert!(!store.contains(record.address()));
+
+            if let Some(previous) = prev {
+                assert!(previous.score > record.score);
+            }
+
+            prev = Some(record);
+        }
+    }
+
+    #[test]
+    fn attempt_to_take_excess_records() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+
+        store.insert(tcp_address_record(&mut rng));
+        store.insert(ws_address_record(&mut rng));
+        store.insert(quic_address_record(&mut rng));
+
+        assert_eq!(store.by_address.len(), 3);
+
+        let taken = store.take(8usize);
+        assert_eq!(taken.len(), 3);
+        assert!(store.is_empty());
+
+        let mut prev: Option<AddressRecord> = None;
+        for record in taken {
+            if prev.is_none() {
+                prev = Some(record);
+            } else {
+                assert!(prev.unwrap().score > record.score);
+                prev = Some(record);
+            }
+        }
+    }
 }
