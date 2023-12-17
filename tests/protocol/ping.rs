@@ -94,6 +94,7 @@ async fn ping_supported_quic() {
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config1)
         .build();
@@ -103,6 +104,7 @@ async fn ping_supported_quic() {
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config2)
         .build();

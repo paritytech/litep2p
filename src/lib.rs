@@ -466,7 +466,6 @@ mod tests {
     use crate::{
         config::Litep2pConfigBuilder,
         protocol::{libp2p::ping, notification::Config as NotificationConfig},
-        transport::tcp::config::TransportConfig as TcpTransportConfig,
         types::protocol::ProtocolName,
         Litep2p, Litep2pEvent, PeerId,
     };
@@ -501,13 +500,8 @@ mod tests {
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
         let config = Litep2pConfigBuilder::new()
-            .with_tcp(TcpTransportConfig {
-                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-                ..Default::default()
-            })
-            .with_quic(crate::transport::quic::config::TransportConfig {
-                listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-            })
+            .with_tcp(Default::default())
+            .with_quic(Default::default())
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)
@@ -578,13 +572,8 @@ mod tests {
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
         let config = Litep2pConfigBuilder::new()
-            .with_tcp(TcpTransportConfig {
-                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-                ..Default::default()
-            })
-            .with_quic(crate::transport::quic::config::TransportConfig {
-                listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-            })
+            .with_tcp(Default::default())
+            .with_quic(Default::default())
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)

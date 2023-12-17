@@ -99,12 +99,8 @@ async fn send_request_receive_response_tcp() {
 #[tokio::test]
 async fn send_request_receive_response_quic() {
     send_request_receive_response(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -227,12 +223,8 @@ async fn reject_request_tcp() {
 #[tokio::test]
 async fn reject_request_quic() {
     reject_request(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -358,12 +350,8 @@ async fn multiple_simultaneous_requests_tcp() {
 #[tokio::test]
 async fn multiple_simultaneous_requests_quic() {
     multiple_simultaneous_requests(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -525,12 +513,8 @@ async fn request_timeout_tcp() {
 #[tokio::test]
 async fn request_timeout_quic() {
     request_timeout(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -645,12 +629,8 @@ async fn protocol_not_supported_tcp() {
 #[tokio::test]
 async fn protocol_not_supported_quic() {
     protocol_not_supported(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -763,12 +743,8 @@ async fn connection_close_while_request_is_pending_tcp() {
 #[tokio::test]
 async fn connection_close_while_request_is_pending_quic() {
     connection_close_while_request_is_pending(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -880,12 +856,8 @@ async fn request_too_big_tcp() {
 #[tokio::test]
 async fn request_too_big_quic() {
     request_too_big(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -993,12 +965,8 @@ async fn response_too_big_tcp() {
 #[tokio::test]
 async fn response_too_big_quic() {
     response_too_big(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -1235,12 +1203,8 @@ async fn dialer_fallback_protocol_works_tcp() {
 #[tokio::test]
 async fn dialer_fallback_protocol_works_quic() {
     dialer_fallback_protocol_works(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -1363,12 +1327,8 @@ async fn listener_fallback_protocol_works_tcp() {
 #[tokio::test]
 async fn listener_fallback_protocol_works_quic() {
     listener_fallback_protocol_works(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -1491,12 +1451,8 @@ async fn dial_peer_when_sending_request_tcp() {
 #[tokio::test]
 async fn dial_peer_when_sending_request_quic() {
     dial_peer_when_sending_request(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -1619,12 +1575,8 @@ async fn dial_peer_but_no_known_address_tcp() {
 #[tokio::test]
 async fn dial_peer_but_no_known_address_quic() {
     dial_peer_but_no_known_address(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -1730,12 +1682,8 @@ async fn cancel_request_tcp() {
 #[tokio::test]
 async fn cancel_request_quic() {
     cancel_request(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -1859,12 +1807,8 @@ async fn substream_open_failure_reported_once_tcp() {
 #[tokio::test]
 async fn substream_open_failure_reported_once_quic() {
     substream_open_failure_reported_once(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -1988,12 +1932,8 @@ async fn excess_inbound_request_rejected_tcp() {
 #[tokio::test]
 async fn excess_inbound_request_rejected_quic() {
     excess_inbound_request_rejected(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -2113,12 +2053,8 @@ async fn feedback_received_for_succesful_response_tcp() {
 #[tokio::test]
 async fn feedback_received_for_succesful_response_quic() {
     feedback_received_for_succesful_response(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -2237,12 +2173,8 @@ async fn feedback_not_received_for_failed_response_tcp() {
 #[tokio::test]
 async fn feedback_not_received_for_failed_response_quic() {
     feedback_not_received_for_failed_response(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }

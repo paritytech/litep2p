@@ -120,6 +120,7 @@ async fn main() {
     let config = Litep2pConfigBuilder::new()
         .with_quic(QuicTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+            ..Default::default()
         })
         .with_notification_protocol(block_announce_config)
         .with_request_response_protocol(block_sync_config)

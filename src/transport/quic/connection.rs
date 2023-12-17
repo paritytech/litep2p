@@ -20,6 +20,8 @@
 
 //! QUIC connection.
 
+use std::time::Duration;
+
 use crate::{
     config::Role,
     error::Error,
@@ -90,6 +92,9 @@ pub struct QuicConnection {
     /// Endpoint.
     endpoint: Endpoint,
 
+    /// Substream open timeout.
+    substream_open_timeout: Duration,
+
     /// QUIC connection.
     connection: QuinnConnection,
 
@@ -112,6 +117,7 @@ impl QuicConnection {
         connection: QuinnConnection,
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
+        substream_open_timeout: Duration,
     ) -> Self {
         Self {
             peer,
@@ -119,6 +125,7 @@ impl QuicConnection {
             connection,
             protocol_set,
             bandwidth_sink,
+            substream_open_timeout,
             pending_substreams: FuturesUnordered::new(),
         }
     }
@@ -233,10 +240,11 @@ impl QuicConnection {
                         let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
                         let stream = NegotiatingSubstream::new(send_stream, receive_stream);
+                        let substream_open_timeout = self.substream_open_timeout;
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                substream_open_timeout,
                                 Self::accept_substream(stream, protocols, substream, permit),
                             )
                             .await
@@ -330,6 +338,7 @@ impl QuicConnection {
                     }
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let connection = self.connection.clone();
+                        let substream_open_timeout = self.substream_open_timeout;
 
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -341,7 +350,7 @@ impl QuicConnection {
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                substream_open_timeout,
                                 Self::open_substream(
                                     connection,
                                     permit,

@@ -39,7 +39,7 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use quinn::{ClientConfig, Connection, Endpoint};
+use quinn::{ClientConfig, Connection, Endpoint, IdleTimeout};
 
 use std::{
     collections::HashMap,
@@ -73,6 +73,9 @@ struct NegotiatedConnection {
 pub(crate) struct QuicTransport {
     /// Transport handle.
     context: TransportHandle,
+
+    /// Transport config.
+    config: QuicTransportConfig,
 
     /// QUIC listener.
     listener: QuicListener,
@@ -155,7 +158,7 @@ impl TransportBuilder for QuicTransport {
     type Transport = QuicTransport;
 
     /// Create new [`QuicTransport`] object.
-    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
+    fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self>
     where
         Self: Sized,
     {
@@ -165,10 +168,14 @@ impl TransportBuilder for QuicTransport {
             "start quic transport",
         );
 
-        let listener = QuicListener::new(&context.keypair, config.listen_addresses)?;
+        let listener = QuicListener::new(
+            &context.keypair,
+            std::mem::replace(&mut config.listen_addresses, Vec::new()),
+        )?;
 
         Ok(Self {
             context,
+            config,
             listener,
             pending_open: HashMap::new(),
             pending_dials: HashMap::new(),
@@ -190,7 +197,13 @@ impl Transport for QuicTransport {
 
         let crypto_config =
             Arc::new(make_client_config(&self.context.keypair, Some(peer)).expect("to succeed"));
-        let client_config = ClientConfig::new(crypto_config);
+        let mut transport_config = quinn::TransportConfig::default();
+        let timeout =
+            IdleTimeout::try_from(self.config.connection_open_timeout).expect("to succeed");
+        transport_config.max_idle_timeout(Some(timeout));
+        let mut client_config = ClientConfig::new(crypto_config);
+        client_config.transport_config(Arc::new(transport_config));
+
         let client_listen_address = match address.iter().next() {
             Some(Protocol::Ip6(_)) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
             Some(Protocol::Ip4(_)) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
@@ -235,6 +248,7 @@ impl Transport for QuicTransport {
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
         let bandwidth_sink = self.context.bandwidth_sink.clone();
         let protocol_set = self.context.protocol_set(connection_id);
+        let substream_open_timeout = self.config.substream_open_timeout;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -249,6 +263,7 @@ impl Transport for QuicTransport {
                 connection.connection,
                 protocol_set,
                 bandwidth_sink,
+                substream_open_timeout,
             )
             .start()
             .await;
@@ -346,11 +361,8 @@ mod tests {
                 },
             )]),
         };
-        let transport_config1 = QuicTransportConfig {
-            listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
-        };
 
-        let mut transport1 = QuicTransport::new(handle1, transport_config1).unwrap();
+        let mut transport1 = QuicTransport::new(handle1, Default::default()).unwrap();
         let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
 
         let keypair2 = Keypair::generate();
@@ -375,12 +387,8 @@ mod tests {
                 },
             )]),
         };
-        let transport_config2 = QuicTransportConfig {
-            listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
-        };
 
-        let mut transport2 = QuicTransport::new(handle2, transport_config2).unwrap();
-
+        let mut transport2 = QuicTransport::new(handle2, Default::default()).unwrap();
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let _peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
         let listen_address = listen_address.with(Protocol::P2p(
