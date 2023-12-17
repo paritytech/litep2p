@@ -20,7 +20,6 @@
 
 use crate::{
     codec::ProtocolCodec,
-    crypto::ed25519::Keypair,
     error::Error,
     protocol::{
         connection::{ConnectionHandle, Permit},
@@ -533,7 +532,6 @@ pub enum ProtocolCommand {
 pub struct ProtocolSet {
     /// Installed protocols.
     pub(crate) protocols: HashMap<ProtocolName, ProtocolContext>,
-    pub(crate) keypair: Keypair,
     mgr_tx: Sender<TransportManagerEvent>,
     connection: ConnectionHandle,
     rx: Receiver<ProtocolCommand>,
@@ -543,7 +541,6 @@ pub struct ProtocolSet {
 
 impl ProtocolSet {
     pub fn new(
-        keypair: Keypair,
         connection_id: ConnectionId,
         mgr_tx: Sender<TransportManagerEvent>,
         next_substream_id: Arc<AtomicUsize>,
@@ -566,7 +563,6 @@ impl ProtocolSet {
         ProtocolSet {
             rx,
             mgr_tx,
-            keypair,
             protocols,
             next_substream_id,
             fallback_names,
@@ -819,7 +815,6 @@ mod tests {
         let (tx1, _rx1) = channel(64);
 
         let mut protocol_set = ProtocolSet::new(
-            Keypair::generate(),
             ConnectionId::from(0usize),
             tx,
             Default::default(),
@@ -863,7 +858,6 @@ mod tests {
         let (tx1, mut rx1) = channel(64);
 
         let mut protocol_set = ProtocolSet::new(
-            Keypair::generate(),
             ConnectionId::from(0usize),
             tx,
             Default::default(),
@@ -907,7 +901,6 @@ mod tests {
         let (tx1, mut rx1) = channel(64);
 
         let mut protocol_set = ProtocolSet::new(
-            Keypair::generate(),
             ConnectionId::from(0usize),
             tx,
             Default::default(),

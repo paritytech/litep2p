@@ -215,10 +215,10 @@ impl Stream for TcpTransport {
 
         while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
             match connection {
-                Ok(context) => {
-                    let peer = context.peer();
-                    let endpoint = context.endpoint();
-                    self.pending_open.insert(context.connection_id(), context);
+                Ok(connection) => {
+                    let peer = connection.peer();
+                    let endpoint = connection.endpoint();
+                    self.pending_open.insert(connection.connection_id(), connection);
 
                     return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                         peer,

@@ -25,7 +25,9 @@ use crate::{
     transport::{
         manager::TransportHandle,
         websocket::{
-            config::TransportConfig, connection::WebSocketConnection, listener::WebSocketListener,
+            config::TransportConfig,
+            connection::{NegotiatedConnection, WebSocketConnection},
+            listener::WebSocketListener,
         },
         Transport, TransportBuilder, TransportEvent,
     },
@@ -90,7 +92,10 @@ pub(crate) struct WebSocketTransport {
 
     /// Pending connections.
     pending_connections:
-        FuturesUnordered<BoxFuture<'static, Result<WebSocketConnection, WebSocketError>>>,
+        FuturesUnordered<BoxFuture<'static, Result<NegotiatedConnection, WebSocketError>>>,
+
+    /// Negotiated connections waiting validation.
+    pending_open: HashMap<ConnectionId, NegotiatedConnection>,
 }
 
 impl WebSocketTransport {
@@ -150,6 +155,7 @@ impl TransportBuilder for WebSocketTransport {
             )),
             config,
             context,
+            pending_open: HashMap::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
         })
@@ -163,7 +169,6 @@ impl TransportBuilder for WebSocketTransport {
 
 impl Transport for WebSocketTransport {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
-        let context = self.context.protocol_set(connection_id);
         let yamux_config = self.config.yamux_config.clone();
         let peer = match address.iter().find(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
             Some(Protocol::P2p(peer)) => PeerId::from_multihash(peer).expect("to succeed"),
@@ -177,8 +182,8 @@ impl Transport for WebSocketTransport {
 
         // try to convert the multiaddress into a `Url` and if it fails,
         // report dial failure immediately
+        let keypair = self.context.keypair.clone();
         let ws_address = Self::multiaddr_into_url(address.clone())?;
-        let bandwidth_sink = self.context.bandwidth_sink.clone();
         self.pending_dials.insert(connection_id, address.clone());
 
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
@@ -186,13 +191,12 @@ impl Transport for WebSocketTransport {
         self.pending_connections.push(Box::pin(async move {
             match tokio::time::timeout(Duration::from_secs(10), async move {
                 WebSocketConnection::open_connection(
+                    connection_id,
+                    keypair,
                     address,
                     Some(peer),
                     ws_address,
-                    connection_id,
                     yamux_config,
-                    bandwidth_sink,
-                    context,
                 )
                 .await
                 .map_err(|error| WebSocketError::new(error, Some(connection_id)))
@@ -208,12 +212,40 @@ impl Transport for WebSocketTransport {
         Ok(())
     }
 
-    fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let context = self
+            .pending_open
+            .remove(&connection_id)
+            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+        let protocol_set = self.context.protocol_set(connection_id);
+        let bandwidth_sink = self.context.bandwidth_sink.clone();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?connection_id,
+            "start connection",
+        );
+
+        self.context.executor.run(Box::pin(async move {
+            if let Err(error) =
+                WebSocketConnection::new(context, protocol_set, bandwidth_sink).start().await
+            {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?connection_id,
+                    ?error,
+                    "connection exited with error",
+                );
+            }
+        }));
+
         Ok(())
     }
 
-    fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-        Ok(())
+    fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.pending_open
+            .remove(&connection_id)
+            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
     }
 }
 
@@ -226,19 +258,17 @@ impl Stream for WebSocketTransport {
                 Err(_) => return Poll::Ready(None),
                 Ok((stream, address)) => {
                     let connection_id = self.context.next_connection_id();
-                    let context = self.context.protocol_set(connection_id);
+                    let keypair = self.context.keypair.clone();
                     let yamux_config = self.config.yamux_config.clone();
-                    let bandwidth_sink = self.context.bandwidth_sink.clone();
 
                     self.pending_connections.push(Box::pin(async move {
                         match tokio::time::timeout(Duration::from_secs(10), async move {
                             WebSocketConnection::accept_connection(
                                 stream,
-                                address,
                                 connection_id,
+                                keypair,
+                                address,
                                 yamux_config,
-                                bandwidth_sink,
-                                context,
                             )
                             .await
                             .map_err(|error| WebSocketError::new(error, None))
@@ -256,11 +286,16 @@ impl Stream for WebSocketTransport {
 
         while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
             match connection {
-                Ok(connection) => self.context.executor.run(Box::pin(async move {
-                    if let Err(error) = connection.start().await {
-                        tracing::debug!(target: LOG_TARGET, ?error, "connection failed");
-                    }
-                })),
+                Ok(connection) => {
+                    let peer = connection.peer();
+                    let endpoint = connection.endpoint();
+                    self.pending_open.insert(connection.connection_id(), connection);
+
+                    return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                        peer,
+                        endpoint,
+                    }));
+                }
                 Err(error) => match error.connection_id {
                     Some(connection_id) => match self.pending_dials.remove(&connection_id) {
                         Some(address) =>
