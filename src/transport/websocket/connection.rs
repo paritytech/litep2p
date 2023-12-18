@@ -39,7 +39,7 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use tokio::net::TcpStream;
-use tokio_tungstenite::MaybeTlsStream;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use url::Url;
 
@@ -329,6 +329,70 @@ impl WebSocketConnection {
             connection,
             connection_id,
             endpoint: Endpoint::listener(address.clone(), connection_id),
+        })
+    }
+
+    /// Negotiate WebSocket connection.
+    pub(super) async fn negotiate_connection(
+        stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        dialed_peer: PeerId,
+        role: Role,
+        address: Multiaddr,
+        connection_id: ConnectionId,
+        keypair: Keypair,
+        yamux_config: yamux::Config,
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
+    ) -> crate::Result<NegotiatedConnection> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?address,
+            "connection received, negotiate protocols"
+        );
+        let stream = BufferedStream::new(stream);
+
+        // negotiate `noise`
+        let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/noise"]).await?;
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            "`multistream-select` and `noise` negotiated"
+        );
+
+        // perform noise handshake
+        let (stream, peer) = noise::handshake(
+            stream.inner(),
+            &keypair,
+            role,
+            max_read_ahead_factor,
+            max_write_buffer_size,
+        )
+        .await?;
+
+        if peer != dialed_peer {
+            return Err(Error::PeerIdMismatch(dialed_peer, peer));
+        }
+
+        let stream: NoiseSocket<BufferedStream<_>> = stream;
+
+        tracing::trace!(target: LOG_TARGET, "noise handshake done");
+
+        // negotiate `yamux`
+        let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"]).await?;
+        tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
+
+        let connection = yamux::Connection::new(stream.inner(), yamux_config, role.into());
+        let (control, connection) = yamux::Control::new(connection);
+
+        Ok(NegotiatedConnection {
+            peer,
+            control,
+            connection,
+            connection_id,
+            endpoint: match role {
+                Role::Dialer => Endpoint::dialer(address, connection_id),
+                Role::Listener => Endpoint::listener(address, connection_id),
+            },
         })
     }
 

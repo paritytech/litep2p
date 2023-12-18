@@ -394,7 +394,7 @@ impl TcpConnection {
     }
 
     /// Negotiate noise + yamux for the connection.
-    async fn negotiate_connection(
+    pub(super) async fn negotiate_connection(
         stream: TcpStream,
         dialed_peer: Option<PeerId>,
         connection_id: ConnectionId,
@@ -670,8 +670,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -731,8 +735,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -797,8 +805,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -862,8 +874,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -932,8 +948,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1002,8 +1022,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1067,8 +1091,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1125,8 +1153,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1189,8 +1221,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1270,8 +1306,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1344,8 +1384,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1422,8 +1466,12 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
             ));
-        let (mut manager, _handle) =
-            TransportManager::new(keypair.clone(), HashSet::new(), bandwidth_sink.clone());
+        let (mut manager, _handle) = TransportManager::new(
+            keypair.clone(),
+            HashSet::new(),
+            bandwidth_sink.clone(),
+            8usize,
+        );
 
         let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),

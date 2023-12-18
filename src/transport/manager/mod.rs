@@ -237,6 +237,9 @@ pub struct TransportManager {
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
 
+    /// Maximum parallel dial attempts per peer.
+    max_parallel_dials: usize,
+
     /// Installed protocols.
     protocols: HashMap<ProtocolName, ProtocolContext>,
 
@@ -281,6 +284,7 @@ impl TransportManager {
         keypair: Keypair,
         supported_transports: HashSet<SupportedTransport>,
         bandwidth_sink: BandwidthSink,
+        max_parallel_dials: usize,
     ) -> (Self, TransportManagerHandle) {
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
@@ -297,6 +301,7 @@ impl TransportManager {
                 event_rx,
                 local_peer_id,
                 bandwidth_sink,
+                max_parallel_dials,
                 protocols: HashMap::new(),
                 transports: TransportContext::new(),
                 protocol_names: HashSet::new(),
@@ -408,19 +413,19 @@ impl TransportManager {
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
-    pub async fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
-        if peer == &self.local_peer_id {
+    pub async fn dial(&mut self, peer: PeerId) -> crate::Result<()> {
+        if peer == self.local_peer_id {
             return Err(Error::TriedToDialSelf);
         }
 
-        let address = match self.peers.write().get_mut(&peer) {
-            None => return Err(Error::PeerDoesntExist(*peer)),
+        let addresses = match self.peers.write().get_mut(&peer) {
+            None => return Err(Error::PeerDoesntExist(peer)),
             Some(PeerContext {
                 state: PeerState::Connected { .. },
                 ..
             }) => return Err(Error::AlreadyConnected),
             Some(PeerContext {
-                state: PeerState::Dialing { .. },
+                state: PeerState::Dialing { .. } | PeerState::Opening { .. },
                 ..
             }) => return Ok(()),
             Some(PeerContext {
@@ -438,44 +443,29 @@ impl TransportManager {
                     return Ok(());
                 }
 
-                let address = addresses.pop().ok_or(Error::NoAddressAvailable(*peer))?;
-
-                // TODO: start timer for the address and after 2 minutes reset peer score to try
-                // again TODO: introduce new error type `Chilled` which means that
-                // the peer shouldn't be considered dead but currently it's not
-                // possible to dial it
-
-                // TODO: this is not good
-                // if address.score <= -200 {
-                //     return Err(Error::NoAddressAvailable(*peer));
-                // }
-
-                address
+                addresses
+                    .take(self.max_parallel_dials)
+                    .into_iter()
+                    .map(|record| (record.address().clone(), record))
+                    .collect()
             }
         };
 
-        self.dial_address_inner(address).await
+        self.dial_inner(peer, addresses).await
     }
 
     /// Dial peer using `Multiaddr`.
     ///
     /// Returns an error if address it not valid.
     pub async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
-        match AddressRecord::from_multiaddr(address) {
-            Some(record) => self.dial_address_inner(record).await,
-            None => return Err(Error::AddressError(AddressError::PeerIdMissing)),
-        }
-    }
-
-    /// Dial peer using `AddressRecord` which holds the inner `Multiaddr` and score for the address.
-    ///
-    /// Returns an error if address it not valid.
-    async fn dial_address_inner(&mut self, mut record: AddressRecord) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, address = ?record.address(), "dial remote peer");
+        let mut record = AddressRecord::from_multiaddr(address)
+            .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
 
         if self.listen_addresses.contains(record.as_ref()) {
             return Err(Error::TriedToDialSelf);
         }
+
+        tracing::debug!(target: LOG_TARGET, address = ?record.address(), "dial remote peer over address");
 
         let mut protocol_stack = record.as_ref().iter();
         match protocol_stack
@@ -570,7 +560,10 @@ impl TransportManager {
                     );
                 }
                 Some(PeerContext {
-                    state: PeerState::Dialing { .. } | PeerState::Connected { .. },
+                    state:
+                        PeerState::Dialing { .. }
+                        | PeerState::Connected { .. }
+                        | PeerState::Opening { .. },
                     ..
                 }) => return Ok(()),
                 Some(PeerContext { ref mut state, .. }) => {
@@ -592,15 +585,123 @@ impl TransportManager {
         Ok(())
     }
 
-    /// Handle dial failure.
-    fn on_dial_failure(
+    /// Dial remote peer using one or more address records.
+    async fn dial_inner(
         &mut self,
-        connection_id: &ConnectionId,
-        address: &Multiaddr,
-        _error: &Error,
-    ) -> crate::Result<bool> {
+        peer: PeerId,
+        mut records: HashMap<Multiaddr, AddressRecord>,
+    ) -> crate::Result<()> {
+        if records.is_empty() {
+            return Err(Error::NoAddressAvailable(peer));
+        }
+
+        for (_, record) in &records {
+            if self.listen_addresses.contains(record.as_ref()) {
+                return Err(Error::TriedToDialSelf);
+            }
+        }
+
+        // set connection id for the address record and put peer into `Opening` state
+        let connection_id = self.next_connection_id();
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?connection_id,
+            addresses = ?records,
+            "dial remote peer",
+        );
+
+        let (tcp, websocket, quic) = {
+            let mut peers = self.peers.write();
+
+            match peers.get_mut(&peer) {
+                Some(PeerContext {
+                    state:
+                        PeerState::Dialing { .. }
+                        | PeerState::Connected { .. }
+                        | PeerState::Opening { .. },
+                    ..
+                }) => return Ok(()),
+                // remote was dialed using `PeerId` but it doesn't exist in `TransportManager`
+                None => {
+                    debug_assert!(false);
+                    return Err(Error::InvalidState);
+                }
+                Some(PeerContext { ref mut state, .. }) => {
+                    let mut transports = HashSet::new();
+                    let mut websocket = Vec::new();
+                    let mut quic = Vec::new();
+                    let mut tcp = Vec::new();
+
+                    for (address, record) in &mut records {
+                        record.set_connection_id(connection_id);
+
+                        let mut iter = address.iter();
+                        match iter.find(|protocol| std::matches!(protocol, Protocol::QuicV1)) {
+                            Some(_) => {
+                                quic.push(address.clone());
+                                transports.insert(SupportedTransport::Quic);
+                            }
+                            _ => match address.iter().find(|protocol| {
+                                std::matches!(protocol, Protocol::Ws(_) | Protocol::Wss(_))
+                            }) {
+                                Some(_) => {
+                                    websocket.push(address.clone());
+                                    transports.insert(SupportedTransport::WebSocket);
+                                }
+                                None => {
+                                    tcp.push(address.clone());
+                                    transports.insert(SupportedTransport::Tcp);
+                                }
+                            },
+                        }
+                    }
+
+                    *state = PeerState::Opening {
+                        records,
+                        connection_id,
+                        transports,
+                    };
+
+                    (tcp, websocket, quic)
+                }
+            }
+        };
+
+        if !tcp.is_empty() {
+            self.transports
+                .get_mut(&SupportedTransport::Tcp)
+                .expect("transport to be supported")
+                .open(connection_id, tcp)?;
+        }
+
+        if !quic.is_empty() {
+            self.transports
+                .get_mut(&SupportedTransport::Quic)
+                .expect("transport to be supported")
+                .open(connection_id, quic)?;
+        }
+
+        if !websocket.is_empty() {
+            self.transports
+                .get_mut(&SupportedTransport::WebSocket)
+                .expect("transport to be supported")
+                .open(connection_id, websocket)?;
+        }
+
+        self.pending_connections.insert(connection_id, peer);
+
+        Ok(())
+    }
+
+    /// Handle dial failure.
+    fn on_dial_failure(&mut self, connection_id: ConnectionId) -> crate::Result<bool> {
         let peer = self.pending_connections.remove(&connection_id).ok_or_else(|| {
-            tracing::error!(target: LOG_TARGET, "dial failed for a connection that doesn't exist");
+            tracing::error!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "dial failed for a connection that doesn't exist",
+            );
             debug_assert!(false);
 
             Error::InvalidState
@@ -624,7 +725,7 @@ impl TransportManager {
             PeerState::Disconnected { dial_record: None },
         ) {
             PeerState::Dialing { ref mut record } => {
-                debug_assert_eq!(record.connection_id(), &Some(*connection_id));
+                debug_assert_eq!(record.connection_id(), &Some(connection_id));
 
                 record.update_score(SCORE_DIAL_FAILURE);
                 context.addresses.insert(record.clone());
@@ -632,13 +733,17 @@ impl TransportManager {
                 context.state = PeerState::Disconnected { dial_record: None };
                 Ok(true)
             }
+            PeerState::Opening {
+                records,
+                connection_id,
+                ..
+            } => {
+                todo!();
+            }
             PeerState::Connected {
                 record,
                 dial_record: Some(mut dial_record),
             } => {
-                debug_assert_ne!(record.address(), address);
-                debug_assert_eq!(dial_record.address(), address);
-
                 dial_record.update_score(SCORE_DIAL_FAILURE);
                 context.addresses.insert(dial_record);
 
@@ -654,11 +759,9 @@ impl TransportManager {
                 tracing::debug!(
                     target: LOG_TARGET,
                     ?connection_id,
-                    ?address,
                     ?dial_record,
                     "dial failed for a disconnected peer",
                 );
-                debug_assert_eq!(dial_record.address(), address);
 
                 dial_record.update_score(SCORE_DIAL_FAILURE);
                 context.addresses.insert(dial_record);
@@ -671,7 +774,6 @@ impl TransportManager {
                     ?peer,
                     ?connection_id,
                     ?state,
-                    ?address,
                     "invalid state for dial failure",
                 );
                 context.state = state;
@@ -680,167 +782,6 @@ impl TransportManager {
                 Ok(true)
             }
         }
-    }
-
-    /// Handle established connection.
-    ///
-    /// TODO: documentation
-    /// TODO: should secondary connection be reported at all?
-    fn on_connection_established(
-        &mut self,
-        peer: &PeerId,
-        connection_id: &ConnectionId,
-        endpoint: &Endpoint,
-    ) -> crate::Result<bool> {
-        if let Some(dialed_peer) = self.pending_connections.remove(&connection_id) {
-            if &dialed_peer != peer {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?dialed_peer,
-                    ?peer,
-                    "peer ids do not match but transport was supposed to reject connection"
-                );
-                debug_assert!(false)
-            }
-        };
-
-        let mut peers = self.peers.write();
-        match peers.get_mut(&peer) {
-            Some(context) => match context.state {
-                PeerState::Connected { .. } => match context.secondary_connection {
-                    Some(_) => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?connection_id,
-                            ?endpoint,
-                            "secondary connection already exists, ignoring connection",
-                        );
-                        context
-                            .addresses
-                            .insert_with_score(endpoint.address().clone(), SCORE_DIAL_SUCCESS);
-
-                        return Ok(false);
-                    }
-                    None => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?connection_id,
-                            address = ?endpoint.address(),
-                            "secondary connection",
-                        );
-
-                        context.secondary_connection = Some(AddressRecord::new(
-                            peer,
-                            endpoint.address().clone(),
-                            SCORE_DIAL_SUCCESS,
-                            Some(*connection_id),
-                        ));
-                    }
-                },
-                PeerState::Dialing { ref record, .. } => {
-                    match record.connection_id() == &Some(*connection_id) {
-                        true => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?connection_id,
-                                ?endpoint,
-                                "connection opened to remote",
-                            );
-
-                            context.state = PeerState::Connected {
-                                record: record.clone(),
-                                dial_record: None,
-                            };
-                        }
-                        false => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?connection_id,
-                                ?endpoint,
-                                "connection opened by remote while local node was dialing",
-                            );
-
-                            context.state = PeerState::Connected {
-                                record: AddressRecord::new(
-                                    peer,
-                                    endpoint.address().clone(),
-                                    SCORE_DIAL_SUCCESS,
-                                    Some(*connection_id),
-                                ),
-                                dial_record: Some(record.clone()),
-                            };
-                        }
-                    }
-                }
-                PeerState::Disconnected {
-                    ref mut dial_record,
-                } => {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?connection_id,
-                        ?endpoint,
-                        ?dial_record,
-                        "connection opened by remote or delayed dial succeeded",
-                    );
-
-                    let (record, dial_record) = match dial_record.take() {
-                        Some(dial_record) =>
-                            if dial_record.address() == endpoint.address() {
-                                (dial_record, None)
-                            } else {
-                                (
-                                    AddressRecord::new(
-                                        peer,
-                                        endpoint.address().clone(),
-                                        SCORE_DIAL_SUCCESS,
-                                        Some(*connection_id),
-                                    ),
-                                    Some(dial_record),
-                                )
-                            },
-                        None => (
-                            AddressRecord::new(
-                                peer,
-                                endpoint.address().clone(),
-                                SCORE_DIAL_SUCCESS,
-                                Some(*connection_id),
-                            ),
-                            None,
-                        ),
-                    };
-
-                    context.state = PeerState::Connected {
-                        record,
-                        dial_record,
-                    };
-                }
-            },
-            None => {
-                peers.insert(
-                    *peer,
-                    PeerContext {
-                        state: PeerState::Connected {
-                            record: AddressRecord::new(
-                                peer,
-                                endpoint.address().clone(),
-                                SCORE_DIAL_SUCCESS,
-                                Some(*connection_id),
-                            ),
-                            dial_record: None,
-                        },
-                        addresses: AddressStore::new(),
-                        secondary_connection: None,
-                    },
-                );
-            }
-        }
-
-        Ok(true)
     }
 
     /// Handle closed connection.
@@ -982,20 +923,77 @@ impl TransportManager {
         address: Multiaddr,
         error: Error,
     ) -> Option<TransportManagerEvent> {
-        match self.on_dial_failure(&connection_id, &address, &error) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?connection_id,
+            ?error,
+            ?address,
+            "dial failure",
+        );
+
+        match self.on_dial_failure(connection_id) {
             Ok(true) => {
                 match address.iter().last() {
                     Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                        Ok(peer) =>
-                            for (_, context) in &self.protocols {
-                                let _ = context
-                                    .tx
-                                    .send(InnerTransportEvent::DialFailure {
-                                        peer,
-                                        address: address.clone(),
-                                    })
-                                    .await;
-                            },
+                        Ok(peer) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?connection_id,
+                                ?error,
+                                ?address,
+                                num_protocols = self.protocols.len(),
+                                "dial failure, notify protocols",
+                            );
+
+                            for (protocol, context) in &self.protocols {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    ?connection_id,
+                                    ?error,
+                                    ?address,
+                                    ?protocol,
+                                    "dial failure, notify protocol",
+                                );
+                                match context.tx.try_send(InnerTransportEvent::DialFailure {
+                                    peer,
+                                    address: address.clone(),
+                                }) {
+                                    Ok(()) => {}
+                                    Err(_) => {
+                                        tracing::trace!(
+                                            target: LOG_TARGET,
+                                            ?connection_id,
+                                            ?error,
+                                            ?address,
+                                            ?protocol,
+                                            "dial failure, channel to protocol clogged, use await",
+                                        );
+                                        let _ = context
+                                            .tx
+                                            .send(InnerTransportEvent::DialFailure {
+                                                peer,
+                                                address: address.clone(),
+                                            })
+                                            .await;
+                                    }
+                                }
+                                // let _ = context
+                                //     .tx
+                                //     .send(InnerTransportEvent::DialFailure {
+                                //         peer,
+                                //         address: address.clone(),
+                                //     })
+                                //     .await;
+                            }
+
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?connection_id,
+                                ?error,
+                                ?address,
+                                "all protocols notified",
+                            );
+                        }
                         Err(error) => {
                             tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
                             debug_assert!(false);
@@ -1046,7 +1044,7 @@ impl TransportManager {
         }
     }
 
-    async fn on_connection_established_new(
+    fn on_connection_established(
         &mut self,
         peer: PeerId,
         endpoint: &Endpoint,
@@ -1136,6 +1134,15 @@ impl TransportManager {
                         }
                     }
                 }
+                PeerState::Opening {
+                    ..
+                    // ref records,
+                    // connection_id,
+                    // ref transports,
+                } => {
+                    assert!(std::matches!(endpoint, &Endpoint::Listener { .. }));
+                    todo!();
+                }
                 PeerState::Disconnected {
                     ref mut dial_record,
                 } => {
@@ -1203,6 +1210,222 @@ impl TransportManager {
         Ok(ConnectionEstablishedResult::Accept)
     }
 
+    fn on_connection_opened(
+        &mut self,
+        transport: SupportedTransport,
+        connection_id: ConnectionId,
+        address: Multiaddr,
+    ) -> crate::Result<()> {
+        let Some(peer) = self.pending_connections.remove(&connection_id) else {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?connection_id,
+                ?transport,
+                ?address,
+                "connection opened but dial record doesn't exist",
+            );
+
+            debug_assert!(false);
+            return Err(Error::InvalidState);
+        };
+
+        let mut peers = self.peers.write();
+        let context = peers.get_mut(&peer).ok_or_else(|| {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                "connection opened but peer doesn't exist",
+            );
+
+            debug_assert!(false);
+            Error::InvalidState
+        })?;
+
+        match std::mem::replace(
+            &mut context.state,
+            PeerState::Disconnected { dial_record: None },
+        ) {
+            PeerState::Opening {
+                mut records,
+                connection_id,
+                transports,
+            } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?address,
+                    ?transport,
+                    "connection opened to peer",
+                );
+
+                // cancel open attempts for other transports as connection already exists
+                for transport in transports.iter() {
+                    let _ = self
+                        .transports
+                        .get_mut(&transport)
+                        .expect("transport to exist")
+                        .cancel(connection_id);
+                }
+
+                // set peer state to `Dialing` to signal that the connection is fully opening
+                //
+                // set the succeeded `AddressRecord` as the one that is used for dialing and move
+                // all other address records back to `AddressStore`. and ask
+                // transport to negotiate the
+                let mut dial_record = records.remove(&address).expect("address to exist");
+                dial_record.update_score(SCORE_DIAL_SUCCESS);
+
+                // negotiate the connection
+                match self
+                    .transports
+                    .get_mut(&transport)
+                    .expect("transport to exist")
+                    .negotiate(connection_id)
+                {
+                    Ok(()) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?connection_id,
+                            ?dial_record,
+                            ?transport,
+                            "negotiate connection"
+                        );
+
+                        self.pending_connections.insert(connection_id, peer);
+
+                        context.state = PeerState::Dialing {
+                            record: dial_record,
+                        };
+
+                        for (_, record) in records {
+                            context.addresses.insert(record);
+                        }
+
+                        Ok(())
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?connection_id,
+                            ?error,
+                            "failed to negotiate connection",
+                        );
+                        context.state = PeerState::Disconnected { dial_record: None };
+
+                        debug_assert!(false);
+                        Err(Error::InvalidState)
+                    }
+                }
+            }
+            state => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?state,
+                    "connection opened but `PeerState` is not `Opening`",
+                );
+                context.state = state;
+
+                debug_assert!(false);
+                Err(Error::InvalidState)
+            }
+        }
+    }
+
+    /// Handle open failure for dialing attempt for `transport`
+    fn on_open_failure(
+        &mut self,
+        transport: SupportedTransport,
+        connection_id: ConnectionId,
+    ) -> crate::Result<Option<PeerId>> {
+        let Some(peer) = self.pending_connections.remove(&connection_id) else {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "open failure but dial record doesn't exist",
+            );
+
+            debug_assert!(false);
+            return Err(Error::InvalidState);
+        };
+
+        let mut peers = self.peers.write();
+        let context = peers.get_mut(&peer).ok_or_else(|| {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                "open failure but peer doesn't exist",
+            );
+
+            debug_assert!(false);
+            Error::InvalidState
+        })?;
+
+        match std::mem::replace(
+            &mut context.state,
+            PeerState::Disconnected { dial_record: None },
+        ) {
+            PeerState::Opening {
+                records,
+                connection_id,
+                mut transports,
+            } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?transport,
+                    "open failure to peer",
+                );
+                transports.remove(&transport);
+
+                if transports.is_empty() {
+                    for (_, mut record) in records {
+                        record.update_score(SCORE_DIAL_FAILURE);
+                        context.addresses.insert(record);
+                    }
+
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?connection_id,
+                        "open failure for last transport",
+                    );
+
+                    return Ok(Some(peer));
+                }
+
+                self.pending_connections.insert(connection_id, peer);
+                context.state = PeerState::Opening {
+                    records,
+                    connection_id,
+                    transports,
+                };
+
+                Ok(None)
+            }
+            state => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?state,
+                    "open failure but `PeerState` is not `Opening`",
+                );
+                context.state = state;
+
+                debug_assert!(false);
+                Err(Error::InvalidState)
+            }
+        }
+    }
+
     /// Poll next event from [`TransportManager`].
     pub async fn next(&mut self) -> Option<TransportManagerEvent> {
         loop {
@@ -1211,19 +1434,15 @@ impl TransportManager {
                     let inner = event?;
                     let result = match &inner {
                         TransportManagerEvent::DialFailure {
-                            address,
                             connection,
-                            error,
-                        } => self.on_dial_failure(&connection, &address, &error),
-                        TransportManagerEvent::ConnectionEstablished {
-                            peer,
-                            connection,
-                            endpoint,
-                        } => self.on_connection_established(&peer, &connection, &endpoint),
+                            address: _,
+                            error: _ ,
+                        } => self.on_dial_failure(*connection),
                         TransportManagerEvent::ConnectionClosed {
                             peer,
                             connection: connection_id,
                         } => self.on_connection_closed(&peer, &connection_id),
+                        event => panic!("unexpected event: {event:?}"),
                     };
 
                     match result {
@@ -1237,7 +1456,7 @@ impl TransportManager {
                 },
                 command = self.cmd_rx.recv() => match command? {
                     InnerTransportManagerCommand::DialPeer { peer } => {
-                        if let Err(error) = self.dial(&peer).await {
+                        if let Err(error) = self.dial(peer).await {
                             tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer")
                         }
                     }
@@ -1257,7 +1476,7 @@ impl TransportManager {
                             }
                         }
                         TransportEvent::ConnectionEstablished { peer, endpoint } => {
-                            match self.on_connection_established_new(peer, &endpoint).await {
+                            match self.on_connection_established(peer, &endpoint) {
                                 Err(error) => {
                                     tracing::debug!(
                                         target: LOG_TARGET,
@@ -1309,6 +1528,87 @@ impl TransportManager {
                                 }
                             }
                         }
+                        TransportEvent::ConnectionOpened { connection_id, address } => {
+                            if let Err(error) = self.on_connection_opened(transport, connection_id, address) {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?connection_id,
+                                    ?error,
+                                    "failed to handle opened connection",
+                                );
+                            }
+                        }
+                        TransportEvent::OpenFailure { connection_id } => {
+                            match self.on_open_failure(transport, connection_id) {
+                                Err(error) => tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?connection_id,
+                                    ?error,
+                                    "failed to handle opened connection",
+                                ),
+                                Ok(Some(peer)) => {
+                                    tracing::trace!(
+                                        target: LOG_TARGET,
+                                        ?peer,
+                                        ?connection_id,
+                                        num_protocols = self.protocols.len(),
+                                        "inform protocols about open failure",
+                                    );
+
+                                    for (protocol, context) in &self.protocols {
+                                        tracing::trace!(
+                                            target: LOG_TARGET,
+                                            ?peer,
+                                            %protocol,
+                                            ?connection_id,
+                                            "inform protocol",
+                                        );
+
+                                        let result = match  context
+                                            .tx
+                                            .try_send(InnerTransportEvent::DialFailure {
+                                                peer,
+                                                address: Multiaddr::empty(),
+                                            }) {
+                                            Ok(_) => Ok(()),
+                                            Err(_) => {
+                                                tracing::trace!(
+                                                    target: LOG_TARGET,
+                                                    ?peer,
+                                                    %protocol,
+                                                    ?connection_id,
+                                                    "call to protocol would, block try sending in a blocking way",
+                                                );
+
+                                                context
+                                                    .tx
+                                                    .send(InnerTransportEvent::DialFailure {
+                                                        peer,
+                                                        address: Multiaddr::empty(),
+                                                    })
+                                                    .await
+                                            }
+                                        };
+
+                                        tracing::trace!(
+                                            target: LOG_TARGET,
+                                            ?peer,
+                                            %protocol,
+                                            ?connection_id,
+                                            ?result,
+                                            "protocol informed maybe",
+                                        );
+                                    }
+
+                                    return Some(TransportManagerEvent::DialFailure {
+                                        connection: connection_id,
+                                        address: Multiaddr::empty(),
+                                        error: Error::Unknown,
+                                    })
+                                }
+                                Ok(None) => {}
+                            }
+                        }
                         _ => panic!("event not supported"),
                     }
                 },
@@ -1334,7 +1634,7 @@ mod tests {
     fn duplicate_protocol() {
         let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink, 8usize);
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1354,7 +1654,7 @@ mod tests {
     fn fallback_protocol_as_duplicate_main_protocol() {
         let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink, 8usize);
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1377,7 +1677,7 @@ mod tests {
     fn duplicate_fallback_protocol() {
         let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink, 8usize);
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1403,7 +1703,7 @@ mod tests {
     fn duplicate_transport() {
         let sink = BandwidthSink::new();
         let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink);
+            TransportManager::new(Keypair::generate(), HashSet::new(), sink, 8usize);
 
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
@@ -1414,15 +1714,19 @@ mod tests {
         let keypair = Keypair::generate();
         let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(keypair, HashSet::new(), sink);
+        let (mut manager, _handle) = TransportManager::new(keypair, HashSet::new(), sink, 8usize);
 
-        assert!(manager.dial(&local_peer_id).await.is_err());
+        assert!(manager.dial(local_peer_id).await.is_err());
     }
 
     #[tokio::test]
     async fn try_to_dial_over_disabled_transport() {
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
@@ -1449,8 +1753,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let mut handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
@@ -1483,8 +1791,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
@@ -1512,8 +1824,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
@@ -1555,15 +1871,19 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport {}),
         );
 
-        assert!(manager.dial(&PeerId::random()).await.is_err());
+        assert!(manager.dial(PeerId::random()).await.is_err());
     }
 
     #[tokio::test]
@@ -1572,8 +1892,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
@@ -1590,7 +1914,7 @@ mod tests {
             },
         );
 
-        assert!(manager.dial(&peer).await.is_err());
+        assert!(manager.dial(peer).await.is_err());
     }
 
     #[tokio::test]
@@ -1603,6 +1927,7 @@ mod tests {
             Keypair::generate(),
             HashSet::from_iter([SupportedTransport::Tcp, SupportedTransport::Quic]),
             BandwidthSink::new(),
+            8usize,
         );
 
         // ipv6
@@ -1656,8 +1981,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
@@ -1690,20 +2019,13 @@ mod tests {
         // remote peer connected to local node from a different address that was dialed
         manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(1usize),
+                peer,
                 &Endpoint::dialer(connect_address, ConnectionId::from(1usize)),
             )
             .unwrap();
 
         // dialing the peer failed
-        manager
-            .on_dial_failure(
-                &ConnectionId::from(0usize),
-                &dial_address,
-                &Error::Disconnected,
-            )
-            .unwrap();
+        manager.on_dial_failure(ConnectionId::from(0usize)).unwrap();
 
         let peers = manager.peers.read();
         let peer = peers.get(&peer).unwrap();
@@ -1728,8 +2050,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
@@ -1762,8 +2088,7 @@ mod tests {
         // remote peer connected to local node from a different address that was dialed
         manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(1usize),
+                peer,
                 &Endpoint::listener(connect_address, ConnectionId::from(1usize)),
             )
             .unwrap();
@@ -1788,13 +2113,7 @@ mod tests {
         }
 
         // dialing the peer failed
-        manager
-            .on_dial_failure(
-                &ConnectionId::from(0usize),
-                &dial_address,
-                &Error::Disconnected,
-            )
-            .unwrap();
+        manager.on_dial_failure(ConnectionId::from(0usize)).unwrap();
 
         let peers = manager.peers.read();
         let peer = peers.get(&peer).unwrap();
@@ -1820,8 +2139,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
@@ -1854,8 +2177,7 @@ mod tests {
         // remote peer connected to local node from a different address that was dialed
         manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(1usize),
+                peer,
                 &Endpoint::listener(connect_address, ConnectionId::from(1usize)),
             )
             .unwrap();
@@ -1882,8 +2204,7 @@ mod tests {
         // the original dial succeeded
         manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(0usize),
+                peer,
                 &Endpoint::dialer(dial_address, ConnectionId::from(0usize)),
             )
             .unwrap();
@@ -1905,8 +2226,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
 
         let peer = PeerId::random();
@@ -1932,8 +2257,7 @@ mod tests {
         // remote peer connected to local node
         manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(0usize),
+                peer,
                 &Endpoint::listener(address1, ConnectionId::from(0usize)),
             )
             .unwrap();
@@ -1956,8 +2280,7 @@ mod tests {
         // second connection is established, verify that the seconary connection is tracked
         manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(1usize),
+                peer,
                 &Endpoint::listener(address2.clone(), ConnectionId::from(1usize)),
             )
             .unwrap();
@@ -1980,8 +2303,7 @@ mod tests {
         // tertiary connection is ignored
         manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(2usize),
+                peer,
                 &Endpoint::listener(address3.clone(), ConnectionId::from(2usize)),
             )
             .unwrap();
@@ -2008,8 +2330,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
 
         let peer = PeerId::random();
@@ -2029,12 +2355,14 @@ mod tests {
         // remote peer connected to local node
         let emit_event = manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(0usize),
+                peer,
                 &Endpoint::listener(address1, ConnectionId::from(0usize)),
             )
             .unwrap();
-        assert!(emit_event);
+        assert!(std::matches!(
+            emit_event,
+            ConnectionEstablishedResult::Accept
+        ));
 
         // verify that the peer state is `Connected` with no seconary connection
         {
@@ -2054,12 +2382,14 @@ mod tests {
         // second connection is established, verify that the seconary connection is tracked
         let emit_event = manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(1usize),
+                peer,
                 &Endpoint::dialer(address2.clone(), ConnectionId::from(1usize)),
             )
             .unwrap();
-        assert!(emit_event);
+        assert!(std::matches!(
+            emit_event,
+            ConnectionEstablishedResult::Accept
+        ));
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
@@ -2102,8 +2432,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
 
         let peer = PeerId::random();
@@ -2123,12 +2457,14 @@ mod tests {
         // remote peer connected to local node
         let emit_event = manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(0usize),
+                peer,
                 &Endpoint::listener(address1.clone(), ConnectionId::from(0usize)),
             )
             .unwrap();
-        assert!(emit_event);
+        assert!(std::matches!(
+            emit_event,
+            ConnectionEstablishedResult::Accept
+        ));
 
         // verify that the peer state is `Connected` with no seconary connection
         {
@@ -2148,12 +2484,14 @@ mod tests {
         // second connection is established, verify that the seconary connection is tracked
         let emit_event = manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(1usize),
+                peer,
                 &Endpoint::dialer(address2.clone(), ConnectionId::from(1usize)),
             )
             .unwrap();
-        assert!(emit_event);
+        assert!(std::matches!(
+            emit_event,
+            ConnectionEstablishedResult::Accept
+        ));
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
@@ -2200,8 +2538,12 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
 
         let peer = PeerId::random();
@@ -2227,12 +2569,14 @@ mod tests {
         // remote peer connected to local node
         let emit_event = manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(0usize),
+                peer,
                 &Endpoint::listener(address1, ConnectionId::from(0usize)),
             )
             .unwrap();
-        assert!(emit_event);
+        assert!(std::matches!(
+            emit_event,
+            ConnectionEstablishedResult::Accept
+        ));
 
         // verify that the peer state is `Connected` with no seconary connection
         {
@@ -2252,12 +2596,14 @@ mod tests {
         // second connection is established, verify that the seconary connection is tracked
         let emit_event = manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(1usize),
+                peer,
                 &Endpoint::dialer(address2.clone(), ConnectionId::from(1usize)),
             )
             .unwrap();
-        assert!(emit_event);
+        assert!(std::matches!(
+            emit_event,
+            ConnectionEstablishedResult::Accept
+        ));
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
@@ -2277,12 +2623,14 @@ mod tests {
         // third connection is established, verify that it's discarded
         let emit_event = manager
             .on_connection_established(
-                &peer,
-                &ConnectionId::from(2usize),
+                peer,
                 &Endpoint::dialer(address3.clone(), ConnectionId::from(2usize)),
             )
             .unwrap();
-        assert!(!emit_event);
+        assert!(std::matches!(
+            emit_event,
+            ConnectionEstablishedResult::Reject
+        ));
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();

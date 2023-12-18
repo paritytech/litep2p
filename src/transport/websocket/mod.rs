@@ -21,6 +21,7 @@
 //! WebSocket transport.
 
 use crate::{
+    config::Role,
     error::{AddressError, Error},
     transport::{
         manager::TransportHandle,
@@ -37,10 +38,12 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use url::Url;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -93,13 +96,34 @@ pub(crate) struct WebSocketTransport {
     pending_connections:
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedConnection, WebSocketError>>>,
 
+    /// Pending raw, unnegotiated connections.
+    pending_raw_connections: FuturesUnordered<
+        BoxFuture<
+            'static,
+            Result<
+                (
+                    ConnectionId,
+                    Multiaddr,
+                    WebSocketStream<MaybeTlsStream<TcpStream>>,
+                ),
+                ConnectionId,
+            >,
+        >,
+    >,
+
+    /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
+    opened_raw: HashMap<ConnectionId, (WebSocketStream<MaybeTlsStream<TcpStream>>, Multiaddr)>,
+
+    /// Canceled raw connections.
+    canceled: HashSet<ConnectionId>,
+
     /// Negotiated connections waiting validation.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
 }
 
 impl WebSocketTransport {
     /// Convert `Multiaddr` into `url::Url`
-    fn multiaddr_into_url(address: Multiaddr) -> crate::Result<Url> {
+    fn multiaddr_into_url(address: Multiaddr) -> crate::Result<(Url, PeerId)> {
         let mut protocol_stack = address.iter();
 
         let dial_address = match protocol_stack
@@ -126,9 +150,21 @@ impl WebSocketTransport {
             _ => return Err(Error::TransportNotSupported(address)),
         };
 
+        let peer = match protocol_stack.next() {
+            Some(Protocol::P2p(multihash)) => PeerId::from_multihash(multihash)?,
+            protocol => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid protocol, expected `Protocol::Ws`/`Protocol::Wss`",
+                );
+                return Err(Error::AddressError(AddressError::PeerIdMissing));
+            }
+        };
+
         tracing::trace!(target: LOG_TARGET, ?url, "parse address");
 
-        url::Url::parse(&url).map_err(|_| Error::InvalidData)
+        url::Url::parse(&url).map(|url| (url, peer)).map_err(|_| Error::InvalidData)
     }
 }
 
@@ -154,9 +190,12 @@ impl TransportBuilder for WebSocketTransport {
             )),
             config,
             context,
+            canceled: HashSet::new(),
+            opened_raw: HashMap::new(),
             pending_open: HashMap::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
+            pending_raw_connections: FuturesUnordered::new(),
         })
     }
 
@@ -169,20 +208,8 @@ impl TransportBuilder for WebSocketTransport {
 impl Transport for WebSocketTransport {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
         let yamux_config = self.config.yamux_config.clone();
-        let peer = match address.iter().find(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
-            Some(Protocol::P2p(peer)) => PeerId::from_multihash(peer).expect("to succeed"),
-            _ => {
-                tracing::error!(target: LOG_TARGET, ?address, "state mismatch: multiaddress doesn't contain peer id");
-                debug_assert!(false);
-
-                return Err(Error::AddressError(AddressError::PeerIdMissing));
-            }
-        };
-
-        // try to convert the multiaddress into a `Url` and if it fails,
-        // report dial failure immediately
         let keypair = self.context.keypair.clone();
-        let ws_address = Self::multiaddr_into_url(address.clone())?;
+        let (ws_address, peer) = Self::multiaddr_into_url(address.clone())?;
         let connection_open_timeout = self.config.connection_open_timeout;
         self.pending_dials.insert(connection_id, address.clone());
 
@@ -250,9 +277,115 @@ impl Transport for WebSocketTransport {
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.canceled.insert(connection_id);
         self.pending_open
             .remove(&connection_id)
             .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
+    }
+
+    fn open(
+        &mut self,
+        connection_id: ConnectionId,
+        addresses: Vec<Multiaddr>,
+    ) -> crate::Result<()> {
+        let connection_open_timeout = self.config.connection_open_timeout;
+        let mut futures: FuturesUnordered<_> = addresses
+            .into_iter()
+            .map(|address| async move {
+                let (url, _) = Self::multiaddr_into_url(address.clone())?;
+
+                match tokio::time::timeout(
+                    connection_open_timeout,
+                    tokio_tungstenite::connect_async(url),
+                )
+                .await
+                {
+                    Err(_) => Err(Error::Timeout),
+                    Ok(Err(error)) => Err(error.into()),
+                    Ok(Ok((stream, _))) => Ok((address, stream)),
+                }
+            })
+            .collect();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            num_addresses = futures.len(),
+            "open connection to remote peer",
+        );
+
+        self.pending_raw_connections.push(Box::pin(async move {
+            while let Some(result) = futures.next().await {
+                match result {
+                    Ok((address, stream)) => return Ok((connection_id, address, stream)),
+                    Err(error) => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?error,
+                        "failed to open connection",
+                    ),
+                }
+            }
+
+            Err(connection_id)
+        }));
+
+        Ok(())
+    }
+
+    fn negotiate(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let (stream, address) = self
+            .opened_raw
+            .remove(&connection_id)
+            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+
+        let peer = match address.iter().find(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
+            Some(Protocol::P2p(multihash)) => PeerId::from_multihash(multihash)?,
+            _ => return Err(Error::InvalidState),
+        };
+        let yamux_config = self.config.yamux_config.clone();
+        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+        let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let connection_open_timeout = self.config.connection_open_timeout;
+        let keypair = self.context.keypair.clone();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?connection_id,
+            ?address,
+            "negotiate connection",
+        );
+
+        self.pending_dials.insert(connection_id, address.clone());
+        self.pending_connections.push(Box::pin(async move {
+            match tokio::time::timeout(connection_open_timeout, async move {
+                WebSocketConnection::negotiate_connection(
+                    stream,
+                    peer,
+                    Role::Dialer,
+                    address,
+                    connection_id,
+                    keypair,
+                    yamux_config,
+                    max_read_ahead_factor,
+                    max_write_buffer_size,
+                )
+                .await
+                .map_err(|error| WebSocketError::new(error, Some(connection_id)))
+            })
+            .await
+            {
+                Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection_id))),
+                Ok(Err(error)) => Err(error),
+                Ok(Ok(connection)) => Ok(connection),
+            }
+        }));
+
+        Ok(())
+    }
+
+    fn cancel(&mut self, connection_id: ConnectionId) {
+        self.canceled.insert(connection_id);
     }
 }
 
@@ -289,6 +422,33 @@ impl Stream for WebSocketTransport {
                         }
                     }));
                 }
+            }
+        }
+
+        while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
+            match result {
+                Ok((connection_id, address, stream)) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?address,
+                        canceled = self.canceled.contains(&connection_id),
+                        "connection opened",
+                    );
+
+                    if !self.canceled.remove(&connection_id) {
+                        self.opened_raw.insert(connection_id, (stream, address.clone()));
+
+                        return Poll::Ready(Some(TransportEvent::ConnectionOpened {
+                            connection_id,
+                            address,
+                        }));
+                    }
+                }
+                Err(connection_id) =>
+                    if !self.canceled.remove(&connection_id) {
+                        return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
+                    },
             }
         }
 

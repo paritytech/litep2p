@@ -55,4 +55,15 @@ impl Transport for DummyTransport {
     fn reject(&mut self, _: ConnectionId) -> crate::Result<()> {
         Ok(())
     }
+
+    fn open(&mut self, _: ConnectionId, _: Vec<Multiaddr>) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn negotiate(&mut self, _: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
+
+    /// Cancel opening connections.
+    fn cancel(&mut self, _: ConnectionId) {}
 }

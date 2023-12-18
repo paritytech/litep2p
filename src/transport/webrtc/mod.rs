@@ -368,6 +368,21 @@ impl Transport for WebRtcTransport {
     fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
         Ok(())
     }
+
+    fn open(
+        &mut self,
+        _connection_id: ConnectionId,
+        _addresses: Vec<Multiaddr>,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn negotiate(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
+
+    /// Cancel opening connections.
+    fn cancel(&mut self, _connection_id: ConnectionId) {}
 }
 
 impl Stream for WebRtcTransport {

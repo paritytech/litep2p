@@ -21,13 +21,14 @@
 //! TCP transport.
 
 use crate::{
+    config::Role,
     error::Error,
     transport::{
         manager::TransportHandle,
         tcp::{
             config::TransportConfig,
             connection::{NegotiatedConnection, TcpConnection},
-            listener::TcpListener,
+            listener::{AddressType, TcpListener},
         },
         Transport, TransportBuilder, TransportEvent,
     },
@@ -42,7 +43,7 @@ use multiaddr::Multiaddr;
 use tokio::net::TcpStream;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
@@ -76,6 +77,17 @@ pub(crate) struct TcpTransport {
     /// Pending opening connections.
     pending_connections:
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, Error)>>>,
+
+    /// Pending raw, unnegotiated connections.
+    pending_raw_connections: FuturesUnordered<
+        BoxFuture<'static, Result<(ConnectionId, Multiaddr, TcpStream), ConnectionId>>,
+    >,
+
+    /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
+    opened_raw: HashMap<ConnectionId, (TcpStream, Multiaddr)>,
+
+    /// Canceled raw connections.
+    canceled: HashSet<ConnectionId>,
 
     /// Connections which have been opened and negotiated but are being validated by the
     /// `TransportManager`.
@@ -127,9 +139,12 @@ impl TransportBuilder for TcpTransport {
             listener: TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new())),
             config,
             context,
+            canceled: HashSet::new(),
+            opened_raw: HashMap::new(),
             pending_open: HashMap::new(),
             pending_dials: HashMap::new(),
             pending_connections: FuturesUnordered::new(),
+            pending_raw_connections: FuturesUnordered::new(),
         })
     }
 
@@ -205,9 +220,112 @@ impl Transport for TcpTransport {
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.canceled.insert(connection_id);
         self.pending_open
             .remove(&connection_id)
             .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
+    }
+
+    fn open(
+        &mut self,
+        connection_id: ConnectionId,
+        addresses: Vec<Multiaddr>,
+    ) -> crate::Result<()> {
+        let connection_open_timeout = self.config.connection_open_timeout;
+        let mut futures: FuturesUnordered<_> = addresses
+            .into_iter()
+            .map(|address| async move {
+                let (socket_address, _) = TcpListener::get_socket_address(&address)?;
+
+                match tokio::time::timeout(connection_open_timeout, async move {
+                    match &socket_address {
+                        AddressType::Socket(socket_address) =>
+                            TcpStream::connect(socket_address).await,
+                        AddressType::Dns(address, port) =>
+                            TcpStream::connect(format!("{address}:{port}")).await,
+                    }
+                })
+                .await
+                {
+                    Err(_) => Err(Error::Timeout),
+                    Ok(Err(error)) => Err(error.into()),
+                    Ok(Ok(stream)) => Ok((address, stream)),
+                }
+            })
+            .collect();
+
+        self.pending_raw_connections.push(Box::pin(async move {
+            while let Some(result) = futures.next().await {
+                match result {
+                    Ok((address, stream)) => return Ok((connection_id, address, stream)),
+                    Err(error) => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?error,
+                        "failed to open connection",
+                    ),
+                }
+            }
+
+            Err(connection_id)
+        }));
+
+        Ok(())
+    }
+
+    fn negotiate(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let (stream, address) = self
+            .opened_raw
+            .remove(&connection_id)
+            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+
+        let (socket_address, peer) = listener::TcpListener::get_socket_address(&address)?;
+        let yamux_config = self.config.yamux_config.clone();
+        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+        let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let connection_open_timeout = self.config.connection_open_timeout;
+        let substream_open_timeout = self.config.substream_open_timeout;
+        let keypair = self.context.keypair.clone();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?connection_id,
+            ?address,
+            "negotiate connection",
+        );
+
+        self.pending_dials.insert(connection_id, address);
+        self.pending_connections.push(Box::pin(async move {
+            match tokio::time::timeout(connection_open_timeout, async move {
+                TcpConnection::negotiate_connection(
+                    stream,
+                    peer,
+                    connection_id,
+                    keypair,
+                    Role::Dialer,
+                    socket_address,
+                    yamux_config,
+                    max_read_ahead_factor,
+                    max_write_buffer_size,
+                    substream_open_timeout,
+                )
+                .await
+                .map_err(|error| (connection_id, error))
+            })
+            .await
+            {
+                Err(_) => Err((connection_id, Error::Timeout)),
+                Ok(Err(error)) => Err(error),
+                Ok(Ok(connection)) => Ok(connection),
+            }
+        }));
+
+        Ok(())
+    }
+
+    fn cancel(&mut self, connection_id: ConnectionId) {
+        self.canceled.insert(connection_id);
     }
 }
 
@@ -221,6 +339,33 @@ impl Stream for TcpTransport {
                 Some(Ok((connection, address))) => {
                     self.on_inbound_connection(connection, address);
                 }
+            }
+        }
+
+        while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
+            match result {
+                Ok((connection_id, address, stream)) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?address,
+                        canceled = self.canceled.contains(&connection_id),
+                        "connection opened",
+                    );
+
+                    if !self.canceled.remove(&connection_id) {
+                        self.opened_raw.insert(connection_id, (stream, address.clone()));
+
+                        return Poll::Ready(Some(TransportEvent::ConnectionOpened {
+                            connection_id,
+                            address,
+                        }));
+                    }
+                }
+                Err(connection_id) =>
+                    if !self.canceled.remove(&connection_id) {
+                        return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
+                    },
             }
         }
 
@@ -390,6 +535,8 @@ mod tests {
                     } => {
                         transport1.context.report_dial_failure(connection_id, address, error).await;
                     }
+                    TransportEvent::ConnectionOpened { .. } => {}
+                    TransportEvent::OpenFailure { .. } => {}
                 }
             }
         });
@@ -450,8 +597,12 @@ mod tests {
 
     #[tokio::test]
     async fn dial_error_reported_for_outbound_connections() {
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,

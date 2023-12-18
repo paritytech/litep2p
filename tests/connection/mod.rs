@@ -1108,3 +1108,42 @@ async fn port_in_use_websocket() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn dial_over_multiple_addresses() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    // let (mut litep2p1, _event_stream) = make_dummy_litep2p(transport1).await;
+    // let (mut litep2p2, _event_stream) = make_dummy_litep2p(transport2).await;
+    // let (mut litep2p3, _event_stream) = make_dummy_litep2p(transport3).await;
+
+    // let mut address_iter = litep2p1.listen_addresses();
+    // let address1 = address_iter.next().unwrap().clone();
+    // let address2 = address_iter.next().unwrap().clone();
+    // drop(address_iter);
+
+    // tokio::spawn(async move {
+    //     loop {
+    //         let _ = litep2p1.next_event().await;
+    //     }
+    // });
+
+    // let (res1, res2) = tokio::join!(
+    //     litep2p2.dial_address(address1),
+    //     litep2p3.dial_address(address2),
+    // );
+    // assert!(res1.is_ok() && res2.is_ok());
+
+    // let (res1, res2) = tokio::join!(litep2p2.next_event(), litep2p3.next_event());
+
+    // assert!(std::matches!(
+    //     res1,
+    //     Some(Litep2pEvent::ConnectionEstablished { .. })
+    // ));
+    // assert!(std::matches!(
+    //     res2,
+    //     Some(Litep2pEvent::ConnectionEstablished { .. })
+    // ));
+}

@@ -41,6 +41,9 @@ pub(crate) const CONNECTION_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for opening a substream.
 pub(crate) const SUBSTREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Maximum number of parallel dial attempts.
+pub(crate) const MAX_PARALLEL_DIALS: usize = 8;
+
 /// Connection endpoint.
 #[derive(Debug, Clone)]
 pub enum Endpoint {
@@ -108,7 +111,7 @@ impl Into<Multiaddr> for Endpoint {
 
 /// Transport event.
 pub(crate) enum TransportEvent {
-    /// Connection established to remote peer.
+    /// Fully negotiated connection established to remote peer.
     ConnectionEstablished {
         /// Peer ID.
         peer: PeerId,
@@ -117,7 +120,17 @@ pub(crate) enum TransportEvent {
         endpoint: Endpoint,
     },
 
+    /// Connection opened to remote but not yet negotiated.
+    ConnectionOpened {
+        /// Connection ID.
+        connection_id: ConnectionId,
+
+        /// Address that was dialed.
+        address: Multiaddr,
+    },
+
     /// Connection closed to remote peer.
+    #[allow(unused)]
     ConnectionClosed {
         /// Peer ID.
         peer: PeerId,
@@ -137,6 +150,12 @@ pub(crate) enum TransportEvent {
         /// Error.
         error: Error,
     },
+
+    /// Open failure for an unnegotiated set of connections.
+    OpenFailure {
+        /// Connection ID.
+        connection_id: ConnectionId,
+    },
 }
 
 pub(crate) trait TransportBuilder {
@@ -153,7 +172,7 @@ pub(crate) trait TransportBuilder {
 }
 
 pub(crate) trait Transport: Stream + Unpin + Send {
-    /// Dial `address`.
+    /// Dial `address` and negotiate connection.
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()>;
 
     /// Accept negotiated connection.
@@ -161,4 +180,20 @@ pub(crate) trait Transport: Stream + Unpin + Send {
 
     /// Reject negotiated connection.
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+
+    /// Attempt to open connection to remote peer over one or more addresses.
+    ///
+    /// TODO: documentation
+    fn open(&mut self, connection_id: ConnectionId, addresses: Vec<Multiaddr>)
+        -> crate::Result<()>;
+
+    /// Negotiate opened connection.
+    ///
+    /// TODO: documentation
+    fn negotiate(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+
+    /// Cancel opening connections.
+    ///
+    /// This is a no-op for connections that have already succeeded/canceled.
+    fn cancel(&mut self, connection_id: ConnectionId);
 }

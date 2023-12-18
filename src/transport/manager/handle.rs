@@ -214,7 +214,7 @@ impl TransportManagerHandle {
                     }
                 }
                 Some(PeerContext {
-                    state: PeerState::Dialing { .. },
+                    state: PeerState::Dialing { .. } | PeerState::Opening { .. },
                     ..
                 }) => return Ok(()),
                 None => return Err(Error::PeerDoesntExist(*peer)),

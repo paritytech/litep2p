@@ -1250,7 +1250,22 @@ impl NotificationProtocol {
 
     /// Handle dial failure.
     async fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            protocol = %self.protocol,
+            ?address,
+            "handle dial failure",
+        );
+
         let Some(context) = self.peers.remove(&peer) else {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                protocol = %self.protocol,
+                ?address,
+                "dial failure for an unknown peer",
+            );
             return;
         };
 
@@ -1262,6 +1277,13 @@ impl NotificationProtocol {
                     .await;
             }
             state => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    ?state,
+                    "dial failure for peer that's not being dialed",
+                );
                 self.peers.insert(peer, PeerContext { state });
             }
         }

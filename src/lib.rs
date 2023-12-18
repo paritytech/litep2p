@@ -131,6 +131,7 @@ impl Litep2p {
             litep2p_config.keypair.clone(),
             supported_transports,
             bandwidth_sink.clone(),
+            litep2p_config.max_parallel_dials,
         );
 
         // add known addresses to `TransportManager`, if any exist
@@ -431,7 +432,7 @@ impl Litep2p {
 
     /// Dial peer.
     pub async fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
-        self.transport_manager.dial(peer).await
+        self.transport_manager.dial(*peer).await
     }
 
     /// Dial address.

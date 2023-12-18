@@ -32,7 +32,7 @@ use crate::{
         quic::config::TransportConfig as QuicTransportConfig,
         tcp::config::TransportConfig as TcpTransportConfig,
         webrtc::config::TransportConfig as WebRtcTransportConfig,
-        websocket::config::TransportConfig as WebSocketTransportConfig,
+        websocket::config::TransportConfig as WebSocketTransportConfig, MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
     PeerId,
@@ -107,6 +107,9 @@ pub struct Litep2pConfigBuilder {
 
     /// Executor for running futures.
     executor: Option<Arc<dyn Executor>>,
+
+    /// Maximum number of parallel dial attempts.
+    max_parallel_dials: usize,
 }
 
 impl Default for Litep2pConfigBuilder {
@@ -130,6 +133,7 @@ impl Litep2pConfigBuilder {
             bitswap: None,
             mdns: None,
             executor: None,
+            max_parallel_dials: MAX_PARALLEL_DIALS,
             user_protocols: HashMap::new(),
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
@@ -232,6 +236,13 @@ impl Litep2pConfigBuilder {
         self
     }
 
+    /// How many addresses should litep2p attempt to dial in parallel when connection to a remote
+    /// peer.
+    pub fn with_max_parallel_dials(mut self, max_parallel_dials: usize) -> Self {
+        self.max_parallel_dials = max_parallel_dials;
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     ///
     /// Generates a default keypair if user didn't provide one.
@@ -252,6 +263,7 @@ impl Litep2pConfigBuilder {
             identify: self.identify.take(),
             kademlia: self.kademlia.take(),
             bitswap: self.bitswap.take(),
+            max_parallel_dials: self.max_parallel_dials,
             executor: self.executor.map_or(Arc::new(DefaultExecutor {}), |executor| executor),
             user_protocols: self.user_protocols,
             notification_protocols: self.notification_protocols,
@@ -304,6 +316,9 @@ pub struct Litep2pConfig {
 
     /// Executor.
     pub(crate) executor: Arc<dyn Executor>,
+
+    /// Maximum number of parallel dial attempts.
+    pub(crate) max_parallel_dials: usize,
 
     /// Known addresses.
     pub known_addresses: Vec<(PeerId, Vec<Multiaddr>)>,
