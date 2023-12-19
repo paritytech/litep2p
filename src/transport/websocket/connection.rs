@@ -211,6 +211,8 @@ impl WebSocketConnection {
         dialed_peer: Option<PeerId>,
         ws_address: Url,
         yamux_config: yamux::Config,
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
     ) -> crate::Result<NegotiatedConnection> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -238,7 +240,14 @@ impl WebSocketConnection {
         );
 
         // perform noise handshake
-        let (stream, peer) = noise::handshake(stream.inner(), &keypair, Role::Dialer, 5, 2).await?;
+        let (stream, peer) = noise::handshake(
+            stream.inner(),
+            &keypair,
+            Role::Dialer,
+            max_read_ahead_factor,
+            max_write_buffer_size,
+        )
+        .await?;
         let stream: NoiseSocket<BufferedStream<_>> = stream;
 
         // if the local node dialed a remote node, verify that received peer ID matches the one that
@@ -275,6 +284,8 @@ impl WebSocketConnection {
         keypair: Keypair,
         address: SocketAddr,
         yamux_config: yamux::Config,
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
     ) -> crate::Result<NegotiatedConnection> {
         let stream = MaybeTlsStream::Plain(stream);
         let stream = tokio_tungstenite::accept_async(stream).await?;
@@ -295,8 +306,14 @@ impl WebSocketConnection {
         );
 
         // perform noise handshake
-        let (stream, peer) =
-            noise::handshake(stream.inner(), &keypair, Role::Listener, 5, 2).await?;
+        let (stream, peer) = noise::handshake(
+            stream.inner(),
+            &keypair,
+            Role::Listener,
+            max_read_ahead_factor,
+            max_write_buffer_size,
+        )
+        .await?;
         let stream: NoiseSocket<BufferedStream<_>> = stream;
 
         tracing::trace!(target: LOG_TARGET, "noise handshake done");

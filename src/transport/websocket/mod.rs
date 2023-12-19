@@ -211,6 +211,8 @@ impl Transport for WebSocketTransport {
         let keypair = self.context.keypair.clone();
         let (ws_address, peer) = Self::multiaddr_into_url(address.clone())?;
         let connection_open_timeout = self.config.connection_open_timeout;
+        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+        let max_write_buffer_size = self.config.noise_write_buffer_size;
         self.pending_dials.insert(connection_id, address.clone());
 
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
@@ -224,6 +226,8 @@ impl Transport for WebSocketTransport {
                     Some(peer),
                     ws_address,
                     yamux_config,
+                    max_read_ahead_factor,
+                    max_write_buffer_size,
                 )
                 .await
                 .map_err(|error| WebSocketError::new(error, Some(connection_id)))
@@ -401,6 +405,8 @@ impl Stream for WebSocketTransport {
                     let keypair = self.context.keypair.clone();
                     let yamux_config = self.config.yamux_config.clone();
                     let connection_open_timeout = self.config.connection_open_timeout;
+                    let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+                    let max_write_buffer_size = self.config.noise_write_buffer_size;
 
                     self.pending_connections.push(Box::pin(async move {
                         match tokio::time::timeout(connection_open_timeout, async move {
@@ -410,6 +416,8 @@ impl Stream for WebSocketTransport {
                                 keypair,
                                 address,
                                 yamux_config,
+                                max_read_ahead_factor,
+                                max_write_buffer_size,
                             )
                             .await
                             .map_err(|error| WebSocketError::new(error, None))
