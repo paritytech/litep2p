@@ -96,9 +96,6 @@ enum ConnectionError {
 
 /// Negotiated connection.
 pub(super) struct NegotiatedConnection {
-    /// Connection ID.
-    connection_id: ConnectionId,
-
     /// Remote peer ID.
     peer: PeerId,
 
@@ -115,7 +112,7 @@ pub(super) struct NegotiatedConnection {
 impl NegotiatedConnection {
     /// Get `ConnectionId` of the negotiated connection.
     pub fn connection_id(&self) -> ConnectionId {
-        self.connection_id
+        self.endpoint.connection_id()
     }
 
     /// Get `PeerId` of the negotiated connection.
@@ -169,7 +166,6 @@ impl WebSocketConnection {
         substream_open_timeout: Duration,
     ) -> Self {
         let NegotiatedConnection {
-            connection_id,
             peer,
             endpoint,
             connection,
@@ -177,7 +173,7 @@ impl WebSocketConnection {
         } = connection;
 
         Self {
-            connection_id,
+            connection_id: endpoint.connection_id(),
             protocol_set,
             connection,
             control,
@@ -268,13 +264,12 @@ impl WebSocketConnection {
             peer,
             control,
             connection,
-            connection_id,
             endpoint: Endpoint::dialer(address.clone(), connection_id),
         })
     }
 
     /// Accept WebSocket connection.
-    pub(crate) async fn accept_connection(
+    pub(super) async fn accept_connection(
         stream: TcpStream,
         connection_id: ConnectionId,
         keypair: Keypair,
@@ -327,7 +322,6 @@ impl WebSocketConnection {
             peer,
             control,
             connection,
-            connection_id,
             endpoint: Endpoint::listener(address.clone(), connection_id),
         })
     }
@@ -388,7 +382,6 @@ impl WebSocketConnection {
             peer,
             control,
             connection,
-            connection_id,
             endpoint: match role {
                 Role::Dialer => Endpoint::dialer(address, connection_id),
                 Role::Listener => Endpoint::listener(address, connection_id),
