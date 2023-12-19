@@ -43,7 +43,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use url::Url;
 
-use std::{net::SocketAddr, time::Duration};
+use std::time::Duration;
 
 mod schema {
     pub(super) mod noise {
@@ -208,7 +208,7 @@ impl WebSocketConnection {
         connection_id: ConnectionId,
         keypair: Keypair,
         address: Multiaddr,
-        dialed_peer: Option<PeerId>,
+        dialed_peer: PeerId,
         ws_address: Url,
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
@@ -222,59 +222,18 @@ impl WebSocketConnection {
             "open connection to remote peer",
         );
 
-        let (stream, _) = tokio_tungstenite::connect_async(ws_address).await?;
-        let stream = BufferedStream::new(stream);
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?address,
-            "connection established, negotiate protocols"
-        );
-
-        // negotiate `noise`
-        let (stream, _) = Self::negotiate_protocol(stream, &Role::Dialer, vec!["/noise"]).await?;
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            "`multistream-select` and `noise` negotiated"
-        );
-
-        // perform noise handshake
-        let (stream, peer) = noise::handshake(
-            stream.inner(),
-            &keypair,
+        Self::negotiate_connection(
+            tokio_tungstenite::connect_async(ws_address).await?.0,
+            Some(dialed_peer),
             Role::Dialer,
+            address,
+            connection_id,
+            keypair,
+            yamux_config,
             max_read_ahead_factor,
             max_write_buffer_size,
         )
-        .await?;
-        let stream: NoiseSocket<BufferedStream<_>> = stream;
-
-        // if the local node dialed a remote node, verify that received peer ID matches the one that
-        // was transported as part of the noise handshake
-        if let Some(dialed_peer) = dialed_peer {
-            if dialed_peer != peer {
-                tracing::debug!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer id mismatch");
-                return Err(Error::PeerIdMismatch(dialed_peer, peer));
-            }
-        }
-
-        tracing::trace!(target: LOG_TARGET, "noise handshake done");
-
-        // negotiate `yamux`
-        let (stream, _) =
-            Self::negotiate_protocol(stream, &Role::Dialer, vec!["/yamux/1.0.0"]).await?;
-        tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
-
-        let connection = yamux::Connection::new(stream.inner(), yamux_config, Role::Dialer.into());
-        let (control, connection) = yamux::Control::new(connection);
-
-        Ok(NegotiatedConnection {
-            peer,
-            control,
-            connection,
-            endpoint: Endpoint::dialer(address.clone(), connection_id),
-        })
+        .await
     }
 
     /// Accept WebSocket connection.
@@ -282,71 +241,31 @@ impl WebSocketConnection {
         stream: TcpStream,
         connection_id: ConnectionId,
         keypair: Keypair,
-        address: SocketAddr,
+        address: Multiaddr,
         yamux_config: yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
     ) -> crate::Result<NegotiatedConnection> {
         let stream = MaybeTlsStream::Plain(stream);
-        let stream = tokio_tungstenite::accept_async(stream).await?;
-        let stream = BufferedStream::new(stream);
 
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?address,
-            "connection received, negotiate protocols"
-        );
-
-        // negotiate `noise`
-        let (stream, _) = Self::negotiate_protocol(stream, &Role::Listener, vec!["/noise"]).await?;
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            "`multistream-select` and `noise` negotiated"
-        );
-
-        // perform noise handshake
-        let (stream, peer) = noise::handshake(
-            stream.inner(),
-            &keypair,
+        Self::negotiate_connection(
+            tokio_tungstenite::accept_async(stream).await?,
+            None,
             Role::Listener,
+            address,
+            connection_id,
+            keypair,
+            yamux_config,
             max_read_ahead_factor,
             max_write_buffer_size,
         )
-        .await?;
-        let stream: NoiseSocket<BufferedStream<_>> = stream;
-
-        tracing::trace!(target: LOG_TARGET, "noise handshake done");
-
-        // negotiate `yamux`
-        let (stream, _) =
-            Self::negotiate_protocol(stream, &Role::Listener, vec!["/yamux/1.0.0"]).await?;
-        tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
-
-        let connection =
-            yamux::Connection::new(stream.inner(), yamux_config, Role::Listener.into());
-        let (control, connection) = yamux::Control::new(connection);
-
-        // create `Multiaddr` from `SocketAddr` and report to protocols
-        // and `TransportManager` that a new connection was established
-        let address = Multiaddr::empty()
-            .with(Protocol::from(address.ip()))
-            .with(Protocol::Tcp(address.port()))
-            .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())))
-            .with(Protocol::P2p(Multihash::from(peer)));
-
-        Ok(NegotiatedConnection {
-            peer,
-            control,
-            connection,
-            endpoint: Endpoint::listener(address.clone(), connection_id),
-        })
+        .await
     }
 
     /// Negotiate WebSocket connection.
     pub(super) async fn negotiate_connection(
         stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-        dialed_peer: PeerId,
+        dialed_peer: Option<PeerId>,
         role: Role,
         address: Multiaddr,
         connection_id: ConnectionId,
@@ -357,8 +276,11 @@ impl WebSocketConnection {
     ) -> crate::Result<NegotiatedConnection> {
         tracing::trace!(
             target: LOG_TARGET,
+            ?connection_id,
             ?address,
-            "connection received, negotiate protocols"
+            ?role,
+            ?dialed_peer,
+            "negotiate connectoin"
         );
         let stream = BufferedStream::new(stream);
 
@@ -380,8 +302,10 @@ impl WebSocketConnection {
         )
         .await?;
 
-        if peer != dialed_peer {
-            return Err(Error::PeerIdMismatch(dialed_peer, peer));
+        if let Some(dialed_peer) = dialed_peer {
+            if peer != dialed_peer {
+                return Err(Error::PeerIdMismatch(dialed_peer, peer));
+            }
         }
 
         let stream: NoiseSocket<BufferedStream<_>> = stream;
@@ -394,6 +318,11 @@ impl WebSocketConnection {
 
         let connection = yamux::Connection::new(stream.inner(), yamux_config, role.into());
         let (control, connection) = yamux::Control::new(connection);
+
+        let address = match role {
+            Role::Dialer => address,
+            Role::Listener => address.with(Protocol::P2p(Multihash::from(peer))),
+        };
 
         Ok(NegotiatedConnection {
             peer,

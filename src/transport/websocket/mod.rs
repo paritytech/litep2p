@@ -132,8 +132,9 @@ impl WebSocketTransport {
         {
             Protocol::Ip4(address) => address.to_string(),
             Protocol::Ip6(address) => format!("[{}]", address.to_string()),
-            Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) =>
-                address.to_string(),
+            Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) => {
+                address.to_string()
+            }
 
             _ => return Err(Error::TransportNotSupported(address)),
         };
@@ -223,7 +224,7 @@ impl Transport for WebSocketTransport {
                     connection_id,
                     keypair,
                     address,
-                    Some(peer),
+                    peer,
                     ws_address,
                     yamux_config,
                     max_read_ahead_factor,
@@ -365,7 +366,7 @@ impl Transport for WebSocketTransport {
             match tokio::time::timeout(connection_open_timeout, async move {
                 WebSocketConnection::negotiate_connection(
                     stream,
-                    peer,
+                    Some(peer),
                     Role::Dialer,
                     address,
                     connection_id,
@@ -407,6 +408,10 @@ impl Stream for WebSocketTransport {
                     let connection_open_timeout = self.config.connection_open_timeout;
                     let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
                     let max_write_buffer_size = self.config.noise_write_buffer_size;
+                    let address = Multiaddr::empty()
+                        .with(Protocol::from(address.ip()))
+                        .with(Protocol::Tcp(address.port()))
+                        .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())));
 
                     self.pending_connections.push(Box::pin(async move {
                         match tokio::time::timeout(connection_open_timeout, async move {
@@ -453,10 +458,11 @@ impl Stream for WebSocketTransport {
                         }));
                     }
                 }
-                Err(connection_id) =>
+                Err(connection_id) => {
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
-                    },
+                    }
+                }
             }
         }
 
@@ -474,12 +480,13 @@ impl Stream for WebSocketTransport {
                 }
                 Err(error) => match error.connection_id {
                     Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                        Some(address) =>
+                        Some(address) => {
                             return Poll::Ready(Some(TransportEvent::DialFailure {
                                 connection_id,
                                 address,
                                 error: error.error,
-                            })),
+                            }))
+                        }
                         None => {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
                         }
