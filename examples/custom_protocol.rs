@@ -191,7 +191,7 @@ impl UserProtocol for CustomProtocol {
     }
 }
 
-async fn make_litep2p() -> (Litep2p, CustomProtocolHandle) {
+fn make_litep2p() -> (Litep2p, CustomProtocolHandle) {
     let (custom_protocol, handle) = CustomProtocol::new();
 
     (
@@ -201,7 +201,6 @@ async fn make_litep2p() -> (Litep2p, CustomProtocolHandle) {
                 .with_user_protocol(Box::new(custom_protocol))
                 .build(),
         )
-        .await
         .unwrap(),
         handle,
     )
@@ -213,8 +212,8 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut litep2p1, handle1) = make_litep2p().await;
-    let (mut litep2p2, mut handle2) = make_litep2p().await;
+    let (mut litep2p1, handle1) = make_litep2p();
+    let (mut litep2p2, mut handle2) = make_litep2p();
 
     let peer2 = *litep2p2.local_peer_id();
     let listen_address = litep2p2.listen_addresses().next().unwrap().clone();

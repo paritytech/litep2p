@@ -113,8 +113,8 @@ async fn two_litep2ps_work(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
     litep2p1.dial_address(address).await.unwrap();
@@ -216,8 +216,8 @@ async fn dial_failure(transport1: Transport, transport2: Transport, dial_address
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = dial_address.with(Protocol::P2p(
         Multihash::from_bytes(&litep2p2.local_peer_id().to_bytes()).unwrap(),
@@ -267,8 +267,8 @@ async fn connect_over_dns() {
         .with_libp2p_ping(ping_config2)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
     let peer2 = *litep2p2.local_peer_id();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
@@ -372,7 +372,7 @@ async fn connection_timeout(transport: Transport, address: Multiaddr) {
     }
     .build();
 
-    let mut litep2p = Litep2p::new(litep2p_config).await.unwrap();
+    let mut litep2p = Litep2p::new(litep2p_config).unwrap();
 
     litep2p.dial_address(address.clone()).await.unwrap();
 
@@ -402,7 +402,7 @@ async fn dial_quic_peer_id_missing() {
         .with_libp2p_ping(ping_config)
         .build();
 
-    let mut litep2p = Litep2p::new(config).await.unwrap();
+    let mut litep2p = Litep2p::new(config).unwrap();
 
     // create udp socket but don't respond to any inbound datagrams
     let listener = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -458,7 +458,7 @@ async fn dial_self(transport: Transport) {
     }
     .build();
 
-    let mut litep2p = Litep2p::new(litep2p_config).await.unwrap();
+    let mut litep2p = Litep2p::new(litep2p_config).unwrap();
     let address = litep2p.listen_addresses().next().unwrap().clone();
 
     // dial without peer id attached
@@ -481,7 +481,7 @@ async fn attempt_to_dial_using_unsupported_transport() {
         .with_libp2p_ping(ping_config)
         .build();
 
-    let mut litep2p = Litep2p::new(config).await.unwrap();
+    let mut litep2p = Litep2p::new(config).unwrap();
     let address = Multiaddr::empty()
         .with(Protocol::from(std::net::Ipv4Addr::new(127, 0, 0, 1)))
         .with(Protocol::Tcp(8888))
@@ -550,7 +550,7 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
         Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -563,7 +563,7 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
         Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     litep2p2.dial_address(address1).await.unwrap();
@@ -611,7 +611,7 @@ async fn simultaneous_dial_tcp() {
         })
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -622,7 +622,7 @@ async fn simultaneous_dial_tcp() {
         })
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
@@ -666,7 +666,7 @@ async fn simultaneous_dial_quic() {
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -674,7 +674,7 @@ async fn simultaneous_dial_quic() {
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
@@ -718,7 +718,7 @@ async fn simultaneous_dial_ipv6_quic() {
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -726,7 +726,7 @@ async fn simultaneous_dial_ipv6_quic() {
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
@@ -773,7 +773,7 @@ async fn websocket_over_ipv6() {
         })
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -784,7 +784,7 @@ async fn websocket_over_ipv6() {
         })
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
     litep2p1.dial_address(address2).await.unwrap();
@@ -825,7 +825,7 @@ async fn tcp_dns_resolution() {
         })
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -836,7 +836,7 @@ async fn tcp_dns_resolution() {
         })
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
     let tcp = address.iter().skip(1).next().unwrap();
@@ -886,7 +886,7 @@ async fn websocket_dns_resolution() {
         })
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -897,7 +897,7 @@ async fn websocket_dns_resolution() {
         })
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
     let tcp = address.iter().skip(1).next().unwrap();
@@ -1014,10 +1014,7 @@ async fn make_dummy_litep2p(
     }
     .build();
 
-    (
-        Litep2p::new(litep2p_config).await.unwrap(),
-        ping_event_stream,
-    )
+    (Litep2p::new(litep2p_config).unwrap(), ping_event_stream)
 }
 
 async fn multiple_listen_addresses(
@@ -1081,7 +1078,6 @@ async fn port_in_use_tcp() {
             })
             .build(),
     )
-    .await
     .unwrap();
 }
 
@@ -1105,7 +1101,6 @@ async fn port_in_use_websocket() {
             })
             .build(),
     )
-    .await
     .unwrap();
 }
 

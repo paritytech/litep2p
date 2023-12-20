@@ -107,8 +107,8 @@ async fn user_protocol() {
         .with_user_protocol(custom_protocol2)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
     let address = litep2p2.listen_addresses().next().unwrap().clone();
 
     litep2p1.dial_address(address).await.unwrap();

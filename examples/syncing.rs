@@ -128,7 +128,7 @@ async fn main() {
         .build();
 
     // create `Litep2p` object and start internal protocol handlers and the QUIC transport
-    let mut litep2p = Litep2p::new(config).await.unwrap();
+    let mut litep2p = Litep2p::new(config).unwrap();
 
     // spawn `SyncingEngine` in the background
     tokio::spawn(engine.run());

@@ -98,7 +98,7 @@ async fn make_default_litep2p(transport: Transport) -> (Litep2p, NotificationHan
     }
     .build();
 
-    (Litep2p::new(config).await.unwrap(), handle)
+    (Litep2p::new(config).unwrap(), handle)
 }
 
 #[tokio::test]
@@ -185,8 +185,8 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -350,8 +350,8 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -473,8 +473,8 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -645,8 +645,8 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -874,8 +874,8 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -1088,8 +1088,8 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -1263,8 +1263,8 @@ async fn both_nodes_open_substream_one_rejects_substreams(
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -1367,7 +1367,7 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     tokio::spawn(async move {
         loop {
@@ -1428,7 +1428,7 @@ async fn send_async_notification_to_non_existent_peer(transport1: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     tokio::spawn(async move {
         loop {
@@ -1492,7 +1492,7 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     tokio::spawn(async move {
         loop {
@@ -1561,7 +1561,7 @@ async fn try_to_disconnect_non_existent_peer(transport1: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     tokio::spawn(async move {
         loop {
@@ -1658,8 +1658,8 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -1812,8 +1812,8 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -1926,8 +1926,8 @@ async fn unsupported_protocol(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer2 = *litep2p2.local_peer_id();
 
@@ -2029,8 +2029,8 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -2167,8 +2167,8 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -2313,8 +2313,8 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -2467,8 +2467,8 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -2646,8 +2646,8 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();

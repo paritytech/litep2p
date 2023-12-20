@@ -29,7 +29,7 @@ use litep2p::{
     Litep2p, PeerId,
 };
 
-async fn spawn_litep2p(port: u16) {
+fn spawn_litep2p(port: u16) {
     let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -40,7 +40,7 @@ async fn spawn_litep2p(port: u16) {
         .with_libp2p_kademlia(kad_config1)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
 }
@@ -62,7 +62,7 @@ async fn kademlia_supported() {
         .with_libp2p_kademlia(kad_config1)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     for port in 9000..9003 {
         spawn_litep2p(port);
@@ -97,7 +97,7 @@ async fn put_value() {
         .with_libp2p_kademlia(kad_config1)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     for i in 0..10 {
         kad_handle1

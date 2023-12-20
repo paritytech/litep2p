@@ -59,7 +59,7 @@ async fn peer_event_loop(
 }
 
 /// helper function for creating `Litep2p` object
-async fn make_litep2p() -> (
+fn make_litep2p() -> (
     Litep2p,
     Box<dyn Stream<Item = PingEvent> + Send + Unpin>,
     Box<dyn Stream<Item = MdnsEvent> + Send + Unpin>,
@@ -78,7 +78,7 @@ async fn make_litep2p() -> (
 
     // build `Litep2p` and return it + event streams
     (
-        Litep2p::new(litep2p_config).await.unwrap(),
+        Litep2p::new(litep2p_config).unwrap(),
         ping_event_stream,
         mdns_event_stream,
     )
@@ -87,8 +87,8 @@ async fn make_litep2p() -> (
 #[tokio::main]
 async fn main() {
     // initialize `Litep2p` objects for the peers
-    let (litep2p1, ping_event_stream1, mdns_event_stream1) = make_litep2p().await;
-    let (litep2p2, ping_event_stream2, mdns_event_stream2) = make_litep2p().await;
+    let (litep2p1, ping_event_stream1, mdns_event_stream1) = make_litep2p();
+    let (litep2p2, ping_event_stream2, mdns_event_stream2) = make_litep2p();
 
     // starts separate tasks for the first and second peer
     tokio::spawn(peer_event_loop(

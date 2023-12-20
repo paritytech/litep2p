@@ -45,7 +45,7 @@ struct Behaviour {
 }
 
 // initialize litep2p with ping support
-async fn initialize_litep2p() -> (Litep2p, KademliaHandle) {
+fn initialize_litep2p() -> (Litep2p, KademliaHandle) {
     let keypair = Keypair::generate();
     let (kad_config, kad_handle) = ConfigBuilder::new().build();
 
@@ -59,7 +59,6 @@ async fn initialize_litep2p() -> (Litep2p, KademliaHandle) {
             .with_libp2p_kademlia(kad_config)
             .build(),
     )
-    .await
     .unwrap();
 
     (litep2p, kad_handle)
@@ -119,7 +118,7 @@ async fn find_node() {
     }
 
     let mut libp2p = initialize_libp2p();
-    let (mut litep2p, mut kad_handle) = initialize_litep2p().await;
+    let (mut litep2p, mut kad_handle) = initialize_litep2p();
     let address = litep2p.listen_addresses().next().unwrap().clone();
 
     for i in 0..addresses.len() {
@@ -223,7 +222,7 @@ async fn put_record() {
     }
 
     let mut libp2p = initialize_libp2p();
-    let (mut litep2p, mut kad_handle) = initialize_litep2p().await;
+    let (mut litep2p, mut kad_handle) = initialize_litep2p();
     let address = litep2p.listen_addresses().next().unwrap().clone();
 
     for i in 0..addresses.len() {
@@ -335,7 +334,7 @@ async fn get_record() {
     }
 
     let mut libp2p = initialize_libp2p();
-    let (mut litep2p, mut kad_handle) = initialize_litep2p().await;
+    let (mut litep2p, mut kad_handle) = initialize_litep2p();
     let address = litep2p.listen_addresses().next().unwrap().clone();
 
     for i in 0..addresses.len() {

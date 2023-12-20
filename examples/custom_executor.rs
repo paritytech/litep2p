@@ -110,7 +110,6 @@ async fn main() {
             })
             .build(),
     )
-    .await
     .unwrap();
 
     // poll litep2p, task executor and the notification handle all together

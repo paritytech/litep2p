@@ -120,7 +120,7 @@ pub struct Litep2p {
 
 impl Litep2p {
     /// Create new [`Litep2p`].
-    pub async fn new(mut litep2p_config: Litep2pConfig) -> crate::Result<Litep2p> {
+    pub fn new(mut litep2p_config: Litep2pConfig) -> crate::Result<Litep2p> {
         let local_peer_id =
             PeerId::from_public_key(&PublicKey::Ed25519(litep2p_config.keypair.public()));
         let bandwidth_sink = BandwidthSink::new();
@@ -452,12 +452,15 @@ impl Litep2p {
     /// Poll next event.
     pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
         match self.transport_manager.next().await? {
-            TransportManagerEvent::ConnectionEstablished { peer, endpoint, .. } =>
-                Some(Litep2pEvent::ConnectionEstablished { peer, endpoint }),
-            TransportManagerEvent::ConnectionClosed { peer, .. } =>
-                Some(Litep2pEvent::ConnectionClosed { peer }),
-            TransportManagerEvent::DialFailure { address, error, .. } =>
-                Some(Litep2pEvent::DialFailure { address, error }),
+            TransportManagerEvent::ConnectionEstablished { peer, endpoint, .. } => {
+                Some(Litep2pEvent::ConnectionEstablished { peer, endpoint })
+            }
+            TransportManagerEvent::ConnectionClosed { peer, .. } => {
+                Some(Litep2pEvent::ConnectionClosed { peer })
+            }
+            TransportManagerEvent::DialFailure { address, error, .. } => {
+                Some(Litep2pEvent::DialFailure { address, error })
+            }
         }
     }
 }
@@ -508,7 +511,7 @@ mod tests {
             .with_libp2p_ping(ping_config)
             .build();
 
-        let _litep2p = Litep2p::new(config).await.unwrap();
+        let _litep2p = Litep2p::new(config).unwrap();
     }
 
     #[tokio::test]
@@ -543,7 +546,7 @@ mod tests {
             .with_libp2p_ping(ping_config)
             .build();
 
-        assert!(Litep2p::new(config).await.is_err());
+        assert!(Litep2p::new(config).is_err());
     }
 
     #[tokio::test]
@@ -588,7 +591,7 @@ mod tests {
                 Multihash::from_bytes(&peer.to_bytes()).unwrap(),
             ));
 
-        let mut litep2p = Litep2p::new(config).await.unwrap();
+        let mut litep2p = Litep2p::new(config).unwrap();
         litep2p.dial_address(address.clone()).await.unwrap();
         litep2p.dial_address(address.clone()).await.unwrap();
 
