@@ -239,10 +239,12 @@ impl Transport for TcpTransport {
 
                 match tokio::time::timeout(connection_open_timeout, async move {
                     match &socket_address {
-                        AddressType::Socket(socket_address) =>
-                            TcpStream::connect(socket_address).await,
-                        AddressType::Dns(address, port) =>
-                            TcpStream::connect(format!("{address}:{port}")).await,
+                        AddressType::Socket(socket_address) => {
+                            TcpStream::connect(socket_address).await
+                        }
+                        AddressType::Dns(address, port) => {
+                            TcpStream::connect(format!("{address}:{port}")).await
+                        }
                     }
                 })
                 .await
@@ -362,10 +364,11 @@ impl Stream for TcpTransport {
                         }));
                     }
                 }
-                Err(connection_id) =>
+                Err(connection_id) => {
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
-                    },
+                    }
+                }
             }
         }
 
@@ -528,13 +531,7 @@ mod tests {
                 match event {
                     TransportEvent::ConnectionEstablished { .. } => {}
                     TransportEvent::ConnectionClosed { .. } => {}
-                    TransportEvent::DialFailure {
-                        connection_id,
-                        address,
-                        error,
-                    } => {
-                        transport1.context.report_dial_failure(connection_id, address, error).await;
-                    }
+                    TransportEvent::DialFailure { .. } => {}
                     TransportEvent::ConnectionOpened { .. } => {}
                     TransportEvent::OpenFailure { .. } => {}
                 }
