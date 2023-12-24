@@ -270,28 +270,6 @@ impl TransportHandle {
 
         ConnectionId::from(connection_id)
     }
-
-    // TODO: report to protocols as well
-    pub async fn _report_connection_established(
-        &mut self,
-        connection: ConnectionId,
-        peer: PeerId,
-        endpoint: Endpoint,
-    ) {
-        let _ = self
-            .tx
-            .send(TransportManagerEvent::ConnectionEstablished {
-                connection,
-                peer,
-                endpoint,
-            })
-            .await;
-    }
-
-    /// Report to `Litep2p` that a peer disconnected.
-    pub async fn _report_connection_closed(&mut self, peer: PeerId, connection: ConnectionId) {
-        let _ = self.tx.send(TransportManagerEvent::ConnectionClosed { peer, connection }).await;
-    }
 }
 
 #[cfg(test)]

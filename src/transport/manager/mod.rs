@@ -1728,10 +1728,7 @@ mod tests {
             8usize,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        manager.register_transport(
-            SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport::new()),
-        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -1759,12 +1756,6 @@ mod tests {
             BandwidthSink::new(),
             8usize,
         );
-        let mut handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        manager.register_transport(
-            SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport::new()),
-        );
-
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -1773,16 +1764,45 @@ mod tests {
                 Multihash::from_bytes(&peer.to_bytes()).unwrap(),
             ));
 
+        let transport = Box::new({
+            let mut transport = DummyTransport::new();
+            transport.inject_event(TransportEvent::ConnectionEstablished {
+                peer,
+                endpoint: Endpoint::dialer(dial_address.clone(), ConnectionId::from(0usize)),
+            });
+            transport
+        });
+        manager.register_transport(SupportedTransport::Tcp, transport);
+
         assert!(manager.dial_address(dial_address.clone()).await.is_ok());
         assert!(!manager.pending_connections.is_empty());
 
-        handle
-            ._report_connection_established(
-                ConnectionId::from(0usize),
-                peer,
-                Endpoint::dialer(dial_address, ConnectionId::from(0usize)),
-            )
-            .await;
+        {
+            let peers = manager.peers.read();
+
+            match peers.get(&peer) {
+                Some(PeerContext {
+                    state: PeerState::Dialing { .. },
+                    ..
+                }) => {}
+                state => panic!("invalid state for peer: {state:?}"),
+            }
+        }
+
+        match manager.next().await.unwrap() {
+            TransportManagerEvent::ConnectionEstablished {
+                peer: event_peer,
+                endpoint: event_endpoint,
+                ..
+            } => {
+                assert_eq!(peer, event_peer);
+                assert_eq!(
+                    event_endpoint,
+                    Endpoint::dialer(dial_address.clone(), ConnectionId::from(0usize))
+                )
+            }
+            event => panic!("invalid event: {event:?}"),
+        }
     }
 
     #[tokio::test]
@@ -1798,10 +1818,7 @@ mod tests {
             8usize,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        manager.register_transport(
-            SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport::new()),
-        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1831,10 +1848,7 @@ mod tests {
             8usize,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        manager.register_transport(
-            SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport::new()),
-        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
 
@@ -1878,10 +1892,7 @@ mod tests {
             8usize,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        manager.register_transport(
-            SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport::new()),
-        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         assert!(manager.dial(PeerId::random()).await.is_err());
     }
@@ -1899,10 +1910,7 @@ mod tests {
             8usize,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        manager.register_transport(
-            SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport::new()),
-        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
         manager.peers.write().insert(
@@ -1988,10 +1996,7 @@ mod tests {
             8usize,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        manager.register_transport(
-            SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport::new()),
-        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -2057,10 +2062,7 @@ mod tests {
             8usize,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        manager.register_transport(
-            SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport::new()),
-        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -2146,10 +2148,7 @@ mod tests {
             8usize,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        manager.register_transport(
-            SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport::new()),
-        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
