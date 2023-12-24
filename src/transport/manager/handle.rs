@@ -115,8 +115,9 @@ impl TransportManagerHandle {
             ) {
                 (Some(Protocol::Ws(_)), true) => true,
                 (Some(Protocol::Wss(_)), true) => true,
-                (Some(Protocol::P2p(_)), _) =>
-                    self.supported_transport.contains(&SupportedTransport::Tcp),
+                (Some(Protocol::P2p(_)), _) => {
+                    self.supported_transport.contains(&SupportedTransport::Tcp)
+                }
                 _ => return false,
             },
             Some(Protocol::Udp(_)) => match (
@@ -161,12 +162,13 @@ impl TransportManagerHandle {
         }
 
         match peers.get_mut(&peer) {
-            Some(context) =>
+            Some(context) => {
                 for record in addresses {
                     if !context.addresses.contains(record.address()) {
                         context.addresses.insert(record);
                     }
-                },
+                }
+            }
             None => {
                 peers.insert(
                     *peer,
@@ -291,49 +293,6 @@ impl TransportHandle {
     /// Report to `Litep2p` that a peer disconnected.
     pub async fn _report_connection_closed(&mut self, peer: PeerId, connection: ConnectionId) {
         let _ = self.tx.send(TransportManagerEvent::ConnectionClosed { peer, connection }).await;
-    }
-
-    /// Report to `Litep2p` that dialing a remote peer failed.
-    #[cfg(test)]
-    pub async fn report_dial_failure(
-        &mut self,
-        connection: ConnectionId,
-        address: Multiaddr,
-        error: Error,
-    ) {
-        tracing::debug!(target: LOG_TARGET, ?connection, ?address, ?error, "dial failure");
-
-        match address.iter().last() {
-            Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                Ok(peer) =>
-                    for (_, context) in &self.protocols {
-                        let _ = context
-                            .tx
-                            .send(crate::protocol::InnerTransportEvent::DialFailure {
-                                peer,
-                                address: address.clone(),
-                            })
-                            .await;
-                    },
-                Err(error) => {
-                    tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
-                    debug_assert!(false);
-                }
-            },
-            _ => {
-                tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
-                debug_assert!(false);
-            }
-        }
-
-        let _ = self
-            .tx
-            .send(TransportManagerEvent::DialFailure {
-                connection,
-                address,
-                error,
-            })
-            .await;
     }
 }
 
