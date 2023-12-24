@@ -110,7 +110,8 @@ impl Into<Multiaddr> for Endpoint {
 }
 
 /// Transport event.
-pub(crate) enum TransportEvent {
+#[derive(Debug)]
+pub enum TransportEvent {
     /// Fully negotiated connection established to remote peer.
     ConnectionEstablished {
         /// Peer ID.

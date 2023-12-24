@@ -94,19 +94,6 @@ pub struct Config {
 /// [`TransportManager`] events.
 #[derive(Debug)]
 pub enum TransportManagerEvent {
-    /// Connection established to remote peer.
-    ConnectionEstablished {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Connection ID.
-        // TODO: remove this
-        connection: ConnectionId,
-
-        /// Endpoint.
-        endpoint: Endpoint,
-    },
-
     /// Connection closed to remote peer.
     ConnectionClosed {
         /// Peer ID.
@@ -114,18 +101,6 @@ pub enum TransportManagerEvent {
 
         /// Connection ID.
         connection: ConnectionId,
-    },
-
-    /// Failed to dial remote peer.
-    DialFailure {
-        /// Connection ID.
-        connection: ConnectionId,
-
-        /// Dialed address.
-        address: Multiaddr,
-
-        /// Error.
-        error: Error,
     },
 }
 
@@ -695,7 +670,7 @@ impl TransportManager {
     }
 
     /// Handle dial failure.
-    fn on_dial_failure(&mut self, connection_id: ConnectionId) -> crate::Result<bool> {
+    fn on_dial_failure(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
         let peer = self.pending_connections.remove(&connection_id).ok_or_else(|| {
             tracing::error!(
                 target: LOG_TARGET,
@@ -731,13 +706,9 @@ impl TransportManager {
                 context.addresses.insert(record.clone());
 
                 context.state = PeerState::Disconnected { dial_record: None };
-                Ok(true)
+                Ok(())
             }
-            PeerState::Opening {
-                records,
-                connection_id,
-                ..
-            } => {
+            PeerState::Opening { .. } => {
                 todo!();
             }
             PeerState::Connected {
@@ -751,7 +722,7 @@ impl TransportManager {
                     record,
                     dial_record: None,
                 };
-                Ok(true)
+                Ok(())
             }
             PeerState::Disconnected {
                 dial_record: Some(mut dial_record),
@@ -766,7 +737,7 @@ impl TransportManager {
                 dial_record.update_score(SCORE_DIAL_FAILURE);
                 context.addresses.insert(dial_record);
 
-                Ok(true)
+                Ok(())
             }
             state => {
                 tracing::warn!(
@@ -779,7 +750,7 @@ impl TransportManager {
                 context.state = state;
 
                 debug_assert!(false);
-                Ok(true)
+                Ok(())
             }
         }
     }
@@ -789,11 +760,11 @@ impl TransportManager {
     /// Returns `bool` which indicates whether the event should be returned or not.
     fn on_connection_closed(
         &mut self,
-        peer: &PeerId,
-        connection_id: &ConnectionId,
-    ) -> crate::Result<bool> {
+        peer: PeerId,
+        connection_id: ConnectionId,
+    ) -> crate::Result<Option<TransportEvent>> {
         let mut peers = self.peers.write();
-        let Some(context) = peers.get_mut(peer) else {
+        let Some(context) = peers.get_mut(&peer) else {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?peer,
@@ -801,7 +772,7 @@ impl TransportManager {
                 "cannot handle closed connection: peer doesn't exist",
             );
             debug_assert!(false);
-            return Err(Error::PeerDoesntExist(*peer));
+            return Err(Error::PeerDoesntExist(peer));
         };
 
         tracing::trace!(
@@ -818,7 +789,7 @@ impl TransportManager {
             PeerState::Connected {
                 record,
                 dial_record: actual_dial_record,
-            } => match record.connection_id() == &Some(*connection_id) {
+            } => match record.connection_id() == &Some(connection_id) {
                 // primary connection was closed
                 //
                 // if secondary connection exists, switch to using it while keeping peer in
@@ -830,7 +801,11 @@ impl TransportManager {
                         context.state = PeerState::Disconnected {
                             dial_record: actual_dial_record,
                         };
-                        return Ok(true);
+
+                        return Ok(Some(TransportEvent::ConnectionClosed {
+                            peer,
+                            connection_id,
+                        }));
                     }
                     Some(secondary_connection) => {
                         context.addresses.insert(record);
@@ -838,13 +813,14 @@ impl TransportManager {
                             record: secondary_connection,
                             dial_record: actual_dial_record,
                         };
-                        return Ok(false);
+
+                        return Ok(None);
                     }
                 },
                 // secondary connection was closed
                 false => match context.secondary_connection.take() {
                     Some(secondary_connection) => {
-                        if secondary_connection.connection_id() != &Some(*connection_id) {
+                        if secondary_connection.connection_id() != &Some(connection_id) {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
@@ -858,7 +834,7 @@ impl TransportManager {
                                 dial_record: actual_dial_record,
                             };
 
-                            return Ok(false);
+                            return Ok(None);
                         }
 
                         tracing::trace!(
@@ -873,7 +849,7 @@ impl TransportManager {
                             record,
                             dial_record: actual_dial_record,
                         };
-                        return Ok(false);
+                        return Ok(None);
                     }
                     None => {
                         tracing::warn!(
@@ -905,7 +881,11 @@ impl TransportManager {
                 }
                 None => {
                     context.state = PeerState::Disconnected { dial_record };
-                    Ok(true)
+
+                    Ok(Some(TransportEvent::ConnectionClosed {
+                        peer,
+                        connection_id,
+                    }))
                 }
             },
             state => {
@@ -913,134 +893,6 @@ impl TransportManager {
                 debug_assert!(false);
                 return Err(Error::InvalidState);
             }
-        }
-    }
-
-    /// Handle dial failure.
-    async fn on_dial_failure_new(
-        &mut self,
-        connection_id: ConnectionId,
-        address: Multiaddr,
-        error: Error,
-    ) -> Option<TransportManagerEvent> {
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?connection_id,
-            ?error,
-            ?address,
-            "dial failure",
-        );
-
-        match self.on_dial_failure(connection_id) {
-            Ok(true) => {
-                match address.iter().last() {
-                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                        Ok(peer) => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?connection_id,
-                                ?error,
-                                ?address,
-                                num_protocols = self.protocols.len(),
-                                "dial failure, notify protocols",
-                            );
-
-                            for (protocol, context) in &self.protocols {
-                                tracing::trace!(
-                                    target: LOG_TARGET,
-                                    ?connection_id,
-                                    ?error,
-                                    ?address,
-                                    ?protocol,
-                                    "dial failure, notify protocol",
-                                );
-                                match context.tx.try_send(InnerTransportEvent::DialFailure {
-                                    peer,
-                                    address: address.clone(),
-                                }) {
-                                    Ok(()) => {}
-                                    Err(_) => {
-                                        tracing::trace!(
-                                            target: LOG_TARGET,
-                                            ?connection_id,
-                                            ?error,
-                                            ?address,
-                                            ?protocol,
-                                            "dial failure, channel to protocol clogged, use await",
-                                        );
-                                        let _ = context
-                                            .tx
-                                            .send(InnerTransportEvent::DialFailure {
-                                                peer,
-                                                address: address.clone(),
-                                            })
-                                            .await;
-                                    }
-                                }
-                                // let _ = context
-                                //     .tx
-                                //     .send(InnerTransportEvent::DialFailure {
-                                //         peer,
-                                //         address: address.clone(),
-                                //     })
-                                //     .await;
-                            }
-
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?connection_id,
-                                ?error,
-                                ?address,
-                                "all protocols notified",
-                            );
-                        }
-                        Err(error) => {
-                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
-                            debug_assert!(false);
-                        }
-                    },
-                    _ => {
-                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
-                        debug_assert!(false);
-                    }
-                }
-
-                Some(TransportManagerEvent::DialFailure {
-                    connection: connection_id,
-                    address,
-                    error,
-                })
-            }
-            Err(error) => {
-                match address.iter().last() {
-                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
-                        Ok(peer) =>
-                            for (_, context) in &self.protocols {
-                                let _ = context
-                                    .tx
-                                    .send(InnerTransportEvent::DialFailure {
-                                        peer,
-                                        address: address.clone(),
-                                    })
-                                    .await;
-                            },
-                        Err(error) => {
-                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
-                            debug_assert!(false);
-                        }
-                    },
-                    _ => {
-                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
-                        debug_assert!(false);
-                    }
-                }
-                Some(TransportManagerEvent::DialFailure {
-                    connection: connection_id,
-                    address,
-                    error,
-                })
-            }
-            _ => None,
         }
     }
 
@@ -1427,31 +1279,21 @@ impl TransportManager {
     }
 
     /// Poll next event from [`TransportManager`].
-    pub async fn next(&mut self) -> Option<TransportManagerEvent> {
+    pub async fn next(&mut self) -> Option<TransportEvent> {
         loop {
             tokio::select! {
-                event = self.event_rx.recv() => {
-                    let inner = event?;
-                    let result = match &inner {
-                        TransportManagerEvent::DialFailure {
-                            connection,
-                            address: _,
-                            error: _ ,
-                        } => self.on_dial_failure(*connection),
-                        TransportManagerEvent::ConnectionClosed {
-                            peer,
-                            connection: connection_id,
-                        } => self.on_connection_closed(&peer, &connection_id),
-                        event => panic!("unexpected event: {event:?}"),
-                    };
-
-                    match result {
-                        Ok(true) => return Some(inner),
-                        Err(error) => {
-                            tracing::debug!(target: LOG_TARGET, ?error, "failed to handle transport event");
-                            return Some(inner)
-                        }
-                        _ => {}
+                event = self.event_rx.recv() => match event? {
+                    TransportManagerEvent::ConnectionClosed {
+                        peer,
+                        connection: connection_id,
+                    } => match self.on_connection_closed(peer, connection_id) {
+                        Ok(None) => {}
+                        Ok(Some(event)) => return Some(event),
+                        Err(error) => tracing::error!(
+                            target: LOG_TARGET,
+                            ?error,
+                            "failed to handle closed connection",
+                        ),
                     }
                 },
                 command = self.cmd_rx.recv() => match command? {
@@ -1471,8 +1313,92 @@ impl TransportManager {
 
                     match event {
                         TransportEvent::DialFailure { connection_id, address, error } => {
-                            if let Some(event) = self.on_dial_failure_new(connection_id, address, error).await {
-                                return Some(event);
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?connection_id,
+                                ?address,
+                                ?error,
+                                "failed to dial peer",
+                            );
+
+                            if let Ok(()) = self.on_dial_failure(connection_id) {
+                                match address.iter().last() {
+                                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
+                                        Ok(peer) => {
+                                            tracing::trace!(
+                                                target: LOG_TARGET,
+                                                ?connection_id,
+                                                ?error,
+                                                ?address,
+                                                num_protocols = self.protocols.len(),
+                                                "dial failure, notify protocols",
+                                            );
+
+                                            for (protocol, context) in &self.protocols {
+                                                tracing::trace!(
+                                                    target: LOG_TARGET,
+                                                    ?connection_id,
+                                                    ?error,
+                                                    ?address,
+                                                    ?protocol,
+                                                    "dial failure, notify protocol",
+                                                );
+                                                match context.tx.try_send(InnerTransportEvent::DialFailure {
+                                                    peer,
+                                                    address: address.clone(),
+                                                }) {
+                                                    Ok(()) => {}
+                                                    Err(_) => {
+                                                        tracing::trace!(
+                                                            target: LOG_TARGET,
+                                                            ?connection_id,
+                                                            ?error,
+                                                            ?address,
+                                                            ?protocol,
+                                                            "dial failure, channel to protocol clogged, use await",
+                                                        );
+                                                        let _ = context
+                                                            .tx
+                                                            .send(InnerTransportEvent::DialFailure {
+                                                                peer,
+                                                                address: address.clone(),
+                                                            })
+                                                            .await;
+                                                    }
+                                                }
+                                                // let _ = context
+                                                //     .tx
+                                                //     .send(InnerTransportEvent::DialFailure {
+                                                //         peer,
+                                                //         address: address.clone(),
+                                                //     })
+                                                //     .await;
+                                            }
+
+                                            tracing::trace!(
+                                                target: LOG_TARGET,
+                                                ?connection_id,
+                                                ?error,
+                                                ?address,
+                                                "all protocols notified",
+                                            );
+                                        }
+                                        Err(error) => {
+                                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
+                                            debug_assert!(false);
+                                        }
+                                    },
+                                    _ => {
+                                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
+                                        debug_assert!(false);
+                                    }
+                                }
+
+                                return Some(TransportEvent::DialFailure {
+                                    connection_id,
+                                    address,
+                                    error,
+                                })
                             }
                         }
                         TransportEvent::ConnectionEstablished { peer, endpoint } => {
@@ -1506,9 +1432,8 @@ impl TransportManager {
                                         .expect("transport to exist")
                                         .accept(endpoint.connection_id());
 
-                                    return Some(TransportManagerEvent::ConnectionEstablished {
+                                    return Some(TransportEvent::ConnectionEstablished {
                                         peer,
-                                        connection: endpoint.connection_id(),
                                         endpoint: endpoint,
                                     });
                                 }
@@ -1600,8 +1525,8 @@ impl TransportManager {
                                         );
                                     }
 
-                                    return Some(TransportManagerEvent::DialFailure {
-                                        connection: connection_id,
+                                    return Some(TransportEvent::DialFailure {
+                                        connection_id,
                                         address: Multiaddr::empty(),
                                         error: Error::Unknown,
                                     })
@@ -1790,7 +1715,7 @@ mod tests {
         }
 
         match manager.next().await.unwrap() {
-            TransportManagerEvent::ConnectionEstablished {
+            TransportEvent::ConnectionEstablished {
                 peer: event_peer,
                 endpoint: event_endpoint,
                 ..
@@ -2096,7 +2021,7 @@ mod tests {
             .unwrap();
 
         // connection to remote was closed while the dial was still in progress
-        manager.on_connection_closed(&peer, &ConnectionId::from(1usize)).unwrap();
+        manager.on_connection_closed(peer, ConnectionId::from(1usize)).unwrap();
 
         // verify that the peer state is `Disconnected`
         {
@@ -2182,7 +2107,7 @@ mod tests {
             .unwrap();
 
         // connection to remote was closed while the dial was still in progress
-        manager.on_connection_closed(&peer, &ConnectionId::from(1usize)).unwrap();
+        manager.on_connection_closed(peer, ConnectionId::from(1usize)).unwrap();
 
         // verify that the peer state is `Disconnected`
         {
@@ -2406,8 +2331,8 @@ mod tests {
         drop(peers);
 
         // close the secondary connection and verify that the peer remains connected
-        let emit_event = manager.on_connection_closed(&peer, &ConnectionId::from(1usize)).unwrap();
-        assert!(!emit_event);
+        let emit_event = manager.on_connection_closed(peer, ConnectionId::from(1usize)).unwrap();
+        assert!(emit_event.is_none());
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
@@ -2509,8 +2434,8 @@ mod tests {
 
         // close the primary connection and verify that the peer remains connected
         // while the primary connection address is stored in peer addresses
-        let emit_event = manager.on_connection_closed(&peer, &ConnectionId::from(0usize)).unwrap();
-        assert!(!emit_event);
+        let emit_event = manager.on_connection_closed(peer, ConnectionId::from(0usize)).unwrap();
+        assert!(emit_event.is_none());
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
@@ -2637,8 +2562,8 @@ mod tests {
         drop(peers);
 
         // close the tertiary connection that was ignored
-        let emit_event = manager.on_connection_closed(&peer, &ConnectionId::from(2usize)).unwrap();
-        assert!(!emit_event);
+        let emit_event = manager.on_connection_closed(peer, ConnectionId::from(2usize)).unwrap();
+        assert!(emit_event.is_none());
 
         // verify that the state remains unchanged
         let peers = manager.peers.read();

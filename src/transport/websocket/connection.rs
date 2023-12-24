@@ -410,7 +410,7 @@ impl WebSocketConnection {
     /// Start connection event loop.
     pub(crate) async fn start(mut self) -> crate::Result<()> {
         self.protocol_set
-            .report_connection_established_new(self.peer, self.endpoint)
+            .report_connection_established(self.peer, self.endpoint)
             .await?;
 
         loop {

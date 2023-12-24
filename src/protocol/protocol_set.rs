@@ -657,57 +657,6 @@ impl ProtocolSet {
     /// Report to protocols that a connection was established.
     pub(crate) async fn report_connection_established(
         &mut self,
-        connection_id: ConnectionId,
-        peer: PeerId,
-        endpoint: Endpoint,
-    ) -> crate::Result<()> {
-        let connection_handle = self.connection.downgrade();
-        let mut futures = self
-            .protocols
-            .iter()
-            .map(|(_, sender)| {
-                let endpoint = endpoint.clone();
-                let connection_handle = connection_handle.clone();
-
-                async move {
-                    sender
-                        .tx
-                        .send(InnerTransportEvent::ConnectionEstablished {
-                            peer,
-                            connection: connection_id,
-                            endpoint,
-                            sender: connection_handle,
-                        })
-                        .await
-                }
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        while !futures.is_empty() {
-            if let Some(Err(error)) = futures.next().await {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?connection_id,
-                    ?error,
-                    "failed to report closed connection",
-                );
-            }
-        }
-
-        self.mgr_tx
-            .send(TransportManagerEvent::ConnectionEstablished {
-                connection: connection_id,
-                peer,
-                endpoint,
-            })
-            .await
-            .map_err(From::from)
-    }
-
-    /// Report to protocols that a connection was established.
-    pub(crate) async fn report_connection_established_new(
-        &mut self,
         peer: PeerId,
         endpoint: Endpoint,
     ) -> crate::Result<()> {

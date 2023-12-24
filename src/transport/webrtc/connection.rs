@@ -441,7 +441,6 @@ impl WebRtcConnection {
 
         self.protocol_set
             .report_connection_established(
-                self.connection_id,
                 remote_peer_id,
                 Endpoint::listener(address, self.connection_id),
             )

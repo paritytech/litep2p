@@ -23,13 +23,10 @@ use crate::{
     error::{AddressError, Error},
     executor::Executor,
     protocol::ProtocolSet,
-    transport::{
-        manager::{
-            address::{AddressRecord, AddressStore},
-            types::{PeerContext, PeerState, SupportedTransport},
-            ProtocolContext, TransportManagerEvent, LOG_TARGET,
-        },
-        Endpoint,
+    transport::manager::{
+        address::{AddressRecord, AddressStore},
+        types::{PeerContext, PeerState, SupportedTransport},
+        ProtocolContext, TransportManagerEvent, LOG_TARGET,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,

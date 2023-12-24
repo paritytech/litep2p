@@ -28,7 +28,7 @@ use crate::{
         request_response::RequestResponseProtocol,
     },
     transport::{
-        manager::{SupportedTransport, TransportManager, TransportManagerEvent},
+        manager::{SupportedTransport, TransportManager},
         quic::QuicTransport,
         tcp::TcpTransport,
         webrtc::WebRtcTransport,
@@ -46,6 +46,7 @@ use std::{collections::HashSet, sync::Arc};
 pub use bandwidth::BandwidthSink;
 pub use error::Error;
 pub use peer_id::PeerId;
+pub use transport::TransportEvent;
 pub use types::protocol::ProtocolName;
 
 pub use yamux;
@@ -451,13 +452,16 @@ impl Litep2p {
 
     /// Poll next event.
     pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
-        match self.transport_manager.next().await? {
-            TransportManagerEvent::ConnectionEstablished { peer, endpoint, .. } =>
-                Some(Litep2pEvent::ConnectionEstablished { peer, endpoint }),
-            TransportManagerEvent::ConnectionClosed { peer, .. } =>
-                Some(Litep2pEvent::ConnectionClosed { peer }),
-            TransportManagerEvent::DialFailure { address, error, .. } =>
-                Some(Litep2pEvent::DialFailure { address, error }),
+        loop {
+            match self.transport_manager.next().await? {
+                TransportEvent::ConnectionEstablished { peer, endpoint, .. } =>
+                    return Some(Litep2pEvent::ConnectionEstablished { peer, endpoint }),
+                TransportEvent::ConnectionClosed { peer, .. } =>
+                    return Some(Litep2pEvent::ConnectionClosed { peer }),
+                TransportEvent::DialFailure { address, error, .. } =>
+                    return Some(Litep2pEvent::DialFailure { address, error }),
+                _ => {}
+            }
         }
     }
 }

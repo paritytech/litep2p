@@ -228,7 +228,7 @@ impl QuicConnection {
     /// Start event loop for [`Connection`].
     pub async fn start(mut self) -> crate::Result<()> {
         self.protocol_set
-            .report_connection_established_new(self.peer, self.endpoint.clone())
+            .report_connection_established(self.peer, self.endpoint.clone())
             .await?;
 
         loop {
