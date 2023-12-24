@@ -115,9 +115,8 @@ impl TransportManagerHandle {
             ) {
                 (Some(Protocol::Ws(_)), true) => true,
                 (Some(Protocol::Wss(_)), true) => true,
-                (Some(Protocol::P2p(_)), _) => {
-                    self.supported_transport.contains(&SupportedTransport::Tcp)
-                }
+                (Some(Protocol::P2p(_)), _) =>
+                    self.supported_transport.contains(&SupportedTransport::Tcp),
                 _ => return false,
             },
             Some(Protocol::Udp(_)) => match (
@@ -162,13 +161,12 @@ impl TransportManagerHandle {
         }
 
         match peers.get_mut(&peer) {
-            Some(context) => {
+            Some(context) =>
                 for record in addresses {
                     if !context.addresses.contains(record.address()) {
                         context.addresses.insert(record);
                     }
-                }
-            }
+                },
             None => {
                 peers.insert(
                     *peer,

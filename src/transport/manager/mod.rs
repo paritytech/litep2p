@@ -1705,8 +1705,8 @@ mod tests {
         let (mut manager, _handle) =
             TransportManager::new(Keypair::generate(), HashSet::new(), sink, 8usize);
 
-        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
-        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
     }
 
     #[tokio::test]
@@ -1730,7 +1730,7 @@ mod tests {
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
 
         let address = Multiaddr::empty()
@@ -1762,7 +1762,7 @@ mod tests {
         let mut handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
 
         let peer = PeerId::random();
@@ -1800,7 +1800,7 @@ mod tests {
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
 
         let peer = PeerId::random();
@@ -1833,7 +1833,7 @@ mod tests {
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
 
         let peer = PeerId::random();
@@ -1880,7 +1880,7 @@ mod tests {
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
 
         assert!(manager.dial(PeerId::random()).await.is_err());
@@ -1901,7 +1901,7 @@ mod tests {
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
 
         let peer = PeerId::random();
@@ -1990,7 +1990,7 @@ mod tests {
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
 
         let peer = PeerId::random();
@@ -2059,7 +2059,7 @@ mod tests {
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
 
         let peer = PeerId::random();
@@ -2148,7 +2148,7 @@ mod tests {
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
 
         let peer = PeerId::random();
@@ -2232,7 +2232,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
         );
-        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
@@ -2336,7 +2336,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
         );
-        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
@@ -2438,7 +2438,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
         );
-        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()
@@ -2544,7 +2544,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
         );
-        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport {}));
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
         let address1 = Multiaddr::empty()

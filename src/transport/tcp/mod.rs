@@ -239,12 +239,10 @@ impl Transport for TcpTransport {
 
                 match tokio::time::timeout(connection_open_timeout, async move {
                     match &socket_address {
-                        AddressType::Socket(socket_address) => {
-                            TcpStream::connect(socket_address).await
-                        }
-                        AddressType::Dns(address, port) => {
-                            TcpStream::connect(format!("{address}:{port}")).await
-                        }
+                        AddressType::Socket(socket_address) =>
+                            TcpStream::connect(socket_address).await,
+                        AddressType::Dns(address, port) =>
+                            TcpStream::connect(format!("{address}:{port}")).await,
                     }
                 })
                 .await
@@ -364,11 +362,10 @@ impl Stream for TcpTransport {
                         }));
                     }
                 }
-                Err(connection_id) => {
+                Err(connection_id) =>
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
-                    }
-                }
+                    },
             }
         }
 
@@ -603,7 +600,7 @@ mod tests {
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
-            Box::new(crate::transport::dummy::DummyTransport {}),
+            Box::new(crate::transport::dummy::DummyTransport::new()),
         );
         let mut transport = TcpTransport::new(
             handle,

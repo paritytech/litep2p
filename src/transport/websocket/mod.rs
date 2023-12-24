@@ -132,9 +132,8 @@ impl WebSocketTransport {
         {
             Protocol::Ip4(address) => address.to_string(),
             Protocol::Ip6(address) => format!("[{}]", address.to_string()),
-            Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) => {
-                address.to_string()
-            }
+            Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) =>
+                address.to_string(),
 
             _ => return Err(Error::TransportNotSupported(address)),
         };
@@ -458,11 +457,10 @@ impl Stream for WebSocketTransport {
                         }));
                     }
                 }
-                Err(connection_id) => {
+                Err(connection_id) =>
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
-                    }
-                }
+                    },
             }
         }
 
@@ -480,13 +478,12 @@ impl Stream for WebSocketTransport {
                 }
                 Err(error) => match error.connection_id {
                     Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                        Some(address) => {
+                        Some(address) =>
                             return Poll::Ready(Some(TransportEvent::DialFailure {
                                 connection_id,
                                 address,
                                 error: error.error,
-                            }))
-                        }
+                            })),
                         None => {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
                         }

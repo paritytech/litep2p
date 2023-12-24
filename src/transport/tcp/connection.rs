@@ -227,9 +227,8 @@ impl TcpConnection {
         match tokio::time::timeout(connection_open_timeout, async move {
             let stream = match &address {
                 AddressType::Socket(socket_address) => TcpStream::connect(socket_address).await?,
-                AddressType::Dns(address, port) => {
-                    TcpStream::connect(format!("{address}:{port}")).await?
-                }
+                AddressType::Dns(address, port) =>
+                    TcpStream::connect(format!("{address}:{port}")).await?,
             };
 
             Self::negotiate_connection(

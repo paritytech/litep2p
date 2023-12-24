@@ -45,7 +45,7 @@ pub(crate) const SUBSTREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const MAX_PARALLEL_DIALS: usize = 8;
 
 /// Connection endpoint.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endpoint {
     /// Successful outbound connection.
     Dialer {
