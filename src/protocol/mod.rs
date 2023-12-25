@@ -166,7 +166,7 @@ pub trait Transport {
 /// Trait defining the interface for a user protocol.
 // TODO: make `TransportService` generic?
 #[async_trait::async_trait]
-pub trait UserProtocol: Send + Debug {
+pub trait UserProtocol: Send {
     /// Get user protocol name.
     fn protocol(&self) -> ProtocolName;
 

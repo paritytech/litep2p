@@ -27,9 +27,9 @@ use litep2p::{
     types::protocol::ProtocolName,
     Litep2p, PeerId,
 };
-use std::collections::HashSet;
 
-#[derive(Debug)]
+use std::{collections::HashSet, sync::Arc};
+
 struct CustomProtocol {
     protocol: ProtocolName,
     codec: ProtocolCodec,
@@ -38,9 +38,11 @@ struct CustomProtocol {
 
 impl CustomProtocol {
     pub fn new() -> Self {
+        let protocol: Arc<str> = Arc::from(String::from("/custom-protocol/1"));
+
         Self {
             peers: HashSet::new(),
-            protocol: ProtocolName::from("/custom-protocol/1"),
+            protocol: ProtocolName::from(protocol),
             codec: ProtocolCodec::UnsignedVarint(None),
         }
     }
@@ -62,21 +64,11 @@ impl UserProtocol for CustomProtocol {
                 match event {
                     TransportEvent::ConnectionEstablished { peer, .. } => {
                         self.peers.insert(peer);
-                        tracing::error!("connection established to {peer}");
                     }
-                    TransportEvent::ConnectionClosed { peer: _ } => {}
-                    TransportEvent::SubstreamOpened {
-                        peer: _,
-                        protocol: _,
-                        direction: _,
-                        substream: _,
-                        fallback: _,
-                    } => {}
-                    TransportEvent::SubstreamOpenFailure {
-                        substream: _,
-                        error: _,
-                    } => {}
-                    TransportEvent::DialFailure { .. } => {}
+                    TransportEvent::ConnectionClosed { peer } => {
+                        self.peers.remove(&peer);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -113,6 +105,18 @@ async fn user_protocol() {
 
     litep2p1.dial_address(address).await.unwrap();
 
+    // wait until connection is established
+    let mut litep2p1_ready = false;
+    let mut litep2p2_ready = false;
+
+    while !litep2p1_ready && !litep2p2_ready {
+        tokio::select! {
+            _event = litep2p1.next_event() => litep2p1_ready = true,
+            _event = litep2p2.next_event() => litep2p2_ready = true,
+        }
+    }
+
+    // wait until connection is closed by the keep-alive timeout
     let mut litep2p1_ready = false;
     let mut litep2p2_ready = false;
 
