@@ -32,14 +32,6 @@ impl SubstreamId {
         SubstreamId(0usize)
     }
 
-    /// Get next [`SubstreamId`].
-    pub fn next(&mut self) -> SubstreamId {
-        let substream_id = self.0;
-        self.0 += 1usize;
-
-        SubstreamId(substream_id)
-    }
-
     /// Get [`SubstreamId`] from a number that can be converted into a `usize`.
     pub fn from<T: Into<usize>>(value: T) -> Self {
         SubstreamId(value.into())
@@ -51,19 +43,6 @@ impl SubstreamId {
 pub struct RequestId(usize);
 
 impl RequestId {
-    /// Create new [`RequestId`].
-    pub fn new() -> Self {
-        RequestId(0usize)
-    }
-
-    /// Get next [`RequestId`].
-    pub fn next(&mut self) -> RequestId {
-        let substream_id = self.0;
-        self.0 += 1usize;
-
-        RequestId(substream_id)
-    }
-
     /// Get [`RequestId`] from a number that can be converted into a `usize`.
     pub fn from<T: Into<usize>>(value: T) -> Self {
         RequestId(value.into())

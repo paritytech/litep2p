@@ -69,7 +69,6 @@ impl TaskExecutor {
     }
 }
 
-#[derive(Debug)]
 struct TaskExecutorHandle {
     tx: Sender<Pin<Box<dyn Future<Output = ()> + Send>>>,
 }

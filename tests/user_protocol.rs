@@ -22,13 +22,15 @@ use litep2p::{
     codec::ProtocolCodec,
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::{Transport, TransportEvent, TransportService, UserProtocol},
+    protocol::{
+        mdns::Config as MdnsConfig, Transport, TransportEvent, TransportService, UserProtocol,
+    },
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName,
     Litep2p, PeerId,
 };
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 struct CustomProtocol {
     protocol: ProtocolName,
@@ -82,13 +84,20 @@ async fn user_protocol() {
         .try_init();
 
     let custom_protocol1 = Box::new(CustomProtocol::new());
+    let (mdns_config, _stream) = MdnsConfig::new(Duration::from_secs(30));
+
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             ..Default::default()
         })
         .with_user_protocol(custom_protocol1)
+        .with_mdns(mdns_config)
         .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+    let listen_address = litep2p1.listen_addresses().next().unwrap().clone();
 
     let custom_protocol2 = Box::new(CustomProtocol::new());
     let config2 = Litep2pConfigBuilder::new()
@@ -97,13 +106,12 @@ async fn user_protocol() {
             ..Default::default()
         })
         .with_user_protocol(custom_protocol2)
+        .with_known_addresses(vec![(peer1, vec![listen_address])].into_iter())
+        .with_max_parallel_dials(8usize)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
-
-    litep2p1.dial_address(address).await.unwrap();
+    litep2p2.dial(&peer1).await.unwrap();
 
     // wait until connection is established
     let mut litep2p1_ready = false;
@@ -111,8 +119,14 @@ async fn user_protocol() {
 
     while !litep2p1_ready && !litep2p2_ready {
         tokio::select! {
-            _event = litep2p1.next_event() => litep2p1_ready = true,
-            _event = litep2p2.next_event() => litep2p2_ready = true,
+            event = litep2p1.next_event() => {
+                tracing::trace!("litep2p1 event: {event:?}");
+                litep2p1_ready = true;
+            }
+            event = litep2p2.next_event() => {
+                tracing::trace!("litep2p2 event: {event:?}");
+                litep2p2_ready = true;
+            }
         }
     }
 
@@ -122,8 +136,17 @@ async fn user_protocol() {
 
     while !litep2p1_ready && !litep2p2_ready {
         tokio::select! {
-            _event = litep2p1.next_event() => litep2p1_ready = true,
-            _event = litep2p2.next_event() => litep2p2_ready = true,
+            event = litep2p1.next_event() => {
+                tracing::trace!("litep2p1 event: {event:?}");
+                litep2p1_ready = true;
+            }
+            event = litep2p2.next_event() => {
+                tracing::trace!("litep2p2 event: {event:?}");
+                litep2p2_ready = true;
+            }
         }
     }
+
+    let sink = litep2p2.bandwidth_sink();
+    tracing::trace!("inbound {}, outbound {}", sink.outbound(), sink.inbound());
 }

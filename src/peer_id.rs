@@ -255,6 +255,8 @@ impl FromStr for PeerId {
 #[cfg(test)]
 mod tests {
     use crate::{crypto::ed25519::Keypair, PeerId};
+    use multiaddr::{Multiaddr, Protocol};
+    use multihash::Multihash;
 
     #[test]
     fn peer_id_is_public_key() {
@@ -286,5 +288,67 @@ mod tests {
             let peer_id = PeerId::random();
             assert_eq!(peer_id, PeerId::from_bytes(&peer_id.to_bytes()).unwrap());
         }
+    }
+
+    #[test]
+    fn peer_id_from_multiaddr() {
+        let address = "[::1]:1337".parse::<std::net::SocketAddr>().unwrap();
+        let peer = PeerId::random();
+        let address = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::P2p(Multihash::from(peer)));
+
+        assert_eq!(peer, PeerId::try_from_multiaddr(&address).unwrap());
+    }
+
+    #[test]
+    fn peer_id_from_multiaddr_no_peer_id() {
+        let address = "[::1]:1337".parse::<std::net::SocketAddr>().unwrap();
+        let address = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()));
+
+        assert!(PeerId::try_from_multiaddr(&address).is_none());
+    }
+
+    #[test]
+    fn peer_id_from_bytes() {
+        let peer = PeerId::random();
+        let bytes = peer.to_bytes();
+
+        assert_eq!(PeerId::try_from(bytes).unwrap(), peer);
+    }
+
+    #[test]
+    fn peer_id_as_multihash() {
+        let peer = PeerId::random();
+        let multihash = Multihash::from(peer);
+
+        assert_eq!(&multihash, peer.as_ref());
+        assert_eq!(PeerId::try_from(multihash).unwrap(), peer);
+    }
+
+    #[test]
+    fn serialize_deserialize() {
+        let peer = PeerId::random();
+        let serialized = serde_json::to_string(&peer).unwrap();
+        let deserialized = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(peer, deserialized);
+    }
+
+    #[test]
+    fn invalid_multihash() {
+        fn test() -> crate::Result<PeerId> {
+            let bytes = [
+                0x16, 0x20, 0x64, 0x4b, 0xcc, 0x7e, 0x56, 0x43, 0x73, 0x04, 0x09, 0x99, 0xaa, 0xc8,
+                0x9e, 0x76, 0x22, 0xf3, 0xca, 0x71, 0xfb, 0xa1, 0xd9, 0x72, 0xfd, 0x94, 0xa3, 0x1c,
+                0x3b, 0xfb, 0xf2, 0x4e, 0x39, 0x38,
+            ];
+
+            PeerId::from_multihash(Multihash::from_bytes(&bytes).unwrap()).map_err(From::from)
+        }
+        let _error = test().unwrap_err();
     }
 }

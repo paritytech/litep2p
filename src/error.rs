@@ -35,10 +35,7 @@ use crate::{
 use multiaddr::Multiaddr;
 use multihash::{Multihash, MultihashGeneric};
 
-use std::{
-    error, fmt,
-    io::{self, ErrorKind},
-};
+use std::io::{self, ErrorKind};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -138,8 +135,6 @@ pub enum ParseError {
     InvalidMultihash(Multihash),
     #[error("Failed to decode protobuf message: `{0:?}`")]
     ProstDecodeError(prost::DecodeError),
-    #[error("Decoding error: `{0:?}`")]
-    DecodingError(DecodingError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -230,12 +225,6 @@ impl From<prost::DecodeError> for Error {
     }
 }
 
-impl From<DecodingError> for Error {
-    fn from(error: DecodingError) -> Self {
-        Error::ParseError(ParseError::DecodingError(error))
-    }
-}
-
 impl From<quinn::ConnectionError> for Error {
     fn from(error: quinn::ConnectionError) -> Self {
         match error {
@@ -245,73 +234,35 @@ impl From<quinn::ConnectionError> for Error {
     }
 }
 
-/// An error during decoding of key material.
-#[derive(Debug)]
-pub struct DecodingError {
-    msg: String,
-    source: Option<Box<dyn error::Error + Send + Sync>>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc::{channel, Sender};
 
-impl DecodingError {
-    pub(crate) fn failed_to_parse<E, S>(what: &'static str, source: S) -> Self
-    where
-        E: error::Error + Send + Sync + 'static,
-        S: Into<Option<E>>,
-    {
-        Self {
-            msg: format!("failed to parse {what}"),
-            source: match source.into() {
-                None => None,
-                Some(e) => Some(Box::new(e)),
-            },
+    #[tokio::test]
+    async fn try_from_errors() {
+        tracing::trace!("{:?}", NotificationError::InvalidState);
+        tracing::trace!("{:?}", DialError::AlreadyConnected);
+        tracing::trace!(
+            "{:?}",
+            SubstreamError::YamuxError(yamux::ConnectionError::Closed)
+        );
+        tracing::trace!("{:?}", AddressError::PeerIdMissing);
+        tracing::trace!(
+            "{:?}",
+            ParseError::InvalidMultihash(Multihash::from(PeerId::random()))
+        );
+
+        let (tx, rx) = channel(1);
+        drop(rx);
+
+        async fn test(tx: Sender<()>) -> crate::Result<()> {
+            tx.send(()).await.map_err(From::from)
         }
-    }
 
-    pub(crate) fn bad_protobuf(
-        what: &'static str,
-        source: impl error::Error + Send + Sync + 'static,
-    ) -> Self {
-        Self {
-            msg: format!("failed to decode {what} from protobuf"),
-            source: Some(Box::new(source)),
+        match test(tx).await.unwrap_err() {
+            Error::EssentialTaskClosed => {}
+            _ => panic!("invalid error"),
         }
-    }
-
-    pub(crate) fn unknown_key_type(key_type: i32) -> Self {
-        Self {
-            msg: format!("unknown key-type {key_type}"),
-            source: None,
-        }
-    }
-}
-
-impl fmt::Display for DecodingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Key decoding error: {}", self.msg)
-    }
-}
-
-impl error::Error for DecodingError {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        self.source.as_ref().map(|s| &**s as &dyn error::Error)
-    }
-}
-
-/// An error during signing of a message.
-#[derive(Debug)]
-pub struct SigningError {
-    msg: String,
-    source: Option<Box<dyn error::Error + Send + Sync>>,
-}
-
-impl fmt::Display for SigningError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Key signing error: {}", self.msg)
-    }
-}
-
-impl error::Error for SigningError {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        self.source.as_ref().map(|s| &**s as &dyn error::Error)
     }
 }

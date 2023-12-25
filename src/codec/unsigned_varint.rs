@@ -26,18 +26,9 @@ use bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 use unsigned_varint::codec::UviBytes;
 
-use std::fmt;
-
 /// Unsigned varint codec.
-#[derive(Default)]
 pub struct UnsignedVarint {
     codec: UviBytes<bytes::Bytes>,
-}
-
-impl fmt::Debug for UnsignedVarint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnsignedVarint").finish()
-    }
 }
 
 impl UnsignedVarint {

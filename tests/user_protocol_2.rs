@@ -33,7 +33,6 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::collections::HashSet;
 
-#[derive(Debug)]
 struct CustomProtocol {
     protocol: ProtocolName,
     codec: ProtocolCodec,
@@ -73,7 +72,6 @@ impl UserProtocol for CustomProtocol {
                 event = service.next_event() => match event.unwrap() {
                     TransportEvent::ConnectionEstablished { peer, .. } => {
                         self.peers.insert(peer);
-                        tracing::error!("connection established to {peer}");
                     }
                     TransportEvent::ConnectionClosed { peer: _ } => {}
                     TransportEvent::SubstreamOpened {
