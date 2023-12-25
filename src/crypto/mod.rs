@@ -30,10 +30,8 @@ pub(crate) mod keys_proto {
     include!(concat!(env!("OUT_DIR"), "/keys_proto.rs"));
 }
 
-const LOG_TARGET: &str = "litep2p::crypto";
-
 /// The public key of a node's identity keypair.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PublicKey {
     /// A public Ed25519 key.
     Ed25519(ed25519::PublicKey),
@@ -102,19 +100,7 @@ impl TryFrom<keys_proto::PublicKey> for PublicKey {
         match key_type {
             keys_proto::KeyType::Ed25519 =>
                 ed25519::PublicKey::decode(&pubkey.data).map(PublicKey::Ed25519),
-            key_type => {
-                tracing::error!(target: LOG_TARGET, ?key_type, "unsupported key type");
-                todo!();
-            }
+            _ => unimplemented!("unsupported key type"),
         }
     }
 }
-
-// /// Identifier of a peer of the network.
-// ///
-// /// The data is a CIDv0 compatible multihash of the protobuf encoded public key of the peer
-// /// as specified in [specs/peer-ids](https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md).
-// #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-// pub struct PeerId {
-//     multihash: Multihash,
-// }

@@ -23,12 +23,11 @@
 
 use crate::{error::DecodingError, PeerId};
 
-use core::{cmp, fmt, hash};
 use ed25519_dalek::{self as ed25519, Signer as _, Verifier as _};
 use rand::RngCore;
 use zeroize::Zeroize;
 
-use std::convert::TryFrom;
+use std::{cmp, convert::TryFrom, fmt};
 
 /// An Ed25519 keypair.
 pub struct Keypair(ed25519::Keypair);
@@ -130,24 +129,6 @@ impl fmt::Debug for PublicKey {
 impl cmp::PartialEq for PublicKey {
     fn eq(&self, other: &Self) -> bool {
         self.0.as_bytes().eq(other.0.as_bytes())
-    }
-}
-
-impl hash::Hash for PublicKey {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.0.as_bytes().hash(state);
-    }
-}
-
-impl cmp::PartialOrd for PublicKey {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        self.0.as_bytes().partial_cmp(other.0.as_bytes())
-    }
-}
-
-impl cmp::Ord for PublicKey {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
@@ -269,5 +250,27 @@ mod tests {
 
         let invalid_msg = "h3ll0 w0rld".as_bytes();
         assert!(!pk.verify(invalid_msg, &sig));
+    }
+
+    #[test]
+    fn secret_key() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let key = Keypair::generate();
+        tracing::trace!("keypair: {:?}", key);
+        tracing::trace!("secret: {:?}", key.secret());
+        tracing::trace!("public: {:?}", key.public());
+
+        let new_key = Keypair::from(key.secret());
+        assert!(new_key.secret().as_ref() == key.secret().as_ref());
+        assert!(new_key.public() == key.public());
+
+        let new_secret = SecretKey::from(new_key.clone());
+        assert!(new_secret.as_ref() == new_key.secret().as_ref());
+
+        let cloned_secret = new_secret.clone();
+        assert!(cloned_secret.as_ref() == new_secret.as_ref());
     }
 }
