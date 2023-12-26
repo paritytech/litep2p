@@ -20,11 +20,13 @@
 
 use futures::{FutureExt, StreamExt};
 use litep2p::{
-    config::Litep2pConfigBuilder, crypto::ed25519::Keypair, protocol::libp2p::identify::Config,
+    config::Litep2pConfigBuilder,
+    crypto::ed25519::Keypair,
+    protocol::libp2p::{identify::Config, ping::Config as PingConfig},
     transport::quic::config::TransportConfig as QuicTransportConfig,
     transport::tcp::config::TransportConfig as TcpTransportConfig,
-    transport::websocket::config::TransportConfig as WebSocketTransportConfig, Litep2p,
-    Litep2pEvent,
+    transport::websocket::config::TransportConfig as WebSocketTransportConfig,
+    Litep2p, Litep2pEvent,
 };
 
 enum Transport {
@@ -172,12 +174,14 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
+    let (ping_config, _event_stream) = PingConfig::default();
     let config1 = match transport1 {
         Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
         Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
         Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
     }
     .with_keypair(Keypair::generate())
+    .with_libp2p_ping(ping_config)
     .build();
 
     let (identify_config2, mut identify_event_stream2) = Config::new();

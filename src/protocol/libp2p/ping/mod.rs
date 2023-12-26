@@ -152,16 +152,6 @@ impl Ping {
         }));
     }
 
-    /// Failed to open substream to remote peer.
-    fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
-        tracing::debug!(
-            target: LOG_TARGET,
-            ?substream,
-            ?error,
-            "failed to open substream"
-        );
-    }
-
     /// Start [`Ping`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting ping event loop");
@@ -170,14 +160,7 @@ impl Ping {
             tokio::select! {
                 event = self.service.next_event() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer).await {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?error,
-                                "failed to register peer",
-                            );
-                        }
+                        let _ = self.on_connection_established(peer).await;
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.on_connection_closed(peer);
@@ -203,10 +186,7 @@ impl Ping {
                             }
                         }
                     },
-                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
-                        self.on_substream_open_failure(substream, error);
-                    }
-                    Some(TransportEvent::DialFailure { .. }) => {}
+                    Some(_) => {}
                     None => return,
                 },
                 _event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}

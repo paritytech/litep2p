@@ -37,7 +37,6 @@ const PING_PAYLOAD_SIZE: usize = 32;
 const MAX_FAILURES: usize = 3;
 
 /// Ping configuration.
-#[derive(Debug)]
 pub struct Config {
     /// Protocol name.
     pub(crate) protocol: ProtocolName,
