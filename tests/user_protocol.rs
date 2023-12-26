@@ -63,6 +63,8 @@ impl UserProtocol for CustomProtocol {
     async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {
         loop {
             while let Some(event) = service.next_event().await {
+                tracing::trace!("received event: {event:?}");
+
                 match event {
                     TransportEvent::ConnectionEstablished { peer, .. } => {
                         self.peers.insert(peer);

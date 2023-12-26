@@ -133,17 +133,74 @@ impl ConnectionHandle {
 #[derive(Debug)]
 pub struct Permit {
     /// Active connection.
-    connection: Sender<ProtocolCommand>,
+    _connection: Sender<ProtocolCommand>,
 }
 
 impl Permit {
     /// Create new [`Permit`] which allows the connection to be kept open.
-    pub fn new(connection: Sender<ProtocolCommand>) -> Self {
-        Self { connection }
+    pub fn new(_connection: Sender<ProtocolCommand>) -> Self {
+        Self { _connection }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc::channel;
+
+    #[test]
+    #[should_panic]
+    fn downgrade_inactive_connection() {
+        let (tx, _rx) = channel(1);
+        let mut handle = ConnectionHandle::new(ConnectionId::new(), tx);
+
+        let mut new_handle = handle.downgrade();
+        assert!(std::matches!(
+            new_handle.connection,
+            ConnectionType::Inactive(_)
+        ));
+
+        // try to downgrade an already-downgraded connection
+        let _handle = new_handle.downgrade();
     }
 
-    /// Get mutable access to inner connection.
-    pub fn inner(&mut self) -> &mut Sender<ProtocolCommand> {
-        &mut self.connection
+    #[tokio::test]
+    async fn open_substream_open_downgraded_connection() {
+        let (tx, mut rx) = channel(1);
+        let mut handle = ConnectionHandle::new(ConnectionId::new(), tx);
+        let mut handle = handle.downgrade();
+        let permit = handle.try_get_permit().unwrap();
+
+        let result = handle
+            .open_substream(
+                ProtocolName::from("/protocol/1"),
+                Vec::new(),
+                SubstreamId::new(),
+                permit,
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert!(rx.recv().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn open_substream_closed_downgraded_connection() {
+        let (tx, _rx) = channel(1);
+        let mut handle = ConnectionHandle::new(ConnectionId::new(), tx);
+        let mut handle = handle.downgrade();
+        let permit = handle.try_get_permit().unwrap();
+        drop(_rx);
+
+        let result = handle
+            .open_substream(
+                ProtocolName::from("/protocol/1"),
+                Vec::new(),
+                SubstreamId::new(),
+                permit,
+            )
+            .await;
+
+        assert!(result.is_err());
     }
 }

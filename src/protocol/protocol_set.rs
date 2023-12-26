@@ -55,6 +55,7 @@ use std::{
 const LOG_TARGET: &str = "litep2p::protocol-set";
 
 /// Events emitted by the underlying transport protocols.
+#[derive(Debug)]
 pub enum InnerTransportEvent {
     /// Connection established to `peer`.
     ConnectionEstablished {
@@ -140,10 +141,6 @@ pub enum InnerTransportEvent {
 impl From<InnerTransportEvent> for TransportEvent {
     fn from(event: InnerTransportEvent) -> Self {
         match event {
-            InnerTransportEvent::ConnectionEstablished { peer, endpoint, .. } =>
-                TransportEvent::ConnectionEstablished { peer, endpoint },
-            InnerTransportEvent::ConnectionClosed { peer, .. } =>
-                TransportEvent::ConnectionClosed { peer },
             InnerTransportEvent::DialFailure { peer, address } =>
                 TransportEvent::DialFailure { peer, address },
             InnerTransportEvent::SubstreamOpened {
@@ -161,6 +158,7 @@ impl From<InnerTransportEvent> for TransportEvent {
             },
             InnerTransportEvent::SubstreamOpenFailure { substream, error } =>
                 TransportEvent::SubstreamOpenFailure { substream, error },
+            event => panic!("cannot convert {event:?}"),
         }
     }
 }
@@ -528,7 +526,6 @@ pub enum ProtocolCommand {
 ///
 /// Each connection gets a copy of [`ProtocolSet`] which allows it to interact
 /// directly with installed protocols.
-#[derive(Debug)]
 pub struct ProtocolSet {
     /// Installed protocols.
     pub(crate) protocols: HashMap<ProtocolName, ProtocolContext>,
@@ -638,20 +635,19 @@ impl ProtocolSet {
     ) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,
-            ?protocol,
+            %protocol,
             ?substream,
             ?error,
-            "failed to open substream"
+            "failed to open substream",
         );
 
-        match self.protocols.get_mut(&protocol) {
-            Some(info) => info
-                .tx
-                .send(InnerTransportEvent::SubstreamOpenFailure { substream, error })
-                .await
-                .map_err(From::from),
-            None => Err(Error::ProtocolNotSupported(protocol.to_string())),
-        }
+        self.protocols
+            .get_mut(&protocol)
+            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
+            .tx
+            .send(InnerTransportEvent::SubstreamOpenFailure { substream, error })
+            .await
+            .map_err(From::from)
     }
 
     /// Report to protocols that a connection was established.
@@ -684,13 +680,7 @@ impl ProtocolSet {
 
         while !futures.is_empty() {
             if let Some(Err(error)) = futures.next().await {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    connection_id = ?endpoint.connection_id(),
-                    ?error,
-                    "failed to report closed connection",
-                );
+                return Err(error.into());
             }
         }
 
@@ -719,13 +709,7 @@ impl ProtocolSet {
 
         while !futures.is_empty() {
             if let Some(Err(error)) = futures.next().await {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?connection_id,
-                    ?error,
-                    "failed to report closed connection",
-                );
+                return Err(error.into());
             }
         }
 
