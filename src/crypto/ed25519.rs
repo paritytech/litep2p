@@ -21,7 +21,7 @@
 
 //! Ed25519 keys.
 
-use crate::{error::DecodingError, PeerId};
+use crate::{error::Error, PeerId};
 
 use ed25519_dalek::{self as ed25519, Signer as _, Verifier as _};
 use rand::RngCore;
@@ -49,13 +49,13 @@ impl Keypair {
     /// produced by [`Keypair::encode`], zeroing the input on success.
     ///
     /// Note that this binary format is the same as `ed25519_dalek`'s and `ed25519_zebra`'s.
-    pub fn decode(kp: &mut [u8]) -> Result<Keypair, DecodingError> {
+    pub fn decode(kp: &mut [u8]) -> crate::Result<Keypair> {
         ed25519::Keypair::from_bytes(kp)
             .map(|k| {
                 kp.zeroize();
                 Keypair(k)
             })
-            .map_err(|e| DecodingError::failed_to_parse("Ed25519 keypair", e))
+            .map_err(|error| Error::Other(format!("Failed to parse keypair: {error:?}")))
     }
 
     /// Sign a message using the private key of this keypair.
@@ -145,9 +145,9 @@ impl PublicKey {
     }
 
     /// Decode a public key from a byte array as produced by `encode`.
-    pub fn decode(k: &[u8]) -> Result<PublicKey, DecodingError> {
+    pub fn decode(k: &[u8]) -> crate::Result<PublicKey> {
         ed25519::PublicKey::from_bytes(k)
-            .map_err(|e| DecodingError::failed_to_parse("Ed25519 public key", e))
+            .map_err(|error| Error::Other(format!("Failed to parse keypair: {error:?}")))
             .map(PublicKey)
     }
 
@@ -195,10 +195,10 @@ impl SecretKey {
     /// Create an Ed25519 secret key from a byte slice, zeroing the input on success.
     /// If the bytes do not constitute a valid Ed25519 secret key, an error is
     /// returned.
-    pub fn from_bytes(mut sk_bytes: impl AsMut<[u8]>) -> Result<SecretKey, DecodingError> {
+    pub fn from_bytes(mut sk_bytes: impl AsMut<[u8]>) -> crate::Result<SecretKey> {
         let sk_bytes = sk_bytes.as_mut();
         let secret = ed25519::SecretKey::from_bytes(&*sk_bytes)
-            .map_err(|e| DecodingError::failed_to_parse("Ed25519 secret key", e))?;
+            .map_err(|error| Error::Other(format!("Failed to parse keypair: {error:?}")))?;
         sk_bytes.zeroize();
         Ok(SecretKey(secret))
     }
