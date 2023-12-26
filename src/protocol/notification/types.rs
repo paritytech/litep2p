@@ -73,7 +73,6 @@ pub enum NotificationError {
 }
 
 /// Notification events.
-#[derive(Debug)]
 pub(crate) enum InnerNotificationEvent {
     /// Validate substream.
     ValidateSubstream {
@@ -209,41 +208,4 @@ pub(crate) enum NotificationCommand {
         /// Peer IDs.
         peers: HashSet<PeerId>,
     },
-}
-
-impl From<InnerNotificationEvent> for NotificationEvent {
-    fn from(event: InnerNotificationEvent) -> Self {
-        match event {
-            InnerNotificationEvent::ValidateSubstream {
-                protocol,
-                fallback,
-                peer,
-                handshake,
-                ..
-            } => NotificationEvent::ValidateSubstream {
-                protocol,
-                fallback,
-                peer,
-                handshake,
-            },
-            InnerNotificationEvent::NotificationStreamOpened {
-                protocol,
-                fallback,
-                direction,
-                peer,
-                handshake,
-                ..
-            } => NotificationEvent::NotificationStreamOpened {
-                protocol,
-                fallback,
-                direction,
-                peer,
-                handshake,
-            },
-            InnerNotificationEvent::NotificationStreamClosed { peer } =>
-                NotificationEvent::NotificationStreamClosed { peer },
-            InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
-                NotificationEvent::NotificationStreamOpenFailure { peer, error },
-        }
-    }
 }
