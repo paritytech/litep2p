@@ -52,7 +52,6 @@ pub use types::protocol::ProtocolName;
 pub use yamux;
 
 pub(crate) mod peer_id;
-pub(crate) mod substream;
 
 pub mod codec;
 pub mod config;
@@ -60,6 +59,7 @@ pub mod crypto;
 pub mod error;
 pub mod executor;
 pub mod protocol;
+pub mod substream;
 pub mod transport;
 pub mod types;
 
