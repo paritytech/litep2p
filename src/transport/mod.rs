@@ -100,15 +100,6 @@ impl Endpoint {
     }
 }
 
-impl Into<Multiaddr> for Endpoint {
-    fn into(self) -> Multiaddr {
-        match self {
-            Self::Dialer { address, .. } => address,
-            Self::Listener { address, .. } => address,
-        }
-    }
-}
-
 /// Transport event.
 #[derive(Debug)]
 pub enum TransportEvent {
