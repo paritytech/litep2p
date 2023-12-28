@@ -31,14 +31,17 @@ use litep2p::{
         websocket::config::TransportConfig as WebSocketTransportConfig,
     },
     types::{protocol::ProtocolName, RequestId},
-    Litep2p, Litep2pEvent,
+    Litep2p, Litep2pEvent, PeerId,
 };
 
 use futures::{channel, StreamExt};
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 use tokio::time::sleep;
 
 use std::{
     collections::{HashMap, HashSet},
+    net::{Ipv4Addr, Ipv6Addr},
     task::Poll,
     time::Duration,
 };
@@ -1229,13 +1232,12 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (req_resp_config1, mut handle1) = RequestResponseConfig::new(
-        ProtocolName::from("/protocol/1/improved"),
-        vec![ProtocolName::from("/protocol/1")],
-        1024,
-        Duration::from_secs(5),
-        None,
-    );
+    let (req_resp_config1, mut handle1) =
+        ConfigBuilder::new(ProtocolName::from("/protocol/1/improved"))
+            .with_max_size(1024usize)
+            .with_fallback_names(vec![ProtocolName::from("/protocol/1")])
+            .build();
+
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
@@ -2269,4 +2271,229 @@ async fn feedback_not_received_for_failed_response(transport1: Transport, transp
     handle2.send_response_with_feedback(request_id, vec![1, 3, 3, 8], feedback_tx);
 
     assert!(feedback_rx.await.is_err());
+}
+
+#[tokio::test]
+async fn custom_timeout_tcp() {
+    custom_timeout(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn custom_timeout_quic() {
+    custom_timeout(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn custom_timeout_websocket() {
+    custom_timeout(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn custom_timeout(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .with_timeout(Duration::from_secs(8))
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, _handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    let request_id =
+        handle1.try_send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).unwrap();
+
+    // verify that the request doesn't timeout after the default timeout
+    match tokio::time::timeout(Duration::from_secs(5), handle1.next()).await {
+        Err(_) => {}
+        Ok(_) => panic!("expected request to timeout"),
+    };
+
+    // verify that the request times out
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestFailed {
+            peer: peer2,
+            request_id,
+            error: RequestResponseError::Timeout
+        }
+    );
+}
+
+#[tokio::test]
+async fn outbound_request_for_unconnected_peer_tcp() {
+    outbound_request_for_unconnected_peer(Transport::Tcp(Default::default())).await;
+}
+
+#[tokio::test]
+async fn outbound_request_for_unconnected_peer_quic() {
+    outbound_request_for_unconnected_peer(Transport::Quic(Default::default())).await;
+}
+
+#[tokio::test]
+async fn outbound_request_for_unconnected_peer_websocket() {
+    outbound_request_for_unconnected_peer(Transport::WebSocket(Default::default())).await;
+}
+
+async fn outbound_request_for_unconnected_peer(transport1: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    tokio::spawn(async move {
+        let mut litep2p1 = Litep2p::new(config1).unwrap();
+        while let Some(_) = litep2p1.next_event().await {}
+    });
+
+    let peer2 = PeerId::random();
+    let request_id = handle1
+        .send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject)
+        .await
+        .unwrap();
+
+    // verify that the request times out
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestFailed {
+            peer: peer2,
+            request_id,
+            error: RequestResponseError::NotConnected
+        }
+    );
+}
+
+#[tokio::test]
+async fn dial_failure_tcp() {
+    dial_failure(Transport::Tcp(Default::default())).await;
+}
+
+#[tokio::test]
+async fn dial_failure_quic() {
+    dial_failure(Transport::Quic(Default::default())).await;
+}
+
+#[tokio::test]
+async fn dial_failure_websocket() {
+    dial_failure(Transport::WebSocket(Default::default())).await;
+}
+
+async fn dial_failure(transport: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config, mut handle) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(1024)
+        .build();
+
+    let litep2p_config = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config);
+
+    let peer = PeerId::random();
+    let known_address = match &transport {
+        Transport::Tcp(_) => Multiaddr::empty()
+            .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+            .with(Protocol::Tcp(5))
+            .with(Protocol::P2p(Multihash::from(peer))),
+        Transport::Quic(_) => Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Udp(5))
+            .with(Protocol::QuicV1)
+            .with(Protocol::P2p(Multihash::from(peer))),
+        Transport::WebSocket(_) => Multiaddr::empty()
+            .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+            .with(Protocol::Tcp(5))
+            .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())))
+            .with(Protocol::P2p(Multihash::from(peer))),
+    };
+
+    let config = match transport {
+        Transport::Tcp(config) => litep2p_config.with_tcp(config),
+        Transport::Quic(config) => litep2p_config.with_quic(config),
+        Transport::WebSocket(config) => litep2p_config.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p = Litep2p::new(config).unwrap();
+    litep2p.add_known_address(peer, vec![known_address].into_iter());
+    tokio::spawn(async move { while let Some(_) = litep2p.next_event().await {} });
+
+    let request_id = handle.send_request(peer, vec![1, 3, 3, 7], DialOptions::Dial).await.unwrap();
+
+    // verify that the request is reported as rejected since the dial failed
+    assert_eq!(
+        handle.next().await.unwrap(),
+        RequestResponseEvent::RequestFailed {
+            peer,
+            request_id,
+            error: RequestResponseError::Rejected
+        }
+    );
 }

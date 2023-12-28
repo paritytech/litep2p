@@ -366,6 +366,7 @@ impl TransportManager {
         tracing::debug!(target: LOG_TARGET, transport = ?name, "register transport");
 
         self.transports.register_transport(name, transport);
+        self.transport_manager_handle.register_transport(name);
     }
 
     /// Register local listen address.

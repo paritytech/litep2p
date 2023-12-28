@@ -21,7 +21,9 @@
 use crate::{
     crypto::ed25519::Keypair,
     mock::substream::DummySubstream,
+    mock::substream::MockSubstream,
     protocol::{
+        connection::ConnectionHandle,
         request_response::{
             ConfigBuilder, DialOptions, RequestResponseError, RequestResponseEvent,
             RequestResponseHandle, RequestResponseProtocol,
@@ -29,15 +31,20 @@ use crate::{
         InnerTransportEvent, TransportService,
     },
     substream::Substream,
-    transport::manager::TransportManager,
-    types::RequestId,
-    BandwidthSink, PeerId, ProtocolName,
+    transport::{
+        dummy::DummyTransport,
+        manager::{SupportedTransport, TransportManager},
+    },
+    types::{ConnectionId, RequestId, SubstreamId},
+    BandwidthSink, Endpoint, Error, PeerId, ProtocolName,
 };
 
 use futures::StreamExt;
-use tokio::sync::mpsc::Sender;
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
+use tokio::sync::mpsc::{channel, Sender};
 
-use std::{collections::HashSet, task::Poll};
+use std::{collections::HashSet, net::Ipv4Addr, task::Poll};
 
 // create new protocol for testing
 fn protocol() -> (
@@ -70,6 +77,131 @@ fn protocol() -> (
         manager,
         tx,
     )
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn connection_closed_twice() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+    assert!(protocol.peers.contains_key(&peer));
+
+    protocol.on_connection_established(peer).await.unwrap();
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn connection_established_twice() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+    assert!(protocol.peers.contains_key(&peer));
+
+    protocol.on_connection_closed(peer).await;
+    assert!(!protocol.peers.contains_key(&peer));
+
+    protocol.on_connection_closed(peer).await;
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn unknown_outbound_substream_opened() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+    let peer = PeerId::random();
+
+    match protocol
+        .on_outbound_substream(
+            peer,
+            SubstreamId::from(1337usize),
+            Substream::new_mock(peer, Box::new(MockSubstream::new())),
+        )
+        .await
+    {
+        Err(Error::InvalidState) => {}
+        _ => panic!("invalid return value"),
+    }
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn unknown_substream_open_failure() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+
+    match protocol
+        .on_substream_open_failure(SubstreamId::from(1338usize), Error::Unknown)
+        .await
+    {
+        Err(Error::InvalidState) => {}
+        _ => panic!("invalid return value"),
+    }
+}
+
+#[tokio::test]
+async fn cancel_unknown_request() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+
+    let request_id = RequestId::from(1337usize);
+    assert!(!protocol.pending_outbound_cancels.contains_key(&request_id));
+    assert!(protocol.on_cancel_request(request_id).await.is_ok());
+}
+
+#[tokio::test]
+async fn substream_event_for_unknown_peer() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+
+    // register peer
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+    assert!(protocol.peers.contains_key(&peer));
+
+    match protocol
+        .on_substream_event(peer, RequestId::from(1337usize), Ok(vec![13, 37]))
+        .await
+    {
+        Err(Error::InvalidState) => {}
+        _ => panic!("invalid return value"),
+    }
+}
+
+#[tokio::test]
+async fn inbound_substream_error() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+
+    // register peer
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+    assert!(protocol.peers.contains_key(&peer));
+
+    let mut substream = MockSubstream::new();
+    substream
+        .expect_poll_next()
+        .times(1)
+        .return_once(|_| Poll::Ready(Some(Err(Error::Unknown))));
+
+    // register inbound substream from peer
+    protocol
+        .on_inbound_substream(peer, None, Substream::new_mock(peer, Box::new(substream)))
+        .await
+        .unwrap();
+
+    // verify the request has been registered for the peer
+    let request_id = *protocol.peers.get(&peer).unwrap().active_inbound.keys().next().unwrap();
+    assert!(protocol.pending_inbound_requests.get_mut(&(peer, request_id)).is_some());
+
+    // poll the substream and get the failure event
+    let ((peer, request_id), event) = protocol.pending_inbound_requests.next().await.unwrap();
+
+    match protocol.on_inbound_request(peer, request_id, event).await {
+        Err(Error::InvalidData) => {}
+        _ => panic!("invalid return value"),
+    }
 }
 
 // when a peer who had an active inbound substream disconnects, verify that the substream is removed
@@ -164,4 +296,65 @@ async fn request_failure_reported_once() {
         event => panic!("read an unexpected event from handle: {event:?}"),
     })
     .await;
+}
+
+// depending on what kind of executor is used, and more precisely, how the tasks of litep2p get
+// executed, what can potentially happen is that connection is established to a peer that was dialed
+// and the request-response protocol got polled with such delay that the connection's keep-alive
+// timeout had expired before it was registered to the protocol and it was closed.
+//
+// in this situation, a stale `ConnectionEstablished` is read from the `TransportService` and when
+// the protocol attempts to open a substream, the call will fail because the connection is no longer
+// open. Under normal circumstances, the request failure has to be reported gracefully, but it will
+// cause a `debug_assert!()` as it's a sign there might be something worth investigating
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn stale_connection() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut protocol, _handle, mut manager, tx) = protocol();
+
+    // register `DummyTransport` as TCP to `TransportManager` and then register a known peer
+    // register peer to `TransportManager`
+    let peer = PeerId::random();
+    manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
+    manager.add_known_address(
+        peer,
+        vec![Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(Multihash::from(peer)))]
+        .into_iter(),
+    );
+
+    // initiate outbound request and instruct the protocol to dial the peer
+    protocol
+        .on_send_request(
+            peer,
+            RequestId::from(1337usize),
+            vec![1, 2, 3, 4],
+            DialOptions::Dial,
+        )
+        .await
+        .unwrap();
+
+    // create new established connection
+    let (conn_tx, conn_rx) = channel(1);
+    let sender = ConnectionHandle::new(ConnectionId::from(1337usize), conn_tx);
+
+    tx.send(InnerTransportEvent::ConnectionEstablished {
+        peer,
+        connection: ConnectionId::from(1337usize),
+        endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1337usize)),
+        sender,
+    })
+    .await
+    .unwrap();
+
+    // drop `conn_rx` to signal that the connection was closed
+    drop(conn_rx);
+    protocol.run().await;
 }

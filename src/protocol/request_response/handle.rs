@@ -62,7 +62,6 @@ pub enum RequestResponseError {
 }
 
 /// Request-response events.
-#[derive(Debug)]
 pub(super) enum InnerRequestResponseEvent {
     /// Request received from remote
     RequestReceived {
@@ -110,18 +109,6 @@ pub(super) enum InnerRequestResponseEvent {
 impl From<InnerRequestResponseEvent> for RequestResponseEvent {
     fn from(event: InnerRequestResponseEvent) -> Self {
         match event {
-            InnerRequestResponseEvent::RequestReceived {
-                peer,
-                fallback,
-                request_id,
-                request,
-                ..
-            } => RequestResponseEvent::RequestReceived {
-                peer,
-                fallback,
-                request_id,
-                request,
-            },
             InnerRequestResponseEvent::ResponseReceived {
                 peer,
                 request_id,
@@ -140,6 +127,7 @@ impl From<InnerRequestResponseEvent> for RequestResponseEvent {
                 request_id,
                 error,
             },
+            _ => panic!("unhandled event"),
         }
     }
 }

@@ -87,6 +87,11 @@ impl TransportManagerHandle {
         }
     }
 
+    /// Register new transport to [`TransportManagerHandle`].
+    pub(crate) fn register_transport(&mut self, transport: SupportedTransport) {
+        self.supported_transport.insert(transport);
+    }
+
     /// Check if `address` is supported by one of the enabled transports.
     pub fn supported_transport(&self, address: &Multiaddr) -> bool {
         let mut iter = address.iter();
@@ -151,7 +156,7 @@ impl TransportManagerHandle {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?peer,
-                "didn't add any addreseses for peer because transport is not supported",
+                "didn't add any addresses for peer because transport is not supported",
             );
 
             return 0usize;

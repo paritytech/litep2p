@@ -36,7 +36,6 @@ use std::{
 };
 
 /// Request-response configuration.
-#[derive(Debug)]
 pub struct Config {
     /// Protocol name.
     pub(crate) protocol_name: ProtocolName,
