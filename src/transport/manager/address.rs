@@ -165,6 +165,22 @@ impl FromIterator<AddressRecord> for AddressStore {
     }
 }
 
+impl Extend<AddressRecord> for AddressStore {
+    fn extend<T: IntoIterator<Item = AddressRecord>>(&mut self, iter: T) {
+        for record in iter {
+            self.insert(record)
+        }
+    }
+}
+
+impl<'a> Extend<&'a AddressRecord> for AddressStore {
+    fn extend<T: IntoIterator<Item = &'a AddressRecord>>(&mut self, iter: T) {
+        for record in iter {
+            self.insert(record.clone())
+        }
+    }
+}
+
 impl AddressStore {
     /// Create new [`AddressStore`].
     pub fn new() -> Self {
@@ -226,7 +242,10 @@ impl AddressStore {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::{
+        collections::HashMap,
+        net::{Ipv4Addr, SocketAddrV4},
+    };
 
     use super::*;
     use rand::{rngs::ThreadRng, Rng};
@@ -359,6 +378,71 @@ mod tests {
                 assert!(prev.unwrap().score > record.score);
                 prev = Some(record);
             }
+        }
+    }
+
+    #[test]
+    fn extend_from_iterator() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+
+        let records = (0..10)
+            .map(|i| {
+                if i % 2 == 0 {
+                    tcp_address_record(&mut rng)
+                } else if i % 3 == 0 {
+                    quic_address_record(&mut rng)
+                } else {
+                    ws_address_record(&mut rng)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert!(store.is_empty());
+        let cloned = records
+            .iter()
+            .cloned()
+            .map(|record| (record.address().clone(), record))
+            .collect::<HashMap<_, _>>();
+        store.extend(records);
+
+        for record in store.by_score {
+            let stored = cloned.get(record.address()).unwrap();
+            assert_eq!(stored.score(), record.score());
+            assert_eq!(stored.connection_id(), record.connection_id());
+            assert_eq!(stored.address(), record.address());
+        }
+    }
+
+    #[test]
+    fn extend_from_iterator_ref() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+
+        let records = (0..10)
+            .map(|i| {
+                if i % 2 == 0 {
+                    let record = tcp_address_record(&mut rng);
+                    (record.address().clone(), record)
+                } else if i % 3 == 0 {
+                    let record = quic_address_record(&mut rng);
+                    (record.address().clone(), record)
+                } else {
+                    let record = ws_address_record(&mut rng);
+                    (record.address().clone(), record)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert!(store.is_empty());
+        let cloned = records.iter().cloned().collect::<HashMap<_, _>>();
+        store.extend(records.iter().map(|(_, record)| record));
+
+        for record in store.by_score {
+            let stored = cloned.get(record.address()).unwrap();
+            assert_eq!(stored.score(), record.score());
+            assert_eq!(stored.connection_id(), record.connection_id());
+            assert_eq!(stored.address(), record.address());
         }
     }
 }
