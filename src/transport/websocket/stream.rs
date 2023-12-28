@@ -105,10 +105,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                     let message = self.write_buffer[..self.write_ptr].to_vec();
                     self.state = State::ReadyPending { to_write: message };
 
-                    match self.stream.poll_ready_unpin(cx) {
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready(Ok(())) => continue,
-                        Poll::Ready(Err(_error)) => {
+                    match futures::ready!(self.stream.poll_ready_unpin(cx)) {
+                        Ok(()) => continue,
+                        Err(_error) => {
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()));
                         }
                     }
@@ -123,17 +122,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
                     }
                 }
-                State::FlushPending => match self.stream.poll_flush_unpin(cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Ok(_res)) => {
+                State::FlushPending => match futures::ready!(self.stream.poll_flush_unpin(cx)) {
+                    Ok(_res) => {
                         // TODO: optimize
                         self.state = State::ReadyToSend;
                         self.write_ptr = 0;
                         self.write_buffer = Vec::with_capacity(2000);
                         return Poll::Ready(Ok(()));
                     }
-                    Poll::Ready(Err(_)) =>
-                        return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
+                    Err(_) => return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
                 },
                 State::Poisoned =>
                     return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
@@ -142,10 +139,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match self.stream.poll_close_unpin(cx) {
-            Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(_error)) => todo!(),
-            Poll::Pending => return Poll::Pending,
+        match futures::ready!(self.stream.poll_close_unpin(cx)) {
+            Ok(_) => Poll::Ready(Ok(())),
+            Err(error) => return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into())),
         }
     }
 }

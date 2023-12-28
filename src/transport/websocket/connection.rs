@@ -54,7 +54,7 @@ mod schema {
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::websocket::connection";
 
-#[derive(Debug)]
+/// Negotiated substream and its context.
 pub struct NegotiatedSubstream {
     /// Substream direction.
     direction: Direction,
@@ -481,16 +481,9 @@ impl WebSocketConnection {
                             };
 
                             if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
-                                if let Err(error) = self.protocol_set
+                                self.protocol_set
                                     .report_substream_open_failure(protocol, substream_id, error)
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        target: LOG_TARGET,
-                                        ?error,
-                                        "failed to register opened substream to protocol"
-                                    );
-                                }
+                                    .await?;
                             }
                         }
                         Ok(substream) => {
@@ -504,16 +497,9 @@ impl WebSocketConnection {
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
-                            if let Err(error) = self.protocol_set
+                            self.protocol_set
                                 .report_substream_open(self.peer, protocol, direction, substream)
-                                .await
-                            {
-                                tracing::warn!(
-                                    target: LOG_TARGET,
-                                    ?error,
-                                    "failed to register opened substream to protocol"
-                                );
-                            }
+                                .await?;
                         }
                     }
                 }
