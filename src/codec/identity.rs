@@ -26,7 +26,6 @@ use bytes::{BufMut, Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
 /// Identity codec.
-#[derive(Debug)]
 pub struct Identity {
     payload_len: usize,
 }

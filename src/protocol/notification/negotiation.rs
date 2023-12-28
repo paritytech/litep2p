@@ -88,7 +88,6 @@ pub enum HandshakeEvent {
 }
 
 /// Outbound substream's handshake state
-#[derive(Debug)]
 enum HandshakeState {
     /// Send handshake to remote peer.
     SendHandshake,
@@ -104,7 +103,6 @@ enum HandshakeState {
 }
 
 /// Handshake service.
-#[derive(Debug)]
 pub(crate) struct HandshakeService {
     /// Handshake.
     handshake: Arc<RwLock<Vec<u8>>>,
@@ -356,5 +354,84 @@ impl Stream for HandshakeService {
         }
 
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{mock::substream::MockSubstream, Error};
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn substream_error_when_sending_handshake() {
+        let mut service = HandshakeService::new(Arc::new(RwLock::new(vec![1, 2, 3, 4])));
+
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            _ => panic!("invalid event received"),
+        })
+        .await;
+
+        let mut substream = MockSubstream::new();
+        substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
+        substream.expect_start_send().times(1).return_once(|_| Err(Error::Unknown));
+
+        let peer = PeerId::random();
+        let substream = Substream::new_mock(peer, Box::new(substream));
+
+        service.send_handshake(peer, substream);
+        match service.next().await {
+            Some((
+                failed_peer,
+                HandshakeEvent::NegotiationError {
+                    peer: event_peer,
+                    direction,
+                },
+            )) => {
+                assert_eq!(failed_peer, peer);
+                assert_eq!(event_peer, peer);
+                assert_eq!(direction, Direction::Inbound);
+            }
+            _ => panic!("invalid event received"),
+        }
+    }
+
+    #[tokio::test]
+    async fn substream_error_when_flushing_substream() {
+        let mut service = HandshakeService::new(Arc::new(RwLock::new(vec![1, 2, 3, 4])));
+
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            _ => panic!("invalid event received"),
+        })
+        .await;
+
+        let mut substream = MockSubstream::new();
+        substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
+        substream.expect_start_send().times(1).return_once(|_| Ok(()));
+        substream
+            .expect_poll_flush()
+            .times(1)
+            .return_once(|_| Poll::Ready(Err(Error::Unknown)));
+
+        let peer = PeerId::random();
+        let substream = Substream::new_mock(peer, Box::new(substream));
+
+        service.send_handshake(peer, substream);
+        match service.next().await {
+            Some((
+                failed_peer,
+                HandshakeEvent::NegotiationError {
+                    peer: event_peer,
+                    direction,
+                },
+            )) => {
+                assert_eq!(failed_peer, peer);
+                assert_eq!(event_peer, peer);
+                assert_eq!(direction, Direction::Inbound);
+            }
+            _ => panic!("invalid event received"),
+        }
     }
 }

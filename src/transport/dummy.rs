@@ -146,4 +146,14 @@ mod tests {
         })
         .await;
     }
+
+    #[test]
+    fn dummy_handle_connection_states() {
+        let mut transport = DummyTransport::new();
+
+        assert!(transport.reject(ConnectionId::new()).is_ok());
+        assert!(transport.open(ConnectionId::new(), Vec::new()).is_ok());
+        assert!(transport.negotiate(ConnectionId::new()).is_ok());
+        transport.cancel(ConnectionId::new());
+    }
 }

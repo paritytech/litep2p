@@ -52,7 +52,6 @@ pub use types::protocol::ProtocolName;
 pub use yamux;
 
 pub(crate) mod peer_id;
-pub(crate) mod substream;
 
 pub mod codec;
 pub mod config;
@@ -60,6 +59,7 @@ pub mod crypto;
 pub mod error;
 pub mod executor;
 pub mod protocol;
+pub mod substream;
 pub mod transport;
 pub mod types;
 
@@ -186,9 +186,7 @@ impl Litep2p {
             let service =
                 transport_manager.register_protocol(protocol_name, Vec::new(), protocol.codec());
             litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = protocol.run(service).await {
-                    tracing::debug!(target: LOG_TARGET, ?error, "user protocol exited with error");
-                }
+                let _ = protocol.run(service).await;
             }));
         }
 
@@ -228,9 +226,7 @@ impl Litep2p {
                 kademlia_config.codec,
             );
             litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = Kademlia::new(service, kademlia_config).run().await {
-                    tracing::debug!(target: LOG_TARGET, ?error, "kademlia exited with error");
-                }
+                let _ = Kademlia::new(service, kademlia_config).run().await;
             }));
         }
 
@@ -339,9 +335,7 @@ impl Litep2p {
             let mdns = Mdns::new(transport_handle, config, listen_addresses.clone())?;
 
             litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = mdns.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "mdns failed");
-                }
+                let _ = mdns.start().await;
             }));
         }
 
@@ -416,19 +410,6 @@ impl Litep2p {
     /// Get handle to bandwidth sink.
     pub fn bandwidth_sink(&self) -> BandwidthSink {
         self.bandwidth_sink.clone()
-    }
-
-    /// Attempt to connect to peer at `address`.
-    ///
-    /// If the transport specified by `address` is not supported, an error is returned.
-    /// The connection is established in the background and its result is reported through
-    /// [`Litep2p::next_event()`].
-    #[deprecated(
-        since = "0.3.0",
-        note = "`Litep2p::connect()` will be removed in 0.4.0. Please use `Litep2p::dial_address()`"
-    )]
-    pub async fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
-        self.transport_manager.dial_address(address).await
     }
 
     /// Dial peer.

@@ -286,16 +286,9 @@ impl QuicConnection {
                             };
 
                             if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
-                                if let Err(error) = self.protocol_set
+                                self.protocol_set
                                     .report_substream_open_failure(protocol, substream_id, error)
-                                    .await
-                                {
-                                    tracing::error!(
-                                        target: LOG_TARGET,
-                                        ?error,
-                                        "failed to register opened substream to protocol"
-                                    );
-                                }
+                                    .await?;
                             }
                         }
                         Ok(substream) => {
@@ -313,16 +306,9 @@ impl QuicConnection {
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
-                            if let Err(error) = self.protocol_set
+                            self.protocol_set
                                 .report_substream_open(self.peer, protocol, direction, substream)
-                                .await
-                            {
-                                tracing::error!(
-                                    target: LOG_TARGET,
-                                    ?error,
-                                    "failed to register opened substream to protocol"
-                                );
-                            }
+                                .await?;
                         }
                     }
                 }

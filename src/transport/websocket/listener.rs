@@ -229,6 +229,22 @@ mod tests {
                 .expect("valid multiaddress")
         )
         .is_err());
+        assert!(WebSocketListener::get_socket_address(
+            &"/ip4/127.0.0.1/tcp/8888/ws/utp".parse().expect("valid multiaddress")
+        )
+        .is_err());
+        assert!(WebSocketListener::get_socket_address(
+            &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_err());
+        assert!(WebSocketListener::get_socket_address(
+            &"/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_err());
     }
 
     #[tokio::test]

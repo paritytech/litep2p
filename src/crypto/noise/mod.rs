@@ -792,4 +792,12 @@ mod tests {
 
         assert_eq!(std::str::from_utf8(&buf[..sent]), Ok("hello, world"));
     }
+
+    #[test]
+    fn invalid_peer_id_schema() {
+        match parse_peer_id(&vec![1, 2, 3, 4]).unwrap_err() {
+            crate::Error::ParseError(_) => {}
+            _ => panic!("invalid error"),
+        }
+    }
 }

@@ -187,14 +187,12 @@ pub struct Substream {
 }
 
 impl Substream {
-    /// Create new [`Substream`] for TCP.
-    pub(crate) fn new_tcp(peer: PeerId, substream: tcp::Substream, codec: ProtocolCodec) -> Self {
-        tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for tcp");
-
+    /// Create new [`Substream`].
+    fn new(peer: PeerId, substream: SubstreamType, codec: ProtocolCodec) -> Self {
         Self {
             peer,
+            substream,
             codec,
-            substream: SubstreamType::Tcp(substream),
             read_buffer: BytesMut::zeroed(1024),
             offset: 0usize,
             pending_frames: VecDeque::new(),
@@ -204,6 +202,13 @@ impl Substream {
             pending_out_frame: None,
             size_vec: BytesMut::zeroed(10),
         }
+    }
+
+    /// Create new [`Substream`] for TCP.
+    pub(crate) fn new_tcp(peer: PeerId, substream: tcp::Substream, codec: ProtocolCodec) -> Self {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for tcp");
+
+        Self::new(peer, SubstreamType::Tcp(substream), codec)
     }
     /// Create new [`Substream`] for WebSocket.
     pub(crate) fn new_websocket(
@@ -213,37 +218,14 @@ impl Substream {
     ) -> Self {
         tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for websocket");
 
-        Self {
-            peer,
-            codec,
-            substream: SubstreamType::WebSocket(substream),
-            read_buffer: BytesMut::zeroed(1024),
-            offset: 0usize,
-            pending_frames: VecDeque::new(),
-            current_frame_size: None,
-            pending_out_bytes: 0usize,
-            pending_out_frames: VecDeque::new(),
-            pending_out_frame: None,
-            size_vec: BytesMut::zeroed(10),
-        }
+        Self::new(peer, SubstreamType::WebSocket(substream), codec)
     }
+
     /// Create new [`Substream`] for QUIC.
     pub(crate) fn new_quic(peer: PeerId, substream: quic::Substream, codec: ProtocolCodec) -> Self {
         tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for quic");
 
-        Self {
-            peer,
-            codec,
-            substream: SubstreamType::Quic(substream),
-            read_buffer: BytesMut::zeroed(1024),
-            offset: 0usize,
-            pending_frames: VecDeque::new(),
-            current_frame_size: None,
-            pending_out_bytes: 0usize,
-            pending_out_frames: VecDeque::new(),
-            pending_out_frame: None,
-            size_vec: BytesMut::zeroed(10),
-        }
+        Self::new(peer, SubstreamType::Quic(substream), codec)
     }
 
     /// Create new [`Substream`] for mocking.
@@ -254,19 +236,11 @@ impl Substream {
     ) -> Self {
         tracing::trace!(target: LOG_TARGET, ?peer, "create new substream for mocking");
 
-        Self {
+        Self::new(
             peer,
-            codec: ProtocolCodec::Unspecified,
-            substream: SubstreamType::Mock(substream),
-            read_buffer: BytesMut::new(),
-            offset: 0usize,
-            pending_frames: VecDeque::new(),
-            current_frame_size: None,
-            pending_out_bytes: 0usize,
-            pending_out_frames: VecDeque::new(),
-            pending_out_frame: None,
-            size_vec: BytesMut::zeroed(10),
-        }
+            SubstreamType::Mock(substream),
+            ProtocolCodec::Unspecified,
+        )
     }
 
     /// Close the substream.
@@ -421,34 +395,8 @@ impl tokio::io::AsyncWrite for Substream {
     ) -> Poll<Result<(), std::io::Error>> {
         poll_shutdown!(&mut self.substream, cx)
     }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[std::io::IoSlice<'_>],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        match &mut self.substream {
-            #[cfg(test)]
-            SubstreamType::Mock(_) => unreachable!(),
-            SubstreamType::Tcp(substream) => Pin::new(substream).poll_write_vectored(cx, bufs),
-            SubstreamType::WebSocket(substream) =>
-                Pin::new(substream).poll_write_vectored(cx, bufs),
-            SubstreamType::Quic(substream) => Pin::new(substream).poll_write_vectored(cx, bufs),
-        }
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        match &self.substream {
-            #[cfg(test)]
-            SubstreamType::Mock(_) => unreachable!(),
-            SubstreamType::Tcp(substream) => substream.is_write_vectored(),
-            SubstreamType::WebSocket(substream) => substream.is_write_vectored(),
-            SubstreamType::Quic(substream) => substream.is_write_vectored(),
-        }
-    }
 }
 
-#[derive(Debug)]
 enum ReadError {
     Overflow,
     NotEnoughBytes,
@@ -475,7 +423,6 @@ fn read_payload_size(buffer: &[u8]) -> Result<(usize, usize), ReadError> {
 }
 
 impl Stream for Substream {
-    // TODO: change to `type Item = BytesMut;`
     type Item = crate::Result<BytesMut>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -631,7 +578,7 @@ impl Sink<Bytes> for Substream {
         match self.codec {
             ProtocolCodec::Identity(payload_size) => {
                 if item.len() != payload_size {
-                    return Err(Error::InvalidData);
+                    return Err(Error::IoError(ErrorKind::PermissionDenied));
                 }
 
                 self.pending_out_bytes += item.len();

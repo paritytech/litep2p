@@ -216,6 +216,22 @@ mod tests {
                 .expect("valid multiaddress")
         )
         .is_err());
+        assert!(QuicListener::get_socket_address(
+            &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_err());
+        assert!(QuicListener::get_socket_address(
+            &"/dns/google.com/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_err());
+        assert!(QuicListener::get_socket_address(
+            &"/ip6/::1/udp/8888/quic-v1/utp".parse().expect("valid multiaddress")
+        )
+        .is_err());
     }
 
     #[tokio::test]

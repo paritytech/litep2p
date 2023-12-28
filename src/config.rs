@@ -112,12 +112,6 @@ pub struct Litep2pConfigBuilder {
     max_parallel_dials: usize,
 }
 
-impl Default for Litep2pConfigBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Litep2pConfigBuilder {
     /// Create new empty [`Litep2pConfigBuilder`].
     pub fn new() -> Self {

@@ -640,6 +640,14 @@ impl RequestResponseProtocol {
                 }
                 DialOptions::Dial => match self.service.dial(&peer).await {
                     Ok(_) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            ?request_id,
+                            "started dialing peer",
+                        );
+
                         self.pending_dials
                             .insert(peer, RequestContext::new(peer, request_id, request));
                         return Ok(());
@@ -776,15 +784,7 @@ impl RequestResponseProtocol {
 
                 event = self.service.next_event() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer).await {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                protocol = %self.protocol,
-                                ?error,
-                                "failed to register peer",
-                            );
-                        }
+                        let _ = self.on_connection_established(peer).await;
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.on_connection_closed(peer).await;
@@ -808,18 +808,7 @@ impl RequestResponseProtocol {
                             }
                         }
                         Direction::Outbound(substream_id) => {
-                            if let Err(error) = self
-                                .on_outbound_substream(peer, substream_id, substream)
-                                .await
-                            {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    protocol = %self.protocol,
-                                    ?error,
-                                    "failed to handle outbound substream",
-                                );
-                            }
+                            let _ = self.on_outbound_substream(peer, substream_id, substream).await;
                         }
                     },
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {

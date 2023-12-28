@@ -21,14 +21,13 @@
 
 //! Ed25519 keys.
 
-use crate::{error::DecodingError, PeerId};
+use crate::{error::Error, PeerId};
 
-use core::{cmp, fmt, hash};
 use ed25519_dalek::{self as ed25519, Signer as _, Verifier as _};
 use rand::RngCore;
 use zeroize::Zeroize;
 
-use std::convert::TryFrom;
+use std::{cmp, convert::TryFrom, fmt};
 
 /// An Ed25519 keypair.
 pub struct Keypair(ed25519::Keypair);
@@ -50,13 +49,13 @@ impl Keypair {
     /// produced by [`Keypair::encode`], zeroing the input on success.
     ///
     /// Note that this binary format is the same as `ed25519_dalek`'s and `ed25519_zebra`'s.
-    pub fn decode(kp: &mut [u8]) -> Result<Keypair, DecodingError> {
+    pub fn decode(kp: &mut [u8]) -> crate::Result<Keypair> {
         ed25519::Keypair::from_bytes(kp)
             .map(|k| {
                 kp.zeroize();
                 Keypair(k)
             })
-            .map_err(|e| DecodingError::failed_to_parse("Ed25519 keypair", e))
+            .map_err(|error| Error::Other(format!("Failed to parse keypair: {error:?}")))
     }
 
     /// Sign a message using the private key of this keypair.
@@ -133,24 +132,6 @@ impl cmp::PartialEq for PublicKey {
     }
 }
 
-impl hash::Hash for PublicKey {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.0.as_bytes().hash(state);
-    }
-}
-
-impl cmp::PartialOrd for PublicKey {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        self.0.as_bytes().partial_cmp(other.0.as_bytes())
-    }
-}
-
-impl cmp::Ord for PublicKey {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.as_bytes().cmp(other.0.as_bytes())
-    }
-}
-
 impl PublicKey {
     /// Verify the Ed25519 signature on a message using the public key.
     pub fn verify(&self, msg: &[u8], sig: &[u8]) -> bool {
@@ -164,9 +145,9 @@ impl PublicKey {
     }
 
     /// Decode a public key from a byte array as produced by `encode`.
-    pub fn decode(k: &[u8]) -> Result<PublicKey, DecodingError> {
+    pub fn decode(k: &[u8]) -> crate::Result<PublicKey> {
         ed25519::PublicKey::from_bytes(k)
-            .map_err(|e| DecodingError::failed_to_parse("Ed25519 public key", e))
+            .map_err(|error| Error::Other(format!("Failed to parse keypair: {error:?}")))
             .map(PublicKey)
     }
 
@@ -214,10 +195,10 @@ impl SecretKey {
     /// Create an Ed25519 secret key from a byte slice, zeroing the input on success.
     /// If the bytes do not constitute a valid Ed25519 secret key, an error is
     /// returned.
-    pub fn from_bytes(mut sk_bytes: impl AsMut<[u8]>) -> Result<SecretKey, DecodingError> {
+    pub fn from_bytes(mut sk_bytes: impl AsMut<[u8]>) -> crate::Result<SecretKey> {
         let sk_bytes = sk_bytes.as_mut();
         let secret = ed25519::SecretKey::from_bytes(&*sk_bytes)
-            .map_err(|e| DecodingError::failed_to_parse("Ed25519 secret key", e))?;
+            .map_err(|error| Error::Other(format!("Failed to parse keypair: {error:?}")))?;
         sk_bytes.zeroize();
         Ok(SecretKey(secret))
     }
@@ -269,5 +250,27 @@ mod tests {
 
         let invalid_msg = "h3ll0 w0rld".as_bytes();
         assert!(!pk.verify(invalid_msg, &sig));
+    }
+
+    #[test]
+    fn secret_key() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let key = Keypair::generate();
+        tracing::trace!("keypair: {:?}", key);
+        tracing::trace!("secret: {:?}", key.secret());
+        tracing::trace!("public: {:?}", key.public());
+
+        let new_key = Keypair::from(key.secret());
+        assert!(new_key.secret().as_ref() == key.secret().as_ref());
+        assert!(new_key.public() == key.public());
+
+        let new_secret = SecretKey::from(new_key.clone());
+        assert!(new_secret.as_ref() == new_key.secret().as_ref());
+
+        let cloned_secret = new_secret.clone();
+        assert!(cloned_secret.as_ref() == new_secret.as_ref());
     }
 }

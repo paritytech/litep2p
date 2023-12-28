@@ -37,8 +37,14 @@ use litep2p::{
 
 use bytes::BytesMut;
 use futures::StreamExt;
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 
-use std::time::Duration;
+use std::{
+    net::{Ipv4Addr, Ipv6Addr},
+    task::Poll,
+    time::Duration,
+};
 
 enum Transport {
     Tcp(TcpTransportConfig),
@@ -3220,21 +3226,20 @@ async fn no_listener_address_for_one_peer_quic() {
     .await;
 }
 
-// TODO: enable when websocket supports zero addresses
-// #[tokio::test]
-// async fn no_listener_address_for_one_peer_websocket() {
-//     no_listener_address_for_one_peer(
-//         Transport::WebSocket(WebSocketTransportConfig {
-//             listen_addresses: vec![],
-//             ..Default::default()
-//         }),
-//         Transport::WebSocket(WebSocketTransportConfig {
-//             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
-//             ..Default::default()
-//         }),
-//     )
-//     .await;
-// }
+#[tokio::test]
+async fn no_listener_address_for_one_peer_websocket() {
+    no_listener_address_for_one_peer(
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_addresses: vec![],
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketTransportConfig {
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
+            ..Default::default()
+        }),
+    )
+    .await;
+}
 
 async fn no_listener_address_for_one_peer(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
@@ -3321,4 +3326,270 @@ async fn no_listener_address_for_one_peer(transport1: Transport, transport2: Tra
             notification: BytesMut::from(&[1, 3, 3, 8][..]),
         }
     );
+}
+
+#[tokio::test]
+async fn auto_accept_inbound_tcp() {
+    auto_accept_inbound(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn auto_accept_inbound_quic() {
+    auto_accept_inbound(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn auto_accept_inbound_websocket() {
+    auto_accept_inbound(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn auto_accept_inbound(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .with_auto_accept_inbound(true)
+        .with_sync_channel_size(1024usize)
+        .with_async_channel_size(1024usize)
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (mut notif_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .with_auto_accept_inbound(true)
+        .with_sync_channel_size(1024usize)
+        .with_async_channel_size(1024usize)
+        .build();
+
+    // set new handshake for the config
+    notif_config2.set_handshake(vec![1, 3, 3, 7]);
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected and spawn the litep2p objects in the background
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            direction: Direction::Inbound,
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpened {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            direction: Direction::Outbound,
+            peer: peer2,
+            handshake: vec![1, 3, 3, 7],
+        }
+    );
+
+    handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]).unwrap();
+    handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]).unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer1,
+            notification: BytesMut::from(&[1, 3, 3, 7][..]),
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer2,
+            notification: BytesMut::from(&[1, 3, 3, 8][..]),
+        }
+    );
+}
+
+#[tokio::test]
+async fn dial_failure_tcp() {
+    dial_failure(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn dial_failure_quic() {
+    dial_failure(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dial_failure_websocket() {
+    dial_failure(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn dial_failure(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .with_auto_accept_inbound(true)
+        .with_sync_channel_size(1024usize)
+        .with_async_channel_size(1024usize)
+        .build();
+    let (notif_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/2"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![7, 7, 7, 7])
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1)
+        .with_notification_protocol(notif_config2);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (notif_config3, _handle3) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .with_auto_accept_inbound(true)
+        .with_sync_channel_size(1024usize)
+        .with_async_channel_size(1024usize)
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config3);
+
+    let known_address = match &transport2 {
+        Transport::Tcp(_) => Multiaddr::empty()
+            .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+            .with(Protocol::Tcp(5)),
+        Transport::Quic(_) => Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Udp(5))
+            .with(Protocol::QuicV1),
+        Transport::WebSocket(_) => Multiaddr::empty()
+            .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+            .with(Protocol::Tcp(5))
+            .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string()))),
+    };
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    let peer2 = *litep2p2.local_peer_id();
+    let known_address = known_address.with(Protocol::P2p(Multihash::from(peer2)));
+
+    litep2p1.add_known_address(peer2, vec![known_address].into_iter());
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer2,
+            error: NotificationError::DialFailure,
+        }
+    );
+
+    futures::future::poll_fn(|cx| match handle2.poll_next_unpin(cx) {
+        Poll::Pending => Poll::Ready(()),
+        _ => panic!("invalid event"),
+    })
+    .await;
 }

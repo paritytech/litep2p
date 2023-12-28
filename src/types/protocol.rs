@@ -33,12 +33,6 @@ pub enum ProtocolName {
     Allocated(Arc<str>),
 }
 
-impl ProtocolName {
-    pub const fn from_static_str(name: &'static str) -> Self {
-        ProtocolName::Static(name)
-    }
-}
-
 impl From<&'static str> for ProtocolName {
     fn from(protocol: &'static str) -> Self {
         ProtocolName::Static(protocol)
@@ -90,3 +84,16 @@ impl PartialEq for ProtocolName {
 }
 
 impl Eq for ProtocolName {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn make_protocol() {
+        let protocol1 = ProtocolName::from(Arc::from(String::from("/protocol/1")));
+        let protocol2 = ProtocolName::from("/protocol/1");
+
+        assert_eq!(protocol1, protocol2);
+    }
+}

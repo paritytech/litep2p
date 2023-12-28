@@ -45,7 +45,6 @@ use std::{
 };
 
 /// Inner commands sent from [`TransportManagerHandle`] to [`TransportManager`].
-#[derive(Debug)]
 pub enum InnerTransportManagerCommand {
     /// Dial peer.
     DialPeer {
@@ -85,6 +84,11 @@ impl TransportManagerHandle {
             cmd_tx,
             supported_transport,
         }
+    }
+
+    /// Register new transport to [`TransportManagerHandle`].
+    pub(crate) fn register_transport(&mut self, transport: SupportedTransport) {
+        self.supported_transport.insert(transport);
     }
 
     /// Check if `address` is supported by one of the enabled transports.
@@ -151,7 +155,7 @@ impl TransportManagerHandle {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?peer,
-                "didn't add any addreseses for peer because transport is not supported",
+                "didn't add any addresses for peer because transport is not supported",
             );
 
             return 0usize;
@@ -182,7 +186,6 @@ impl TransportManagerHandle {
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
-    // TODO: this must report some tokent to the caller so `DialFailure` can be reported to them
     pub async fn dial(&self, peer: &PeerId) -> crate::Result<()> {
         {
             match self.peers.read().get(&peer) {
@@ -272,6 +275,7 @@ impl TransportHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use multihash::Multihash;
     use tokio::sync::mpsc::{channel, Receiver};
 
     fn make_transport_manager_handle() -> (
@@ -301,5 +305,221 @@ mod tests {
                 .parse()
                 .unwrap();
         assert!(handle.supported_transport(&address));
+    }
+
+    #[test]
+    fn transport_not_supported() {
+        let (handle, _rx) = make_transport_manager_handle();
+
+        // only peer id (used by Polkadot sometimes)
+        assert!(!handle.supported_transport(
+            &Multiaddr::empty().with(Protocol::P2p(Multihash::from(PeerId::random())))
+        ));
+
+        // only one transport
+        assert!(!handle.supported_transport(
+            &Multiaddr::empty().with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+        ));
+
+        // any udp-based protocol other than quic
+        assert!(!handle.supported_transport(
+            &Multiaddr::empty()
+                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                .with(Protocol::Udp(8888))
+                .with(Protocol::Utp)
+        ));
+
+        // any other protocol other than tcp
+        assert!(!handle.supported_transport(
+            &Multiaddr::empty()
+                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                .with(Protocol::Sctp(8888))
+        ));
+    }
+
+    #[test]
+    fn zero_addresses_added() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Quic);
+
+        assert!(
+            handle.add_known_address(
+                &PeerId::random(),
+                vec![
+                    Multiaddr::empty()
+                        .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                        .with(Protocol::Udp(8888))
+                        .with(Protocol::Utp),
+                    Multiaddr::empty()
+                        .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                        .with(Protocol::Tcp(8888)),
+                    Multiaddr::empty()
+                        .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                        .with(Protocol::Tcp(8888))
+                        .with(Protocol::Wss(std::borrow::Cow::Owned("".to_string()))),
+                ]
+                .into_iter()
+            ) == 0usize
+        );
+    }
+
+    #[tokio::test]
+    async fn dial_already_connected_peer() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Tcp);
+
+        let peer = {
+            let peer = PeerId::random();
+            let mut peers = handle.peers.write();
+
+            peers.insert(
+                peer,
+                PeerContext {
+                    state: PeerState::Connected {
+                        record: AddressRecord::from_multiaddr(
+                            Multiaddr::empty()
+                                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                                .with(Protocol::Tcp(8888))
+                                .with(Protocol::P2p(Multihash::from(peer))),
+                        )
+                        .unwrap(),
+                        dial_record: None,
+                    },
+                    secondary_connection: None,
+                    addresses: AddressStore::from_iter(
+                        vec![Multiaddr::empty()
+                            .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                            .with(Protocol::Tcp(8888))
+                            .with(Protocol::P2p(Multihash::from(peer)))]
+                        .into_iter(),
+                    ),
+                },
+            );
+            drop(peers);
+
+            peer
+        };
+
+        match handle.dial(&peer).await {
+            Err(Error::AlreadyConnected) => {}
+            _ => panic!("invalid return value"),
+        }
+    }
+
+    #[tokio::test]
+    async fn peer_already_being_dialed() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Tcp);
+
+        let peer = {
+            let peer = PeerId::random();
+            let mut peers = handle.peers.write();
+
+            peers.insert(
+                peer,
+                PeerContext {
+                    state: PeerState::Dialing {
+                        record: AddressRecord::from_multiaddr(
+                            Multiaddr::empty()
+                                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                                .with(Protocol::Tcp(8888))
+                                .with(Protocol::P2p(Multihash::from(peer))),
+                        )
+                        .unwrap(),
+                    },
+                    secondary_connection: None,
+                    addresses: AddressStore::from_iter(
+                        vec![Multiaddr::empty()
+                            .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                            .with(Protocol::Tcp(8888))
+                            .with(Protocol::P2p(Multihash::from(peer)))]
+                        .into_iter(),
+                    ),
+                },
+            );
+            drop(peers);
+
+            peer
+        };
+
+        match handle.dial(&peer).await {
+            Ok(()) => {}
+            _ => panic!("invalid return value"),
+        }
+    }
+
+    #[tokio::test]
+    async fn no_address_available_for_peer() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Tcp);
+
+        let peer = {
+            let peer = PeerId::random();
+            let mut peers = handle.peers.write();
+
+            peers.insert(
+                peer,
+                PeerContext {
+                    state: PeerState::Disconnected { dial_record: None },
+                    secondary_connection: None,
+                    addresses: AddressStore::new(),
+                },
+            );
+            drop(peers);
+
+            peer
+        };
+
+        match handle.dial(&peer).await {
+            Err(Error::NoAddressAvailable(failed_peer)) => {
+                assert_eq!(failed_peer, peer);
+            }
+            _ => panic!("invalid return value"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_connection_for_disconnected_peer() {
+        let (mut handle, mut rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Tcp);
+
+        let peer = {
+            let peer = PeerId::random();
+            let mut peers = handle.peers.write();
+
+            peers.insert(
+                peer,
+                PeerContext {
+                    state: PeerState::Disconnected {
+                        dial_record: Some(
+                            AddressRecord::from_multiaddr(
+                                Multiaddr::empty()
+                                    .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                                    .with(Protocol::Tcp(8888))
+                                    .with(Protocol::P2p(Multihash::from(peer))),
+                            )
+                            .unwrap(),
+                        ),
+                    },
+                    secondary_connection: None,
+                    addresses: AddressStore::from_iter(
+                        vec![Multiaddr::empty()
+                            .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                            .with(Protocol::Tcp(8888))
+                            .with(Protocol::P2p(Multihash::from(peer)))]
+                        .into_iter(),
+                    ),
+                },
+            );
+            drop(peers);
+
+            peer
+        };
+
+        match handle.dial(&peer).await {
+            Ok(()) => {}
+            _ => panic!("invalid return value"),
+        }
+        assert!(rx.try_recv().is_err());
     }
 }

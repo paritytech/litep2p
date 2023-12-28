@@ -25,18 +25,12 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-use crate::crypto::ed25519::Keypair;
-use crate::PeerId;
+use crate::{crypto::ed25519::Keypair, PeerId};
 
 use std::sync::Arc;
 
 pub mod certificate;
-mod upgrade;
 mod verifier;
-
-// TODO: remove maybe
-pub use futures_rustls::TlsStream;
-pub use upgrade::UpgradeError;
 
 const P2P_ALPN: [u8; 6] = *b"libp2p";
 

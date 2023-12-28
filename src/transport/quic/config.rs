@@ -27,7 +27,7 @@ use multiaddr::Multiaddr;
 use std::time::Duration;
 
 /// QUIC transport configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TransportConfig {
     /// Listen address for the transport.
     pub listen_addresses: Vec<Multiaddr>,

@@ -95,22 +95,4 @@ impl AsyncWrite for Substream {
     ) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.io).poll_shutdown(cx)
     }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[io::IoSlice<'_>],
-    ) -> Poll<Result<usize, io::Error>> {
-        match futures::ready!(Pin::new(&mut self.io).poll_write_vectored(cx, bufs)) {
-            Err(error) => Poll::Ready(Err(error)),
-            Ok(nwritten) => {
-                self.bandwidth_sink.increase_outbound(nwritten);
-                Poll::Ready(Ok(nwritten))
-            }
-        }
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        self.io.is_write_vectored()
-    }
 }

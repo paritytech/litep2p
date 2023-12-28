@@ -32,7 +32,8 @@ async fn ping_supported() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config1, mut ping_event_stream1) = PingConfigBuilder::new().build();
+    let (ping_config1, mut ping_event_stream1) =
+        PingConfigBuilder::new().with_max_failure(3usize).build();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -65,16 +66,18 @@ async fn ping_supported() {
         tokio::select! {
             _event = litep2p1.next_event() => {}
             _event = litep2p2.next_event() => {}
-            _event = ping_event_stream1.next() => {
-                litep2p1_done = true;
+            event = ping_event_stream1.next() => {
+                tracing::trace!("ping event for litep2p1: {event:?}");
 
+                litep2p1_done = true;
                 if litep2p1_done && litep2p2_done {
                     break
                 }
             }
-            _event = ping_event_stream2.next() => {
-                litep2p2_done = true;
+            event = ping_event_stream2.next() => {
+                tracing::trace!("ping event for litep2p2: {event:?}");
 
+                litep2p2_done = true;
                 if litep2p1_done && litep2p2_done {
                     break
                 }
