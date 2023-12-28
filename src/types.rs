@@ -20,6 +20,8 @@
 
 //! Types used by [`Litep2p`](`crate::Litep2p`) protocols/transport.
 
+use rand::Rng;
+
 pub mod protocol;
 
 /// Substream ID.
@@ -65,6 +67,11 @@ impl ConnectionId {
         self.0 += 1usize;
 
         ConnectionId(connection_id)
+    }
+
+    /// Generate random `ConnectionId`.
+    pub fn random() -> Self {
+        ConnectionId(rand::thread_rng().gen::<usize>())
     }
 }
 

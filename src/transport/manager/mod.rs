@@ -84,15 +84,7 @@ enum ConnectionEstablishedResult {
     Reject,
 }
 
-/// [`TransportManager`] configuration.
-#[derive(Debug)]
-pub struct Config {
-    /// Maximum connections.
-    pub max_connections: usize,
-}
-
 /// [`TransportManager`] events.
-#[derive(Debug)]
 pub enum TransportManagerEvent {
     /// Connection closed to remote peer.
     ConnectionClosed {
@@ -460,44 +452,20 @@ impl TransportManager {
             }
         };
 
-        let (supported_transport, remote_peer_id) = match protocol_stack
+        let supported_transport = match protocol_stack
             .next()
             .ok_or_else(|| Error::TransportNotSupported(record.address().clone()))?
         {
             Protocol::Tcp(_) => match protocol_stack.next() {
-                Some(Protocol::Ws(_)) | Some(Protocol::Wss(_)) => match protocol_stack.next() {
-                    Some(Protocol::P2p(hash)) => (
-                        SupportedTransport::WebSocket,
-                        PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
-                    ),
-                    _ => {
-                        tracing::debug!(target: LOG_TARGET, address = ?record.address(), "peer id missing");
-                        return Err(Error::AddressError(AddressError::PeerIdMissing));
-                    }
-                },
-                Some(Protocol::P2p(hash)) => (
-                    SupportedTransport::Tcp,
-                    PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
-                ),
-                _ => {
-                    tracing::debug!(target: LOG_TARGET, address = ?record.address(), "peer id missing");
-                    return Err(Error::AddressError(AddressError::PeerIdMissing));
-                }
+                Some(Protocol::Ws(_)) | Some(Protocol::Wss(_)) => SupportedTransport::WebSocket,
+                Some(Protocol::P2p(_)) => SupportedTransport::Tcp,
+                _ => return Err(Error::TransportNotSupported(record.address().clone())),
             },
             Protocol::Udp(_) => match protocol_stack
                 .next()
                 .ok_or_else(|| Error::TransportNotSupported(record.address().clone()))?
             {
-                Protocol::QuicV1 => match protocol_stack.next() {
-                    Some(Protocol::P2p(hash)) => (
-                        SupportedTransport::Quic,
-                        PeerId::from_multihash(hash).map_err(|_| Error::InvalidData)?,
-                    ),
-                    _ => {
-                        tracing::debug!(target: LOG_TARGET, address = ?record.address(), "peer id missing");
-                        return Err(Error::AddressError(AddressError::PeerIdMissing));
-                    }
-                },
+                Protocol::QuicV1 => SupportedTransport::Quic,
                 _ => {
                     tracing::debug!(target: LOG_TARGET, address = ?record.address(), "expected `quic-v1`");
                     return Err(Error::TransportNotSupported(record.address().clone()));
@@ -513,6 +481,10 @@ impl TransportManager {
                 return Err(Error::TransportNotSupported(record.address().clone()));
             }
         };
+
+        // when constructing `AddressRecord`, `PeerId` was verified to be part of the address
+        let remote_peer_id =
+            PeerId::try_from_multiaddr(record.address()).expect("`PeerId` to exist");
 
         // set connection id for the address record and put peer into `Dialing` state
         let connection_id = self.next_connection_id();
@@ -2581,5 +2553,436 @@ mod tests {
             state => panic!("invalid state: {state:?}"),
         }
         drop(peers);
+    }
+
+    #[tokio::test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    async fn dial_failure_for_unknow_connection() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+
+        manager.on_dial_failure(ConnectionId::random()).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    async fn dial_failure_for_unknow_peer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        let connection_id = ConnectionId::random();
+        let peer = PeerId::random();
+        manager.pending_connections.insert(connection_id, peer);
+        manager.on_dial_failure(connection_id).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    async fn connection_closed_for_unknown_peer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        manager.on_connection_closed(PeerId::random(), ConnectionId::random()).unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    async fn unknown_connection_opened() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        manager
+            .on_connection_opened(
+                SupportedTransport::Tcp,
+                ConnectionId::random(),
+                Multiaddr::empty(),
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    async fn connection_opened_for_unknown_peer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        let connection_id = ConnectionId::random();
+        let peer = PeerId::random();
+
+        manager.pending_connections.insert(connection_id, peer);
+        manager
+            .on_connection_opened(SupportedTransport::Tcp, connection_id, Multiaddr::empty())
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    async fn connection_established_for_wrong_peer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        let connection_id = ConnectionId::random();
+        let peer = PeerId::random();
+
+        manager.pending_connections.insert(connection_id, peer);
+        manager
+            .on_connection_established(
+                PeerId::random(),
+                &Endpoint::dialer(Multiaddr::empty(), connection_id),
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    async fn open_failure_unknown_connection() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+
+        manager
+            .on_open_failure(SupportedTransport::Tcp, ConnectionId::random())
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    async fn open_failure_unknown_peer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        let connection_id = ConnectionId::random();
+        let peer = PeerId::random();
+
+        manager.pending_connections.insert(connection_id, peer);
+        manager.on_open_failure(SupportedTransport::Tcp, connection_id).unwrap();
+    }
+
+    #[tokio::test]
+    async fn no_transports() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+
+        assert!(manager.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn dial_already_connected_peer() {
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+
+        let peer = {
+            let peer = PeerId::random();
+            let mut peers = manager.peers.write();
+
+            peers.insert(
+                peer,
+                PeerContext {
+                    state: PeerState::Connected {
+                        record: AddressRecord::from_multiaddr(
+                            Multiaddr::empty()
+                                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                                .with(Protocol::Tcp(8888))
+                                .with(Protocol::P2p(Multihash::from(peer))),
+                        )
+                        .unwrap(),
+                        dial_record: None,
+                    },
+                    secondary_connection: None,
+                    addresses: AddressStore::from_iter(
+                        vec![Multiaddr::empty()
+                            .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                            .with(Protocol::Tcp(8888))
+                            .with(Protocol::P2p(Multihash::from(peer)))]
+                        .into_iter(),
+                    ),
+                },
+            );
+            drop(peers);
+
+            peer
+        };
+
+        match manager.dial(peer).await {
+            Err(Error::AlreadyConnected) => {}
+            _ => panic!("invalid return value"),
+        }
+    }
+
+    #[tokio::test]
+    async fn peer_already_being_dialed() {
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+
+        let peer = {
+            let peer = PeerId::random();
+            let mut peers = manager.peers.write();
+
+            peers.insert(
+                peer,
+                PeerContext {
+                    state: PeerState::Dialing {
+                        record: AddressRecord::from_multiaddr(
+                            Multiaddr::empty()
+                                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                                .with(Protocol::Tcp(8888))
+                                .with(Protocol::P2p(Multihash::from(peer))),
+                        )
+                        .unwrap(),
+                    },
+                    secondary_connection: None,
+                    addresses: AddressStore::from_iter(
+                        vec![Multiaddr::empty()
+                            .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                            .with(Protocol::Tcp(8888))
+                            .with(Protocol::P2p(Multihash::from(peer)))]
+                        .into_iter(),
+                    ),
+                },
+            );
+            drop(peers);
+
+            peer
+        };
+
+        manager.dial(peer).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pending_connection_for_disconnected_peer() {
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+
+        let peer = {
+            let peer = PeerId::random();
+            let mut peers = manager.peers.write();
+
+            peers.insert(
+                peer,
+                PeerContext {
+                    state: PeerState::Disconnected {
+                        dial_record: Some(
+                            AddressRecord::from_multiaddr(
+                                Multiaddr::empty()
+                                    .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                                    .with(Protocol::Tcp(8888))
+                                    .with(Protocol::P2p(Multihash::from(peer))),
+                            )
+                            .unwrap(),
+                        ),
+                    },
+                    secondary_connection: None,
+                    addresses: AddressStore::new(),
+                },
+            );
+            drop(peers);
+
+            peer
+        };
+
+        manager.dial(peer).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dial_address_invalid_transport() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+
+        // transport doesn't start with ip/dns
+        {
+            let address = Multiaddr::empty().with(Protocol::P2p(Multihash::from(PeerId::random())));
+            match manager.dial_address(address.clone()).await {
+                Err(Error::TransportNotSupported(dial_address)) => {
+                    assert_eq!(dial_address, address);
+                }
+                _ => panic!("invalid return value"),
+            }
+        }
+
+        {
+            // upd-based protocol but not quic
+            let address = Multiaddr::empty()
+                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                .with(Protocol::Udp(8888))
+                .with(Protocol::Utp)
+                .with(Protocol::P2p(Multihash::from(PeerId::random())));
+            match manager.dial_address(address.clone()).await {
+                Err(Error::TransportNotSupported(dial_address)) => {
+                    assert_eq!(dial_address, address);
+                }
+                res => panic!("invalid return value: {res:?}"),
+            }
+        }
+
+        // not tcp nor udp
+        {
+            let address = Multiaddr::empty()
+                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                .with(Protocol::Sctp(8888))
+                .with(Protocol::P2p(Multihash::from(PeerId::random())));
+            match manager.dial_address(address.clone()).await {
+                Err(Error::TransportNotSupported(dial_address)) => {
+                    assert_eq!(dial_address, address);
+                }
+                _ => panic!("invalid return value"),
+            }
+        }
+
+        // random protocol after tcp
+        {
+            let address = Multiaddr::empty()
+                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                .with(Protocol::Tcp(8888))
+                .with(Protocol::Utp)
+                .with(Protocol::P2p(Multihash::from(PeerId::random())));
+            match manager.dial_address(address.clone()).await {
+                Err(Error::TransportNotSupported(dial_address)) => {
+                    assert_eq!(dial_address, address);
+                }
+                _ => panic!("invalid return value"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn dial_address_peer_id_missing() {
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+
+        async fn call_manager(manager: &mut TransportManager, address: Multiaddr) {
+            match manager.dial_address(address).await {
+                Err(Error::AddressError(AddressError::PeerIdMissing)) => {}
+                _ => panic!("invalid return value"),
+            }
+        }
+
+        {
+            call_manager(
+                &mut manager,
+                Multiaddr::empty()
+                    .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                    .with(Protocol::Tcp(8888)),
+            )
+            .await;
+        }
+
+        {
+            call_manager(
+                &mut manager,
+                Multiaddr::empty()
+                    .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                    .with(Protocol::Tcp(8888))
+                    .with(Protocol::Wss(std::borrow::Cow::Owned("".to_string()))),
+            )
+            .await;
+        }
+
+        {
+            call_manager(
+                &mut manager,
+                Multiaddr::empty()
+                    .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                    .with(Protocol::Udp(8888))
+                    .with(Protocol::QuicV1),
+            )
+            .await;
+        }
     }
 }
