@@ -122,24 +122,6 @@ impl TokioAsyncWrite for Substream {
     ) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.send_stream).poll_shutdown(cx)
     }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[io::IoSlice<'_>],
-    ) -> Poll<Result<usize, io::Error>> {
-        match futures::ready!(Pin::new(&mut self.send_stream).poll_write_vectored(cx, bufs)) {
-            Err(error) => Poll::Ready(Err(error)),
-            Ok(nwritten) => {
-                self.bandwidth_sink.increase_outbound(nwritten);
-                Poll::Ready(Ok(nwritten))
-            }
-        }
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        self.send_stream.is_write_vectored()
-    }
 }
 
 /// Substream pair used to negotiate a protocol for the connection.
@@ -174,14 +156,6 @@ impl AsyncRead for NegotiatingSubstream {
     ) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.recv_stream).poll_read(cx, buf)
     }
-
-    fn poll_read_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &mut [std::io::IoSliceMut<'_>],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.recv_stream).poll_read_vectored(cx, bufs)
-    }
 }
 
 impl AsyncWrite for NegotiatingSubstream {
@@ -191,14 +165,6 @@ impl AsyncWrite for NegotiatingSubstream {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.send_stream).poll_write(cx, buf)
-    }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[io::IoSlice<'_>],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.send_stream).poll_write_vectored(cx, bufs)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {

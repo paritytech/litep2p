@@ -175,7 +175,7 @@ impl TransportBuilder for QuicTransport {
     {
         tracing::info!(
             target: LOG_TARGET,
-            listen_addresses = ?config.listen_addresses,
+            ?config,
             "start quic transport",
         );
 
