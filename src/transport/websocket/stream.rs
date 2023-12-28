@@ -141,7 +141,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match futures::ready!(self.stream.poll_close_unpin(cx)) {
             Ok(_) => Poll::Ready(Ok(())),
-            Err(error) => return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into())),
+            Err(_) => return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into())),
         }
     }
 }
