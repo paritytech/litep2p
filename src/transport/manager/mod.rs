@@ -960,13 +960,64 @@ impl TransportManager {
                     }
                 }
                 PeerState::Opening {
-                    ..
-                    // ref records,
-                    // connection_id,
-                    // ref transports,
+                    ref mut records,
+                    connection_id,
+                    ref transports,
                 } => {
-                    assert!(std::matches!(endpoint, &Endpoint::Listener { .. }));
-                    todo!();
+                    debug_assert!(std::matches!(endpoint, &Endpoint::Listener { .. }));
+
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        dial_connection_id = ?connection_id,
+                        dial_records = ?records,
+                        dial_transports = ?transports,
+                        listener_endpoint = ?endpoint,
+                        "inbound connection while opening an outbound connection",
+                    );
+
+                    // cancel all pending dials
+                    transports.iter().for_each(|transport| {
+                        self.transports
+                            .get_mut(transport)
+                            .expect("transport to exist")
+                            .cancel(connection_id);
+                    });
+
+                    // since an inbound connection was removed, the outbound connection can be
+                    // removed from pendind dials
+                    //
+                    // all records have the same `ConnectionId` so it doens't matter which of them
+                    // is used to remove the pending dial
+                    self.pending_connections.remove(
+                        &records
+                            .iter()
+                            .next()
+                            .expect("record to exist")
+                            .1
+                            .connection_id()
+                            .expect("`ConnectionId` to exist"),
+                    );
+
+                    let record = match records.remove(endpoint.address()) {
+                        Some(mut record) => {
+                            record.update_score(SCORE_DIAL_SUCCESS);
+                            record.set_connection_id(endpoint.connection_id());
+                            record
+                        }
+                        None => AddressRecord::new(
+                            &peer,
+                            endpoint.address().clone(),
+                            SCORE_DIAL_SUCCESS,
+                            Some(endpoint.connection_id()),
+                        ),
+                    };
+                    context.addresses.extend(records.iter().map(|(_, record)| record));
+
+                    context.state = PeerState::Connected {
+                        record,
+                        dial_record: None,
+                    };
                 }
                 PeerState::Disconnected {
                     ref mut dial_record,
@@ -2983,6 +3034,188 @@ mod tests {
                     .with(Protocol::QuicV1),
             )
             .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn inbound_connection_while_dialing() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        let peer = PeerId::random();
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        let connection_id = ConnectionId::random();
+        let transport = Box::new({
+            let mut transport = DummyTransport::new();
+            transport.inject_event(TransportEvent::ConnectionEstablished {
+                peer,
+                endpoint: Endpoint::listener(dial_address.clone(), connection_id),
+            });
+            transport
+        });
+        manager.register_transport(SupportedTransport::Tcp, transport);
+        manager.add_known_address(
+            peer,
+            vec![Multiaddr::empty()
+                .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 5)))
+                .with(Protocol::Tcp(8888))
+                .with(Protocol::P2p(Multihash::from(peer)))]
+            .into_iter(),
+        );
+
+        assert!(manager.dial(peer).await.is_ok());
+        assert!(!manager.pending_connections.is_empty());
+
+        {
+            let peers = manager.peers.read();
+
+            match peers.get(&peer) {
+                Some(PeerContext {
+                    state: PeerState::Opening { .. },
+                    ..
+                }) => {}
+                state => panic!("invalid state for peer: {state:?}"),
+            }
+        }
+
+        match manager.next().await.unwrap() {
+            TransportEvent::ConnectionEstablished {
+                peer: event_peer,
+                endpoint: event_endpoint,
+                ..
+            } => {
+                assert_eq!(peer, event_peer);
+                assert_eq!(
+                    event_endpoint,
+                    Endpoint::listener(dial_address.clone(), connection_id),
+                );
+            }
+            event => panic!("invalid event: {event:?}"),
+        }
+        assert!(manager.pending_connections.is_empty());
+
+        let peers = manager.peers.read();
+        match peers.get(&peer).unwrap() {
+            PeerContext {
+                state:
+                    PeerState::Connected {
+                        record,
+                        dial_record,
+                    },
+                secondary_connection,
+                addresses,
+            } => {
+                assert!(!addresses.contains(record.address()));
+                assert!(dial_record.is_none());
+                assert!(secondary_connection.is_none());
+                assert_eq!(record.address(), &dial_address);
+                assert_eq!(record.connection_id(), &Some(connection_id));
+            }
+            state => panic!("invalid peer state: {state:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn inbound_connection_for_same_address_while_dialing() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        let peer = PeerId::random();
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        let connection_id = ConnectionId::random();
+        let transport = Box::new({
+            let mut transport = DummyTransport::new();
+            transport.inject_event(TransportEvent::ConnectionEstablished {
+                peer,
+                endpoint: Endpoint::listener(dial_address.clone(), connection_id),
+            });
+            transport
+        });
+        manager.register_transport(SupportedTransport::Tcp, transport);
+        manager.add_known_address(
+            peer,
+            vec![Multiaddr::empty()
+                .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+                .with(Protocol::Tcp(8888))
+                .with(Protocol::P2p(Multihash::from(peer)))]
+            .into_iter(),
+        );
+
+        assert!(manager.dial(peer).await.is_ok());
+        assert!(!manager.pending_connections.is_empty());
+
+        {
+            let peers = manager.peers.read();
+
+            match peers.get(&peer) {
+                Some(PeerContext {
+                    state: PeerState::Opening { .. },
+                    ..
+                }) => {}
+                state => panic!("invalid state for peer: {state:?}"),
+            }
+        }
+
+        match manager.next().await.unwrap() {
+            TransportEvent::ConnectionEstablished {
+                peer: event_peer,
+                endpoint: event_endpoint,
+                ..
+            } => {
+                assert_eq!(peer, event_peer);
+                assert_eq!(
+                    event_endpoint,
+                    Endpoint::listener(dial_address.clone(), connection_id),
+                );
+            }
+            event => panic!("invalid event: {event:?}"),
+        }
+        assert!(manager.pending_connections.is_empty());
+
+        let peers = manager.peers.read();
+        match peers.get(&peer).unwrap() {
+            PeerContext {
+                state:
+                    PeerState::Connected {
+                        record,
+                        dial_record,
+                    },
+                secondary_connection,
+                addresses,
+            } => {
+                assert!(addresses.is_empty());
+                assert!(dial_record.is_none());
+                assert!(secondary_connection.is_none());
+                assert_eq!(record.address(), &dial_address);
+                assert_eq!(record.connection_id(), &Some(connection_id));
+            }
+            state => panic!("invalid peer state: {state:?}"),
         }
     }
 }
