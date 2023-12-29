@@ -111,7 +111,7 @@ async fn server_event_loop(mut litep2p: Litep2p, mut handle: NotificationHandle)
 }
 
 /// helper function for creating `Litep2p` object
-async fn make_litep2p() -> (Litep2p, NotificationHandle) {
+fn make_litep2p() -> (Litep2p, NotificationHandle) {
     // build notification config and handle for the first peer
     let (echo_config, echo_handle) = NotificationConfigBuilder::new(ProtocolName::from("/echo/1"))
         .with_max_size(256)
@@ -124,11 +124,11 @@ async fn make_litep2p() -> (Litep2p, NotificationHandle) {
             Litep2pConfigBuilder::new()
                 .with_quic(QuicTransportConfig {
                     listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+                    ..Default::default()
                 })
                 .with_notification_protocol(echo_config)
                 .build(),
         )
-        .await
         .unwrap(),
         echo_handle,
     )
@@ -137,8 +137,8 @@ async fn make_litep2p() -> (Litep2p, NotificationHandle) {
 #[tokio::main]
 async fn main() {
     // build `Litep2p` objects for both peers
-    let (litep2p1, echo_handle1) = make_litep2p().await;
-    let (litep2p2, echo_handle2) = make_litep2p().await;
+    let (litep2p1, echo_handle1) = make_litep2p();
+    let (litep2p2, echo_handle2) = make_litep2p();
 
     // get the first (and only) listen address for the second peer
     let listen_address = litep2p2.listen_addresses().next().unwrap().clone();

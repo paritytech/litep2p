@@ -169,6 +169,148 @@ async fn connection_closed_for_initiated_substream() {
     .await;
 }
 
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn connection_established_twice() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
+    let peer = PeerId::random();
+
+    assert!(notif.on_connection_established(peer).await.is_ok());
+    assert!(notif.on_connection_established(peer).await.is_err());
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn connection_closed_twice() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
+    let peer = PeerId::random();
+
+    assert!(notif.on_connection_closed(peer).await.is_ok());
+    assert!(notif.on_connection_closed(peer).await.is_err());
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn substream_open_failure_for_unknown_substream() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
+
+    notif.on_substream_open_failure(SubstreamId::new(), Error::Unknown).await;
+}
+
+#[tokio::test]
+async fn close_substream_to_unknown_peer() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
+    let peer = PeerId::random();
+
+    assert!(!notif.peers.contains_key(&peer));
+    notif.on_close_substream(peer).await;
+    assert!(!notif.peers.contains_key(&peer));
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn handshake_event_unknown_peer() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
+    let peer = PeerId::random();
+
+    assert!(!notif.peers.contains_key(&peer));
+    notif
+        .on_handshake_event(
+            peer,
+            HandshakeEvent::InboundNegotiated {
+                peer,
+                handshake: vec![1, 3, 3, 7],
+                substream: Substream::new_mock(peer, Box::new(DummySubstream::new())),
+            },
+        )
+        .await;
+    assert!(!notif.peers.contains_key(&peer));
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn handshake_event_invalid_state_for_outbound_substream() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
+    let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
+
+    notif
+        .on_handshake_event(
+            peer,
+            HandshakeEvent::OutboundNegotiated {
+                peer,
+                handshake: vec![1, 3, 3, 7],
+                substream: Substream::new_mock(peer, Box::new(DummySubstream::new())),
+            },
+        )
+        .await;
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+#[should_panic]
+async fn substream_open_failure_for_unknown_peer() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
+    let peer = PeerId::random();
+    let substream_id = SubstreamId::from(1337usize);
+
+    notif.pending_outbound.insert(substream_id, peer);
+    notif.on_substream_open_failure(substream_id, Error::Unknown).await;
+}
+
+#[tokio::test]
+async fn dial_failure_for_non_dialing_peer() {
+    let (mut notif, mut handle, _sender, mut tx) = make_notification_protocol();
+    let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
+
+    // dial failure for the peer even though it's not dialing
+    notif.on_dial_failure(peer, Multiaddr::empty()).await;
+
+    assert!(std::matches!(
+        notif.peers.get(&peer),
+        Some(PeerContext {
+            state: PeerState::Closed { .. }
+        })
+    ));
+    futures::future::poll_fn(|cx| match handle.poll_next_unpin(cx) {
+        Poll::Pending => Poll::Ready(()),
+        _ => panic!("invalid event"),
+    })
+    .await;
+}
+
 // inbound state is ignored
 async fn connection_closed(peer: PeerId, state: PeerState, event: Option<NotificationEvent>) {
     let _ = tracing_subscriber::fmt()

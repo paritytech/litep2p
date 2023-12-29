@@ -69,7 +69,6 @@ impl TaskExecutor {
     }
 }
 
-#[derive(Debug)]
 struct TaskExecutorHandle {
     tx: Sender<Pin<Box<dyn Future<Output = ()> + Send>>>,
 }
@@ -106,6 +105,7 @@ async fn custom_executor() {
         false,
         64,
         64,
+        true,
     );
     let (req_resp_config1, mut req_resp_handle1) =
         RequestResponseConfigBuilder::new(ProtocolName::from("/protocol/1"))
@@ -132,6 +132,7 @@ async fn custom_executor() {
         false,
         64,
         64,
+        true,
     );
     let (req_resp_config2, mut req_resp_handle2) =
         RequestResponseConfigBuilder::new(ProtocolName::from("/protocol/1"))
@@ -150,8 +151,8 @@ async fn custom_executor() {
         })
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
@@ -180,6 +181,7 @@ async fn custom_executor() {
         }
 
         if litep2p1_connected && litep2p2_connected {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             break;
         }
     }

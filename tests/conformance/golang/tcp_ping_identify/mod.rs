@@ -58,7 +58,6 @@ async fn go_libp2p_dials() {
             .with_libp2p_identify(identify_config)
             .build(),
     )
-    .await
     .unwrap();
 
     let peer = *litep2p.local_peer_id();

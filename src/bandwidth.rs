@@ -72,3 +72,19 @@ impl BandwidthSink {
         self.0.outbound.load(Ordering::Relaxed)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_bandwidth() {
+        let sink = BandwidthSink::new();
+
+        sink.increase_inbound(1337usize);
+        sink.increase_outbound(1338usize);
+
+        assert_eq!(sink.inbound(), 1337usize);
+        assert_eq!(sink.outbound(), 1338usize);
+    }
+}

@@ -63,12 +63,8 @@ async fn two_litep2ps_work_tcp() {
 #[tokio::test]
 async fn two_litep2ps_work_quic() {
     two_litep2ps_work(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -117,8 +113,8 @@ async fn two_litep2ps_work(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
     litep2p1.dial_address(address).await.unwrap();
@@ -158,12 +154,8 @@ async fn dial_failure_tcp() {
 #[tokio::test]
 async fn dial_failure_quic() {
     dial_failure(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
         Multiaddr::empty()
             .with(Protocol::Ip6(std::net::Ipv6Addr::new(
                 0, 0, 0, 0, 0, 0, 0, 1,
@@ -224,8 +216,8 @@ async fn dial_failure(transport1: Transport, transport2: Transport, dial_address
     }
     .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = dial_address.with(Protocol::P2p(
         Multihash::from_bytes(&litep2p2.local_peer_id().to_bytes()).unwrap(),
@@ -275,8 +267,8 @@ async fn connect_over_dns() {
         .with_libp2p_ping(ping_config2)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
     let peer2 = *litep2p2.local_peer_id();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
@@ -337,13 +329,7 @@ async fn connection_timeout_quic() {
             Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
         ));
 
-    connection_timeout(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        address,
-    )
-    .await;
+    connection_timeout(Transport::Quic(Default::default()), address).await;
 }
 
 #[tokio::test]
@@ -386,7 +372,7 @@ async fn connection_timeout(transport: Transport, address: Multiaddr) {
     }
     .build();
 
-    let mut litep2p = Litep2p::new(litep2p_config).await.unwrap();
+    let mut litep2p = Litep2p::new(litep2p_config).unwrap();
 
     litep2p.dial_address(address.clone()).await.unwrap();
 
@@ -412,13 +398,11 @@ async fn dial_quic_peer_id_missing() {
     let (ping_config, _ping_event_stream) = PingConfig::default();
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        })
+        .with_quic(Default::default())
         .with_libp2p_ping(ping_config)
         .build();
 
-    let mut litep2p = Litep2p::new(config).await.unwrap();
+    let mut litep2p = Litep2p::new(config).unwrap();
 
     // create udp socket but don't respond to any inbound datagrams
     let listener = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -445,10 +429,7 @@ async fn dial_self_tcp() {
 
 #[tokio::test]
 async fn dial_self_quic() {
-    dial_self(Transport::Quic(QuicTransportConfig {
-        listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-    }))
-    .await;
+    dial_self(Transport::Quic(Default::default())).await;
 }
 
 #[tokio::test]
@@ -477,7 +458,7 @@ async fn dial_self(transport: Transport) {
     }
     .build();
 
-    let mut litep2p = Litep2p::new(litep2p_config).await.unwrap();
+    let mut litep2p = Litep2p::new(litep2p_config).unwrap();
     let address = litep2p.listen_addresses().next().unwrap().clone();
 
     // dial without peer id attached
@@ -496,13 +477,11 @@ async fn attempt_to_dial_using_unsupported_transport() {
     let (ping_config, _ping_event_stream) = PingConfig::default();
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        })
+        .with_quic(Default::default())
         .with_libp2p_ping(ping_config)
         .build();
 
-    let mut litep2p = Litep2p::new(config).await.unwrap();
+    let mut litep2p = Litep2p::new(config).unwrap();
     let address = Multiaddr::empty()
         .with(Protocol::from(std::net::Ipv4Addr::new(127, 0, 0, 1)))
         .with(Protocol::Tcp(8888))
@@ -534,12 +513,8 @@ async fn keep_alive_timeout_tcp() {
 #[tokio::test]
 async fn keep_alive_timeout_quic() {
     keep_alive_timeout(
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
-        Transport::Quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        }),
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
     )
     .await;
 }
@@ -575,7 +550,7 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
         Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -588,7 +563,7 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
         Transport::WebSocket(config) => config2.with_websocket(config),
     }
     .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     litep2p2.dial_address(address1).await.unwrap();
@@ -636,7 +611,7 @@ async fn simultaneous_dial_tcp() {
         })
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -647,7 +622,7 @@ async fn simultaneous_dial_tcp() {
         })
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
@@ -688,22 +663,18 @@ async fn simultaneous_dial_quic() {
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        })
+        .with_quic(Default::default())
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-        })
+        .with_quic(Default::default())
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
@@ -744,22 +715,18 @@ async fn simultaneous_dial_ipv6_quic() {
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
-        })
+        .with_quic(Default::default())
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip6/::1/udp/0/quic-v1".parse().unwrap()],
-        })
+        .with_quic(Default::default())
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
@@ -806,7 +773,7 @@ async fn websocket_over_ipv6() {
         })
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -817,7 +784,7 @@ async fn websocket_over_ipv6() {
         })
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address2 = litep2p2.listen_addresses().next().unwrap().clone();
     litep2p1.dial_address(address2).await.unwrap();
@@ -858,7 +825,7 @@ async fn tcp_dns_resolution() {
         })
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -869,7 +836,7 @@ async fn tcp_dns_resolution() {
         })
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
     let tcp = address.iter().skip(1).next().unwrap();
@@ -919,7 +886,7 @@ async fn websocket_dns_resolution() {
         })
         .with_libp2p_ping(ping_config1)
         .build();
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = Litep2pConfigBuilder::new()
@@ -930,7 +897,7 @@ async fn websocket_dns_resolution() {
         })
         .with_libp2p_ping(ping_config2)
         .build();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
     let tcp = address.iter().skip(1).next().unwrap();
@@ -996,12 +963,15 @@ async fn multiple_listen_addresses_quic() {
                 "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
                 "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
             ],
+            ..Default::default()
         }),
         Transport::Quic(QuicTransportConfig {
             listen_addresses: vec![],
+            ..Default::default()
         }),
         Transport::Quic(QuicTransportConfig {
             listen_addresses: vec![],
+            ..Default::default()
         }),
     )
     .await;
@@ -1044,10 +1014,7 @@ async fn make_dummy_litep2p(
     }
     .build();
 
-    (
-        Litep2p::new(litep2p_config).await.unwrap(),
-        ping_event_stream,
-    )
+    (Litep2p::new(litep2p_config).unwrap(), ping_event_stream)
 }
 
 async fn multiple_listen_addresses(
@@ -1111,7 +1078,6 @@ async fn port_in_use_tcp() {
             })
             .build(),
     )
-    .await
     .unwrap();
 }
 
@@ -1135,6 +1101,44 @@ async fn port_in_use_websocket() {
             })
             .build(),
     )
-    .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn dial_over_multiple_addresses() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    // let (mut litep2p1, _event_stream) = make_dummy_litep2p(transport1).await;
+    // let (mut litep2p2, _event_stream) = make_dummy_litep2p(transport2).await;
+    // let (mut litep2p3, _event_stream) = make_dummy_litep2p(transport3).await;
+
+    // let mut address_iter = litep2p1.listen_addresses();
+    // let address1 = address_iter.next().unwrap().clone();
+    // let address2 = address_iter.next().unwrap().clone();
+    // drop(address_iter);
+
+    // tokio::spawn(async move {
+    //     loop {
+    //         let _ = litep2p1.next_event().await;
+    //     }
+    // });
+
+    // let (res1, res2) = tokio::join!(
+    //     litep2p2.dial_address(address1),
+    //     litep2p3.dial_address(address2),
+    // );
+    // assert!(res1.is_ok() && res2.is_ok());
+
+    // let (res1, res2) = tokio::join!(litep2p2.next_event(), litep2p3.next_event());
+
+    // assert!(std::matches!(
+    //     res1,
+    //     Some(Litep2pEvent::ConnectionEstablished { .. })
+    // ));
+    // assert!(std::matches!(
+    //     res2,
+    //     Some(Litep2pEvent::ConnectionEstablished { .. })
+    // ));
 }

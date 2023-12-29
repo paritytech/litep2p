@@ -124,3 +124,34 @@ impl Stream for DummySubstream {
         Poll::Pending
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::SinkExt;
+
+    #[tokio::test]
+    async fn dummy_substream_sink() {
+        let mut substream = DummySubstream::new();
+
+        futures::future::poll_fn(|cx| match substream.poll_ready_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            _ => panic!("invalid event"),
+        })
+        .await;
+
+        assert!(Pin::new(&mut substream).start_send(bytes::Bytes::new()).is_ok());
+
+        futures::future::poll_fn(|cx| match substream.poll_flush_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            _ => panic!("invalid event"),
+        })
+        .await;
+
+        futures::future::poll_fn(|cx| match substream.poll_close_unpin(cx) {
+            Poll::Ready(Ok(())) => Poll::Ready(()),
+            _ => panic!("invalid event"),
+        })
+        .await;
+    }
+}

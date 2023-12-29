@@ -20,14 +20,19 @@
 
 //! QUIC connection.
 
+use std::time::Duration;
+
 use crate::{
     config::Role,
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
-    transport::quic::substream::{NegotiatingSubstream, Substream},
-    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    transport::{
+        quic::substream::{NegotiatingSubstream, Substream},
+        Endpoint,
+    },
+    types::{protocol::ProtocolName, SubstreamId},
     BandwidthSink, PeerId,
 };
 
@@ -80,12 +85,15 @@ struct NegotiatedSubstream {
 }
 
 /// QUIC connection.
-pub struct Connection {
+pub struct QuicConnection {
     /// Remote peer ID.
     peer: PeerId,
 
-    /// Connection ID.
-    connection_id: ConnectionId,
+    /// Endpoint.
+    endpoint: Endpoint,
+
+    /// Substream open timeout.
+    substream_open_timeout: Duration,
 
     /// QUIC connection.
     connection: QuinnConnection,
@@ -101,21 +109,23 @@ pub struct Connection {
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
 }
 
-impl Connection {
+impl QuicConnection {
     /// Create new [`Connection`].
     pub fn new(
         peer: PeerId,
-        connection_id: ConnectionId,
+        endpoint: Endpoint,
         connection: QuinnConnection,
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
+        substream_open_timeout: Duration,
     ) -> Self {
         Self {
             peer,
+            endpoint,
             connection,
             protocol_set,
-            connection_id,
             bandwidth_sink,
+            substream_open_timeout,
             pending_substreams: FuturesUnordered::new(),
         }
     }
@@ -217,6 +227,10 @@ impl Connection {
 
     /// Start event loop for [`Connection`].
     pub async fn start(mut self) -> crate::Result<()> {
+        self.protocol_set
+            .report_connection_established(self.peer, self.endpoint.clone())
+            .await?;
+
         loop {
             tokio::select! {
                 event = self.connection.accept_bi() => match event {
@@ -226,10 +240,11 @@ impl Connection {
                         let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
                         let stream = NegotiatingSubstream::new(send_stream, receive_stream);
+                        let substream_open_timeout = self.substream_open_timeout;
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                substream_open_timeout,
                                 Self::accept_substream(stream, protocols, substream, permit),
                             )
                             .await
@@ -249,7 +264,7 @@ impl Connection {
                     }
                     Err(error) => {
                         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, ?error, "failed to accept substream");
-                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await;
+                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await;
                     }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
@@ -271,16 +286,9 @@ impl Connection {
                             };
 
                             if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
-                                if let Err(error) = self.protocol_set
+                                self.protocol_set
                                     .report_substream_open_failure(protocol, substream_id, error)
-                                    .await
-                                {
-                                    tracing::error!(
-                                        target: LOG_TARGET,
-                                        ?error,
-                                        "failed to register opened substream to protocol"
-                                    );
-                                }
+                                    .await?;
                             }
                         }
                         Ok(substream) => {
@@ -298,31 +306,25 @@ impl Connection {
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
-                            if let Err(error) = self.protocol_set
+                            self.protocol_set
                                 .report_substream_open(self.peer, protocol, direction, substream)
-                                .await
-                            {
-                                tracing::error!(
-                                    target: LOG_TARGET,
-                                    ?error,
-                                    "failed to register opened substream to protocol"
-                                );
-                            }
+                                .await?;
                         }
                     }
                 }
-                command = self.protocol_set.next_event() => match command {
+                command = self.protocol_set.next() => match command {
                     None => {
                         tracing::debug!(
                             target: LOG_TARGET,
                             peer = ?self.peer,
-                            connection_id = ?self.connection_id,
+                            connection_id = ?self.endpoint.connection_id(),
                             "protocols have dropped connection"
                         );
-                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await;
+                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await;
                     }
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let connection = self.connection.clone();
+                        let substream_open_timeout = self.substream_open_timeout;
 
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -334,7 +336,7 @@ impl Connection {
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                substream_open_timeout,
                                 Self::open_substream(
                                     connection,
                                     permit,

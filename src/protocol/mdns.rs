@@ -58,14 +58,14 @@ const IPV4_MULTICAST_PORT: u16 = 5353;
 const SERVICE_NAME: &str = "_p2p._udp.local";
 
 /// Events emitted by mDNS.
-#[derive(Debug, Clone)]
+// #[derive(Debug, Clone)]
 pub enum MdnsEvent {
     /// One or more addresses discovered.
     Discovered(Vec<Multiaddr>),
 }
 
 /// mDNS configuration.
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct Config {
     /// How often the network should be queried for new peers.
     query_interval: Duration,
@@ -242,14 +242,14 @@ impl Mdns {
 
         let name = match names.len() {
             0 => return Vec::new(),
-            1 => names[0],
             _ => {
                 tracing::debug!(
                     target: LOG_TARGET,
                     ?names,
-                    "response contains multiple different names"
+                    "response name"
                 );
-                return Vec::new();
+
+                names[0]
             }
         };
 
@@ -346,8 +346,12 @@ mod tests {
             .try_init();
 
         let (config1, mut stream1) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle1) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (_manager1, handle1) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
 
         let mdns1 = Mdns::new(
             handle1,
@@ -364,8 +368,12 @@ mod tests {
         .unwrap();
 
         let (config2, mut stream2) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle2) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+        let (_manager1, handle2) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
 
         let mdns2 = Mdns::new(
             handle2,

@@ -207,6 +207,7 @@ async fn full_peer() -> (Litep2p, BlockProtocolHandle, TransactionProtocolHandle
     let config = Litep2pConfigBuilder::new()
         .with_quic(QuicTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+            ..Default::default()
         })
         .with_notification_protocol(block_announce_config)
         .with_notification_protocol(tx_announce_config)
@@ -214,7 +215,7 @@ async fn full_peer() -> (Litep2p, BlockProtocolHandle, TransactionProtocolHandle
         .build();
 
     // create `Litep2p` object and start internal protocol handlers and the QUIC transport
-    let mut litep2p = Litep2p::new(config).await.unwrap();
+    let mut litep2p = Litep2p::new(config).unwrap();
 
     // spawn `SyncingEngine` in the background
     tokio::spawn(block.run());
@@ -242,12 +243,13 @@ async fn main() {
     let config = Litep2pConfigBuilder::new()
         .with_quic(QuicTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+            ..Default::default()
         })
         .with_notification_protocol(block_announce_config)
         .build();
 
     // create `Litep2p` object and start internal protocol handlers and the QUIC transport
-    let mut litep2p = Litep2p::new(config).await.unwrap();
+    let mut litep2p = Litep2p::new(config).unwrap();
 
     // spawn `SyncingEngine` in the background
     tokio::spawn(engine.run());

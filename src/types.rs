@@ -20,6 +20,8 @@
 
 //! Types used by [`Litep2p`](`crate::Litep2p`) protocols/transport.
 
+use rand::Rng;
+
 pub mod protocol;
 
 /// Substream ID.
@@ -30,14 +32,6 @@ impl SubstreamId {
     /// Create new [`SubstreamId`].
     pub fn new() -> Self {
         SubstreamId(0usize)
-    }
-
-    /// Get next [`SubstreamId`].
-    pub fn next(&mut self) -> SubstreamId {
-        let substream_id = self.0;
-        self.0 += 1usize;
-
-        SubstreamId(substream_id)
     }
 
     /// Get [`SubstreamId`] from a number that can be converted into a `usize`.
@@ -51,19 +45,6 @@ impl SubstreamId {
 pub struct RequestId(usize);
 
 impl RequestId {
-    /// Create new [`RequestId`].
-    pub fn new() -> Self {
-        RequestId(0usize)
-    }
-
-    /// Get next [`RequestId`].
-    pub fn next(&mut self) -> RequestId {
-        let substream_id = self.0;
-        self.0 += 1usize;
-
-        RequestId(substream_id)
-    }
-
     /// Get [`RequestId`] from a number that can be converted into a `usize`.
     pub fn from<T: Into<usize>>(value: T) -> Self {
         RequestId(value.into())
@@ -86,6 +67,11 @@ impl ConnectionId {
         self.0 += 1usize;
 
         ConnectionId(connection_id)
+    }
+
+    /// Generate random `ConnectionId`.
+    pub fn random() -> Self {
+        ConnectionId(rand::thread_rng().gen::<usize>())
     }
 }
 

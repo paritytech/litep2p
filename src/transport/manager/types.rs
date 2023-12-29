@@ -18,7 +18,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::transport::manager::address::{AddressRecord, AddressStore};
+use crate::{
+    transport::manager::address::{AddressRecord, AddressStore},
+    types::ConnectionId,
+};
+
+use multiaddr::Multiaddr;
+
+use std::collections::{HashMap, HashSet};
 
 /// Supported protocols.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -51,6 +58,18 @@ pub enum PeerState {
         /// is stored for processing later when the dial attempt conclused as either
         /// successful/failed.
         dial_record: Option<AddressRecord>,
+    },
+
+    /// Connection to peer is opening over one or more addresses.
+    Opening {
+        /// Address records used for dialing.
+        records: HashMap<Multiaddr, AddressRecord>,
+
+        /// Connection ID.
+        connection_id: ConnectionId,
+
+        /// Active transports.
+        transports: HashSet<SupportedTransport>,
     },
 
     /// Peer is being dialed.

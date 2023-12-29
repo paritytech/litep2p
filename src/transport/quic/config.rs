@@ -20,19 +20,37 @@
 
 //! QUIC transport configuration.
 
+use crate::transport::{CONNECTION_OPEN_TIMEOUT, SUBSTREAM_OPEN_TIMEOUT};
+
 use multiaddr::Multiaddr;
 
+use std::time::Duration;
+
 /// QUIC transport configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TransportConfig {
     /// Listen address for the transport.
     pub listen_addresses: Vec<Multiaddr>,
+
+    /// Connection open timeout.
+    ///
+    /// How long should litep2p wait for a connection to be opend before the host
+    /// is deemed unreachable.
+    pub connection_open_timeout: Duration,
+
+    /// Substream open timeout.
+    ///
+    /// How long should litep2p wait for a substream to be opened before considering
+    /// the substream rejected.
+    pub substream_open_timeout: Duration,
 }
 
 impl Default for TransportConfig {
     fn default() -> Self {
         Self {
-            listen_addresses: vec!["/ip6/::/udp/0/quic-v1".parse().expect("valid address")],
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().expect("valid address")],
+            connection_open_timeout: CONNECTION_OPEN_TIMEOUT,
+            substream_open_timeout: SUBSTREAM_OPEN_TIMEOUT,
         }
     }
 }

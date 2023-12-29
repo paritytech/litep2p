@@ -48,8 +48,12 @@ fn make_notification_protocol() -> (
     TransportManager,
     Sender<InnerTransportEvent>,
 ) {
-    let (manager, handle) =
-        TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new());
+    let (manager, handle) = TransportManager::new(
+        Keypair::generate(),
+        HashSet::new(),
+        BandwidthSink::new(),
+        8usize,
+    );
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(
@@ -67,6 +71,7 @@ fn make_notification_protocol() -> (
         false,
         64,
         64,
+        true,
     );
 
     (

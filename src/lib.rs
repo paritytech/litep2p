@@ -28,12 +28,12 @@ use crate::{
         request_response::RequestResponseProtocol,
     },
     transport::{
-        manager::{SupportedTransport, TransportManager, TransportManagerEvent},
+        manager::{SupportedTransport, TransportManager},
         quic::QuicTransport,
         tcp::TcpTransport,
         webrtc::WebRtcTransport,
         websocket::WebSocketTransport,
-        Transport,
+        TransportBuilder,
     },
 };
 
@@ -46,12 +46,12 @@ use std::{collections::HashSet, sync::Arc};
 pub use bandwidth::BandwidthSink;
 pub use error::Error;
 pub use peer_id::PeerId;
+pub use transport::TransportEvent;
 pub use types::protocol::ProtocolName;
 
 pub use yamux;
 
 pub(crate) mod peer_id;
-pub(crate) mod substream;
 
 pub mod codec;
 pub mod config;
@@ -59,6 +59,7 @@ pub mod crypto;
 pub mod error;
 pub mod executor;
 pub mod protocol;
+pub mod substream;
 pub mod transport;
 pub mod types;
 
@@ -120,7 +121,7 @@ pub struct Litep2p {
 
 impl Litep2p {
     /// Create new [`Litep2p`].
-    pub async fn new(mut litep2p_config: Litep2pConfig) -> crate::Result<Litep2p> {
+    pub fn new(mut litep2p_config: Litep2pConfig) -> crate::Result<Litep2p> {
         let local_peer_id =
             PeerId::from_public_key(&PublicKey::Ed25519(litep2p_config.keypair.public()));
         let bandwidth_sink = BandwidthSink::new();
@@ -131,6 +132,7 @@ impl Litep2p {
             litep2p_config.keypair.clone(),
             supported_transports,
             bandwidth_sink.clone(),
+            litep2p_config.max_parallel_dials,
         );
 
         // add known addresses to `TransportManager`, if any exist
@@ -184,9 +186,7 @@ impl Litep2p {
             let service =
                 transport_manager.register_protocol(protocol_name, Vec::new(), protocol.codec());
             litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = protocol.run(service).await {
-                    tracing::debug!(target: LOG_TARGET, ?error, "user protocol exited with error");
-                }
+                let _ = protocol.run(service).await;
             }));
         }
 
@@ -226,9 +226,7 @@ impl Litep2p {
                 kademlia_config.codec,
             );
             litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = Kademlia::new(service, kademlia_config).run().await {
-                    tracing::debug!(target: LOG_TARGET, ?error, "kademlia exited with error");
-                }
+                let _ = Kademlia::new(service, kademlia_config).run().await;
             }));
         }
 
@@ -273,90 +271,67 @@ impl Litep2p {
 
         // enable tcp transport if the config exists
         if let Some(config) = litep2p_config.tcp.take() {
-            let service = transport_manager.register_transport(
-                SupportedTransport::Tcp,
-                Arc::clone(&litep2p_config.executor),
-            );
-            let transport = <TcpTransport as Transport>::new(service, config).await?;
+            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+            let (transport, transport_listen_addresses) =
+                <TcpTransport as TransportBuilder>::new(handle, config)?;
 
-            for address in transport.listen_address() {
+            for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
                 listen_addresses.push(address.with(Protocol::P2p(
                     Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
                 )));
             }
 
-            litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "tcp failed");
-                }
-            }));
+            transport_manager.register_transport(SupportedTransport::Tcp, Box::new(transport));
         }
 
         // enable quic transport if the config exists
         if let Some(config) = litep2p_config.quic.take() {
-            let service = transport_manager.register_transport(
-                SupportedTransport::Quic,
-                Arc::clone(&litep2p_config.executor),
-            );
-            let transport = <QuicTransport as Transport>::new(service, config).await?;
+            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+            let (transport, transport_listen_addresses) =
+                <QuicTransport as TransportBuilder>::new(handle, config)?;
 
-            for address in transport.listen_address() {
+            for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
                 listen_addresses.push(address.with(Protocol::P2p(
                     Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
                 )));
             }
 
-            litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "quic failed");
-                }
-            }));
+            transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
         }
 
         // enable webrtc transport if the config exists
         if let Some(config) = litep2p_config.webrtc.take() {
-            let service = transport_manager.register_transport(
-                SupportedTransport::WebRtc,
-                Arc::clone(&litep2p_config.executor),
-            );
-            let transport = <WebRtcTransport as Transport>::new(service, config).await?;
+            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+            let (transport, transport_listen_addresses) =
+                <WebRtcTransport as TransportBuilder>::new(handle, config)?;
 
-            for address in transport.listen_address() {
+            for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
                 listen_addresses.push(address.with(Protocol::P2p(
                     Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
                 )));
             }
 
-            litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "webrtc failed");
-                }
-            }));
+            transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
         }
 
         // enable websocket transport if the config exists
         if let Some(config) = litep2p_config.websocket.take() {
-            let service = transport_manager.register_transport(
-                SupportedTransport::WebSocket,
-                Arc::clone(&litep2p_config.executor),
-            );
-            let transport = <WebSocketTransport as Transport>::new(service, config).await?;
+            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+            let (transport, transport_listen_addresses) =
+                <WebSocketTransport as TransportBuilder>::new(handle, config)?;
 
-            for address in transport.listen_address() {
+            for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
                 listen_addresses.push(address.with(Protocol::P2p(
                     Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
                 )));
             }
 
-            litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = transport.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "websocket failed");
-                }
-            }));
+            transport_manager
+                .register_transport(SupportedTransport::WebSocket, Box::new(transport));
         }
 
         // enable mdns if the config exists
@@ -364,9 +339,7 @@ impl Litep2p {
             let mdns = Mdns::new(transport_handle, config, listen_addresses.clone())?;
 
             litep2p_config.executor.run(Box::pin(async move {
-                if let Err(error) = mdns.start().await {
-                    tracing::error!(target: LOG_TARGET, ?error, "mdns failed");
-                }
+                let _ = mdns.start().await;
             }));
         }
 
@@ -443,22 +416,9 @@ impl Litep2p {
         self.bandwidth_sink.clone()
     }
 
-    /// Attempt to connect to peer at `address`.
-    ///
-    /// If the transport specified by `address` is not supported, an error is returned.
-    /// The connection is established in the background and its result is reported through
-    /// [`Litep2p::next_event()`].
-    #[deprecated(
-        since = "0.3.0",
-        note = "`Litep2p::connect()` will be removed in 0.4.0. Please use `Litep2p::dial_address()`"
-    )]
-    pub async fn connect(&mut self, address: Multiaddr) -> crate::Result<()> {
-        self.transport_manager.dial_address(address).await
-    }
-
     /// Dial peer.
     pub async fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
-        self.transport_manager.dial(peer).await
+        self.transport_manager.dial(*peer).await
     }
 
     /// Dial address.
@@ -477,13 +437,16 @@ impl Litep2p {
 
     /// Poll next event.
     pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
-        match self.transport_manager.next().await? {
-            TransportManagerEvent::ConnectionEstablished { peer, endpoint, .. } =>
-                Some(Litep2pEvent::ConnectionEstablished { peer, endpoint }),
-            TransportManagerEvent::ConnectionClosed { peer, .. } =>
-                Some(Litep2pEvent::ConnectionClosed { peer }),
-            TransportManagerEvent::DialFailure { address, error, .. } =>
-                Some(Litep2pEvent::DialFailure { address, error }),
+        loop {
+            match self.transport_manager.next().await? {
+                TransportEvent::ConnectionEstablished { peer, endpoint, .. } =>
+                    return Some(Litep2pEvent::ConnectionEstablished { peer, endpoint }),
+                TransportEvent::ConnectionClosed { peer, .. } =>
+                    return Some(Litep2pEvent::ConnectionClosed { peer }),
+                TransportEvent::DialFailure { address, error, .. } =>
+                    return Some(Litep2pEvent::DialFailure { address, error }),
+                _ => {}
+            }
         }
     }
 }
@@ -493,7 +456,6 @@ mod tests {
     use crate::{
         config::Litep2pConfigBuilder,
         protocol::{libp2p::ping, notification::Config as NotificationConfig},
-        transport::tcp::config::TransportConfig as TcpTransportConfig,
         types::protocol::ProtocolName,
         Litep2p, Litep2pEvent, PeerId,
     };
@@ -515,6 +477,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (config2, _service2) = NotificationConfig::new(
             ProtocolName::from("/notificaton/2"),
@@ -524,23 +487,19 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
         let config = Litep2pConfigBuilder::new()
-            .with_tcp(TcpTransportConfig {
-                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-                ..Default::default()
-            })
-            .with_quic(crate::transport::quic::config::TransportConfig {
-                listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-            })
+            .with_tcp(Default::default())
+            .with_quic(Default::default())
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)
             .build();
 
-        let _litep2p = Litep2p::new(config).await.unwrap();
+        let _litep2p = Litep2p::new(config).unwrap();
     }
 
     #[tokio::test]
@@ -557,6 +516,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (config2, _service2) = NotificationConfig::new(
             ProtocolName::from("/notificaton/2"),
@@ -566,6 +526,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
@@ -575,7 +536,7 @@ mod tests {
             .with_libp2p_ping(ping_config)
             .build();
 
-        assert!(Litep2p::new(config).await.is_err());
+        assert!(Litep2p::new(config).is_err());
     }
 
     #[tokio::test]
@@ -592,6 +553,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (config2, _service2) = NotificationConfig::new(
             ProtocolName::from("/notificaton/2"),
@@ -601,17 +563,13 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
         let config = Litep2pConfigBuilder::new()
-            .with_tcp(TcpTransportConfig {
-                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-                ..Default::default()
-            })
-            .with_quic(crate::transport::quic::config::TransportConfig {
-                listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-            })
+            .with_tcp(Default::default())
+            .with_quic(Default::default())
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)
@@ -625,7 +583,7 @@ mod tests {
                 Multihash::from_bytes(&peer.to_bytes()).unwrap(),
             ));
 
-        let mut litep2p = Litep2p::new(config).await.unwrap();
+        let mut litep2p = Litep2p::new(config).unwrap();
         litep2p.dial_address(address.clone()).await.unwrap();
         litep2p.dial_address(address.clone()).await.unwrap();
 

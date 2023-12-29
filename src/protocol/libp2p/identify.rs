@@ -57,7 +57,6 @@ mod identify_schema {
 }
 
 /// Identify configuration.
-#[derive(Debug)]
 pub struct Config {
     /// Protocol name.
     pub(crate) protocol: ProtocolName,
@@ -267,16 +266,6 @@ impl Identify {
         }));
     }
 
-    /// Failed to open substream to remote peer.
-    fn on_substream_open_failure(&mut self, substream: SubstreamId, error: Error) {
-        tracing::debug!(
-            target: LOG_TARGET,
-            ?substream,
-            ?error,
-            "failed to open substream"
-        );
-    }
-
     /// Start [`Identify`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting identify event loop");
@@ -286,14 +275,7 @@ impl Identify {
                 event = self.service.next_event() => match event {
                     None => return,
                     Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
-                        if let Err(error) = self.on_connection_established(peer, endpoint).await {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?error,
-                                "failed to register peer"
-                            );
-                        }
+                        let _ = self.on_connection_established(peer, endpoint).await;
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.on_connection_closed(peer);
@@ -308,9 +290,6 @@ impl Identify {
                         Direction::Inbound => self.on_inbound_substream(peer, protocol, substream),
                         Direction::Outbound(substream_id) => self.on_outbound_substream(peer, protocol, substream_id, substream),
                     },
-                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
-                        self.on_substream_open_failure(substream, error);
-                    }
                     _ => {}
                 },
                 _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}

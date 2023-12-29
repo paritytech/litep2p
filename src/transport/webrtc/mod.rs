@@ -25,14 +25,17 @@
 use crate::{
     error::{AddressError, Error},
     transport::{
-        manager::{TransportHandle, TransportManagerCommand},
+        manager::TransportHandle,
         webrtc::{config::TransportConfig, connection::WebRtcConnection},
-        Transport,
+        Transport, TransportBuilder, TransportEvent,
     },
+    types::ConnectionId,
     PeerId,
 };
 
+use futures::{Stream, StreamExt};
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
+use socket2::{Domain, Socket, Type};
 use str0m::{
     change::{DtlsCert, IceCreds},
     channel::{ChannelConfig, ChannelId},
@@ -40,6 +43,7 @@ use str0m::{
     Candidate, Input, Rtc,
 };
 use tokio::{
+    io::ReadBuf,
     net::UdpSocket,
     sync::mpsc::{channel, Sender},
 };
@@ -47,7 +51,9 @@ use tokio::{
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     time::Instant,
 };
 
@@ -196,11 +202,18 @@ impl WebRtcTransport {
     }
 
     /// Handle socket input.
-    async fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<()> {
+    fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<()> {
         // if the `Rtc` object already exists for `souce`, pass the message directly to that
         // connection.
         if let Some(tx) = self.peers.get_mut(&source) {
-            return tx.send(buffer).await.map_err(From::from);
+            // TODO: implement properly
+            match tx.try_send(buffer) {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    tracing::warn!(target: LOG_TARGET, ?error, "failed to send datagram to connection");
+                    return Ok(());
+                }
+            }
         }
 
         // if the peer doesn't exist, decode the message and expect to receive `Stun`
@@ -272,12 +285,12 @@ impl WebRtcTransport {
     }
 }
 
-#[async_trait::async_trait]
-impl Transport for WebRtcTransport {
+impl TransportBuilder for WebRtcTransport {
     type Config = TransportConfig;
+    type Transport = WebRtcTransport;
 
     /// Create new [`Transport`] object.
-    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
+    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
     {
@@ -288,60 +301,122 @@ impl Transport for WebRtcTransport {
         );
 
         let (listen_address, _) = Self::get_socket_address(&config.listen_addresses[0])?;
-        let socket = UdpSocket::bind(listen_address).await?;
+        let socket = match listen_address.is_ipv4() {
+            true => {
+                let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
+                socket.bind(&listen_address.into())?;
+                socket
+            }
+            false => {
+                let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?;
+                socket.set_only_v6(true)?;
+                socket.bind(&listen_address.into())?;
+                socket
+            }
+        };
+        socket.listen(1024)?;
+        socket.set_reuse_address(true)?;
+        socket.set_nonblocking(true)?;
+        #[cfg(unix)]
+        socket.set_reuse_port(true)?;
+
+        let socket = UdpSocket::from_std(socket.into())?;
         let listen_address = socket.local_addr()?;
         let dtls_cert = DtlsCert::new();
 
-        Ok(Self {
-            context,
-            dtls_cert,
-            listen_address,
-            peers: HashMap::new(),
-            socket: Arc::new(socket),
-        })
+        let listen_multi_addresses = {
+            let fingerprint = dtls_cert.fingerprint().bytes;
+
+            const MULTIHASH_SHA256_CODE: u64 = 0x12;
+            let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
+                .expect("fingerprint's len to be 32 bytes");
+
+            vec![Multiaddr::empty()
+                .with(Protocol::from(listen_address.ip()))
+                .with(Protocol::Udp(listen_address.port()))
+                .with(Protocol::WebRTC)
+                .with(Protocol::Certhash(certificate))]
+        };
+
+        Ok((
+            Self {
+                context,
+                dtls_cert,
+                listen_address,
+                peers: HashMap::new(),
+                socket: Arc::new(socket),
+            },
+            listen_multi_addresses,
+        ))
+    }
+}
+
+impl Transport for WebRtcTransport {
+    fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
+        tracing::warn!(
+            target: LOG_TARGET,
+            ?connection_id,
+            ?address,
+            "webrtc cannot dial",
+        );
+
+        Err(Error::NotSupported(format!("webrtc cannot dial peers")))
     }
 
-    /// Get assigned listen address.
-    fn listen_address(&self) -> Vec<Multiaddr> {
-        let fingerprint = self.dtls_cert.fingerprint().bytes;
-
-        const MULTIHASH_SHA256_CODE: u64 = 0x12;
-        let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
-            .expect("fingerprint's len to be 32 bytes");
-
-        vec![Multiaddr::empty()
-            .with(Protocol::from(self.listen_address.ip()))
-            .with(Protocol::Udp(self.listen_address.port()))
-            .with(Protocol::WebRTC)
-            .with(Protocol::Certhash(certificate))]
+    fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+        Ok(())
     }
 
-    /// Start transport event loop.
-    async fn start(mut self) -> crate::Result<()> {
-        loop {
-            // TODO: correct buf size + don't reallocate
-            let mut buf = vec![0; 16384];
+    fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
 
-            tokio::select! {
-                result = self.socket.recv_from(&mut buf) => match result {
-                    Ok((n, source)) => {
-                        buf.truncate(n);
+    fn open(
+        &mut self,
+        _connection_id: ConnectionId,
+        _addresses: Vec<Multiaddr>,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
 
-                        if let Err(error) = self.on_socket_input(source, buf).await {
-                            tracing::error!(target: LOG_TARGET, ?error, "failed to handle input");
-                        }
+    fn negotiate(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
 
-                    }
-                    Err(_error) => return Err(Error::EssentialTaskClosed),
-                },
-                event = self.context.next() => match event {
-                    Some(TransportManagerCommand::Dial { .. }) => {
-                        tracing::warn!(target: LOG_TARGET, "webrtc cannot dial peers");
-                    }
-                    None => return Err(Error::EssentialTaskClosed),
-                },
+    /// Cancel opening connections.
+    fn cancel(&mut self, _connection_id: ConnectionId) {}
+}
+
+impl Stream for WebRtcTransport {
+    type Item = TransportEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // TODO: optimizations
+        let mut buf = vec![0u8; 16384];
+        let mut read_buf = ReadBuf::new(&mut buf);
+
+        match self.socket.poll_recv_from(cx, &mut read_buf) {
+            Poll::Pending => {}
+            Poll::Ready(Ok(source)) => {
+                let nread = read_buf.filled().len();
+                buf.truncate(nread);
+
+                if let Err(error) = self.on_socket_input(source, buf) {
+                    tracing::error!(target: LOG_TARGET, ?error, "failed to handle input");
+                }
+            }
+            Poll::Ready(Err(error)) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to read from webrtc socket",
+                );
+
+                return Poll::Ready(None);
             }
         }
+
+        Poll::Pending
     }
 }
 

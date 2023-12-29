@@ -50,7 +50,7 @@ pub(super) enum AddressType {
 /// TCP listener listening to zero or more addresses.
 pub struct TcpListener {
     /// Listen addresses.
-    listen_addresses: Vec<Multiaddr>,
+    _listen_addresses: Vec<SocketAddr>,
 
     /// Listeners.
     listeners: Vec<TokioTcpListener>,
@@ -58,8 +58,8 @@ pub struct TcpListener {
 
 impl TcpListener {
     /// Create new [`TcpListener`]
-    pub fn new(addresses: Vec<Multiaddr>) -> Self {
-        let (listeners, listen_addresses) = addresses
+    pub fn new(addresses: Vec<Multiaddr>) -> (Self, Vec<Multiaddr>) {
+        let (listeners, listen_addresses): (_, Vec<_>) = addresses
             .into_iter()
             .filter_map(|address| {
                 let socket = match Self::get_socket_address(&address).ok()?.0 {
@@ -98,25 +98,29 @@ impl TcpListener {
 
                 let socket: std::net::TcpListener = socket.into();
                 let listener = TokioTcpListener::from_std(socket).ok()?;
-
                 let listen_address = listener.local_addr().ok()?;
-                let listen_address = Multiaddr::empty()
-                    .with(Protocol::from(listen_address.ip()))
-                    .with(Protocol::Tcp(listen_address.port()));
 
                 Some((listener, listen_address))
             })
             .unzip();
 
-        Self {
-            listeners,
-            listen_addresses,
-        }
-    }
+        let listen_multi_addresses = listen_addresses
+            .iter()
+            .cloned()
+            .map(|address| {
+                Multiaddr::empty()
+                    .with(Protocol::from(address.ip()))
+                    .with(Protocol::Tcp(address.port()))
+            })
+            .collect();
 
-    /// Get listen addresses.
-    pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
-        self.listen_addresses.iter()
+        (
+            Self {
+                listeners,
+                _listen_addresses: listen_addresses,
+            },
+            listen_multi_addresses,
+        )
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
@@ -252,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_listeners() {
-        let mut listener = TcpListener::new(Vec::new());
+        let (mut listener, _) = TcpListener::new(Vec::new());
 
         futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -264,9 +268,9 @@ mod tests {
     #[tokio::test]
     async fn one_listener() {
         let address: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
-        let mut listener = TcpListener::new(vec![address.clone()]);
+        let (mut listener, listen_addresses) = TcpListener::new(vec![address.clone()]);
         let Some(Protocol::Tcp(port)) =
-            listener.listen_addresses().next().unwrap().clone().iter().skip(1).next()
+            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
             panic!("invalid address");
         };
@@ -281,23 +285,15 @@ mod tests {
     async fn two_listeners() {
         let address1: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
         let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
-        let mut listener = TcpListener::new(vec![address1, address2]);
-
+        let (mut listener, listen_addresses) = TcpListener::new(vec![address1, address2]);
         let Some(Protocol::Tcp(port1)) =
-            listener.listen_addresses().next().unwrap().clone().iter().skip(1).next()
+            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
             panic!("invalid address");
         };
 
-        let Some(Protocol::Tcp(port2)) = listener
-            .listen_addresses()
-            .skip(1)
-            .next()
-            .unwrap()
-            .clone()
-            .iter()
-            .skip(1)
-            .next()
+        let Some(Protocol::Tcp(port2)) =
+            listen_addresses.iter().skip(1).next().unwrap().clone().iter().skip(1).next()
         else {
             panic!("invalid address");
         };

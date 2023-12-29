@@ -33,7 +33,6 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::collections::HashSet;
 
-#[derive(Debug)]
 struct CustomProtocol {
     protocol: ProtocolName,
     codec: ProtocolCodec,
@@ -73,7 +72,6 @@ impl UserProtocol for CustomProtocol {
                 event = service.next_event() => match event.unwrap() {
                     TransportEvent::ConnectionEstablished { peer, .. } => {
                         self.peers.insert(peer);
-                        tracing::error!("connection established to {peer}");
                     }
                     TransportEvent::ConnectionClosed { peer: _ } => {}
                     TransportEvent::SubstreamOpened {
@@ -121,8 +119,8 @@ async fn user_protocol_2() {
         .with_user_protocol(Box::new(custom_protocol2))
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
     let address = litep2p2.listen_addresses().next().unwrap().clone();
 
     sender1.send(address).await.unwrap();

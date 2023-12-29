@@ -41,7 +41,7 @@ struct Behaviour {
 }
 
 // initialize litep2p with ping support
-async fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
+fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
     let keypair = Keypair::generate();
     let (ping_config, ping_event_stream) = PingConfig::default();
     let litep2p = Litep2p::new(
@@ -49,11 +49,11 @@ async fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Se
             .with_keypair(keypair)
             .with_quic(QuicTransportConfig {
                 listen_addresses: vec!["/ip4/127.0.0.1/udp/8888/quic-v1".parse().unwrap()],
+                ..Default::default()
             })
             .with_libp2p_ping(ping_config)
             .build(),
     )
-    .await
     .unwrap();
 
     (litep2p, ping_event_stream)
@@ -91,7 +91,7 @@ async fn libp2p_dials() {
         .try_init();
 
     let mut libp2p = initialize_libp2p();
-    let (mut litep2p, mut ping_event_stream) = initialize_litep2p().await;
+    let (mut litep2p, mut ping_event_stream) = initialize_litep2p();
 
     let address: multiaddr::Multiaddr = format!(
         "/ip4/127.0.0.1/udp/8888/quic-v1/p2p/{}",

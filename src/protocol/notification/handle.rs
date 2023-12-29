@@ -397,7 +397,10 @@ impl Stream for NotificationHandle {
                             handshake,
                         }));
                     }
-                    event => return Poll::Ready(Some(event.into())),
+                    InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
+                        return Poll::Ready(Some(
+                            NotificationEvent::NotificationStreamOpenFailure { peer, error },
+                        )),
                 },
             }
 

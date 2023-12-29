@@ -20,7 +20,6 @@
 
 use crate::{
     codec::ProtocolCodec,
-    crypto::ed25519::Keypair,
     error::Error,
     protocol::{
         connection::{ConnectionHandle, Permit},
@@ -35,7 +34,7 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -43,10 +42,12 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
+    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -54,6 +55,7 @@ use std::{
 const LOG_TARGET: &str = "litep2p::protocol-set";
 
 /// Events emitted by the underlying transport protocols.
+#[derive(Debug)]
 pub enum InnerTransportEvent {
     /// Connection established to `peer`.
     ConnectionEstablished {
@@ -139,10 +141,6 @@ pub enum InnerTransportEvent {
 impl From<InnerTransportEvent> for TransportEvent {
     fn from(event: InnerTransportEvent) -> Self {
         match event {
-            InnerTransportEvent::ConnectionEstablished { peer, endpoint, .. } =>
-                TransportEvent::ConnectionEstablished { peer, endpoint },
-            InnerTransportEvent::ConnectionClosed { peer, .. } =>
-                TransportEvent::ConnectionClosed { peer },
             InnerTransportEvent::DialFailure { peer, address } =>
                 TransportEvent::DialFailure { peer, address },
             InnerTransportEvent::SubstreamOpened {
@@ -160,6 +158,7 @@ impl From<InnerTransportEvent> for TransportEvent {
             },
             InnerTransportEvent::SubstreamOpenFailure { substream, error } =>
                 TransportEvent::SubstreamOpenFailure { substream, error },
+            event => panic!("cannot convert {event:?}"),
         }
     }
 }
@@ -527,11 +526,9 @@ pub enum ProtocolCommand {
 ///
 /// Each connection gets a copy of [`ProtocolSet`] which allows it to interact
 /// directly with installed protocols.
-#[derive(Debug)]
 pub struct ProtocolSet {
     /// Installed protocols.
     pub(crate) protocols: HashMap<ProtocolName, ProtocolContext>,
-    pub(crate) keypair: Keypair,
     mgr_tx: Sender<TransportManagerEvent>,
     connection: ConnectionHandle,
     rx: Receiver<ProtocolCommand>,
@@ -541,7 +538,6 @@ pub struct ProtocolSet {
 
 impl ProtocolSet {
     pub fn new(
-        keypair: Keypair,
         connection_id: ConnectionId,
         mgr_tx: Sender<TransportManagerEvent>,
         next_substream_id: Arc<AtomicUsize>,
@@ -564,7 +560,6 @@ impl ProtocolSet {
         ProtocolSet {
             rx,
             mgr_tx,
-            keypair,
             protocols,
             next_substream_id,
             fallback_names,
@@ -640,26 +635,24 @@ impl ProtocolSet {
     ) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,
-            ?protocol,
+            %protocol,
             ?substream,
             ?error,
-            "failed to open substream"
+            "failed to open substream",
         );
 
-        match self.protocols.get_mut(&protocol) {
-            Some(info) => info
-                .tx
-                .send(InnerTransportEvent::SubstreamOpenFailure { substream, error })
-                .await
-                .map_err(From::from),
-            None => Err(Error::ProtocolNotSupported(protocol.to_string())),
-        }
+        self.protocols
+            .get_mut(&protocol)
+            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
+            .tx
+            .send(InnerTransportEvent::SubstreamOpenFailure { substream, error })
+            .await
+            .map_err(From::from)
     }
 
     /// Report to protocols that a connection was established.
     pub(crate) async fn report_connection_established(
         &mut self,
-        connection_id: ConnectionId,
         peer: PeerId,
         endpoint: Endpoint,
     ) -> crate::Result<()> {
@@ -676,7 +669,7 @@ impl ProtocolSet {
                         .tx
                         .send(InnerTransportEvent::ConnectionEstablished {
                             peer,
-                            connection: connection_id,
+                            connection: endpoint.connection_id(),
                             endpoint,
                             sender: connection_handle,
                         })
@@ -687,24 +680,11 @@ impl ProtocolSet {
 
         while !futures.is_empty() {
             if let Some(Err(error)) = futures.next().await {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?connection_id,
-                    ?error,
-                    "failed to report closed connection",
-                );
+                return Err(error.into());
             }
         }
 
-        self.mgr_tx
-            .send(TransportManagerEvent::ConnectionEstablished {
-                connection: connection_id,
-                peer,
-                endpoint,
-            })
-            .await
-            .map_err(From::from)
+        Ok(())
     }
 
     /// Report to protocols that a connection was closed.
@@ -729,13 +709,7 @@ impl ProtocolSet {
 
         while !futures.is_empty() {
             if let Some(Err(error)) = futures.next().await {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?connection_id,
-                    ?error,
-                    "failed to report closed connection",
-                );
+                return Err(error.into());
             }
         }
 
@@ -747,10 +721,13 @@ impl ProtocolSet {
             .await
             .map_err(From::from)
     }
+}
 
-    /// Poll next substream open query from one of the installed protocols.
-    pub async fn next_event(&mut self) -> Option<ProtocolCommand> {
-        self.rx.recv().await
+impl Stream for ProtocolSet {
+    type Item = ProtocolCommand;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.rx.poll_recv(cx)
     }
 }
 
@@ -770,7 +747,6 @@ mod tests {
         let (tx1, _rx1) = channel(64);
 
         let mut protocol_set = ProtocolSet::new(
-            Keypair::generate(),
             ConnectionId::from(0usize),
             tx,
             Default::default(),
@@ -814,7 +790,6 @@ mod tests {
         let (tx1, mut rx1) = channel(64);
 
         let mut protocol_set = ProtocolSet::new(
-            Keypair::generate(),
             ConnectionId::from(0usize),
             tx,
             Default::default(),
@@ -858,7 +833,6 @@ mod tests {
         let (tx1, mut rx1) = channel(64);
 
         let mut protocol_set = ProtocolSet::new(
-            Keypair::generate(),
             ConnectionId::from(0usize),
             tx,
             Default::default(),

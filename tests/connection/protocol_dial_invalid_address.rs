@@ -107,7 +107,7 @@ async fn protocol_dial_invalid_dns_address() {
         .with_user_protocol(custom_protocol)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     tokio::spawn(async move {
         loop {
@@ -139,7 +139,7 @@ async fn protocol_dial_peer_id_missing() {
         .with_user_protocol(custom_protocol)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     tokio::spawn(async move {
         loop {

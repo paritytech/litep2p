@@ -20,7 +20,10 @@
 
 use crate::{
     config::Role,
-    crypto::noise::{self, NoiseSocket},
+    crypto::{
+        ed25519::Keypair,
+        noise::{self, NoiseSocket},
+    },
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
@@ -36,11 +39,11 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use tokio::net::TcpStream;
-use tokio_tungstenite::MaybeTlsStream;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use url::Url;
 
-use std::net::SocketAddr;
+use std::time::Duration;
 
 mod schema {
     pub(super) mod noise {
@@ -51,7 +54,7 @@ mod schema {
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::websocket::connection";
 
-#[derive(Debug)]
+/// Negotiated substream and its context.
 pub struct NegotiatedSubstream {
     /// Substream direction.
     direction: Direction,
@@ -91,6 +94,38 @@ enum ConnectionError {
     },
 }
 
+/// Negotiated connection.
+pub(super) struct NegotiatedConnection {
+    /// Remote peer ID.
+    peer: PeerId,
+
+    /// Endpoint.
+    endpoint: Endpoint,
+
+    /// Yamux connection.
+    connection: yamux::ControlledConnection<NoiseSocket<BufferedStream<MaybeTlsStream<TcpStream>>>>,
+
+    /// Yamux control.
+    control: yamux::Control,
+}
+
+impl NegotiatedConnection {
+    /// Get `ConnectionId` of the negotiated connection.
+    pub fn connection_id(&self) -> ConnectionId {
+        self.endpoint.connection_id()
+    }
+
+    /// Get `PeerId` of the negotiated connection.
+    pub fn peer(&self) -> PeerId {
+        self.peer
+    }
+
+    /// Get `Endpoint` of the negotiated connection.
+    pub fn endpoint(&self) -> Endpoint {
+        self.endpoint.clone()
+    }
+}
+
 /// WebSocket connection.
 pub(crate) struct WebSocketConnection {
     /// Protocol context.
@@ -105,11 +140,14 @@ pub(crate) struct WebSocketConnection {
     /// Remote peer ID.
     peer: PeerId,
 
+    /// Endpoint.
+    endpoint: Endpoint,
+
+    /// Substream open timeout.
+    substream_open_timeout: Duration,
+
     /// Connection ID.
     connection_id: ConnectionId,
-
-    /// Remote address.
-    address: Multiaddr,
 
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
@@ -120,14 +158,31 @@ pub(crate) struct WebSocketConnection {
 }
 
 impl WebSocketConnection {
-    /// Get remote peer ID.
-    pub(crate) fn peer(&self) -> &PeerId {
-        &self.peer
-    }
+    /// Create new [`WebSocketConnection`].
+    pub(super) fn new(
+        connection: NegotiatedConnection,
+        protocol_set: ProtocolSet,
+        bandwidth_sink: BandwidthSink,
+        substream_open_timeout: Duration,
+    ) -> Self {
+        let NegotiatedConnection {
+            peer,
+            endpoint,
+            connection,
+            control,
+        } = connection;
 
-    /// Get remote address.
-    pub(crate) fn address(&self) -> &Multiaddr {
-        &self.address
+        Self {
+            connection_id: endpoint.connection_id(),
+            protocol_set,
+            connection,
+            control,
+            peer,
+            endpoint,
+            bandwidth_sink,
+            substream_open_timeout,
+            pending_substreams: FuturesUnordered::new(),
+        }
     }
 
     /// Negotiate protocol.
@@ -149,28 +204,88 @@ impl WebSocketConnection {
     }
 
     /// Open WebSocket connection.
-    pub(crate) async fn open_connection(
-        address: Multiaddr,
-        dialed_peer: Option<PeerId>,
-        ws_address: Url,
+    pub(super) async fn open_connection(
         connection_id: ConnectionId,
+        keypair: Keypair,
+        address: Multiaddr,
+        dialed_peer: PeerId,
+        ws_address: Url,
         yamux_config: yamux::Config,
-        bandwidth_sink: BandwidthSink,
-        mut protocol_set: ProtocolSet,
-    ) -> crate::Result<Self> {
-        tracing::trace!(target: LOG_TARGET, ?address, ?ws_address, ?connection_id, "open connection to remote peer");
-
-        let (stream, _) = tokio_tungstenite::connect_async(ws_address).await?;
-        let stream = BufferedStream::new(stream);
-
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
+    ) -> crate::Result<NegotiatedConnection> {
         tracing::trace!(
             target: LOG_TARGET,
             ?address,
-            "connection established, negotiate protocols"
+            ?ws_address,
+            ?connection_id,
+            "open connection to remote peer",
         );
 
+        Self::negotiate_connection(
+            tokio_tungstenite::connect_async(ws_address).await?.0,
+            Some(dialed_peer),
+            Role::Dialer,
+            address,
+            connection_id,
+            keypair,
+            yamux_config,
+            max_read_ahead_factor,
+            max_write_buffer_size,
+        )
+        .await
+    }
+
+    /// Accept WebSocket connection.
+    pub(super) async fn accept_connection(
+        stream: TcpStream,
+        connection_id: ConnectionId,
+        keypair: Keypair,
+        address: Multiaddr,
+        yamux_config: yamux::Config,
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
+    ) -> crate::Result<NegotiatedConnection> {
+        let stream = MaybeTlsStream::Plain(stream);
+
+        Self::negotiate_connection(
+            tokio_tungstenite::accept_async(stream).await?,
+            None,
+            Role::Listener,
+            address,
+            connection_id,
+            keypair,
+            yamux_config,
+            max_read_ahead_factor,
+            max_write_buffer_size,
+        )
+        .await
+    }
+
+    /// Negotiate WebSocket connection.
+    pub(super) async fn negotiate_connection(
+        stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        dialed_peer: Option<PeerId>,
+        role: Role,
+        address: Multiaddr,
+        connection_id: ConnectionId,
+        keypair: Keypair,
+        yamux_config: yamux::Config,
+        max_read_ahead_factor: usize,
+        max_write_buffer_size: usize,
+    ) -> crate::Result<NegotiatedConnection> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?connection_id,
+            ?address,
+            ?role,
+            ?dialed_peer,
+            "negotiate connectoin"
+        );
+        let stream = BufferedStream::new(stream);
+
         // negotiate `noise`
-        let (stream, _) = Self::negotiate_protocol(stream, &Role::Dialer, vec!["/noise"]).await?;
+        let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/noise"]).await?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -178,117 +293,45 @@ impl WebSocketConnection {
         );
 
         // perform noise handshake
-        let (stream, peer) =
-            noise::handshake(stream.inner(), &protocol_set.keypair, Role::Dialer, 5, 2).await?;
-        let stream: NoiseSocket<BufferedStream<_>> = stream;
+        let (stream, peer) = noise::handshake(
+            stream.inner(),
+            &keypair,
+            role,
+            max_read_ahead_factor,
+            max_write_buffer_size,
+        )
+        .await?;
 
-        // if the local node dialed a remote node, verify that received peer ID matches the one that
-        // was transported as part of the noise handshake
         if let Some(dialed_peer) = dialed_peer {
-            if dialed_peer != peer {
-                tracing::debug!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer id mismatch");
+            if peer != dialed_peer {
                 return Err(Error::PeerIdMismatch(dialed_peer, peer));
             }
         }
 
-        tracing::trace!(target: LOG_TARGET, "noise handshake done");
-
-        // negotiate `yamux`
-        let (stream, _) =
-            Self::negotiate_protocol(stream, &Role::Dialer, vec!["/yamux/1.0.0"]).await?;
-        tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
-
-        let connection = yamux::Connection::new(stream.inner(), yamux_config, Role::Dialer.into());
-        let (control, connection) = yamux::Control::new(connection);
-
-        protocol_set
-            .report_connection_established(
-                connection_id,
-                peer,
-                Endpoint::dialer(address.clone(), connection_id),
-            )
-            .await?;
-
-        Ok(Self {
-            peer,
-            control,
-            connection,
-            connection_id,
-            protocol_set,
-            bandwidth_sink,
-            pending_substreams: FuturesUnordered::new(),
-            address,
-        })
-    }
-
-    /// Accept WebSocket connection.
-    pub(crate) async fn accept_connection(
-        stream: TcpStream,
-        address: SocketAddr,
-        connection_id: ConnectionId,
-        yamux_config: yamux::Config,
-        bandwidth_sink: BandwidthSink,
-        mut protocol_set: ProtocolSet,
-    ) -> crate::Result<Self> {
-        let stream = MaybeTlsStream::Plain(stream);
-        let stream = tokio_tungstenite::accept_async(stream).await?;
-        let stream = BufferedStream::new(stream);
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?address,
-            "connection received, negotiate protocols"
-        );
-
-        // negotiate `noise`
-        let (stream, _) = Self::negotiate_protocol(stream, &Role::Dialer, vec!["/noise"]).await?;
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            "`multistream-select` and `noise` negotiated"
-        );
-
-        // perform noise handshake
-        let (stream, peer) =
-            noise::handshake(stream.inner(), &protocol_set.keypair, Role::Listener, 5, 2).await?;
         let stream: NoiseSocket<BufferedStream<_>> = stream;
 
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
 
         // negotiate `yamux`
-        let (stream, _) =
-            Self::negotiate_protocol(stream, &Role::Listener, vec!["/yamux/1.0.0"]).await?;
+        let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"]).await?;
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-        let connection =
-            yamux::Connection::new(stream.inner(), yamux_config, Role::Listener.into());
+        let connection = yamux::Connection::new(stream.inner(), yamux_config, role.into());
         let (control, connection) = yamux::Control::new(connection);
 
-        // create `Multiaddr` from `SocketAddr` and report to protocols
-        // and `TransportManager` that a new connection was established
-        let address = Multiaddr::empty()
-            .with(Protocol::from(address.ip()))
-            .with(Protocol::Tcp(address.port()))
-            .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())))
-            .with(Protocol::P2p(Multihash::from(peer)));
+        let address = match role {
+            Role::Dialer => address,
+            Role::Listener => address.with(Protocol::P2p(Multihash::from(peer))),
+        };
 
-        protocol_set
-            .report_connection_established(
-                connection_id,
-                peer,
-                Endpoint::listener(address.clone(), connection_id),
-            )
-            .await?;
-
-        Ok(Self {
+        Ok(NegotiatedConnection {
             peer,
             control,
             connection,
-            connection_id,
-            protocol_set,
-            bandwidth_sink,
-            pending_substreams: FuturesUnordered::new(),
-            address,
+            endpoint: match role {
+                Role::Dialer => Endpoint::dialer(address, connection_id),
+                Role::Listener => Endpoint::listener(address, connection_id),
+            },
         })
     }
 
@@ -366,6 +409,10 @@ impl WebSocketConnection {
 
     /// Start connection event loop.
     pub(crate) async fn start(mut self) -> crate::Result<()> {
+        self.protocol_set
+            .report_connection_established(self.peer, self.endpoint)
+            .await?;
+
         loop {
             tokio::select! {
                 substream = self.connection.next() => match substream {
@@ -373,10 +420,11 @@ impl WebSocketConnection {
                         let substream = self.protocol_set.next_substream_id();
                         let protocols = self.protocol_set.protocols();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
+                        let substream_open_timeout = self.substream_open_timeout;
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                substream_open_timeout,
                                 Self::accept_substream(stream, permit, substream, protocols),
                             )
                             .await
@@ -433,16 +481,9 @@ impl WebSocketConnection {
                             };
 
                             if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
-                                if let Err(error) = self.protocol_set
+                                self.protocol_set
                                     .report_substream_open_failure(protocol, substream_id, error)
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        target: LOG_TARGET,
-                                        ?error,
-                                        "failed to register opened substream to protocol"
-                                    );
-                                }
+                                    .await?;
                             }
                         }
                         Ok(substream) => {
@@ -456,22 +497,16 @@ impl WebSocketConnection {
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
-                            if let Err(error) = self.protocol_set
+                            self.protocol_set
                                 .report_substream_open(self.peer, protocol, direction, substream)
-                                .await
-                            {
-                                tracing::warn!(
-                                    target: LOG_TARGET,
-                                    ?error,
-                                    "failed to register opened substream to protocol"
-                                );
-                            }
+                                .await?;
                         }
                     }
                 }
-                protocol = self.protocol_set.next_event() => match protocol {
+                protocol = self.protocol_set.next() => match protocol {
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
                         let control = self.control.clone();
+                        let substream_open_timeout = self.substream_open_timeout;
 
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -482,7 +517,7 @@ impl WebSocketConnection {
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                substream_open_timeout,
                                 Self::open_substream(
                                     control,
                                     permit,

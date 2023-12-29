@@ -20,21 +20,32 @@
 
 //! Transport protocol implementations provided by [`Litep2p`](`crate::Litep2p`).
 
-use crate::{transport::manager::TransportHandle, types::ConnectionId};
+use crate::{transport::manager::TransportHandle, types::ConnectionId, Error, PeerId};
 
+use futures::Stream;
 use multiaddr::Multiaddr;
 
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 
 pub mod quic;
 pub mod tcp;
 pub mod webrtc;
 pub mod websocket;
 
+pub(crate) mod dummy;
 pub(crate) mod manager;
 
+/// Timeout for opening a connection.
+pub(crate) const CONNECTION_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for opening a substream.
+pub(crate) const SUBSTREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Maximum number of parallel dial attempts.
+pub(crate) const MAX_PARALLEL_DIALS: usize = 8;
+
 /// Connection endpoint.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endpoint {
     /// Successful outbound connection.
     Dialer {
@@ -79,29 +90,99 @@ impl Endpoint {
             connection_id,
         }
     }
-}
 
-impl Into<Multiaddr> for Endpoint {
-    fn into(self) -> Multiaddr {
+    /// Get `ConnectionId` of the `Endpoint`.
+    pub fn connection_id(&self) -> ConnectionId {
         match self {
-            Self::Dialer { address, .. } => address,
-            Self::Listener { address, .. } => address,
+            Self::Dialer { connection_id, .. } => *connection_id,
+            Self::Listener { connection_id, .. } => *connection_id,
         }
     }
 }
 
-#[async_trait::async_trait]
-pub(crate) trait Transport {
+/// Transport event.
+#[derive(Debug)]
+pub enum TransportEvent {
+    /// Fully negotiated connection established to remote peer.
+    ConnectionEstablished {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Endpoint.
+        endpoint: Endpoint,
+    },
+
+    /// Connection opened to remote but not yet negotiated.
+    ConnectionOpened {
+        /// Connection ID.
+        connection_id: ConnectionId,
+
+        /// Address that was dialed.
+        address: Multiaddr,
+    },
+
+    /// Connection closed to remote peer.
+    #[allow(unused)]
+    ConnectionClosed {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Connection ID.
+        connection_id: ConnectionId,
+    },
+
+    /// Failed to dial remote peer.
+    DialFailure {
+        /// Connection ID.
+        connection_id: ConnectionId,
+
+        /// Dialed address.
+        address: Multiaddr,
+
+        /// Error.
+        error: Error,
+    },
+
+    /// Open failure for an unnegotiated set of connections.
+    OpenFailure {
+        /// Connection ID.
+        connection_id: ConnectionId,
+    },
+}
+
+pub(crate) trait TransportBuilder {
     type Config: Debug;
+    type Transport: Transport;
 
     /// Create new [`Transport`] object.
-    async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
+    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized;
+}
 
-    /// Get assigned listen address.
-    fn listen_address(&self) -> Vec<Multiaddr>;
+pub(crate) trait Transport: Stream + Unpin + Send {
+    /// Dial `address` and negotiate connection.
+    fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()>;
 
-    /// Start transport event loop.
-    async fn start(mut self) -> crate::Result<()>;
+    /// Accept negotiated connection.
+    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+
+    /// Reject negotiated connection.
+    fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+
+    /// Attempt to open connection to remote peer over one or more addresses.
+    ///
+    /// TODO: documentation
+    fn open(&mut self, connection_id: ConnectionId, addresses: Vec<Multiaddr>)
+        -> crate::Result<()>;
+
+    /// Negotiate opened connection.
+    ///
+    /// TODO: documentation
+    fn negotiate(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+
+    /// Cancel opening connections.
+    ///
+    /// This is a no-op for connections that have already succeeded/canceled.
+    fn cancel(&mut self, connection_id: ConnectionId);
 }

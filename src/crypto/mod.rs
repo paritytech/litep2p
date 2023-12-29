@@ -30,10 +30,8 @@ pub(crate) mod keys_proto {
     include!(concat!(env!("OUT_DIR"), "/keys_proto.rs"));
 }
 
-const LOG_TARGET: &str = "litep2p::crypto";
-
 /// The public key of a node's identity keypair.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PublicKey {
     /// A public Ed25519 key.
     Ed25519(ed25519::PublicKey),
@@ -66,11 +64,11 @@ impl PublicKey {
 
     /// Decode a public key from a protobuf structure, e.g. read from storage
     /// or received from another node.
-    pub fn from_protobuf_encoding(bytes: &[u8]) -> Result<PublicKey, DecodingError> {
+    pub fn from_protobuf_encoding(bytes: &[u8]) -> crate::Result<PublicKey> {
         use prost::Message;
 
         let pubkey = keys_proto::PublicKey::decode(bytes)
-            .map_err(|e| DecodingError::bad_protobuf("public key bytes", e))?;
+            .map_err(|error| Error::Other(format!("Invalid Protobuf: {error:?}")))?;
 
         pubkey.try_into()
     }
@@ -93,28 +91,16 @@ impl From<&PublicKey> for keys_proto::PublicKey {
 }
 
 impl TryFrom<keys_proto::PublicKey> for PublicKey {
-    type Error = DecodingError;
+    type Error = Error;
 
     fn try_from(pubkey: keys_proto::PublicKey) -> Result<Self, Self::Error> {
         let key_type = keys_proto::KeyType::from_i32(pubkey.r#type)
-            .ok_or_else(|| DecodingError::unknown_key_type(pubkey.r#type))?;
+            .ok_or_else(|| Error::Other(format!("Unknown key type: {}", pubkey.r#type)))?;
 
         match key_type {
             keys_proto::KeyType::Ed25519 =>
-                ed25519::PublicKey::decode(&pubkey.data).map(PublicKey::Ed25519),
-            key_type => {
-                tracing::error!(target: LOG_TARGET, ?key_type, "unsupported key type");
-                todo!();
-            }
+                Ok(ed25519::PublicKey::decode(&pubkey.data).map(PublicKey::Ed25519)?),
+            _ => unimplemented!("unsupported key type"),
         }
     }
 }
-
-// /// Identifier of a peer of the network.
-// ///
-// /// The data is a CIDv0 compatible multihash of the protobuf encoded public key of the peer
-// /// as specified in [specs/peer-ids](https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md).
-// #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-// pub struct PeerId {
-//     multihash: Multihash,
-// }

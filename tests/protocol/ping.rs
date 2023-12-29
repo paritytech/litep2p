@@ -32,7 +32,8 @@ async fn ping_supported() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (ping_config1, mut ping_event_stream1) = PingConfigBuilder::new().build();
+    let (ping_config1, mut ping_event_stream1) =
+        PingConfigBuilder::new().with_max_failure(3usize).build();
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
@@ -52,8 +53,8 @@ async fn ping_supported() {
         .with_libp2p_ping(ping_config2)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
     let address = litep2p2.listen_addresses().next().unwrap().clone();
 
     litep2p1.dial_address(address).await.unwrap();
@@ -65,16 +66,18 @@ async fn ping_supported() {
         tokio::select! {
             _event = litep2p1.next_event() => {}
             _event = litep2p2.next_event() => {}
-            _event = ping_event_stream1.next() => {
-                litep2p1_done = true;
+            event = ping_event_stream1.next() => {
+                tracing::trace!("ping event for litep2p1: {event:?}");
 
+                litep2p1_done = true;
                 if litep2p1_done && litep2p2_done {
                     break
                 }
             }
-            _event = ping_event_stream2.next() => {
-                litep2p2_done = true;
+            event = ping_event_stream2.next() => {
+                tracing::trace!("ping event for litep2p2: {event:?}");
 
+                litep2p2_done = true;
                 if litep2p1_done && litep2p2_done {
                     break
                 }
@@ -94,6 +97,7 @@ async fn ping_supported_quic() {
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config1)
         .build();
@@ -103,12 +107,13 @@ async fn ping_supported_quic() {
         .with_keypair(Keypair::generate())
         .with_quic(QuicTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config2)
         .build();
 
-    let mut litep2p1 = Litep2p::new(config1).await.unwrap();
-    let mut litep2p2 = Litep2p::new(config2).await.unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
     let address = litep2p2.listen_addresses().next().unwrap().clone();
 
     litep2p1.dial_address(address).await.unwrap();
