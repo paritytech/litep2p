@@ -92,6 +92,7 @@ async fn make_default_litep2p(transport: Transport) -> (Litep2p, NotificationHan
         false,
         64,
         64,
+        true,
     );
     let config = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -159,6 +160,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -179,6 +181,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -324,6 +327,7 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -344,6 +348,7 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -447,6 +452,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -467,6 +473,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -619,6 +626,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -639,6 +647,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -848,6 +857,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -868,6 +878,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1062,6 +1073,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1082,6 +1094,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1237,6 +1250,7 @@ async fn both_nodes_open_substream_one_rejects_substreams(
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1257,6 +1271,7 @@ async fn both_nodes_open_substream_one_rejects_substreams(
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1361,6 +1376,7 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1422,6 +1438,7 @@ async fn send_async_notification_to_non_existent_peer(transport1: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1486,6 +1503,7 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1555,6 +1573,7 @@ async fn try_to_disconnect_non_existent_peer(transport1: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1632,6 +1651,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1652,6 +1672,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1786,6 +1807,7 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -1806,6 +1828,7 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2287,6 +2310,7 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         true,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2307,6 +2331,7 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2441,6 +2466,7 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2461,6 +2487,7 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2620,6 +2647,7 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         false,
         64,
         64,
+        true,
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -2640,6 +2668,7 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         false,
         64,
         64,
+        true,
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -3470,7 +3499,6 @@ async fn auto_accept_inbound(transport1: Transport, transport2: Transport) {
         }
     );
 }
-
 #[tokio::test]
 async fn dial_failure_tcp() {
     dial_failure(
@@ -3567,6 +3595,117 @@ async fn dial_failure(transport1: Transport, transport2: Transport) {
     let known_address = known_address.with(Protocol::P2p(Multihash::from(peer2)));
 
     litep2p1.add_known_address(peer2, vec![known_address].into_iter());
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer2,
+            error: NotificationError::DialFailure,
+        }
+    );
+
+    futures::future::poll_fn(|cx| match handle2.poll_next_unpin(cx) {
+        Poll::Pending => Poll::Ready(()),
+        _ => panic!("invalid event"),
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn dialing_disabled_tcp() {
+    dialing_disabled(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn dialing_disabled_quic() {
+    dialing_disabled(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dialing_disabled_websocket() {
+    dialing_disabled(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn dialing_disabled(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .with_auto_accept_inbound(true)
+        .with_sync_channel_size(1024usize)
+        .with_async_channel_size(1024usize)
+        .with_dialing_enabled(false)
+        .build();
+    let (notif_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/2"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![7, 7, 7, 7])
+        .with_dialing_enabled(false)
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1)
+        .with_notification_protocol(notif_config2);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (notif_config3, _handle3) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .with_auto_accept_inbound(true)
+        .with_sync_channel_size(1024usize)
+        .with_async_channel_size(1024usize)
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config3);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    let peer2 = *litep2p2.local_peer_id();
+    let listen_address = litep2p2.listen_addresses().next().unwrap().clone();
+
+    litep2p1.add_known_address(peer2, vec![listen_address].into_iter());
 
     tokio::spawn(async move {
         loop {

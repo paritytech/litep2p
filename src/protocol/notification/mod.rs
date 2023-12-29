@@ -243,6 +243,9 @@ pub(crate) struct NotificationProtocol {
 
     /// Timers for pending outbound substreams.
     timers: FuturesUnordered<BoxFuture<'static, PeerId>>,
+
+    /// Should `NotificationProtocol` attempt to dial the peer.
+    should_dial: bool,
 }
 
 impl NotificationProtocol {
@@ -270,6 +273,7 @@ impl NotificationProtocol {
             negotiation: HandshakeService::new(config.handshake),
             sync_channel_size: config.sync_channel_size,
             async_channel_size: config.async_channel_size,
+            should_dial: config.should_dial,
         }
     }
 
@@ -711,6 +715,20 @@ impl NotificationProtocol {
         tracing::trace!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "open substream");
 
         let Some(context) = self.peers.get_mut(&peer) else {
+            if !self.should_dial {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    "connection to peer not open and dialing disabled",
+                );
+
+                self.event_handle
+                    .report_notification_stream_open_failure(peer, NotificationError::DialFailure)
+                    .await;
+                return Ok(());
+            }
+
             match self.service.dial(&peer).await {
                 Err(error) => {
                     tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, ?error, "failed to dial peer");

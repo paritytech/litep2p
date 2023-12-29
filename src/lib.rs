@@ -477,6 +477,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (config2, _service2) = NotificationConfig::new(
             ProtocolName::from("/notificaton/2"),
@@ -486,6 +487,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
@@ -514,6 +516,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (config2, _service2) = NotificationConfig::new(
             ProtocolName::from("/notificaton/2"),
@@ -523,6 +526,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
@@ -549,6 +553,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (config2, _service2) = NotificationConfig::new(
             ProtocolName::from("/notificaton/2"),
@@ -558,6 +563,7 @@ mod tests {
             false,
             64,
             64,
+            true,
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 

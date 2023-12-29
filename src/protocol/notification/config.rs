@@ -71,6 +71,10 @@ pub struct Config {
 
     /// Asynchronous channel size.
     pub(crate) async_channel_size: usize,
+
+    /// Should `NotificationProtocol` dial the peer if there is no connection to them
+    /// when an outbound substream is requested.
+    pub(crate) should_dial: bool,
 }
 
 impl Config {
@@ -83,6 +87,7 @@ impl Config {
         auto_accept: bool,
         sync_channel_size: usize,
         async_channel_size: usize,
+        should_dial: bool,
     ) -> (Self, NotificationHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (notif_tx, notif_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -102,6 +107,7 @@ impl Config {
                 event_tx,
                 notif_tx,
                 command_rx,
+                should_dial,
                 sync_channel_size,
                 async_channel_size,
             },
@@ -135,6 +141,10 @@ pub struct ConfigBuilder {
     /// Handshake bytes.
     handshake: Option<Vec<u8>>,
 
+    /// Should `NotificationProtocol` dial the peer if an outbound substream is requested but there
+    /// is no connection to the peer.
+    should_dial: bool,
+
     /// Fallback names.
     fallback_names: Vec<ProtocolName>,
 
@@ -159,6 +169,7 @@ impl ConfigBuilder {
             auto_accept_inbound_for_initiated: false,
             sync_channel_size: SYNC_CHANNEL_SIZE,
             async_channel_size: ASYNC_CHANNEL_SIZE,
+            should_dial: true,
         }
     }
 
@@ -221,6 +232,15 @@ impl ConfigBuilder {
         self
     }
 
+    /// Should `NotificationProtocol` attempt to dial the peer if an outbound substream is opened
+    /// but no connection to the peer exist.
+    ///
+    /// Dialing is enabled by default.
+    pub fn with_dialing_enabled(mut self, should_dial: bool) -> Self {
+        self.should_dial = should_dial;
+        self
+    }
+
     /// Build notification configuration.
     pub fn build(mut self) -> (Config, NotificationHandle) {
         Config::new(
@@ -231,6 +251,7 @@ impl ConfigBuilder {
             self.auto_accept_inbound_for_initiated,
             self.sync_channel_size,
             self.async_channel_size,
+            self.should_dial,
         )
     }
 }

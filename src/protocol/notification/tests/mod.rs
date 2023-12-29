@@ -71,6 +71,7 @@ fn make_notification_protocol() -> (
         false,
         64,
         64,
+        true,
     );
 
     (

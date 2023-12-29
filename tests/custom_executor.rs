@@ -105,6 +105,7 @@ async fn custom_executor() {
         false,
         64,
         64,
+        true,
     );
     let (req_resp_config1, mut req_resp_handle1) =
         RequestResponseConfigBuilder::new(ProtocolName::from("/protocol/1"))
@@ -131,6 +132,7 @@ async fn custom_executor() {
         false,
         64,
         64,
+        true,
     );
     let (req_resp_config2, mut req_resp_handle2) =
         RequestResponseConfigBuilder::new(ProtocolName::from("/protocol/1"))
