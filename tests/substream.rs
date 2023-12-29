@@ -236,8 +236,8 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
 }
 
 #[tokio::test]
-async fn too_big_identity_payload_tcp() {
-    too_big_identity_payload(
+async fn too_big_identity_payload_framed_tcp() {
+    too_big_identity_payload_framed(
         Transport::Tcp(Default::default()),
         Transport::Tcp(Default::default()),
     )
@@ -245,8 +245,8 @@ async fn too_big_identity_payload_tcp() {
 }
 
 #[tokio::test]
-async fn too_big_identity_payload_quic() {
-    too_big_identity_payload(
+async fn too_big_identity_payload_framed_quic() {
+    too_big_identity_payload_framed(
         Transport::Quic(Default::default()),
         Transport::Quic(Default::default()),
     )
@@ -254,15 +254,16 @@ async fn too_big_identity_payload_quic() {
 }
 
 #[tokio::test]
-async fn too_big_identity_payload_websocket() {
-    too_big_identity_payload(
+async fn too_big_identity_payload_framed_websocket() {
+    too_big_identity_payload_framed(
         Transport::WebSocket(Default::default()),
         Transport::WebSocket(Default::default()),
     )
     .await;
 }
 
-async fn too_big_identity_payload(transport1: Transport, transport2: Transport) {
+// send too big payload using `Substream::send_framed()` and verify it's rejected
+async fn too_big_identity_payload_framed(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -301,27 +302,91 @@ async fn too_big_identity_payload(transport1: Transport, transport2: Transport) 
     });
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
-    // send too big payload using `Substream::send_framed()`
-    {
-        // open substream to peer
-        let (tx, rx) = oneshot::channel();
-        tx1.send(Command::OpenSubstream(peer2, tx)).await.unwrap();
+    // open substream to peer
+    let (tx, rx) = oneshot::channel();
+    tx1.send(Command::OpenSubstream(peer2, tx)).await.unwrap();
 
-        let Ok(()) = rx.await else {
-            panic!("failed to open substream");
-        };
+    let Ok(()) = rx.await else {
+        panic!("failed to open substream");
+    };
 
-        // send too large paylod to peer
-        let (tx, rx) = oneshot::channel();
-        tx1.send(Command::SendPayloadFramed(peer2, vec![0u8; 16], tx)).await.unwrap();
+    // send too large paylod to peer
+    let (tx, rx) = oneshot::channel();
+    tx1.send(Command::SendPayloadFramed(peer2, vec![0u8; 16], tx)).await.unwrap();
 
-        match rx.await {
-            Ok(Err(Error::IoError(ErrorKind::PermissionDenied))) => {}
-            event => panic!("invalid event received: {event:?}"),
-        }
+    match rx.await {
+        Ok(Err(Error::IoError(ErrorKind::PermissionDenied))) => {}
+        event => panic!("invalid event received: {event:?}"),
     }
+}
 
-    // send too big payload using `<Substream as Sink>::send()`
+#[tokio::test]
+async fn too_big_identity_payload_sink_tcp() {
+    too_big_identity_payload_sink(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn too_big_identity_payload_sink_quic() {
+    too_big_identity_payload_sink(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn too_big_identity_payload_sink_websocket() {
+    too_big_identity_payload_sink(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+// send too big payload using `<Substream as Sink>::send()` and verify it's rejected
+async fn too_big_identity_payload_sink(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
+    let config1 = match transport1 {
+        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+    }
+    .with_user_protocol(Box::new(custom_protocol1))
+    .build();
+
+    let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
+    let config2 = match transport2 {
+        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+    }
+    .with_user_protocol(Box::new(custom_protocol2))
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // connect peers and start event loops for litep2ps
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _event = litep2p1.next_event() => {}
+                _event = litep2p2.next_event() => {}
+            }
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
     {
         // open substream to peer
         let (tx, rx) = oneshot::channel();
@@ -340,44 +405,174 @@ async fn too_big_identity_payload(transport1: Transport, transport2: Transport) 
             event => panic!("invalid event received: {event:?}"),
         }
     }
+}
 
-    // send correctly-sized payload using `<Substream as Sink>::send()`
-    {
-        // open substream to peer
-        let (tx, rx) = oneshot::channel();
-        tx1.send(Command::OpenSubstream(peer2, tx)).await.unwrap();
+#[tokio::test]
+async fn correct_payload_size_sink_tcp() {
+    correct_payload_size_sink(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
+}
 
-        let Ok(()) = rx.await else {
-            panic!("failed to open substream");
-        };
+#[tokio::test]
+async fn correct_payload_size_sink_quic() {
+    correct_payload_size_sink(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
 
-        let (tx, rx) = oneshot::channel();
-        tx1.send(Command::SendPayloadSink(peer2, vec![0u8; 10], tx)).await.unwrap();
+#[tokio::test]
+async fn correct_payload_size_sink_websocket() {
+    correct_payload_size_sink(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
 
-        match rx.await {
-            Ok(_) => {}
-            event => panic!("invalid event received: {event:?}"),
-        }
+// send correctly-sized payload using `<Substream as Sink>::send()`
+async fn correct_payload_size_sink(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
+    let config1 = match transport1 {
+        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
     }
+    .with_user_protocol(Box::new(custom_protocol1))
+    .build();
 
-    // send correctly-sized payload using `<Substream as AsyncRead>::poll_write()`
-    {
-        // open substream to peer
-        let (tx, rx) = oneshot::channel();
-        tx1.send(Command::OpenSubstream(peer2, tx)).await.unwrap();
+    let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
+    let config2 = match transport2 {
+        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+    }
+    .with_user_protocol(Box::new(custom_protocol2))
+    .build();
 
-        let Ok(()) = rx.await else {
-            panic!("failed to open substream");
-        };
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer2 = *litep2p2.local_peer_id();
 
-        let (tx, rx) = oneshot::channel();
-        tx1.send(Command::SendPayloadAsyncWrite(peer2, vec![0u8; 10], tx))
-            .await
-            .unwrap();
-
-        match rx.await {
-            Ok(_) => {}
-            event => panic!("invalid event received: {event:?}"),
+    // connect peers and start event loops for litep2ps
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _event = litep2p1.next_event() => {}
+                _event = litep2p2.next_event() => {}
+            }
         }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    // open substream to peer
+    let (tx, rx) = oneshot::channel();
+    tx1.send(Command::OpenSubstream(peer2, tx)).await.unwrap();
+
+    let Ok(()) = rx.await else {
+        panic!("failed to open substream");
+    };
+
+    let (tx, rx) = oneshot::channel();
+    tx1.send(Command::SendPayloadSink(peer2, vec![0u8; 10], tx)).await.unwrap();
+
+    match rx.await {
+        Ok(_) => {}
+        event => panic!("invalid event received: {event:?}"),
+    }
+}
+
+#[tokio::test]
+async fn correct_payload_size_async_write_tcp() {
+    correct_payload_size_async_write(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn correct_payload_size_async_write_quic() {
+    correct_payload_size_async_write(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn correct_payload_size_async_write_websocket() {
+    correct_payload_size_async_write(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+// send correctly-sized payload using `<Substream as AsyncRead>::poll_write()`
+async fn correct_payload_size_async_write(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
+    let config1 = match transport1 {
+        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+    }
+    .with_user_protocol(Box::new(custom_protocol1))
+    .build();
+
+    let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
+    let config2 = match transport2 {
+        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+    }
+    .with_user_protocol(Box::new(custom_protocol2))
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // connect peers and start event loops for litep2ps
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _event = litep2p1.next_event() => {}
+                _event = litep2p2.next_event() => {}
+            }
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    // open substream to peer
+    let (tx, rx) = oneshot::channel();
+    tx1.send(Command::OpenSubstream(peer2, tx)).await.unwrap();
+
+    let Ok(()) = rx.await else {
+        panic!("failed to open substream");
+    };
+
+    let (tx, rx) = oneshot::channel();
+    tx1.send(Command::SendPayloadAsyncWrite(peer2, vec![0u8; 10], tx))
+        .await
+        .unwrap();
+
+    match rx.await {
+        Ok(_) => {}
+        event => panic!("invalid event received: {event:?}"),
     }
 }
