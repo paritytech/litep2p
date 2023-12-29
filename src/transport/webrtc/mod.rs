@@ -290,7 +290,7 @@ impl TransportBuilder for WebRtcTransport {
     type Transport = WebRtcTransport;
 
     /// Create new [`Transport`] object.
-    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
+    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
     {
@@ -324,28 +324,30 @@ impl TransportBuilder for WebRtcTransport {
         let listen_address = socket.local_addr()?;
         let dtls_cert = DtlsCert::new();
 
-        Ok(Self {
-            context,
-            dtls_cert,
-            listen_address,
-            peers: HashMap::new(),
-            socket: Arc::new(socket),
-        })
-    }
+        let listen_multi_addresses = {
+            let fingerprint = dtls_cert.fingerprint().bytes;
 
-    /// Get assigned listen address.
-    fn listen_address(&self) -> Vec<Multiaddr> {
-        let fingerprint = self.dtls_cert.fingerprint().bytes;
+            const MULTIHASH_SHA256_CODE: u64 = 0x12;
+            let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
+                .expect("fingerprint's len to be 32 bytes");
 
-        const MULTIHASH_SHA256_CODE: u64 = 0x12;
-        let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
-            .expect("fingerprint's len to be 32 bytes");
+            vec![Multiaddr::empty()
+                .with(Protocol::from(listen_address.ip()))
+                .with(Protocol::Udp(listen_address.port()))
+                .with(Protocol::WebRTC)
+                .with(Protocol::Certhash(certificate))]
+        };
 
-        vec![Multiaddr::empty()
-            .with(Protocol::from(self.listen_address.ip()))
-            .with(Protocol::Udp(self.listen_address.port()))
-            .with(Protocol::WebRTC)
-            .with(Protocol::Certhash(certificate))]
+        Ok((
+            Self {
+                context,
+                dtls_cert,
+                listen_address,
+                peers: HashMap::new(),
+                socket: Arc::new(socket),
+            },
+            listen_multi_addresses,
+        ))
     }
 }
 

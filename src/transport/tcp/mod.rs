@@ -128,29 +128,34 @@ impl TransportBuilder for TcpTransport {
     type Transport = TcpTransport;
 
     /// Create new [`TcpTransport`].
-    fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self> {
+    fn new(
+        context: TransportHandle,
+        mut config: Self::Config,
+    ) -> crate::Result<(Self, Vec<Multiaddr>)> {
         tracing::info!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,
             "start tcp transport",
         );
 
-        Ok(Self {
-            listener: TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new())),
-            config,
-            context,
-            canceled: HashSet::new(),
-            opened_raw: HashMap::new(),
-            pending_open: HashMap::new(),
-            pending_dials: HashMap::new(),
-            pending_connections: FuturesUnordered::new(),
-            pending_raw_connections: FuturesUnordered::new(),
-        })
-    }
+        // start tcp listeners for all listen addresses
+        let (listener, listen_addresses) =
+            TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new()));
 
-    /// Get assigned listen address.
-    fn listen_address(&self) -> Vec<Multiaddr> {
-        self.listener.listen_addresses().cloned().collect()
+        Ok((
+            Self {
+                listener,
+                config,
+                context,
+                canceled: HashSet::new(),
+                opened_raw: HashMap::new(),
+                pending_open: HashMap::new(),
+                pending_dials: HashMap::new(),
+                pending_connections: FuturesUnordered::new(),
+                pending_raw_connections: FuturesUnordered::new(),
+            },
+            listen_addresses,
+        ))
     }
 }
 
@@ -447,8 +452,9 @@ mod tests {
             ..Default::default()
         };
 
-        let mut transport1 = TcpTransport::new(handle1, transport_config1).unwrap();
-        let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
+        let (mut transport1, listen_addresses) =
+            TcpTransport::new(handle1, transport_config1).unwrap();
+        let listen_address = listen_addresses[0].clone();
 
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
@@ -477,7 +483,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut transport2 = TcpTransport::new(handle2, transport_config2).unwrap();
+        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2).unwrap();
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
         let (res1, res2) = tokio::join!(transport1.next(), transport2.next());
@@ -521,7 +527,7 @@ mod tests {
                 },
             )]),
         };
-        let mut transport1 = TcpTransport::new(handle1, Default::default()).unwrap();
+        let (mut transport1, _) = TcpTransport::new(handle1, Default::default()).unwrap();
 
         tokio::spawn(async move {
             while let Some(event) = transport1.next().await {
@@ -558,7 +564,7 @@ mod tests {
             )]),
         };
 
-        let mut transport2 = TcpTransport::new(handle2, Default::default()).unwrap();
+        let (mut transport2, _) = TcpTransport::new(handle2, Default::default()).unwrap();
 
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
@@ -602,7 +608,7 @@ mod tests {
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport::new()),
         );
-        let mut transport = TcpTransport::new(
+        let (mut transport, _) = TcpTransport::new(
             handle,
             TransportConfig {
                 listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],

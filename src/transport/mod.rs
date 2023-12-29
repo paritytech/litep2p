@@ -155,12 +155,9 @@ pub(crate) trait TransportBuilder {
     type Transport: Transport;
 
     /// Create new [`Transport`] object.
-    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
+    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized;
-
-    /// Get assigned listen address.
-    fn listen_address(&self) -> Vec<Multiaddr>;
 }
 
 pub(crate) trait Transport: Stream + Unpin + Send {

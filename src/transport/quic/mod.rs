@@ -169,7 +169,10 @@ impl TransportBuilder for QuicTransport {
     type Transport = QuicTransport;
 
     /// Create new [`QuicTransport`] object.
-    fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self>
+    fn new(
+        context: TransportHandle,
+        mut config: Self::Config,
+    ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
     {
@@ -179,27 +182,25 @@ impl TransportBuilder for QuicTransport {
             "start quic transport",
         );
 
-        let listener = QuicListener::new(
+        let (listener, listen_addresses) = QuicListener::new(
             &context.keypair,
             std::mem::replace(&mut config.listen_addresses, Vec::new()),
         )?;
 
-        Ok(Self {
-            context,
-            config,
-            listener,
-            canceled: HashSet::new(),
-            opened_raw: HashMap::new(),
-            pending_open: HashMap::new(),
-            pending_dials: HashMap::new(),
-            pending_raw_connections: FuturesUnordered::new(),
-            pending_connections: FuturesUnordered::new(),
-        })
-    }
-
-    /// Get assigned listen address.
-    fn listen_address(&self) -> Vec<Multiaddr> {
-        self.listener.listen_addresses().cloned().collect()
+        Ok((
+            Self {
+                context,
+                config,
+                listener,
+                canceled: HashSet::new(),
+                opened_raw: HashMap::new(),
+                pending_open: HashMap::new(),
+                pending_dials: HashMap::new(),
+                pending_raw_connections: FuturesUnordered::new(),
+                pending_connections: FuturesUnordered::new(),
+            },
+            listen_addresses,
+        ))
     }
 }
 
@@ -514,8 +515,9 @@ mod tests {
             )]),
         };
 
-        let mut transport1 = QuicTransport::new(handle1, Default::default()).unwrap();
-        let listen_address = TransportBuilder::listen_address(&transport1)[0].clone();
+        let (mut transport1, listen_addresses) =
+            QuicTransport::new(handle1, Default::default()).unwrap();
+        let listen_address = listen_addresses[0].clone();
 
         let keypair2 = Keypair::generate();
         let (tx2, _rx2) = channel(64);
@@ -540,7 +542,7 @@ mod tests {
             )]),
         };
 
-        let mut transport2 = QuicTransport::new(handle2, Default::default()).unwrap();
+        let (mut transport2, _) = QuicTransport::new(handle2, Default::default()).unwrap();
         let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
         let _peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
         let listen_address = listen_address.with(Protocol::P2p(

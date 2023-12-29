@@ -41,7 +41,7 @@ const LOG_TARGET: &str = "litep2p::quic::listener";
 /// QUIC listener.
 pub struct QuicListener {
     /// Listen addresses.
-    listen_addresses: Vec<Multiaddr>,
+    _listen_addresses: Vec<SocketAddr>,
 
     /// Listeners.
     listeners: Vec<Endpoint>,
@@ -52,7 +52,10 @@ pub struct QuicListener {
 
 impl QuicListener {
     /// Create new [`QuicListener`].
-    pub fn new(keypair: &Keypair, addresses: Vec<Multiaddr>) -> crate::Result<Self> {
+    pub fn new(
+        keypair: &Keypair,
+        addresses: Vec<Multiaddr>,
+    ) -> crate::Result<(Self, Vec<Multiaddr>)> {
         let mut listeners: Vec<Endpoint> = Vec::new();
         let mut listen_addresses = Vec::new();
 
@@ -63,33 +66,38 @@ impl QuicListener {
             let listener = Endpoint::server(server_config, listen_address).unwrap();
 
             let listen_address = listener.local_addr()?;
-            listen_addresses.push(
-                Multiaddr::empty()
-                    .with(Protocol::from(listen_address.ip()))
-                    .with(Protocol::Udp(listen_address.port()))
-                    .with(Protocol::QuicV1),
-            );
-
+            listen_addresses.push(listen_address);
             listeners.push(listener);
+            // );
         }
 
-        Ok(Self {
-            incoming: listeners
-                .iter_mut()
-                .enumerate()
-                .map(|(i, listener)| {
-                    let inner = listener.clone();
-                    async move { inner.accept().await.map(|connecting| (i, connecting)) }.boxed()
-                })
-                .collect(),
-            listeners,
-            listen_addresses,
-        })
-    }
+        let listen_multi_addresses = listen_addresses
+            .iter()
+            .cloned()
+            .map(|address| {
+                Multiaddr::empty()
+                    .with(Protocol::from(address.ip()))
+                    .with(Protocol::Udp(address.port()))
+                    .with(Protocol::QuicV1)
+            })
+            .collect();
 
-    /// Get listen addresses.
-    pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
-        self.listen_addresses.iter()
+        Ok((
+            Self {
+                incoming: listeners
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(i, listener)| {
+                        let inner = listener.clone();
+                        async move { inner.accept().await.map(|connecting| (i, connecting)) }
+                            .boxed()
+                    })
+                    .collect(),
+                listeners,
+                _listen_addresses: listen_addresses,
+            },
+            listen_multi_addresses,
+        ))
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
@@ -178,7 +186,6 @@ mod tests {
     use crate::crypto::{tls::make_client_config, PublicKey};
 
     use super::*;
-    use futures::StreamExt;
     use quinn::ClientConfig;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -236,7 +243,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_listeners() {
-        let mut listener = QuicListener::new(&Keypair::generate(), Vec::new()).unwrap();
+        let (mut listener, _) = QuicListener::new(&Keypair::generate(), Vec::new()).unwrap();
 
         futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -250,9 +257,10 @@ mod tests {
         let address: Multiaddr = "/ip6/::1/udp/0/quic-v1".parse().unwrap();
         let keypair = Keypair::generate();
         let peer = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
-        let mut listener = QuicListener::new(&keypair, vec![address.clone()]).unwrap();
+        let (mut listener, listen_addresses) =
+            QuicListener::new(&keypair, vec![address.clone()]).unwrap();
         let Some(Protocol::Udp(port)) =
-            listener.listen_addresses().next().unwrap().clone().iter().skip(1).next()
+            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
             panic!("invalid address");
         };
@@ -292,23 +300,17 @@ mod tests {
         let keypair = Keypair::generate();
         let peer = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
 
-        let mut listener = QuicListener::new(&keypair, vec![address1, address2]).unwrap();
+        let (mut listener, listen_addresses) =
+            QuicListener::new(&keypair, vec![address1, address2]).unwrap();
 
         let Some(Protocol::Udp(port1)) =
-            listener.listen_addresses().next().unwrap().clone().iter().skip(1).next()
+            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
             panic!("invalid address");
         };
 
-        let Some(Protocol::Udp(port2)) = listener
-            .listen_addresses()
-            .skip(1)
-            .next()
-            .unwrap()
-            .clone()
-            .iter()
-            .skip(1)
-            .next()
+        let Some(Protocol::Udp(port2)) =
+            listen_addresses.iter().skip(1).next().unwrap().clone().iter().skip(1).next()
         else {
             panic!("invalid address");
         };
@@ -371,7 +373,7 @@ mod tests {
         let keypair = Keypair::generate();
         let peer = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
 
-        let mut listener = QuicListener::new(
+        let (mut listener, listen_addresses) = QuicListener::new(
             &keypair,
             vec![
                 "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
@@ -381,7 +383,7 @@ mod tests {
         .unwrap();
 
         let Some(Protocol::Udp(port)) =
-            listener.listen_addresses().next().unwrap().clone().iter().skip(1).next()
+            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
             panic!("invalid address");
         };

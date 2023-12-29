@@ -3,7 +3,7 @@
 // Permission is hereby granted, free of charge, to any person obtaining a
 // copy of this software and associated documentation files (the "Software"),
 // to deal in the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// the rigts to use, copy, modify, merge, publish, distribute, sublicense,
 // and/or sell copies of the Software, and to permit persons to whom the
 // Software is furnished to do so, subject to the following conditions:
 //
@@ -173,7 +173,10 @@ impl TransportBuilder for WebSocketTransport {
     type Transport = WebSocketTransport;
 
     /// Create new [`Transport`] object.
-    fn new(context: TransportHandle, mut config: Self::Config) -> crate::Result<Self>
+    fn new(
+        context: TransportHandle,
+        mut config: Self::Config,
+    ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
     {
@@ -182,26 +185,23 @@ impl TransportBuilder for WebSocketTransport {
             listen_addresses = ?config.listen_addresses,
             "start websocket transport",
         );
+        let (listener, listen_addresses) =
+            WebSocketListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new()));
 
-        Ok(Self {
-            listener: WebSocketListener::new(std::mem::replace(
-                &mut config.listen_addresses,
-                Vec::new(),
-            )),
-            config,
-            context,
-            canceled: HashSet::new(),
-            opened_raw: HashMap::new(),
-            pending_open: HashMap::new(),
-            pending_dials: HashMap::new(),
-            pending_connections: FuturesUnordered::new(),
-            pending_raw_connections: FuturesUnordered::new(),
-        })
-    }
-
-    /// Get assigned listen address.
-    fn listen_address(&self) -> Vec<Multiaddr> {
-        self.listener.listen_addresses().cloned().collect()
+        Ok((
+            Self {
+                listener,
+                config,
+                context,
+                canceled: HashSet::new(),
+                opened_raw: HashMap::new(),
+                pending_open: HashMap::new(),
+                pending_dials: HashMap::new(),
+                pending_connections: FuturesUnordered::new(),
+                pending_raw_connections: FuturesUnordered::new(),
+            },
+            listen_addresses,
+        ))
     }
 }
 
