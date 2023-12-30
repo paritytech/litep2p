@@ -23,7 +23,7 @@
 //! Run: `RUST_LOG=gossiping=info cargo run --example gossiping`
 
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     protocol::notification::{
         Config as NotificationConfig, ConfigBuilder as NotificationConfigBuilder,
         NotificationEvent, NotificationHandle, ValidationResult,
@@ -208,7 +208,7 @@ fn tx_peer() -> (Litep2p, TransactionProtocol, TransactionProtocolHandle) {
     let (tx, tx_announce_config, tx_handle) = TransactionProtocol::new();
 
     // build `Litep2pConfig`
-    let config = Litep2pConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .with_tcp(Default::default())
         .with_notification_protocol(tx_announce_config)
         .build();

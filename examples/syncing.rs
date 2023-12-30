@@ -22,7 +22,7 @@
 //! to implement, e.g, a syncing protocol using notification and request-response protocols
 
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     protocol::{
         notification::{
             Config as NotificationConfig, ConfigBuilder as NotificationConfigBuilder,
@@ -117,7 +117,7 @@ async fn main() {
         SyncingEngine::new();
 
     // build `Litep2pConfig`
-    let config = Litep2pConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .with_quic(QuicTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
             ..Default::default()

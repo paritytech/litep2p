@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder as Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     error::Error,
     protocol::notification::{

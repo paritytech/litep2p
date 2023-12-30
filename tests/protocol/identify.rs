@@ -20,7 +20,7 @@
 
 use futures::{FutureExt, StreamExt};
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::{identify::Config, ping::Config as PingConfig},
     transport::quic::config::TransportConfig as QuicTransportConfig,
@@ -68,7 +68,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
         .try_init();
 
     let (identify_config1, mut identify_event_stream1) = Config::new();
-    let config_builder = Litep2pConfigBuilder::new()
+    let config_builder = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config1);
 
@@ -80,7 +80,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
     .build();
 
     let (identify_config2, mut identify_event_stream2) = Config::new();
-    let config_builder = Litep2pConfigBuilder::new()
+    let config_builder = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config2);
 
@@ -176,16 +176,16 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
 
     let (ping_config, _event_stream) = PingConfig::default();
     let config1 = match transport1 {
-        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_keypair(Keypair::generate())
     .with_libp2p_ping(ping_config)
     .build();
 
     let (identify_config2, mut identify_event_stream2) = Config::new();
-    let config_builder = Litep2pConfigBuilder::new()
+    let config_builder = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config2);
 

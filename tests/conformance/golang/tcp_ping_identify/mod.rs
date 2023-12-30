@@ -20,7 +20,7 @@
 
 use futures::StreamExt;
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::{identify::Config as IdentifyConfig, ping::Config as PingConfig},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
@@ -49,7 +49,7 @@ async fn go_libp2p_dials() {
     let (identify_config, mut identify_event_stream) = IdentifyConfig::new();
 
     let mut litep2p = Litep2p::new(
-        Litep2pConfigBuilder::new()
+        ConfigBuilder::new()
             .with_keypair(keypair)
             .with_tcp(TcpTransportConfig {
                 ..Default::default()

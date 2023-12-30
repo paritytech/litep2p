@@ -62,7 +62,7 @@ impl From<Role> for yamux::Mode {
 }
 
 /// Configuration builder for [`Litep2p`](`crate::Litep2p`).
-pub struct Litep2pConfigBuilder {
+pub struct ConfigBuilder {
     // TCP transport configuration.
     tcp: Option<TcpTransportConfig>,
 
@@ -112,8 +112,8 @@ pub struct Litep2pConfigBuilder {
     max_parallel_dials: usize,
 }
 
-impl Litep2pConfigBuilder {
-    /// Create new empty [`Litep2pConfigBuilder`].
+impl ConfigBuilder {
+    /// Create new empty [`ConfigBuilder`].
     pub fn new() -> Self {
         Self {
             tcp: None,

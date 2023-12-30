@@ -27,7 +27,7 @@ use libp2p::{
     PeerId, Swarm, Transport,
 };
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::ping::{Config as PingConfig, PingEvent},
     transport::quic::config::TransportConfig as QuicTransportConfig,
@@ -45,7 +45,7 @@ fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send + U
     let keypair = Keypair::generate();
     let (ping_config, ping_event_stream) = PingConfig::default();
     let litep2p = Litep2p::new(
-        Litep2pConfigBuilder::new()
+        ConfigBuilder::new()
             .with_keypair(keypair)
             .with_quic(QuicTransportConfig {
                 listen_addresses: vec!["/ip4/127.0.0.1/udp/8888/quic-v1".parse().unwrap()],

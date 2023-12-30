@@ -22,7 +22,7 @@
 //! in which client connects to server and sends a message to server every 3 seconds
 
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     protocol::notification::{
         ConfigBuilder as NotificationConfigBuilder, NotificationEvent, NotificationHandle,
         ValidationResult,
@@ -121,7 +121,7 @@ fn make_litep2p() -> (Litep2p, NotificationHandle) {
     // build `Litep2p` object and return it + notification handle
     (
         Litep2p::new(
-            Litep2pConfigBuilder::new()
+            ConfigBuilder::new()
                 .with_quic(QuicTransportConfig {
                     listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
                     ..Default::default()

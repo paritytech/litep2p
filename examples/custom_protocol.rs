@@ -22,7 +22,7 @@
 
 use litep2p::{
     codec::ProtocolCodec,
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     protocol::{Direction, TransportEvent, TransportService, UserProtocol},
     types::protocol::ProtocolName,
     Litep2p, PeerId,
@@ -196,7 +196,7 @@ fn make_litep2p() -> (Litep2p, CustomProtocolHandle) {
 
     (
         Litep2p::new(
-            Litep2pConfigBuilder::new()
+            ConfigBuilder::new()
                 .with_tcp(Default::default())
                 .with_user_protocol(Box::new(custom_protocol))
                 .build(),

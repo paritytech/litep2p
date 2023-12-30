@@ -20,7 +20,7 @@
 
 use litep2p::{
     codec::ProtocolCodec,
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     protocol::{Direction, TransportEvent, TransportService, UserProtocol},
     substream::{Substream, SubstreamSet},
     transport::quic::config::TransportConfig as QuicTransportConfig,
@@ -268,18 +268,18 @@ async fn too_big_identity_payload_framed(transport1: Transport, transport2: Tran
 
     let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config1 = match transport1 {
-        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol1))
     .build();
 
     let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config2 = match transport2 {
-        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))
     .build();
@@ -353,18 +353,18 @@ async fn too_big_identity_payload_sink(transport1: Transport, transport2: Transp
 
     let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config1 = match transport1 {
-        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol1))
     .build();
 
     let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config2 = match transport2 {
-        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))
     .build();
@@ -440,18 +440,18 @@ async fn correct_payload_size_sink(transport1: Transport, transport2: Transport)
 
     let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config1 = match transport1 {
-        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol1))
     .build();
 
     let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config2 = match transport2 {
-        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))
     .build();
@@ -524,18 +524,18 @@ async fn correct_payload_size_async_write(transport1: Transport, transport2: Tra
 
     let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config1 = match transport1 {
-        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol1))
     .build();
 
     let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config2 = match transport2 {
-        Transport::Tcp(config) => Litep2pConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => Litep2pConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => Litep2pConfigBuilder::new().with_websocket(config),
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))
     .build();

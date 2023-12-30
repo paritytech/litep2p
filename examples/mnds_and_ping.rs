@@ -22,7 +22,7 @@
 //! calculating their PING time.
 
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     protocol::{
         libp2p::ping::{Config as PingConfig, PingEvent},
         mdns::{Config as MdnsConfig, MdnsEvent},
@@ -69,7 +69,7 @@ fn make_litep2p() -> (
     let (mdns_config, mdns_event_stream) = MdnsConfig::new(Duration::from_secs(30));
 
     // build `Litep2p`, passing in configurations for IPFS and mDNS
-    let litep2p_config = Litep2pConfigBuilder::new()
+    let litep2p_config = ConfigBuilder::new()
         // `litep2p` will bind to `/ip6/::1/tcp/0` by default
         .with_tcp(Default::default())
         .with_libp2p_ping(ping_config)

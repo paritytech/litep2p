@@ -28,7 +28,7 @@
 ```rust
 use futures::StreamExt;
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     protocol::{libp2p::ping, request_response::ConfigBuilder},
     transport::{
         quic::config::TransportConfig as QuicTransportConfig,
@@ -49,7 +49,7 @@ async fn main() {
         ConfigBuilder::new(ProtocolName::from("/request/1")).with_max_size(1024).build();
 
     // build `Litep2pConfig` object
-    let config = Litep2pConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .with_tcp(TcpTransportConfig {
             listen_addresses: vec![
                 "/ip6/::1/tcp/0".parse().expect("valid address"),

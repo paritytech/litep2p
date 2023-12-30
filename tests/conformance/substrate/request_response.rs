@@ -25,7 +25,7 @@ use libp2p::{
     PeerId, Swarm,
 };
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     protocol::request_response::{
         RequestResponseConfig, RequestResponseError, RequestResponseEvent, RequestResponseHandle,
     },
@@ -79,7 +79,7 @@ async fn initialize_litep2p() -> (Litep2p, RequestResponseHandle) {
     );
 
     let litep2p = Litep2p::new(
-        Litep2pConfigBuilder::new()
+        ConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
                 yamux_config: Default::default(),

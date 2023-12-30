@@ -28,7 +28,7 @@
 //! This example doesn't really do anything, apart from showing how the custom executor can be used.
 
 use litep2p::{
-    config::Litep2pConfigBuilder, executor::Executor,
+    config::ConfigBuilder, executor::Executor,
     protocol::notification::ConfigBuilder as NotificationConfigBuilder,
     transport::tcp::config::TransportConfig as TcpTransportConfig, types::protocol::ProtocolName,
     Litep2p,
@@ -101,7 +101,7 @@ async fn main() {
             .build();
 
     let mut litep2p = Litep2p::new(
-        Litep2pConfigBuilder::new()
+        ConfigBuilder::new()
             .with_notification_protocol(notif_config)
             .with_executor(Arc::new(TaskExecutorHandle { tx: sender.clone() }))
             .with_tcp(TcpTransportConfig {

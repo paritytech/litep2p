@@ -19,7 +19,7 @@
 // // DEALINGS IN THE SOFTWARE.
 
 // use litep2p::{
-//     config::Litep2pConfigBuilder,
+//     config::ConfigBuilder,
 //     protocol::request_response::types::{Config as RequestResponseConfig, RequestResponseHandle},
 //     transport::websocket::config::Config as WebSocketConfig,
 //     Litep2p,
@@ -32,7 +32,7 @@
 //     );
 
 //     let litep2p = Litep2p::new(
-//         Litep2pConfigBuilder::new()
+//         ConfigBuilder::new()
 //             .with_websocket(WebSocketConfig {
 //                 listen_address: "/ip4/127.0.0.1/tcp/8888/ws".parse().unwrap(),
 //             })

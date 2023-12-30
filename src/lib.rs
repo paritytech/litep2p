@@ -454,7 +454,7 @@ impl Litep2p {
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::Litep2pConfigBuilder,
+        config::ConfigBuilder,
         protocol::{libp2p::ping, notification::Config as NotificationConfig},
         types::protocol::ProtocolName,
         Litep2p, Litep2pEvent, PeerId,
@@ -491,7 +491,7 @@ mod tests {
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
-        let config = Litep2pConfigBuilder::new()
+        let config = ConfigBuilder::new()
             .with_tcp(Default::default())
             .with_quic(Default::default())
             .with_notification_protocol(config1)
@@ -530,7 +530,7 @@ mod tests {
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
-        let config = Litep2pConfigBuilder::new()
+        let config = ConfigBuilder::new()
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)
@@ -567,7 +567,7 @@ mod tests {
         );
         let (ping_config, _ping_event_stream) = ping::Config::default();
 
-        let config = Litep2pConfigBuilder::new()
+        let config = ConfigBuilder::new()
             .with_tcp(Default::default())
             .with_quic(Default::default())
             .with_notification_protocol(config1)

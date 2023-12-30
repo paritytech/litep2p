@@ -20,7 +20,7 @@
 
 use litep2p::{
     codec::ProtocolCodec,
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::{mdns::Config as MdnsConfig, TransportEvent, TransportService, UserProtocol},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
@@ -88,7 +88,7 @@ async fn user_protocol() {
     let custom_protocol1 = Box::new(CustomProtocol::new());
     let (mdns_config, _stream) = MdnsConfig::new(Duration::from_secs(30));
 
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             ..Default::default()
@@ -102,7 +102,7 @@ async fn user_protocol() {
     let listen_address = litep2p1.listen_addresses().next().unwrap().clone();
 
     let custom_protocol2 = Box::new(CustomProtocol::new());
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             ..Default::default()

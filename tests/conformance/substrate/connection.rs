@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::notification::{handle::NotificationHandle, types::Config as NotificationConfig},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
@@ -88,7 +88,7 @@ async fn initialize_litep2p() -> (Litep2p, NotificationHandle) {
         vec![1, 3, 3, 8],
         Vec::new(),
     );
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),

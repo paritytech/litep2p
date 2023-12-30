@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     protocol::libp2p::ping::{Config as PingConfig, PingEvent},
@@ -90,7 +90,7 @@ async fn two_litep2ps_work(transport1: Transport, transport2: Transport) {
         .try_init();
 
     let (ping_config1, _ping_event_stream1) = PingConfig::default();
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config1);
 
@@ -102,7 +102,7 @@ async fn two_litep2ps_work(transport1: Transport, transport2: Transport) {
     .build();
 
     let (ping_config2, _ping_event_stream2) = PingConfig::default();
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config2);
 
@@ -193,7 +193,7 @@ async fn dial_failure(transport1: Transport, transport2: Transport, dial_address
         .try_init();
 
     let (ping_config1, _ping_event_stream1) = PingConfig::default();
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config1);
 
@@ -205,7 +205,7 @@ async fn dial_failure(transport1: Transport, transport2: Transport, dial_address
     .build();
 
     let (ping_config2, _ping_event_stream2) = PingConfig::default();
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config2);
 
@@ -246,7 +246,7 @@ async fn connect_over_dns() {
     let keypair1 = Keypair::generate();
     let (ping_config1, _ping_event_stream1) = PingConfig::default();
 
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(keypair1)
         .with_tcp(TcpTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
@@ -258,7 +258,7 @@ async fn connect_over_dns() {
     let keypair2 = Keypair::generate();
     let (ping_config2, _ping_event_stream2) = PingConfig::default();
 
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(keypair2)
         .with_tcp(TcpTransportConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
@@ -361,7 +361,7 @@ async fn connection_timeout(transport: Transport, address: Multiaddr) {
         .try_init();
 
     let (ping_config, _ping_event_stream) = PingConfig::default();
-    let litep2p_config = Litep2pConfigBuilder::new()
+    let litep2p_config = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config);
 
@@ -396,7 +396,7 @@ async fn dial_quic_peer_id_missing() {
         .try_init();
 
     let (ping_config, _ping_event_stream) = PingConfig::default();
-    let config = Litep2pConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config)
@@ -447,7 +447,7 @@ async fn dial_self(transport: Transport) {
         .try_init();
 
     let (ping_config, _ping_event_stream) = PingConfig::default();
-    let litep2p_config = Litep2pConfigBuilder::new()
+    let litep2p_config = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config);
 
@@ -475,7 +475,7 @@ async fn attempt_to_dial_using_unsupported_transport() {
         .try_init();
 
     let (ping_config, _ping_event_stream) = PingConfig::default();
-    let config = Litep2pConfigBuilder::new()
+    let config = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config)
@@ -540,7 +540,7 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
         .try_init();
 
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config1);
 
@@ -553,7 +553,7 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config2);
 
@@ -603,7 +603,7 @@ async fn simultaneous_dial_tcp() {
         .try_init();
 
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -614,7 +614,7 @@ async fn simultaneous_dial_tcp() {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -661,7 +661,7 @@ async fn simultaneous_dial_quic() {
         .try_init();
 
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config1)
@@ -669,7 +669,7 @@ async fn simultaneous_dial_quic() {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config2)
@@ -713,7 +713,7 @@ async fn simultaneous_dial_ipv6_quic() {
         .try_init();
 
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config1)
@@ -721,7 +721,7 @@ async fn simultaneous_dial_ipv6_quic() {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_quic(Default::default())
         .with_libp2p_ping(ping_config2)
@@ -765,7 +765,7 @@ async fn websocket_over_ipv6() {
         .try_init();
 
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_websocket(WebSocketTransportConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0/ws".parse().unwrap()],
@@ -776,7 +776,7 @@ async fn websocket_over_ipv6() {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_websocket(WebSocketTransportConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0/ws".parse().unwrap()],
@@ -817,7 +817,7 @@ async fn tcp_dns_resolution() {
         .try_init();
 
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -828,7 +828,7 @@ async fn tcp_dns_resolution() {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpTransportConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -878,7 +878,7 @@ async fn websocket_dns_resolution() {
         .try_init();
 
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_websocket(WebSocketTransportConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0/ws".parse().unwrap()],
@@ -889,7 +889,7 @@ async fn websocket_dns_resolution() {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_websocket(WebSocketTransportConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0/ws".parse().unwrap()],
@@ -1003,7 +1003,7 @@ async fn make_dummy_litep2p(
     transport: Transport,
 ) -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
     let (ping_config, ping_event_stream) = PingConfig::default();
-    let litep2p_config = Litep2pConfigBuilder::new()
+    let litep2p_config = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config);
 
@@ -1069,7 +1069,7 @@ async fn port_in_use_tcp() {
     let address = listener.local_addr().unwrap();
 
     let _litep2p = Litep2p::new(
-        Litep2pConfigBuilder::new()
+        ConfigBuilder::new()
             .with_tcp(TcpTransportConfig {
                 listen_addresses: vec![Multiaddr::empty()
                     .with(Protocol::from(address.ip()))
@@ -1091,7 +1091,7 @@ async fn port_in_use_websocket() {
     let address = listener.local_addr().unwrap();
 
     let _litep2p = Litep2p::new(
-        Litep2pConfigBuilder::new()
+        ConfigBuilder::new()
             .with_websocket(WebSocketTransportConfig {
                 listen_addresses: vec![Multiaddr::empty()
                     .with(Protocol::from(address.ip()))

@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder as Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::request_response::{
         Config as RequestResponseConfig, ConfigBuilder, DialOptions, RequestResponseError,

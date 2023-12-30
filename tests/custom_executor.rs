@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     crypto::ed25519::Keypair,
     executor::Executor,
     protocol::{
@@ -113,7 +113,7 @@ async fn custom_executor() {
             .build();
 
     let handle = TaskExecutorHandle { tx: sender.clone() };
-    let config1 = Litep2pConfigBuilder::new()
+    let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1)
         .with_request_response_protocol(req_resp_config1)
@@ -140,7 +140,7 @@ async fn custom_executor() {
             .build();
 
     let handle = TaskExecutorHandle { tx: sender };
-    let config2 = Litep2pConfigBuilder::new()
+    let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2)
         .with_request_response_protocol(req_resp_config2)

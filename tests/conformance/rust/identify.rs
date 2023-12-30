@@ -28,7 +28,7 @@ use libp2p::{
     PeerId, Swarm,
 };
 use litep2p::{
-    config::Litep2pConfigBuilder,
+    config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::{
         identify::{Config as IdentifyConfig, IdentifyEvent},
@@ -74,7 +74,7 @@ fn initialize_litep2p() -> (
     let (identify_config, identify_event_stream) = IdentifyConfig::new();
 
     let litep2p = Litep2p::new(
-        Litep2pConfigBuilder::new()
+        ConfigBuilder::new()
             .with_keypair(keypair)
             .with_tcp(TcpTransportConfig {
                 listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
