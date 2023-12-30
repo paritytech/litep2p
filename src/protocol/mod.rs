@@ -36,7 +36,7 @@ use std::fmt::Debug;
 pub(crate) use connection::Permit;
 pub(crate) use protocol_set::{InnerTransportEvent, ProtocolCommand, ProtocolSet};
 
-pub use protocol_set::TransportService;
+pub use transport_service::TransportService;
 
 pub mod libp2p;
 pub mod mdns;
@@ -45,6 +45,7 @@ pub mod request_response;
 
 mod connection;
 mod protocol_set;
+mod transport_service;
 
 /// Substream direction.
 #[derive(Debug, Copy, Clone)]
@@ -128,43 +129,7 @@ pub enum TransportEvent {
     },
 }
 
-/// Transport service.
-///
-/// Provides an interfaces for (`Litep2p`)[crate::Litep2p] protocols to interact with the underlying
-/// transport protocols.
-#[async_trait::async_trait]
-pub trait Transport {
-    /// Dial `peer` using `PeerId`.
-    ///
-    /// Call fails if `Litep2p` doesn't know have a known address for the peer.
-    async fn dial(&mut self, peer: &PeerId) -> crate::Result<()>;
-
-    /// Dial peer using a `Multiaddr`.
-    ///
-    /// Call fails if the address is not in correct format or it contains an unsupported/disabled
-    /// transport.
-    ///
-    /// Calling this function is only necessary for those addresses that are discovered out-of-band
-    /// since `Litep2p` internally keeps track of all peer addresses it has learned through user
-    /// calling this function, Kademlia peer discoveries and `Identify` responses.
-    async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()>;
-
-    /// Add known one or more addresses for peer.
-    ///
-    /// The list is filtered for duplicates and unsupported transports.
-    fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>);
-
-    /// Open substream to `peer`.
-    ///
-    /// Call fails if there is no open connection to the peer.
-    async fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId>;
-
-    /// Get next [`TransportEvent`].
-    async fn next_event(&mut self) -> Option<TransportEvent>;
-}
-
 /// Trait defining the interface for a user protocol.
-// TODO: make `TransportService` generic?
 #[async_trait::async_trait]
 pub trait UserProtocol: Send {
     /// Get user protocol name.

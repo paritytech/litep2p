@@ -33,7 +33,7 @@ use crate::{
             store::MemoryStore,
             types::{ConnectionType, KademliaPeer, Key},
         },
-        Direction, Transport, TransportEvent, TransportService,
+        Direction, TransportEvent, TransportService,
     },
     substream::Substream,
     types::SubstreamId,
@@ -180,7 +180,7 @@ impl Kademlia {
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
+    fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
         match self.peers.entry(peer) {
@@ -188,7 +188,7 @@ impl Kademlia {
                 // TODO: add peer to routing table
                 // TODO: verify that peer limit is respected
                 match self.pending_dials.remove(&peer) {
-                    Some(action) => match self.service.open_substream(peer).await {
+                    Some(action) => match self.service.open_substream(peer) {
                         Ok(substream_id) => {
                             entry.insert(PeerContext::with_pending_action(substream_id, action));
                         }
@@ -467,42 +467,42 @@ impl Kademlia {
     /// Handle next query action.
     async fn on_query_action(&mut self, action: QueryAction) -> Result<(), (QueryId, PeerId)> {
         match action {
-            QueryAction::SendMessage { query, peer, .. } =>
-                match self.service.open_substream(peer).await {
-                    Err(_) => {
-                        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "dial peer");
+            QueryAction::SendMessage { query, peer, .. } => match self.service.open_substream(peer)
+            {
+                Err(_) => {
+                    tracing::trace!(target: LOG_TARGET, ?query, ?peer, "dial peer");
 
-                        match self.service.dial(&peer).await {
-                            Ok(_) => {
-                                self.pending_dials.insert(peer, PeerAction::SendFindNode(query));
-                            }
-                            Err(error) => {
-                                tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?error, "failed to dial peer");
-                                self.engine.register_response_failure(query, peer);
-                            }
+                    match self.service.dial(&peer) {
+                        Ok(_) => {
+                            self.pending_dials.insert(peer, PeerAction::SendFindNode(query));
                         }
-
-                        Ok(())
+                        Err(error) => {
+                            tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?error, "failed to dial peer");
+                            self.engine.register_response_failure(query, peer);
+                        }
                     }
-                    Ok(substream_id) => {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?query,
-                            ?peer,
-                            ?substream_id,
-                            "open outbound substream for peer"
-                        );
 
-                        self.pending_substreams.insert(substream_id, peer);
-                        self.peers
-                            .entry(peer)
-                            .or_default()
-                            .pending_actions
-                            .insert(substream_id, PeerAction::SendFindNode(query));
+                    Ok(())
+                }
+                Ok(substream_id) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        ?substream_id,
+                        "open outbound substream for peer"
+                    );
 
-                        Ok(())
-                    }
-                },
+                    self.pending_substreams.insert(substream_id, peer);
+                    self.peers
+                        .entry(peer)
+                        .or_default()
+                        .pending_actions
+                        .insert(substream_id, PeerAction::SendFindNode(query));
+
+                    Ok(())
+                }
+            },
             QueryAction::FindNodeQuerySucceeded {
                 target,
                 peers,
@@ -536,7 +536,7 @@ impl Kademlia {
                 let message = KademliaMessage::put_value(record);
 
                 for peer in peers {
-                    match self.service.open_substream(peer.peer).await {
+                    match self.service.open_substream(peer.peer) {
                         Ok(substream_id) => {
                             self.pending_substreams.insert(substream_id, peer.peer);
                             self.peers
@@ -546,7 +546,8 @@ impl Kademlia {
                                 .insert(substream_id, PeerAction::SendPutValue(message.clone()));
                         }
                         Err(_) => {
-                            let _ = self.service.dial(&peer.peer).await;
+                            // TODO: handle error
+                            let _ = self.service.dial(&peer.peer);
                             self.pending_dials
                                 .insert(peer.peer, PeerAction::SendPutValue(message.clone()));
                         }
@@ -585,9 +586,9 @@ impl Kademlia {
             }
 
             tokio::select! {
-                event = self.service.next_event() => match event {
+                event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer).await {
+                        if let Err(error) = self.on_connection_established(peer) {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to handle established connection");
                         }
                     }

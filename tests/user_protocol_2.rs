@@ -22,12 +22,13 @@ use litep2p::{
     codec::ProtocolCodec,
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::{Transport, TransportEvent, TransportService, UserProtocol},
+    protocol::{TransportEvent, TransportService, UserProtocol},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent, PeerId,
 };
 
+use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -69,7 +70,7 @@ impl UserProtocol for CustomProtocol {
     async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {
         loop {
             tokio::select! {
-                event = service.next_event() => match event.unwrap() {
+                event = service.next() => match event.unwrap() {
                     TransportEvent::ConnectionEstablished { peer, .. } => {
                         self.peers.insert(peer);
                     }
@@ -88,7 +89,7 @@ impl UserProtocol for CustomProtocol {
                     TransportEvent::DialFailure { .. } => {}
                 },
                 address = self.rx.recv() => {
-                    service.dial_address(address.unwrap()).await.unwrap();
+                    service.dial_address(address.unwrap()).unwrap();
                 }
             }
         }

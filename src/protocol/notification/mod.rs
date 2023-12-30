@@ -31,7 +31,7 @@ use crate::{
             negotiation::{HandshakeEvent, HandshakeService},
             types::NotificationCommand,
         },
-        Transport, TransportEvent, TransportService,
+        TransportEvent, TransportService,
     },
     substream::Substream,
     types::{protocol::ProtocolName, SubstreamId},
@@ -729,9 +729,15 @@ impl NotificationProtocol {
                 return Ok(());
             }
 
-            match self.service.dial(&peer).await {
+            match self.service.dial(&peer) {
                 Err(error) => {
-                    tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, ?error, "failed to dial peer");
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        ?error,
+                        "failed to dial peer",
+                    );
 
                     self.event_handle
                         .report_notification_stream_open_failure(
@@ -739,6 +745,7 @@ impl NotificationProtocol {
                             NotificationError::DialFailure,
                         )
                         .await;
+
                     return Err(error);
                 }
                 Ok(()) => {
@@ -763,7 +770,7 @@ impl NotificationProtocol {
         // protocol can only request a new outbound substream to be opened if the state is `Closed`
         // other states imply that it's already open
         if std::matches!(context.state, PeerState::Closed { .. }) {
-            match self.service.open_substream(peer).await {
+            match self.service.open_substream(peer) {
                 Ok(substream_id) => {
                     tracing::trace!(
                         target: LOG_TARGET,
@@ -888,7 +895,7 @@ impl NotificationProtocol {
                     // no outbound substream exists so initiate a new substream open and send the
                     // local handshake to remote node, indicating that the
                     // connection was accepted by the local node
-                    OutboundState::Closed => match self.service.open_substream(peer).await {
+                    OutboundState::Closed => match self.service.open_substream(peer) {
                         Ok(substream) => {
                             self.negotiation.send_handshake(peer, inbound);
                             self.pending_outbound.insert(substream, peer);
@@ -1373,7 +1380,7 @@ impl NotificationProtocol {
                 }
                 None => return,
             },
-            event = self.service.next_event() => match event {
+            event = self.service.next() => match event {
                 Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                     if let Err(error) = self.on_connection_established(peer).await {
                         tracing::debug!(

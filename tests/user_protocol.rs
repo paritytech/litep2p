@@ -22,13 +22,13 @@ use litep2p::{
     codec::ProtocolCodec,
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::{
-        mdns::Config as MdnsConfig, Transport, TransportEvent, TransportService, UserProtocol,
-    },
+    protocol::{mdns::Config as MdnsConfig, TransportEvent, TransportService, UserProtocol},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName,
     Litep2p, PeerId,
 };
+
+use futures::StreamExt;
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
@@ -62,7 +62,7 @@ impl UserProtocol for CustomProtocol {
 
     async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {
         loop {
-            while let Some(event) = service.next_event().await {
+            while let Some(event) = service.next().await {
                 tracing::trace!("received event: {event:?}");
 
                 match event {

@@ -24,7 +24,7 @@ use crate::{
     error::Error,
     protocol::{
         request_response::handle::{InnerRequestResponseEvent, RequestResponseCommand},
-        Direction, Transport, TransportEvent, TransportService,
+        Direction, TransportEvent, TransportService,
     },
     substream::{Substream, SubstreamSet},
     types::{protocol::ProtocolName, RequestId, SubstreamId},
@@ -212,7 +212,7 @@ impl RequestResponseProtocol {
             None => {
                 entry.insert(PeerContext::new());
             }
-            Some(context) => match self.service.open_substream(peer).await {
+            Some(context) => match self.service.open_substream(peer) {
                 Ok(substream_id) => {
                     tracing::trace!(
                         target: LOG_TARGET,
@@ -638,7 +638,7 @@ impl RequestResponseProtocol {
                         )
                         .await;
                 }
-                DialOptions::Dial => match self.service.dial(&peer).await {
+                DialOptions::Dial => match self.service.dial(&peer) {
                     Ok(_) => {
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -675,7 +675,7 @@ impl RequestResponseProtocol {
 
         // open substream and push it pending outbound substreams
         // once the substream is opened, send the request.
-        match self.service.open_substream(peer).await {
+        match self.service.open_substream(peer) {
             Ok(substream_id) => {
                 let unique_request_id = context.active.insert(request_id);
                 debug_assert!(unique_request_id);
@@ -782,7 +782,7 @@ impl RequestResponseProtocol {
                 // responses to network behaviour so ensure that the commands operate on the most up to date information.
                 biased;
 
-                event = self.service.next_event() => match event {
+                event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         let _ = self.on_connection_established(peer).await;
                     }

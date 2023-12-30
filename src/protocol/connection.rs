@@ -26,7 +26,7 @@ use crate::{
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
-use tokio::sync::mpsc::{Sender, WeakSender};
+use tokio::sync::mpsc::{error::TrySendError, Sender, WeakSender};
 
 /// Connection type, from the point of view of the protocol.
 #[derive(Debug, Clone)]
@@ -106,7 +106,7 @@ impl ConnectionHandle {
 
     /// Open substream to remote peer over `protocol` and send the acquired permit to the
     /// transport so it can be given to the opened substream.
-    pub async fn open_substream(
+    pub fn open_substream(
         &mut self,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
@@ -118,14 +118,16 @@ impl ConnectionHandle {
             ConnectionType::Inactive(inactive) =>
                 inactive.upgrade().ok_or(Error::ConnectionClosed)?,
         }
-        .send(ProtocolCommand::OpenSubstream {
+        .try_send(ProtocolCommand::OpenSubstream {
             protocol: protocol.clone(),
             fallback_names,
             substream_id,
             permit,
         })
-        .await
-        .map_err(From::from)
+        .map_err(|error| match error {
+            TrySendError::Full(_) => Error::ChannelClogged,
+            TrySendError::Closed(_) => Error::ConnectionClosed,
+        })
     }
 }
 
@@ -171,14 +173,12 @@ mod tests {
         let mut handle = handle.downgrade();
         let permit = handle.try_get_permit().unwrap();
 
-        let result = handle
-            .open_substream(
-                ProtocolName::from("/protocol/1"),
-                Vec::new(),
-                SubstreamId::new(),
-                permit,
-            )
-            .await;
+        let result = handle.open_substream(
+            ProtocolName::from("/protocol/1"),
+            Vec::new(),
+            SubstreamId::new(),
+            permit,
+        );
 
         assert!(result.is_ok());
         assert!(rx.recv().await.is_some());
@@ -192,15 +192,40 @@ mod tests {
         let permit = handle.try_get_permit().unwrap();
         drop(_rx);
 
-        let result = handle
-            .open_substream(
-                ProtocolName::from("/protocol/1"),
-                Vec::new(),
-                SubstreamId::new(),
-                permit,
-            )
-            .await;
+        let result = handle.open_substream(
+            ProtocolName::from("/protocol/1"),
+            Vec::new(),
+            SubstreamId::new(),
+            permit,
+        );
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn open_substream_channel_clogged() {
+        let (tx, _rx) = channel(1);
+        let mut handle = ConnectionHandle::new(ConnectionId::new(), tx);
+        let mut handle = handle.downgrade();
+        let permit = handle.try_get_permit().unwrap();
+
+        let result = handle.open_substream(
+            ProtocolName::from("/protocol/1"),
+            Vec::new(),
+            SubstreamId::new(),
+            permit,
+        );
+        assert!(result.is_ok());
+
+        let permit = handle.try_get_permit().unwrap();
+        match handle.open_substream(
+            ProtocolName::from("/protocol/1"),
+            Vec::new(),
+            SubstreamId::new(),
+            permit,
+        ) {
+            Err(Error::ChannelClogged) => {}
+            error => panic!("invalid error: {error:?}"),
+        }
     }
 }

@@ -34,7 +34,7 @@ use crate::{
 
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{error::TrySendError, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -186,7 +186,7 @@ impl TransportManagerHandle {
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
-    pub async fn dial(&self, peer: &PeerId) -> crate::Result<()> {
+    pub fn dial(&self, peer: &PeerId) -> crate::Result<()> {
         {
             match self.peers.read().get(&peer) {
                 Some(PeerContext {
@@ -222,23 +222,27 @@ impl TransportManagerHandle {
         }
 
         self.cmd_tx
-            .send(InnerTransportManagerCommand::DialPeer { peer: *peer })
-            .await
-            .map_err(From::from)
+            .try_send(InnerTransportManagerCommand::DialPeer { peer: *peer })
+            .map_err(|error| match error {
+                TrySendError::Full(_) => Error::ChannelClogged,
+                TrySendError::Closed(_) => Error::EssentialTaskClosed,
+            })
     }
 
     /// Dial peer using `Multiaddr`.
     ///
     /// Returns an error if address it not valid.
-    pub async fn dial_address(&self, address: Multiaddr) -> crate::Result<()> {
+    pub fn dial_address(&self, address: Multiaddr) -> crate::Result<()> {
         if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
             return Err(Error::AddressError(AddressError::PeerIdMissing));
         }
 
         self.cmd_tx
-            .send(InnerTransportManagerCommand::DialAddress { address })
-            .await
-            .map_err(From::from)
+            .try_send(InnerTransportManagerCommand::DialAddress { address })
+            .map_err(|error| match error {
+                TrySendError::Full(_) => Error::ChannelClogged,
+                TrySendError::Closed(_) => Error::EssentialTaskClosed,
+            })
     }
 }
 
@@ -400,7 +404,7 @@ mod tests {
             peer
         };
 
-        match handle.dial(&peer).await {
+        match handle.dial(&peer) {
             Err(Error::AlreadyConnected) => {}
             _ => panic!("invalid return value"),
         }
@@ -442,7 +446,7 @@ mod tests {
             peer
         };
 
-        match handle.dial(&peer).await {
+        match handle.dial(&peer) {
             Ok(()) => {}
             _ => panic!("invalid return value"),
         }
@@ -470,7 +474,7 @@ mod tests {
             peer
         };
 
-        match handle.dial(&peer).await {
+        match handle.dial(&peer) {
             Err(Error::NoAddressAvailable(failed_peer)) => {
                 assert_eq!(failed_peer, peer);
             }
@@ -516,7 +520,7 @@ mod tests {
             peer
         };
 
-        match handle.dial(&peer).await {
+        match handle.dial(&peer) {
             Ok(()) => {}
             _ => panic!("invalid return value"),
         }

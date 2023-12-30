@@ -23,12 +23,12 @@
 use litep2p::{
     codec::ProtocolCodec,
     config::Litep2pConfigBuilder,
-    protocol::{Direction, TransportService, UserProtocol},
-    protocol::{Transport, TransportEvent},
+    protocol::{Direction, TransportEvent, TransportService, UserProtocol},
     types::protocol::ProtocolName,
     Litep2p, PeerId,
 };
 
+use futures::StreamExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::mpsc::{channel, Receiver, Sender},
@@ -121,7 +121,7 @@ impl UserProtocol for CustomProtocol {
                         // if the peer doesn't exist in the protocol, we don't have a connection
                         // open so dial them and save the message.
                         if !self.peers.contains_key(&peer) {
-                            match service.dial(&peer).await {
+                            match service.dial(&peer) {
                                 Ok(_) => {
                                     self.peers.insert(peer, Some(message));
                                 }
@@ -133,7 +133,7 @@ impl UserProtocol for CustomProtocol {
                     }
                     None => return Err(litep2p::Error::EssentialTaskClosed),
                 },
-                event = service.next_event() => match event {
+                event = service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         // connection established to peer
                         //
@@ -141,7 +141,7 @@ impl UserProtocol for CustomProtocol {
                         // and if yes, open substream to the peer.
                         match self.peers.get(&peer) {
                             Some(Some(_)) => {
-                                if let Err(error) = service.open_substream(peer).await {
+                                if let Err(error) = service.open_substream(peer) {
                                     println!("failed to open substream to {peer:?}: {error:?}");
                                 }
                             }

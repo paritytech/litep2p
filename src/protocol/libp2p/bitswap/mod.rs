@@ -23,8 +23,7 @@
 use crate::{
     error::Error,
     protocol::{
-        libp2p::bitswap::handle::BitswapCommand, Direction, Transport, TransportEvent,
-        TransportService,
+        libp2p::bitswap::handle::BitswapCommand, Direction, TransportEvent, TransportService,
     },
     substream::Substream,
     types::SubstreamId,
@@ -206,8 +205,8 @@ impl Bitswap {
     }
 
     /// Handle bitswap response.
-    async fn on_bitswap_response(&mut self, peer: PeerId, responses: Vec<ResponseType>) {
-        match self.service.open_substream(peer).await {
+    fn on_bitswap_response(&mut self, peer: PeerId, responses: Vec<ResponseType>) {
+        match self.service.open_substream(peer) {
             Err(error) => {
                 tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream to peer")
             }
@@ -223,7 +222,7 @@ impl Bitswap {
 
         loop {
             tokio::select! {
-                event = self.service.next_event() => match event {
+                event = self.service.next() => match event {
                     Some(TransportEvent::SubstreamOpened {
                         peer,
                         substream,
@@ -239,7 +238,7 @@ impl Bitswap {
                 },
                 command = self.cmd_rx.recv() => match command {
                     Some(BitswapCommand::SendResponse { peer, responses }) => {
-                        self.on_bitswap_response(peer, responses).await;
+                        self.on_bitswap_response(peer, responses);
                     }
                     None => return,
                 },
