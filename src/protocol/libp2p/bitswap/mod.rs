@@ -23,8 +23,7 @@
 use crate::{
     error::Error,
     protocol::{
-        libp2p::bitswap::handle::BitswapCommand, Direction, Transport, TransportEvent,
-        TransportService,
+        libp2p::bitswap::handle::BitswapCommand, Direction, TransportEvent, TransportService,
     },
     substream::Substream,
     types::SubstreamId,
@@ -223,7 +222,7 @@ impl Bitswap {
 
         loop {
             tokio::select! {
-                event = self.service.next_event() => match event {
+                event = self.service.next() => match event {
                     Some(TransportEvent::SubstreamOpened {
                         peer,
                         substream,

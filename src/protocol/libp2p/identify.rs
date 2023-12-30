@@ -24,7 +24,7 @@ use crate::{
     codec::ProtocolCodec,
     crypto::PublicKey,
     error::{Error, SubstreamError},
-    protocol::{Direction, Transport, TransportEvent, TransportService},
+    protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     transport::Endpoint,
     types::{protocol::ProtocolName, SubstreamId},
@@ -268,7 +268,7 @@ impl Identify {
 
         loop {
             tokio::select! {
-                event = self.service.next_event() => match event {
+                event = self.service.next() => match event {
                     None => return,
                     Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
                         let _ = self.on_connection_established(peer, endpoint);

@@ -23,12 +23,12 @@
 use litep2p::{
     codec::ProtocolCodec,
     config::Litep2pConfigBuilder,
-    protocol::{Direction, TransportService, UserProtocol},
-    protocol::{Transport, TransportEvent},
+    protocol::{Direction, TransportEvent, TransportService, UserProtocol},
     types::protocol::ProtocolName,
     Litep2p, PeerId,
 };
 
+use futures::StreamExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::mpsc::{channel, Receiver, Sender},
@@ -133,7 +133,7 @@ impl UserProtocol for CustomProtocol {
                     }
                     None => return Err(litep2p::Error::EssentialTaskClosed),
                 },
-                event = service.next_event() => match event {
+                event = service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         // connection established to peer
                         //

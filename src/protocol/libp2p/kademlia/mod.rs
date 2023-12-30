@@ -33,7 +33,7 @@ use crate::{
             store::MemoryStore,
             types::{ConnectionType, KademliaPeer, Key},
         },
-        Direction, Transport, TransportEvent, TransportService,
+        Direction, TransportEvent, TransportService,
     },
     substream::Substream,
     types::SubstreamId,
@@ -586,7 +586,7 @@ impl Kademlia {
             }
 
             tokio::select! {
-                event = self.service.next_event() => match event {
+                event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         if let Err(error) = self.on_connection_established(peer) {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to handle established connection");

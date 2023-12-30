@@ -22,7 +22,7 @@
 
 use crate::{
     error::{Error, SubstreamError},
-    protocol::{Direction, Transport, TransportEvent, TransportService},
+    protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     types::SubstreamId,
     PeerId,
@@ -158,7 +158,7 @@ impl Ping {
 
         loop {
             tokio::select! {
-                event = self.service.next_event() => match event {
+                event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         let _ = self.on_connection_established(peer);
                     }

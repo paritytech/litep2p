@@ -22,12 +22,13 @@ use litep2p::{
     codec::ProtocolCodec,
     config::Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::{Transport, TransportEvent, TransportService, UserProtocol},
+    protocol::{TransportEvent, TransportService, UserProtocol},
     transport::tcp::config::TransportConfig as TcpTransportConfig,
     types::protocol::ProtocolName,
     Litep2p, PeerId,
 };
 
+use futures::StreamExt;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use tokio::sync::oneshot;
@@ -73,7 +74,7 @@ impl UserProtocol for CustomProtocol {
         }
 
         loop {
-            while let Some(event) = service.next_event().await {
+            while let Some(event) = service.next().await {
                 if let TransportEvent::DialFailure { .. } = event {
                     self.tx.send(()).unwrap();
                     return Ok(());

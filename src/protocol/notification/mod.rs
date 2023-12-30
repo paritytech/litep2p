@@ -31,7 +31,7 @@ use crate::{
             negotiation::{HandshakeEvent, HandshakeService},
             types::NotificationCommand,
         },
-        Transport, TransportEvent, TransportService,
+        TransportEvent, TransportService,
     },
     substream::Substream,
     types::{protocol::ProtocolName, SubstreamId},
@@ -1380,7 +1380,7 @@ impl NotificationProtocol {
                 }
                 None => return,
             },
-            event = self.service.next_event() => match event {
+            event = self.service.next() => match event {
                 Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                     if let Err(error) = self.on_connection_established(peer).await {
                         tracing::debug!(

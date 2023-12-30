@@ -24,7 +24,7 @@ use crate::{
     error::Error,
     protocol::{
         request_response::handle::{InnerRequestResponseEvent, RequestResponseCommand},
-        Direction, Transport, TransportEvent, TransportService,
+        Direction, TransportEvent, TransportService,
     },
     substream::{Substream, SubstreamSet},
     types::{protocol::ProtocolName, RequestId, SubstreamId},
@@ -782,7 +782,7 @@ impl RequestResponseProtocol {
                 // responses to network behaviour so ensure that the commands operate on the most up to date information.
                 biased;
 
-                event = self.service.next_event() => match event {
+                event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         let _ = self.on_connection_established(peer).await;
                     }

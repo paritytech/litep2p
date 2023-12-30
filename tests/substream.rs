@@ -21,9 +21,7 @@
 use litep2p::{
     codec::ProtocolCodec,
     config::Litep2pConfigBuilder,
-    protocol::{
-        Direction, Transport as TransportT, TransportEvent, TransportService, UserProtocol,
-    },
+    protocol::{Direction, TransportEvent, TransportService, UserProtocol},
     substream::{Substream, SubstreamSet},
     transport::quic::config::TransportConfig as QuicTransportConfig,
     transport::tcp::config::TransportConfig as TcpTransportConfig,
@@ -103,7 +101,7 @@ impl UserProtocol for CustomProtocol {
     async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {
         loop {
             tokio::select! {
-                event = service.next_event() => match event.unwrap() {
+                event = service.next() => match event.unwrap() {
                     TransportEvent::ConnectionEstablished { peer, .. } => {
                         self.peers.insert(peer);
                     }
