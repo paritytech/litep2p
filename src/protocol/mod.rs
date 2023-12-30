@@ -137,7 +137,7 @@ pub trait Transport {
     /// Dial `peer` using `PeerId`.
     ///
     /// Call fails if `Litep2p` doesn't know have a known address for the peer.
-    async fn dial(&mut self, peer: &PeerId) -> crate::Result<()>;
+    fn dial(&mut self, peer: &PeerId) -> crate::Result<()>;
 
     /// Dial peer using a `Multiaddr`.
     ///
@@ -147,7 +147,7 @@ pub trait Transport {
     /// Calling this function is only necessary for those addresses that are discovered out-of-band
     /// since `Litep2p` internally keeps track of all peer addresses it has learned through user
     /// calling this function, Kademlia peer discoveries and `Identify` responses.
-    async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()>;
+    fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()>;
 
     /// Add known one or more addresses for peer.
     ///

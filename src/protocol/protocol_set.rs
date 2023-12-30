@@ -390,12 +390,12 @@ impl TransportService {
 
 #[async_trait::async_trait]
 impl Transport for TransportService {
-    async fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
-        self.transport_handle.dial(peer).await
+    fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
+        self.transport_handle.dial(peer)
     }
 
-    async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
-        self.transport_handle.dial_address(address).await
+    fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
+        self.transport_handle.dial_address(address)
     }
 
     fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {

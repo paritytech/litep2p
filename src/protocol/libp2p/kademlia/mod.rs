@@ -472,7 +472,7 @@ impl Kademlia {
                 Err(_) => {
                     tracing::trace!(target: LOG_TARGET, ?query, ?peer, "dial peer");
 
-                    match self.service.dial(&peer).await {
+                    match self.service.dial(&peer) {
                         Ok(_) => {
                             self.pending_dials.insert(peer, PeerAction::SendFindNode(query));
                         }
@@ -546,7 +546,8 @@ impl Kademlia {
                                 .insert(substream_id, PeerAction::SendPutValue(message.clone()));
                         }
                         Err(_) => {
-                            let _ = self.service.dial(&peer.peer).await;
+                            // TODO: handle error
+                            let _ = self.service.dial(&peer.peer);
                             self.pending_dials
                                 .insert(peer.peer, PeerAction::SendPutValue(message.clone()));
                         }

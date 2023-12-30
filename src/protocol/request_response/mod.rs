@@ -638,7 +638,7 @@ impl RequestResponseProtocol {
                         )
                         .await;
                 }
-                DialOptions::Dial => match self.service.dial(&peer).await {
+                DialOptions::Dial => match self.service.dial(&peer) {
                     Ok(_) => {
                         tracing::trace!(
                             target: LOG_TARGET,

@@ -88,7 +88,7 @@ impl UserProtocol for CustomProtocol {
                     TransportEvent::DialFailure { .. } => {}
                 },
                 address = self.rx.recv() => {
-                    service.dial_address(address.unwrap()).await.unwrap();
+                    service.dial_address(address.unwrap()).unwrap();
                 }
             }
         }

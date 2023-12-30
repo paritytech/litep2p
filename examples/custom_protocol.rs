@@ -121,7 +121,7 @@ impl UserProtocol for CustomProtocol {
                         // if the peer doesn't exist in the protocol, we don't have a connection
                         // open so dial them and save the message.
                         if !self.peers.contains_key(&peer) {
-                            match service.dial(&peer).await {
+                            match service.dial(&peer) {
                                 Ok(_) => {
                                     self.peers.insert(peer, Some(message));
                                 }

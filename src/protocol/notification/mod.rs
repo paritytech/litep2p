@@ -729,9 +729,15 @@ impl NotificationProtocol {
                 return Ok(());
             }
 
-            match self.service.dial(&peer).await {
+            match self.service.dial(&peer) {
                 Err(error) => {
-                    tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, ?error, "failed to dial peer");
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        ?error,
+                        "failed to dial peer",
+                    );
 
                     self.event_handle
                         .report_notification_stream_open_failure(
@@ -739,6 +745,7 @@ impl NotificationProtocol {
                             NotificationError::DialFailure,
                         )
                         .await;
+
                     return Err(error);
                 }
                 Ok(()) => {

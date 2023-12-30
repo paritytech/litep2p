@@ -67,7 +67,7 @@ impl UserProtocol for CustomProtocol {
     }
 
     async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {
-        if service.dial_address(self.dial_address.clone()).await.is_err() {
+        if service.dial_address(self.dial_address.clone()).is_err() {
             self.tx.send(()).unwrap();
             return Ok(());
         }
