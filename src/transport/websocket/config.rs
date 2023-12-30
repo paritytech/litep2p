@@ -25,19 +25,14 @@ use crate::{
     transport::{CONNECTION_OPEN_TIMEOUT, SUBSTREAM_OPEN_TIMEOUT},
 };
 
-use multiaddr::Multiaddr;
-use yamux::Config;
-
-use std::time::Duration;
-
 /// WebSocket transport configuration.
 #[derive(Debug)]
-pub struct TransportConfig {
+pub struct Config {
     /// Listen address address for the transport.
-    pub listen_addresses: Vec<Multiaddr>,
+    pub listen_addresses: Vec<multiaddr::Multiaddr>,
 
     /// Yamux configuration.
-    pub yamux_config: Config,
+    pub yamux_config: yamux::Config,
 
     /// Noise read-ahead frame count.
     ///
@@ -63,16 +58,16 @@ pub struct TransportConfig {
     ///
     /// How long should litep2p wait for a connection to be opend before the host
     /// is deemed unreachable.
-    pub connection_open_timeout: Duration,
+    pub connection_open_timeout: std::time::Duration,
 
     /// Substream open timeout.
     ///
     /// How long should litep2p wait for a substream to be opened before considering
     /// the substream rejected.
-    pub substream_open_timeout: Duration,
+    pub substream_open_timeout: std::time::Duration,
 }
 
-impl Default for TransportConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             listen_addresses: vec!["/ip6/::/tcp/0/ws".parse().expect("valid address")],

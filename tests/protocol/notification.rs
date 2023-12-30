@@ -27,9 +27,9 @@ use litep2p::{
         NotificationEvent, NotificationHandle, ValidationResult,
     },
     transport::{
-        quic::config::TransportConfig as QuicTransportConfig,
-        tcp::config::TransportConfig as TcpTransportConfig,
-        websocket::config::TransportConfig as WebSocketTransportConfig,
+        quic::config::Config as QuicConfig,
+        tcp::config::Config as TcpConfig,
+        websocket::config::Config as WebSocketConfig,
     },
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent, PeerId,
@@ -47,9 +47,9 @@ use std::{
 };
 
 enum Transport {
-    Tcp(TcpTransportConfig),
-    Quic(QuicTransportConfig),
-    WebSocket(WebSocketTransportConfig),
+    Tcp(TcpConfig),
+    Quic(QuicConfig),
+    WebSocket(WebSocketConfig),
 }
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
@@ -111,11 +111,11 @@ async fn make_default_litep2p(transport: Transport) -> (Litep2p, NotificationHan
 #[tokio::test]
 async fn open_substreams_tcp() {
     open_substreams(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -135,11 +135,11 @@ async fn open_substreams_quic() {
 #[tokio::test]
 async fn open_substreams_websocket() {
     open_substreams(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -278,11 +278,11 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
 #[tokio::test]
 async fn reject_substream_tcp() {
     reject_substream(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -302,11 +302,11 @@ async fn reject_substream_quic() {
 #[tokio::test]
 async fn reject_substream_websocket() {
     reject_substream(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -403,11 +403,11 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
 #[tokio::test]
 async fn notification_stream_closed_tcp() {
     notification_stream_closed(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -427,11 +427,11 @@ async fn notification_stream_closed_quic() {
 #[tokio::test]
 async fn notification_stream_closed_websocket() {
     notification_stream_closed(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -577,11 +577,11 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
 #[tokio::test]
 async fn reconnect_after_disconnect_tcp() {
     reconnect_after_disconnect(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -601,11 +601,11 @@ async fn reconnect_after_disconnect_quic() {
 #[tokio::test]
 async fn reconnect_after_disconnect_websocket() {
     reconnect_after_disconnect(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -808,11 +808,11 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
 #[tokio::test]
 async fn set_new_handshake_tcp() {
     set_new_handshake(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -832,11 +832,11 @@ async fn set_new_handshake_quic() {
 #[tokio::test]
 async fn set_new_handshake_websocket() {
     set_new_handshake(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -1024,11 +1024,11 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
 #[tokio::test]
 async fn both_nodes_open_substreams_tcp() {
     both_nodes_open_substreams(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -1048,11 +1048,11 @@ async fn both_nodes_open_substreams_quic() {
 #[tokio::test]
 async fn both_nodes_open_substreams_websocket() {
     both_nodes_open_substreams(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -1196,11 +1196,11 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
 #[cfg(debug_assertions)]
 async fn both_nodes_open_substream_one_rejects_substreams_tcp() {
     both_nodes_open_substream_one_rejects_substreams(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -1222,11 +1222,11 @@ async fn both_nodes_open_substream_one_rejects_substreams_quic() {
 #[cfg(debug_assertions)]
 async fn both_nodes_open_substream_one_rejects_substreams_websocket() {
     both_nodes_open_substream_one_rejects_substreams(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -1342,7 +1342,7 @@ async fn both_nodes_open_substream_one_rejects_substreams(
 
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_tcp() {
-    send_sync_notification_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
+    send_sync_notification_to_non_existent_peer(Transport::Tcp(TcpConfig {
         listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
         ..Default::default()
     }))
@@ -1356,7 +1356,7 @@ async fn send_sync_notification_to_non_existent_peer_quic() {
 
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_websocket() {
-    send_sync_notification_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
+    send_sync_notification_to_non_existent_peer(Transport::WebSocket(WebSocketConfig {
         listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
         ..Default::default()
     }))
@@ -1404,7 +1404,7 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport) {
 
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_tcp() {
-    send_async_notification_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
+    send_async_notification_to_non_existent_peer(Transport::Tcp(TcpConfig {
         listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
         ..Default::default()
     }))
@@ -1418,7 +1418,7 @@ async fn send_async_notification_to_non_existent_peer_quic() {
 
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_websocket() {
-    send_async_notification_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
+    send_async_notification_to_non_existent_peer(Transport::WebSocket(WebSocketConfig {
         listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
         ..Default::default()
     }))
@@ -1469,7 +1469,7 @@ async fn send_async_notification_to_non_existent_peer(transport1: Transport) {
 
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_tcp() {
-    try_to_connect_to_non_existent_peer(Transport::Tcp(TcpTransportConfig {
+    try_to_connect_to_non_existent_peer(Transport::Tcp(TcpConfig {
         listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
         ..Default::default()
     }))
@@ -1483,7 +1483,7 @@ async fn try_to_connect_to_non_existent_peer_quic() {
 
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_websocket() {
-    try_to_connect_to_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
+    try_to_connect_to_non_existent_peer(Transport::WebSocket(WebSocketConfig {
         listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
         ..Default::default()
     }))
@@ -1539,7 +1539,7 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
 
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_tcp() {
-    try_to_disconnect_non_existent_peer(Transport::Tcp(TcpTransportConfig {
+    try_to_disconnect_non_existent_peer(Transport::Tcp(TcpConfig {
         listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
         ..Default::default()
     }))
@@ -1553,7 +1553,7 @@ async fn try_to_disconnect_non_existent_peer_quic() {
 
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_websocket() {
-    try_to_disconnect_non_existent_peer(Transport::WebSocket(WebSocketTransportConfig {
+    try_to_disconnect_non_existent_peer(Transport::WebSocket(WebSocketConfig {
         listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
         ..Default::default()
     }))
@@ -1602,11 +1602,11 @@ async fn try_to_disconnect_non_existent_peer(transport1: Transport) {
 #[tokio::test]
 async fn try_to_reopen_substream_tcp() {
     try_to_reopen_substream(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -1626,11 +1626,11 @@ async fn try_to_reopen_substream_quic() {
 #[tokio::test]
 async fn try_to_reopen_substream_websocket() {
     try_to_reopen_substream(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -1758,11 +1758,11 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
 #[tokio::test]
 async fn substream_validation_timeout_tcp() {
     substream_validation_timeout(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -1782,11 +1782,11 @@ async fn substream_validation_timeout_quic() {
 #[tokio::test]
 async fn substream_validation_timeout_websocket() {
     substream_validation_timeout(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -1883,11 +1883,11 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
 #[tokio::test]
 async fn unsupported_protocol_tcp() {
     unsupported_protocol(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -1907,11 +1907,11 @@ async fn unsupported_protocol_quic() {
 #[tokio::test]
 async fn unsupported_protocol_websocket() {
     unsupported_protocol(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -1985,11 +1985,11 @@ async fn unsupported_protocol(transport1: Transport, transport2: Transport) {
 #[tokio::test]
 async fn dialer_fallback_protocol_works_tcp() {
     dialer_fallback_protocol_works(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -2009,11 +2009,11 @@ async fn dialer_fallback_protocol_works_quic() {
 #[tokio::test]
 async fn dialer_fallback_protocol_works_websocket() {
     dialer_fallback_protocol_works(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -2123,11 +2123,11 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
 #[tokio::test]
 async fn listener_fallback_protocol_works_tcp() {
     listener_fallback_protocol_works(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -2147,11 +2147,11 @@ async fn listener_fallback_protocol_works_quic() {
 #[tokio::test]
 async fn listener_fallback_protocol_works_websocket() {
     listener_fallback_protocol_works(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -2261,11 +2261,11 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
 #[tokio::test]
 async fn enable_auto_accept_tcp() {
     enable_auto_accept(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -2285,11 +2285,11 @@ async fn enable_auto_accept_quic() {
 #[tokio::test]
 async fn enable_auto_accept_websocket() {
     enable_auto_accept(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -2417,11 +2417,11 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
 #[tokio::test]
 async fn send_using_notification_sink_tcp() {
     send_using_notification_sink(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -2441,11 +2441,11 @@ async fn send_using_notification_sink_quic() {
 #[tokio::test]
 async fn send_using_notification_sink_websocket() {
     send_using_notification_sink(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -2598,11 +2598,11 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
 #[tokio::test]
 async fn dial_peer_when_opening_substream_tcp() {
     dial_peer_when_opening_substream(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -2622,11 +2622,11 @@ async fn dial_peer_when_opening_substream_quic() {
 #[tokio::test]
 async fn dial_peer_when_opening_substream_websocket() {
     dial_peer_when_opening_substream(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -2781,15 +2781,15 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
 #[tokio::test]
 async fn open_and_close_batched_tcp() {
     open_and_close_batched(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -2810,15 +2810,15 @@ async fn open_and_close_batched_quic() {
 #[tokio::test]
 async fn open_and_close_batched_websocket() {
     open_and_close_batched(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -2984,15 +2984,15 @@ async fn open_and_close_batched(
 #[tokio::test]
 async fn open_and_close_batched_duplicate_peer_tcp() {
     open_and_close_batched_duplicate_peer(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -3013,15 +3013,15 @@ async fn open_and_close_batched_duplicate_peer_quic() {
 #[tokio::test]
 async fn open_and_close_batched_duplicate_peer_websocket() {
     open_and_close_batched_duplicate_peer(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -3234,11 +3234,11 @@ async fn open_and_close_batched_duplicate_peer(
 #[tokio::test]
 async fn no_listener_address_for_one_peer_tcp() {
     no_listener_address_for_one_peer(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec![],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -3258,11 +3258,11 @@ async fn no_listener_address_for_one_peer_quic() {
 #[tokio::test]
 async fn no_listener_address_for_one_peer_websocket() {
     no_listener_address_for_one_peer(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec![],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),

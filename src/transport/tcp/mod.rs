@@ -26,7 +26,7 @@ use crate::{
     transport::{
         manager::TransportHandle,
         tcp::{
-            config::TransportConfig,
+            config::Config,
             connection::{NegotiatedConnection, TcpConnection},
             listener::{AddressType, TcpListener},
         },
@@ -66,7 +66,7 @@ pub(crate) struct TcpTransport {
     context: TransportHandle,
 
     /// Transport configuration.
-    config: TransportConfig,
+    config: Config,
 
     /// TCP listener.
     listener: TcpListener,
@@ -124,7 +124,7 @@ impl TcpTransport {
 }
 
 impl TransportBuilder for TcpTransport {
-    type Config = TransportConfig;
+    type Config = Config;
     type Transport = TcpTransport;
 
     /// Create new [`TcpTransport`].
@@ -447,7 +447,7 @@ mod tests {
                 },
             )]),
         };
-        let transport_config1 = TransportConfig {
+        let transport_config1 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
@@ -478,7 +478,7 @@ mod tests {
                 },
             )]),
         };
-        let transport_config2 = TransportConfig {
+        let transport_config2 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
@@ -610,7 +610,7 @@ mod tests {
         );
         let (mut transport, _) = TcpTransport::new(
             handle,
-            TransportConfig {
+            Config {
                 listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
                 ..Default::default()
             },

@@ -23,9 +23,9 @@ use litep2p::{
     config::ConfigBuilder,
     protocol::{Direction, TransportEvent, TransportService, UserProtocol},
     substream::{Substream, SubstreamSet},
-    transport::quic::config::TransportConfig as QuicTransportConfig,
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
-    transport::websocket::config::TransportConfig as WebSocketTransportConfig,
+    transport::quic::config::Config as QuicConfig,
+    transport::tcp::config::Config as TcpConfig,
+    transport::websocket::config::Config as WebSocketConfig,
     types::{protocol::ProtocolName, SubstreamId},
     Error, Litep2p, Litep2pEvent, PeerId,
 };
@@ -48,9 +48,9 @@ use std::{
 };
 
 enum Transport {
-    Tcp(TcpTransportConfig),
-    Quic(QuicTransportConfig),
-    WebSocket(WebSocketTransportConfig),
+    Tcp(TcpConfig),
+    Quic(QuicConfig),
+    WebSocket(WebSocketConfig),
 }
 
 enum Command {

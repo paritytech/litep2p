@@ -31,8 +31,8 @@ use litep2p::{
     config::ConfigBuilder,
     protocol::{libp2p::ping, request_response::ConfigBuilder},
     transport::{
-        quic::config::TransportConfig as QuicTransportConfig,
-        tcp::config::TransportConfig as TcpTransportConfig,
+        quic::config::Config as QuicConfig,
+        tcp::config::Config as TcpConfig,
     },
     Litep2p, ProtocolName,
 };
@@ -50,14 +50,14 @@ async fn main() {
 
     // build `Litep2pConfig` object
     let config = ConfigBuilder::new()
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec![
                 "/ip6/::1/tcp/0".parse().expect("valid address"),
                 "/ip4/127.0.0.1/tcp/0".parse().expect("valid address"),
             ],
             ..Default::default()
         })
-        .with_quic(QuicTransportConfig {
+        .with_quic(QuicConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().expect("valid address")],
         })
         .with_libp2p_ping(ping_config)

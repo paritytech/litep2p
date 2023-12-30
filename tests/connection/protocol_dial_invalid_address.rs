@@ -23,7 +23,7 @@ use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::{TransportEvent, TransportService, UserProtocol},
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     types::protocol::ProtocolName,
     Litep2p, PeerId,
 };
@@ -102,7 +102,7 @@ async fn protocol_dial_invalid_dns_address() {
     let custom_protocol = Box::new(custom_protocol);
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             ..Default::default()
         })
         .with_user_protocol(custom_protocol)
@@ -134,7 +134,7 @@ async fn protocol_dial_peer_id_missing() {
     let custom_protocol = Box::new(custom_protocol);
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             ..Default::default()
         })
         .with_user_protocol(custom_protocol)

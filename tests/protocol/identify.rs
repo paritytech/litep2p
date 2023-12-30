@@ -23,16 +23,16 @@ use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::{identify::Config, ping::Config as PingConfig},
-    transport::quic::config::TransportConfig as QuicTransportConfig,
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
-    transport::websocket::config::TransportConfig as WebSocketTransportConfig,
+    transport::quic::config::Config as QuicConfig,
+    transport::tcp::config::Config as TcpConfig,
+    transport::websocket::config::Config as WebSocketConfig,
     Litep2p, Litep2pEvent,
 };
 
 enum Transport {
-    Quic(QuicTransportConfig),
-    Tcp(TcpTransportConfig),
-    WebSocket(WebSocketTransportConfig),
+    Quic(QuicConfig),
+    Tcp(TcpConfig),
+    WebSocket(WebSocketConfig),
 }
 
 #[tokio::test]

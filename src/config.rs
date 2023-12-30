@@ -29,10 +29,10 @@ use crate::{
         notification, request_response, UserProtocol,
     },
     transport::{
-        quic::config::TransportConfig as QuicTransportConfig,
-        tcp::config::TransportConfig as TcpTransportConfig,
-        webrtc::config::TransportConfig as WebRtcTransportConfig,
-        websocket::config::TransportConfig as WebSocketTransportConfig, MAX_PARALLEL_DIALS,
+        quic::config::Config as QuicConfig,
+        tcp::config::Config as TcpConfig,
+        webrtc::config::Config as WebRtcConfig,
+        websocket::config::Config as WebSocketConfig, MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
     PeerId,
@@ -64,16 +64,16 @@ impl From<Role> for yamux::Mode {
 /// Configuration builder for [`Litep2p`](`crate::Litep2p`).
 pub struct ConfigBuilder {
     // TCP transport configuration.
-    tcp: Option<TcpTransportConfig>,
+    tcp: Option<TcpConfig>,
 
     /// QUIC transport config.
-    quic: Option<QuicTransportConfig>,
+    quic: Option<QuicConfig>,
 
     /// WebRTC transport config.
-    webrtc: Option<WebRtcTransportConfig>,
+    webrtc: Option<WebRtcConfig>,
 
     /// WebSocket transport config.
-    websocket: Option<WebSocketTransportConfig>,
+    websocket: Option<WebSocketConfig>,
 
     /// Keypair.
     keypair: Option<Keypair>,
@@ -136,25 +136,25 @@ impl ConfigBuilder {
     }
 
     /// Add TCP transport configuration.
-    pub fn with_tcp(mut self, config: TcpTransportConfig) -> Self {
+    pub fn with_tcp(mut self, config: TcpConfig) -> Self {
         self.tcp = Some(config);
         self
     }
 
     /// Add QUIC transport configuration.
-    pub fn with_quic(mut self, config: QuicTransportConfig) -> Self {
+    pub fn with_quic(mut self, config: QuicConfig) -> Self {
         self.quic = Some(config);
         self
     }
 
     /// Add WebRTC transport configuration.
-    pub fn with_webrtc(mut self, config: WebRtcTransportConfig) -> Self {
+    pub fn with_webrtc(mut self, config: WebRtcConfig) -> Self {
         self.webrtc = Some(config);
         self
     }
 
     /// Add WebSocket transport configuration.
-    pub fn with_websocket(mut self, config: WebSocketTransportConfig) -> Self {
+    pub fn with_websocket(mut self, config: WebSocketConfig) -> Self {
         self.websocket = Some(config);
         self
     }
@@ -270,16 +270,16 @@ impl ConfigBuilder {
 /// Configuration for [`Litep2p`](`crate::Litep2p`).
 pub struct Litep2pConfig {
     // TCP transport configuration.
-    pub(crate) tcp: Option<TcpTransportConfig>,
+    pub(crate) tcp: Option<TcpConfig>,
 
     /// QUIC transport config.
-    pub(crate) quic: Option<QuicTransportConfig>,
+    pub(crate) quic: Option<QuicConfig>,
 
     /// WebRTC transport config.
-    pub(crate) webrtc: Option<WebRtcTransportConfig>,
+    pub(crate) webrtc: Option<WebRtcConfig>,
 
     /// WebSocket transport config.
-    pub(crate) websocket: Option<WebSocketTransportConfig>,
+    pub(crate) websocket: Option<WebSocketConfig>,
 
     /// Keypair.
     pub(crate) keypair: Keypair,

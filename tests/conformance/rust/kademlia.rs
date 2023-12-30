@@ -32,7 +32,7 @@ use litep2p::{
     protocol::libp2p::kademlia::{
         ConfigBuilder, KademliaEvent, KademliaHandle, Quorum, Record, RecordKey,
     },
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     Litep2p,
 };
 use multiaddr::Protocol;
@@ -52,7 +52,7 @@ fn initialize_litep2p() -> (Litep2p, KademliaHandle) {
     let litep2p = Litep2p::new(
         Litep2pConfigBuilder::new()
             .with_keypair(keypair)
-            .with_tcp(TcpTransportConfig {
+            .with_tcp(TcpConfig {
                 listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
                 ..Default::default()
             })

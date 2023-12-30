@@ -30,7 +30,7 @@ use litep2p::{
             ConfigBuilder as RequestResponseConfigBuilder, DialOptions, RequestResponseEvent,
         },
     },
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent,
 };
@@ -118,7 +118,7 @@ async fn custom_executor() {
         .with_notification_protocol(notif_config1)
         .with_request_response_protocol(req_resp_config1)
         .with_executor(Arc::new(handle))
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -145,7 +145,7 @@ async fn custom_executor() {
         .with_notification_protocol(notif_config2)
         .with_request_response_protocol(req_resp_config2)
         .with_executor(Arc::new(handle))
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })

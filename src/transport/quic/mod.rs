@@ -27,10 +27,7 @@ use crate::{
     error::{AddressError, Error},
     transport::{
         manager::TransportHandle,
-        quic::{
-            config::TransportConfig as QuicTransportConfig, connection::QuicConnection,
-            listener::QuicListener,
-        },
+        quic::{config::Config as QuicConfig, connection::QuicConnection, listener::QuicListener},
         Endpoint as Litep2pEndpoint, Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
@@ -75,7 +72,7 @@ pub(crate) struct QuicTransport {
     context: TransportHandle,
 
     /// Transport config.
-    config: QuicTransportConfig,
+    config: QuicConfig,
 
     /// QUIC listener.
     listener: QuicListener,
@@ -165,7 +162,7 @@ impl QuicTransport {
 }
 
 impl TransportBuilder for QuicTransport {
-    type Config = QuicTransportConfig;
+    type Config = QuicConfig;
     type Transport = QuicTransport;
 
     /// Create new [`QuicTransport`] object.

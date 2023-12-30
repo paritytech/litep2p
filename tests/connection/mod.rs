@@ -24,9 +24,9 @@ use litep2p::{
     error::{AddressError, Error},
     protocol::libp2p::ping::{Config as PingConfig, PingEvent},
     transport::{
-        quic::config::TransportConfig as QuicTransportConfig,
-        tcp::config::TransportConfig as TcpTransportConfig,
-        websocket::config::TransportConfig as WebSocketTransportConfig,
+        quic::config::Config as QuicConfig,
+        tcp::config::Config as TcpConfig,
+        websocket::config::Config as WebSocketConfig,
     },
     Litep2p, Litep2pEvent, PeerId,
 };
@@ -40,19 +40,19 @@ use tokio::net::{TcpListener, UdpSocket};
 mod protocol_dial_invalid_address;
 
 enum Transport {
-    Tcp(TcpTransportConfig),
-    Quic(QuicTransportConfig),
-    WebSocket(WebSocketTransportConfig),
+    Tcp(TcpConfig),
+    Quic(QuicConfig),
+    WebSocket(WebSocketConfig),
 }
 
 #[tokio::test]
 async fn two_litep2ps_work_tcp() {
     two_litep2ps_work(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -72,11 +72,11 @@ async fn two_litep2ps_work_quic() {
 #[tokio::test]
 async fn two_litep2ps_work_websocket() {
     two_litep2ps_work(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -134,11 +134,11 @@ async fn two_litep2ps_work(transport1: Transport, transport2: Transport) {
 #[tokio::test]
 async fn dial_failure_tcp() {
     dial_failure(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -169,11 +169,11 @@ async fn dial_failure_quic() {
 #[tokio::test]
 async fn dial_failure_websocket() {
     dial_failure(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -248,7 +248,7 @@ async fn connect_over_dns() {
 
     let config1 = ConfigBuilder::new()
         .with_keypair(keypair1)
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -260,7 +260,7 @@ async fn connect_over_dns() {
 
     let config2 = ConfigBuilder::new()
         .with_keypair(keypair2)
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -307,7 +307,7 @@ async fn connection_timeout_tcp() {
         ));
 
     connection_timeout(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -346,7 +346,7 @@ async fn connection_timeout_websocket() {
         ));
 
     connection_timeout(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -420,7 +420,7 @@ async fn dial_quic_peer_id_missing() {
 
 #[tokio::test]
 async fn dial_self_tcp() {
-    dial_self(Transport::Tcp(TcpTransportConfig {
+    dial_self(Transport::Tcp(TcpConfig {
         listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
         ..Default::default()
     }))
@@ -434,7 +434,7 @@ async fn dial_self_quic() {
 
 #[tokio::test]
 async fn dial_self_websocket() {
-    dial_self(Transport::WebSocket(WebSocketTransportConfig {
+    dial_self(Transport::WebSocket(WebSocketConfig {
         listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
         ..Default::default()
     }))
@@ -498,11 +498,11 @@ async fn attempt_to_dial_using_unsupported_transport() {
 #[tokio::test]
 async fn keep_alive_timeout_tcp() {
     keep_alive_timeout(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         }),
@@ -522,11 +522,11 @@ async fn keep_alive_timeout_quic() {
 #[tokio::test]
 async fn keep_alive_timeout_websocket() {
     keep_alive_timeout(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         }),
@@ -605,7 +605,7 @@ async fn simultaneous_dial_tcp() {
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -616,7 +616,7 @@ async fn simultaneous_dial_tcp() {
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -767,7 +767,7 @@ async fn websocket_over_ipv6() {
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_websocket(WebSocketTransportConfig {
+        .with_websocket(WebSocketConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         })
@@ -778,7 +778,7 @@ async fn websocket_over_ipv6() {
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_websocket(WebSocketTransportConfig {
+        .with_websocket(WebSocketConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         })
@@ -819,7 +819,7 @@ async fn tcp_dns_resolution() {
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -830,7 +830,7 @@ async fn tcp_dns_resolution() {
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -880,7 +880,7 @@ async fn websocket_dns_resolution() {
     let (ping_config1, mut ping_event_stream1) = PingConfig::default();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_websocket(WebSocketTransportConfig {
+        .with_websocket(WebSocketConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         })
@@ -891,7 +891,7 @@ async fn websocket_dns_resolution() {
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_websocket(WebSocketTransportConfig {
+        .with_websocket(WebSocketConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0/ws".parse().unwrap()],
             ..Default::default()
         })
@@ -936,18 +936,18 @@ async fn websocket_dns_resolution() {
 #[tokio::test]
 async fn multiple_listen_addresses_tcp() {
     multiple_listen_addresses(
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec![
                 "/ip6/::1/tcp/0".parse().unwrap(),
                 "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
             ],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec![],
             ..Default::default()
         }),
-        Transport::Tcp(TcpTransportConfig {
+        Transport::Tcp(TcpConfig {
             listen_addresses: vec![],
             ..Default::default()
         }),
@@ -958,18 +958,18 @@ async fn multiple_listen_addresses_tcp() {
 #[tokio::test]
 async fn multiple_listen_addresses_quic() {
     multiple_listen_addresses(
-        Transport::Quic(QuicTransportConfig {
+        Transport::Quic(QuicConfig {
             listen_addresses: vec![
                 "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
                 "/ip6/::1/udp/0/quic-v1".parse().unwrap(),
             ],
             ..Default::default()
         }),
-        Transport::Quic(QuicTransportConfig {
+        Transport::Quic(QuicConfig {
             listen_addresses: vec![],
             ..Default::default()
         }),
-        Transport::Quic(QuicTransportConfig {
+        Transport::Quic(QuicConfig {
             listen_addresses: vec![],
             ..Default::default()
         }),
@@ -980,18 +980,18 @@ async fn multiple_listen_addresses_quic() {
 #[tokio::test]
 async fn multiple_listen_addresses_websocket() {
     multiple_listen_addresses(
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec![
                 "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap(),
                 "/ip6/::1/tcp/0/ws".parse().unwrap(),
             ],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec![],
             ..Default::default()
         }),
-        Transport::WebSocket(WebSocketTransportConfig {
+        Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec![],
             ..Default::default()
         }),
@@ -1070,7 +1070,7 @@ async fn port_in_use_tcp() {
 
     let _litep2p = Litep2p::new(
         ConfigBuilder::new()
-            .with_tcp(TcpTransportConfig {
+            .with_tcp(TcpConfig {
                 listen_addresses: vec![Multiaddr::empty()
                     .with(Protocol::from(address.ip()))
                     .with(Protocol::Tcp(address.port()))],
@@ -1092,7 +1092,7 @@ async fn port_in_use_websocket() {
 
     let _litep2p = Litep2p::new(
         ConfigBuilder::new()
-            .with_websocket(WebSocketTransportConfig {
+            .with_websocket(WebSocketConfig {
                 listen_addresses: vec![Multiaddr::empty()
                     .with(Protocol::from(address.ip()))
                     .with(Protocol::Tcp(address.port()))

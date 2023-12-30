@@ -22,8 +22,8 @@ use futures::StreamExt;
 use litep2p::{
     config::ConfigBuilder, crypto::ed25519::Keypair,
     protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
-    transport::quic::config::TransportConfig as QuicTransportConfig,
-    transport::tcp::config::TransportConfig as TcpTransportConfig, Litep2p,
+    transport::quic::config::Config as QuicConfig,
+    transport::tcp::config::Config as TcpConfig, Litep2p,
 };
 
 #[tokio::test]
@@ -36,7 +36,7 @@ async fn ping_supported() {
         PingConfigBuilder::new().with_max_failure(3usize).build();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -46,7 +46,7 @@ async fn ping_supported() {
     let (ping_config2, mut ping_event_stream2) = PingConfigBuilder::new().build();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -95,7 +95,7 @@ async fn ping_supported_quic() {
     let (ping_config1, mut ping_event_stream1) = PingConfigBuilder::new().build();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_quic(QuicTransportConfig {
+        .with_quic(QuicConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
             ..Default::default()
         })
@@ -105,7 +105,7 @@ async fn ping_supported_quic() {
     let (ping_config2, mut ping_event_stream2) = PingConfigBuilder::new().build();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_quic(QuicTransportConfig {
+        .with_quic(QuicConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
             ..Default::default()
         })

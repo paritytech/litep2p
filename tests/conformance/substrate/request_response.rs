@@ -29,7 +29,7 @@ use litep2p::{
     protocol::request_response::{
         RequestResponseConfig, RequestResponseError, RequestResponseEvent, RequestResponseHandle,
     },
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     Litep2p, Litep2pEvent,
 };
 use sc_network::{
@@ -80,7 +80,7 @@ async fn initialize_litep2p() -> (Litep2p, RequestResponseHandle) {
 
     let litep2p = Litep2p::new(
         ConfigBuilder::new()
-            .with_tcp(TcpTransportConfig {
+            .with_tcp(TcpConfig {
                 listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
                 yamux_config: Default::default(),
             })

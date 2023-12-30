@@ -23,7 +23,7 @@ use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::{TransportEvent, TransportService, UserProtocol},
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent, PeerId,
 };
@@ -105,7 +105,7 @@ async fn user_protocol_2() {
     let (custom_protocol1, sender1) = CustomProtocol::new();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             ..Default::default()
         })
         .with_user_protocol(Box::new(custom_protocol1))
@@ -114,7 +114,7 @@ async fn user_protocol_2() {
     let (custom_protocol2, _sender2) = CustomProtocol::new();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             ..Default::default()
         })
         .with_user_protocol(Box::new(custom_protocol2))

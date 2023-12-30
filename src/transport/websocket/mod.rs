@@ -26,7 +26,7 @@ use crate::{
     transport::{
         manager::TransportHandle,
         websocket::{
-            config::TransportConfig,
+            config::Config,
             connection::{NegotiatedConnection, WebSocketConnection},
             listener::WebSocketListener,
         },
@@ -84,7 +84,7 @@ pub(crate) struct WebSocketTransport {
     context: TransportHandle,
 
     /// Transport configuration.
-    config: TransportConfig,
+    config: Config,
 
     /// WebSocket listener.
     listener: WebSocketListener,
@@ -169,7 +169,7 @@ impl WebSocketTransport {
 }
 
 impl TransportBuilder for WebSocketTransport {
-    type Config = TransportConfig;
+    type Config = Config;
     type Transport = WebSocketTransport;
 
     /// Create new [`Transport`] object.

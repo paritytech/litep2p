@@ -25,7 +25,7 @@ use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::kademlia::{ConfigBuilder as KademliaConfigBuilder, RecordKey},
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     Litep2p, PeerId,
 };
 
@@ -33,7 +33,7 @@ fn spawn_litep2p(port: u16) {
     let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec![format!("/ip6/::1/tcp/{port}").parse().unwrap()],
             ..Default::default()
         })
@@ -55,7 +55,7 @@ async fn kademlia_supported() {
     let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
@@ -90,7 +90,7 @@ async fn put_value() {
     let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         })

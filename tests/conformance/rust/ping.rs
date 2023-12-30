@@ -29,7 +29,7 @@ use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::ping::{Config as PingConfig, PingEvent},
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     Litep2p,
 };
 
@@ -46,7 +46,7 @@ fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send + U
     let litep2p = Litep2p::new(
         ConfigBuilder::new()
             .with_keypair(keypair)
-            .with_tcp(TcpTransportConfig {
+            .with_tcp(TcpConfig {
                 listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
                 ..Default::default()
             })

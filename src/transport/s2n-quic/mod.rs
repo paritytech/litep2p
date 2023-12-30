@@ -25,7 +25,7 @@ use crate::{
     error::{AddressError, Error},
     transport::{
         manager::{TransportHandle, TransportManagerCommand},
-        quic::{config::TransportConfig, connection::QuicConnection},
+        quic::{config::Config, connection::QuicConnection},
         Transport,
     },
     types::ConnectionId,
@@ -279,7 +279,7 @@ impl QuicTransport {
 
 #[async_trait::async_trait]
 impl Transport for QuicTransport {
-    type Config = TransportConfig;
+    type Config = Config;
 
     /// Create new [`QuicTransport`] object.
     async fn new(context: TransportHandle, config: Self::Config) -> crate::Result<Self>
@@ -401,7 +401,7 @@ mod tests {
                 },
             )]),
         };
-        let transport_config1 = config::TransportConfig {
+        let transport_config1 = config::Config {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         };
 
@@ -434,7 +434,7 @@ mod tests {
                 },
             )]),
         };
-        let transport_config2 = config::TransportConfig {
+        let transport_config2 = config::Config {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
         };
 
@@ -467,7 +467,7 @@ mod tests {
         let handle = manager.register_transport(SupportedTransport::Quic);
         let mut transport = QuicTransport::new(
             handle,
-            TransportConfig {
+            Config {
                 listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
             },
         )
@@ -494,7 +494,7 @@ mod tests {
         let handle = manager.register_transport(SupportedTransport::Quic);
         let mut transport = QuicTransport::new(
             handle,
-            TransportConfig {
+            Config {
                 listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
             },
         )
@@ -539,7 +539,7 @@ mod tests {
         let handle = manager.register_transport(SupportedTransport::Quic);
         let mut transport = QuicTransport::new(
             handle,
-            TransportConfig {
+            Config {
                 listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
             },
         )

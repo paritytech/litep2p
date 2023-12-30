@@ -28,7 +28,7 @@ use std::time::Duration;
 
 /// QUIC transport configuration.
 #[derive(Debug)]
-pub struct TransportConfig {
+pub struct Config {
     /// Listen address for the transport.
     pub listen_addresses: Vec<Multiaddr>,
 
@@ -45,7 +45,7 @@ pub struct TransportConfig {
     pub substream_open_timeout: Duration,
 }
 
-impl Default for TransportConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().expect("valid address")],

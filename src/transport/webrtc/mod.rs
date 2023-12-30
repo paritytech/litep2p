@@ -26,7 +26,7 @@ use crate::{
     error::{AddressError, Error},
     transport::{
         manager::TransportHandle,
-        webrtc::{config::TransportConfig, connection::WebRtcConnection},
+        webrtc::{config::Config, connection::WebRtcConnection},
         Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
@@ -286,7 +286,7 @@ impl WebRtcTransport {
 }
 
 impl TransportBuilder for WebRtcTransport {
-    type Config = TransportConfig;
+    type Config = Config;
     type Transport = WebRtcTransport;
 
     /// Create new [`Transport`] object.

@@ -34,7 +34,7 @@ use litep2p::{
         identify::{Config as IdentifyConfig, IdentifyEvent},
         ping::{Config as PingConfig, PingEvent},
     },
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     Litep2p,
 };
 
@@ -76,7 +76,7 @@ fn initialize_litep2p() -> (
     let litep2p = Litep2p::new(
         ConfigBuilder::new()
             .with_keypair(keypair)
-            .with_tcp(TcpTransportConfig {
+            .with_tcp(TcpConfig {
                 listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
                 ..Default::default()
             })

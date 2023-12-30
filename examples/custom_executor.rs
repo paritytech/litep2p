@@ -30,7 +30,7 @@
 use litep2p::{
     config::ConfigBuilder, executor::Executor,
     protocol::notification::ConfigBuilder as NotificationConfigBuilder,
-    transport::tcp::config::TransportConfig as TcpTransportConfig, types::protocol::ProtocolName,
+    transport::tcp::config::Config as TcpConfig, types::protocol::ProtocolName,
     Litep2p,
 };
 
@@ -104,7 +104,7 @@ async fn main() {
         ConfigBuilder::new()
             .with_notification_protocol(notif_config)
             .with_executor(Arc::new(TaskExecutorHandle { tx: sender.clone() }))
-            .with_tcp(TcpTransportConfig {
+            .with_tcp(TcpConfig {
                 listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
                 ..Default::default()
             })

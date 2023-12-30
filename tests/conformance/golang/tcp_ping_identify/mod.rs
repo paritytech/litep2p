@@ -23,7 +23,7 @@ use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::{identify::Config as IdentifyConfig, ping::Config as PingConfig},
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     Litep2p,
 };
 
@@ -51,7 +51,7 @@ async fn go_libp2p_dials() {
     let mut litep2p = Litep2p::new(
         ConfigBuilder::new()
             .with_keypair(keypair)
-            .with_tcp(TcpTransportConfig {
+            .with_tcp(TcpConfig {
                 ..Default::default()
             })
             .with_libp2p_ping(ping_config)

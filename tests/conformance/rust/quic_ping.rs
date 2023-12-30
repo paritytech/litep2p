@@ -30,7 +30,7 @@ use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::ping::{Config as PingConfig, PingEvent},
-    transport::quic::config::TransportConfig as QuicTransportConfig,
+    transport::quic::config::Config as QuicConfig,
     Litep2p,
 };
 
@@ -47,7 +47,7 @@ fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send + U
     let litep2p = Litep2p::new(
         ConfigBuilder::new()
             .with_keypair(keypair)
-            .with_quic(QuicTransportConfig {
+            .with_quic(QuicConfig {
                 listen_addresses: vec!["/ip4/127.0.0.1/udp/8888/quic-v1".parse().unwrap()],
                 ..Default::default()
             })

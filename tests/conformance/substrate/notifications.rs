@@ -27,7 +27,7 @@ use litep2p::{
             Config as NotificationConfig, NotificationError, NotificationEvent, ValidationResult,
         },
     },
-    transport::tcp::config::TransportConfig as TcpTransportConfig,
+    transport::tcp::config::Config as TcpConfig,
     types::protocol::ProtocolName as Litep2pProtocol,
     Litep2p, Litep2pEvent, PeerId as Litep2pPeerId,
 };
@@ -96,7 +96,7 @@ async fn initialize_litep2p() -> (Litep2p, NotificationHandle) {
     );
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_tcp(TcpTransportConfig {
+        .with_tcp(TcpConfig {
             listen_address: "/ip6/::1/tcp/0".parse().unwrap(),
             yamux_config: Default::default(),
         })
