@@ -205,7 +205,7 @@ impl UserProtocol for CustomProtocol {
                         }
                     }
                     Command::OpenSubstream(peer, tx) => {
-                        let substream_id = service.open_substream(peer).await.unwrap();
+                        let substream_id = service.open_substream(peer).unwrap();
                         self.pending_opens.insert(substream_id, (peer, tx));
                     }
                 }

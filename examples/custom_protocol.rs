@@ -141,7 +141,7 @@ impl UserProtocol for CustomProtocol {
                         // and if yes, open substream to the peer.
                         match self.peers.get(&peer) {
                             Some(Some(_)) => {
-                                if let Err(error) = service.open_substream(peer).await {
+                                if let Err(error) = service.open_substream(peer) {
                                     println!("failed to open substream to {peer:?}: {error:?}");
                                 }
                             }

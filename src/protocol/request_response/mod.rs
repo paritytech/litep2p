@@ -212,7 +212,7 @@ impl RequestResponseProtocol {
             None => {
                 entry.insert(PeerContext::new());
             }
-            Some(context) => match self.service.open_substream(peer).await {
+            Some(context) => match self.service.open_substream(peer) {
                 Ok(substream_id) => {
                     tracing::trace!(
                         target: LOG_TARGET,
@@ -675,7 +675,7 @@ impl RequestResponseProtocol {
 
         // open substream and push it pending outbound substreams
         // once the substream is opened, send the request.
-        match self.service.open_substream(peer).await {
+        match self.service.open_substream(peer) {
             Ok(substream_id) => {
                 let unique_request_id = context.active.insert(request_id);
                 debug_assert!(unique_request_id);

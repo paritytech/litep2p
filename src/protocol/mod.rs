@@ -157,7 +157,7 @@ pub trait Transport {
     /// Open substream to `peer`.
     ///
     /// Call fails if there is no open connection to the peer.
-    async fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId>;
+    fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId>;
 
     /// Get next [`TransportEvent`].
     async fn next_event(&mut self) -> Option<TransportEvent>;

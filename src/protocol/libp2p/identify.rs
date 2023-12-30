@@ -163,14 +163,10 @@ impl Identify {
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(
-        &mut self,
-        peer: PeerId,
-        endpoint: Endpoint,
-    ) -> crate::Result<()> {
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, ?endpoint, "connection established");
 
-        let substream_id = self.service.open_substream(peer).await?;
+        let substream_id = self.service.open_substream(peer)?;
         self.pending_opens.insert(substream_id, peer);
         self.peers.insert(peer, endpoint);
 
@@ -275,7 +271,7 @@ impl Identify {
                 event = self.service.next_event() => match event {
                     None => return,
                     Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
-                        let _ = self.on_connection_established(peer, endpoint).await;
+                        let _ = self.on_connection_established(peer, endpoint);
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.on_connection_closed(peer);

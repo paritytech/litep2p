@@ -206,8 +206,8 @@ impl Bitswap {
     }
 
     /// Handle bitswap response.
-    async fn on_bitswap_response(&mut self, peer: PeerId, responses: Vec<ResponseType>) {
-        match self.service.open_substream(peer).await {
+    fn on_bitswap_response(&mut self, peer: PeerId, responses: Vec<ResponseType>) {
+        match self.service.open_substream(peer) {
             Err(error) => {
                 tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream to peer")
             }
@@ -239,7 +239,7 @@ impl Bitswap {
                 },
                 command = self.cmd_rx.recv() => match command {
                     Some(BitswapCommand::SendResponse { peer, responses }) => {
-                        self.on_bitswap_response(peer, responses).await;
+                        self.on_bitswap_response(peer, responses);
                     }
                     None => return,
                 },

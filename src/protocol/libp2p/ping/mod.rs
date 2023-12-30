@@ -97,10 +97,10 @@ impl Ping {
     }
 
     /// Connection established to remote peer.
-    async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
+    fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-        let substream_id = self.service.open_substream(peer).await?;
+        let substream_id = self.service.open_substream(peer)?;
         self.pending_opens.insert(substream_id, peer);
         self.peers.insert(peer);
 
@@ -160,7 +160,7 @@ impl Ping {
             tokio::select! {
                 event = self.service.next_event() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        let _ = self.on_connection_established(peer).await;
+                        let _ = self.on_connection_established(peer);
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.on_connection_closed(peer);

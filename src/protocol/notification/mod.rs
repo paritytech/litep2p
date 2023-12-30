@@ -763,7 +763,7 @@ impl NotificationProtocol {
         // protocol can only request a new outbound substream to be opened if the state is `Closed`
         // other states imply that it's already open
         if std::matches!(context.state, PeerState::Closed { .. }) {
-            match self.service.open_substream(peer).await {
+            match self.service.open_substream(peer) {
                 Ok(substream_id) => {
                     tracing::trace!(
                         target: LOG_TARGET,
@@ -888,7 +888,7 @@ impl NotificationProtocol {
                     // no outbound substream exists so initiate a new substream open and send the
                     // local handshake to remote node, indicating that the
                     // connection was accepted by the local node
-                    OutboundState::Closed => match self.service.open_substream(peer).await {
+                    OutboundState::Closed => match self.service.open_substream(peer) {
                         Ok(substream) => {
                             self.negotiation.send_handshake(peer, inbound);
                             self.pending_outbound.insert(substream, peer);

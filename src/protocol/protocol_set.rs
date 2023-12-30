@@ -412,7 +412,7 @@ impl Transport for TransportService {
         self.transport_handle.add_known_address(peer, addresses.into_iter());
     }
 
-    async fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
+    fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
         // always prefer the primary connection
         let connection =
             &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?.primary;
@@ -436,7 +436,6 @@ impl Transport for TransportService {
                 substream_id,
                 permit,
             )
-            .await
             .map(|_| substream_id)
     }
 
