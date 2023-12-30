@@ -18,43 +18,30 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
-//! This example demonstrates how application can implement block and transaction gossiping.
+//! This example demonstrates how application can implement transaction gossiping.
 //!
-//! Peers interested in both blocks and transactions initialize both notification protocols
-//! and receive notifications over them. The block announce protocol only announces headers
-//! and peers interested in the block bodies will request them over the request-response protocol.
-//! The presence of the block announcement protocol assumes that the request-response protocol is
-//! also available.
-//!
-//! TODO:
+//! Run: `RUST_LOG=gossiping=info cargo run --example gossiping`
 
 use litep2p::{
     config::Litep2pConfigBuilder,
-    protocol::{
-        notification::{
-            Config as NotificationConfig, ConfigBuilder as NotificationConfigBuilder,
-            NotificationHandle,
-        },
-        request_response::{
-            Config as RequestResponseConfig, ConfigBuilder as RequestResponseConfigBuilder,
-            RequestResponseHandle,
-        },
+    protocol::notification::{
+        Config as NotificationConfig, ConfigBuilder as NotificationConfigBuilder,
+        NotificationEvent, NotificationHandle, ValidationResult,
     },
-    transport::quic::config::TransportConfig as QuicTransportConfig,
     types::protocol::ProtocolName,
-    Litep2p,
+    Litep2p, PeerId,
 };
 
 use futures::StreamExt;
-use tokio::sync::{
-    mpsc::{channel, Receiver, Sender},
-    oneshot,
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
 };
 
 /// Dummy transaction.
-#[derive(Hash)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct Transaction {
     tx: Vec<u8>,
 }
@@ -75,7 +62,7 @@ impl TransactionProtocolHandle {
     /// Announce transaction by sending it to the [`TransactionProtocol`] which will send
     /// it to all peers who don't have it yet.
     async fn announce_transaction(&self, tx: Transaction) {
-        self.tx.send(tx).await;
+        self.tx.send(tx).await.unwrap();
     }
 }
 
@@ -83,13 +70,32 @@ impl TransactionProtocolHandle {
 struct TransactionProtocol {
     /// Notification handle used to send and receive notifications.
     tx_handle: NotificationHandle,
+
+    /// Handle for receiving transactions from user that should be sent to connected peers.
+    rx: Receiver<Transaction>,
+
+    /// Connected peers.
+    peers: HashMap<PeerId, HashSet<Transaction>>,
+
+    /// Seen transactions.
+    seen: HashSet<Transaction>,
 }
 
 impl TransactionProtocol {
-    fn new() -> (Self, NotificationConfig) {
+    fn new() -> (Self, NotificationConfig, TransactionProtocolHandle) {
         let (tx_config, tx_handle) = Self::init_tx_announce();
+        let (handle, rx) = TransactionProtocolHandle::new();
 
-        (Self { tx_handle }, tx_config)
+        (
+            Self {
+                tx_handle,
+                rx,
+                peers: HashMap::new(),
+                seen: HashSet::new(),
+            },
+            tx_config,
+            handle,
+        )
     }
 
     /// Initialize notification protocol for transactions.
@@ -100,164 +106,180 @@ impl TransactionProtocol {
             .build()
     }
 
-    /// Start event loop for the transaction protocol.
-    async fn run(&mut self) {
-        todo!();
-    }
-}
-
-/// Dummy block.
-#[derive(Hash)]
-struct Block {
-    block: Vec<u8>,
-}
-
-/// Block protocol command.
-enum BlockProtocolCommand {
-    /// Announce block.
-    AnnounceBlock(Block),
-
-    /// Download block.
-    DownloadBlock(u64, oneshot::Sender<Block>),
-}
-
-struct BlockProtocolHandle {
-    tx: Sender<BlockProtocolCommand>,
-}
-
-impl BlockProtocolHandle {
-    /// Create new [`BlockProtocolHandle`].
-    fn new() -> (Self, Receiver<BlockProtocolCommand>) {
-        let (tx, rx) = channel(64);
-
-        (Self { tx }, rx)
-    }
-
-    /// Announce block on the network.
-    async fn announce_block(&self, block: Block) {
-        self.tx.send(BlockProtocolCommand::AnnounceBlock(block)).await;
-    }
-
-    /// Download block.
-    async fn download_block(&self, hash: u64) -> Option<Block> {
-        let (tx, rx) = oneshot::channel();
-
-        self.tx.send(BlockProtocolCommand::DownloadBlock(hash, tx)).await;
-        rx.await.ok()
-    }
-}
-
-struct BlockProtocol {
-    /// Notification handle used to send and receive notifications.
-    block_announce_handle: NotificationHandle,
-
-    /// Request-response handle for sending/receiving block requests.
-    block_request_handle: RequestResponseHandle,
-}
-
-impl BlockProtocol {
-    /// Create new [`SyncingEngine`].
-    fn new() -> (Self, NotificationConfig, RequestResponseConfig) {
-        let (block_announce_config, block_announce_handle) = Self::init_block_announce();
-        let (block_request_config, block_request_handle) = Self::init_block_request();
-
-        (
-            Self {
-                block_announce_handle,
-                block_request_handle,
-            },
-            block_announce_config,
-            block_request_config,
-        )
-    }
-
-    /// Initialize notification protocol for block announcements
-    fn init_block_announce() -> (NotificationConfig, NotificationHandle) {
-        NotificationConfigBuilder::new(ProtocolName::from("/notif/block-announce/1"))
-            .with_max_size(1024usize)
-            .with_handshake(vec![1, 2, 3, 4])
-            .build()
-    }
-
-    /// Initialize request-response protocol for block requests.
-    fn init_block_request() -> (RequestResponseConfig, RequestResponseHandle) {
-        RequestResponseConfigBuilder::new(ProtocolName::from("/sync/block/1"))
-            .with_max_size(8 * 1024)
-            .build()
-    }
-
-    /// Start event loop for [`SyncingEngine`].
-    async fn run(mut self) {
+    /// Poll next transaction from the protocol.
+    async fn next(&mut self) -> Option<(PeerId, Transaction)> {
         loop {
             tokio::select! {
-                _ = self.block_announce_handle.next() => {}
-                _ = self.block_request_handle.next() => {}
+                event = self.tx_handle.next() => match event? {
+                    NotificationEvent::ValidateSubstream { peer, .. } => {
+                        tracing::info!("inbound substream received from {peer}");
+
+                        self.tx_handle.send_validation_result(peer, ValidationResult::Accept);
+                    }
+                    NotificationEvent::NotificationStreamOpened { peer, .. } => {
+                        tracing::info!("substream opened for {peer}");
+
+                        self.peers.insert(peer, HashSet::new());
+                    }
+                    NotificationEvent::NotificationStreamClosed { peer } => {
+                        tracing::info!("substream closed for {peer}");
+
+                        self.peers.remove(&peer);
+                    }
+                    NotificationEvent::NotificationReceived { peer, notification } => {
+                        tracing::info!("transaction received from {peer}: {notification:?}");
+
+                        // send transaction to all peers who don't have it yet
+                        let notification = notification.freeze();
+
+                        for (connected, txs) in &mut self.peers {
+                            let not_seen = txs.insert(Transaction { tx: notification.clone().into() });
+                            if connected != &peer && not_seen {
+                                self.tx_handle.send_sync_notification(
+                                    *connected,
+                                    notification.clone().into(),
+                                ).unwrap();
+                            }
+                        }
+
+                        if self.seen.insert(Transaction { tx: notification.clone().into() }) {
+                            return Some((peer, Transaction { tx: notification.clone().into() }))
+                        }
+                    }
+                    _ => {}
+                },
+                tx = self.rx.recv() => match tx {
+                    None => return None,
+                    Some(transaction) => {
+                        // send transaction to all peers who don't have it yet
+                        self.seen.insert(transaction.clone());
+
+                        for (peer, txs) in &mut self.peers {
+                            if txs.insert(transaction.clone()) {
+                                self.tx_handle.send_sync_notification(
+                                    *peer,
+                                    transaction.tx.clone(),
+                                ).unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Start event loop for [`TransactionProtocol`].
+    async fn run(mut self) {
+        loop {
+            match self.next().await {
+                Some((peer, tx)) => {
+                    tracing::info!("received transaction from {peer}: {tx:?}");
+                }
+                None => return,
             }
         }
     }
 }
 
-/// Initialize peer with all protocols enabled.
-async fn full_peer() -> (Litep2p, BlockProtocolHandle, TransactionProtocolHandle) {
-    // create `BlockProtocol` and get configs for the protocols that it will use.
-    let (mut block, block_announce_config, block_request_config) = BlockProtocol::new();
-    let (mut tx, tx_announce_config) = TransactionProtocol::new();
-
-    // build `Litep2pConfig`
-    let config = Litep2pConfigBuilder::new()
-        .with_quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-            ..Default::default()
-        })
-        .with_notification_protocol(block_announce_config)
-        .with_notification_protocol(tx_announce_config)
-        .with_request_response_protocol(block_request_config)
-        .build();
-
-    // create `Litep2p` object and start internal protocol handlers and the QUIC transport
-    let mut litep2p = Litep2p::new(config).unwrap();
-
-    // spawn `SyncingEngine` in the background
-    tokio::spawn(block.run());
-    // tokio::spawn(tx.run());
-
-    todo!();
-}
-
-/// Initialize peer with block announcement/request-response protocols enabled.
-async fn block_peer() -> (Litep2p, BlockProtocol) {
-    todo!();
+async fn await_substreams(
+    tx1: &mut TransactionProtocol,
+    tx2: &mut TransactionProtocol,
+    tx3: &mut TransactionProtocol,
+    tx4: &mut TransactionProtocol,
+) {
+    loop {
+        tokio::select! {
+            _ = tx1.next() => {}
+            _ = tx2.next() => {}
+            _ = tx3.next() => {}
+            _ = tx4.next() => {}
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                if tx1.peers.len() == 1 && tx2.peers.len() == 3 && tx3.peers.len() == 1 && tx4.peers.len() == 1 {
+                    return
+                }
+            }
+        }
+    }
 }
 
 /// Initialize peer with transaction protocol enabled.
-async fn tx_peer() -> (Litep2p, TransactionProtocol) {
-    todo!();
+fn tx_peer() -> (Litep2p, TransactionProtocol, TransactionProtocolHandle) {
+    // initialize `TransctionProtocol`
+    let (tx, tx_announce_config, tx_handle) = TransactionProtocol::new();
+
+    // build `Litep2pConfig`
+    let config = Litep2pConfigBuilder::new()
+        .with_tcp(Default::default())
+        .with_notification_protocol(tx_announce_config)
+        .build();
+
+    // create `Litep2p` object and start internal protocol handlers and the QUIC transport
+    let litep2p = Litep2p::new(config).unwrap();
+
+    (litep2p, tx, tx_handle)
 }
 
 #[tokio::main]
 async fn main() {
-    // create `BlockProtocol` and get configs for the protocols that it will use.
-    let (engine, block_announce_config, block_request_config) = BlockProtocol::new();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
-    // build `Litep2pConfig`
-    let config = Litep2pConfigBuilder::new()
-        .with_quic(QuicTransportConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()],
-            ..Default::default()
+    let (mut litep2p1, mut tx1, tx_handle1) = tx_peer();
+    let (mut litep2p2, mut tx2, _tx_handle2) = tx_peer();
+    let (mut litep2p3, mut tx3, tx_handle3) = tx_peer();
+    let (mut litep2p4, mut tx4, tx_handle4) = tx_peer();
+
+    tracing::info!("litep2p1: {}", litep2p1.local_peer_id());
+    tracing::info!("litep2p2: {}", litep2p2.local_peer_id());
+    tracing::info!("litep2p3: {}", litep2p3.local_peer_id());
+    tracing::info!("litep2p4: {}", litep2p4.local_peer_id());
+
+    // establish connection to litep2p for all other litep2ps
+    let peer2 = *litep2p2.local_peer_id();
+    let listen_address = litep2p2.listen_addresses().next().unwrap().clone();
+
+    litep2p1.add_known_address(peer2, vec![listen_address.clone()].into_iter());
+    litep2p3.add_known_address(peer2, vec![listen_address.clone()].into_iter());
+    litep2p4.add_known_address(peer2, vec![listen_address].into_iter());
+
+    tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
+    tokio::spawn(async move { while let Some(_) = litep2p2.next_event().await {} });
+    tokio::spawn(async move { while let Some(_) = litep2p3.next_event().await {} });
+    tokio::spawn(async move { while let Some(_) = litep2p4.next_event().await {} });
+
+    // open substreams
+    tx1.tx_handle.open_substream(peer2).await.unwrap();
+    tx3.tx_handle.open_substream(peer2).await.unwrap();
+    tx4.tx_handle.open_substream(peer2).await.unwrap();
+
+    // wait a moment for substream to open and start `TransactionProtocol` event loops
+    await_substreams(&mut tx1, &mut tx2, &mut tx3, &mut tx4).await;
+
+    tokio::spawn(tx1.run());
+    tokio::spawn(tx2.run());
+    tokio::spawn(tx3.run());
+    tokio::spawn(tx4.run());
+
+    // annouce three transactions over three different handles
+    tx_handle1
+        .announce_transaction(Transaction {
+            tx: vec![1, 2, 3, 4],
         })
-        .with_notification_protocol(block_announce_config)
-        .build();
+        .await;
 
-    // create `Litep2p` object and start internal protocol handlers and the QUIC transport
-    let mut litep2p = Litep2p::new(config).unwrap();
+    tx_handle3
+        .announce_transaction(Transaction {
+            tx: vec![1, 3, 3, 7],
+        })
+        .await;
 
-    // spawn `SyncingEngine` in the background
-    tokio::spawn(engine.run());
+    tx_handle4
+        .announce_transaction(Transaction {
+            tx: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        })
+        .await;
 
-    // poll `litep2p` to allow connection-related activity to make progress
-    loop {
-        match litep2p.next_event().await.unwrap() {
-            _ => {}
-        }
-    }
+    // allow protocols to process announced transactions before exiting
+    tokio::time::sleep(Duration::from_secs(3)).await;
 }
