@@ -184,7 +184,7 @@ pub enum RequestResponseEvent {
 pub enum DialOptions {
     /// If the peer is not currently connected, attempt to dial them before sending a request.
     ///
-    /// If the dial succeeds, then request is sent to the peer once the peer has been registered
+    /// If the dial succeeds, the request is sent to the peer once the peer has been registered
     /// to the protocol.
     ///
     /// If the dial fails, [`RequestResponseError::Rejected`] is returned.
@@ -364,11 +364,11 @@ impl RequestResponseHandle {
     /// Send response to remote peer with feedback.
     ///
     /// The feedback system is inherited from Polkadot SDK's `sc-network` and it's used to notify
-    /// the sender the response whether it was sent successfully or not. Once the response has been
-    /// sent over the substream successfully, `()` will be sent over the feedback channel to the
-    /// sender to notify them about it. If the substream has been closed or the substream failed
-    /// while sending the response, the feedback channel will be dropped, notifying the sender
-    /// that sending the response failed.
+    /// the sender of the response whether it was sent successfully or not. Once the response has
+    /// been sent over the substream successfully, `()` will be sent over the feedback channel
+    /// to the sender to notify them about it. If the substream has been closed or the substream
+    /// failed while sending the response, the feedback channel will be dropped, notifying the
+    /// sender that sending the response failed.
     pub fn send_response_with_feedback(
         &mut self,
         request_id: RequestId,

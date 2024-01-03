@@ -49,6 +49,7 @@ pub enum Quorum {
     N(NonZeroUsize),
 }
 
+/// Routing table update mode.
 #[derive(Debug, Copy, Clone)]
 pub enum RoutingTableUpdateMode {
     /// Don't insert discovered peers automatically to the routing tables but

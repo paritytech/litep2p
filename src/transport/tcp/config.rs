@@ -29,6 +29,8 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Listen address for the transport.
+    ///
+    /// Default listen addres is `/ip6/::1/tcp`.
     pub listen_addresses: Vec<multiaddr::Multiaddr>,
 
     /// Yamux configuration.

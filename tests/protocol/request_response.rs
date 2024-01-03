@@ -26,8 +26,7 @@ use litep2p::{
         RequestResponseEvent,
     },
     transport::{
-        quic::config::Config as QuicConfig,
-        tcp::config::Config as TcpConfig,
+        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
         websocket::config::Config as WebSocketConfig,
     },
     types::{protocol::ProtocolName, RequestId},

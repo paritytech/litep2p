@@ -30,8 +30,7 @@
 use litep2p::{
     config::ConfigBuilder, executor::Executor,
     protocol::notification::ConfigBuilder as NotificationConfigBuilder,
-    transport::tcp::config::Config as TcpConfig, types::protocol::ProtocolName,
-    Litep2p,
+    transport::tcp::config::Config as TcpConfig, types::protocol::ProtocolName, Litep2p,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};

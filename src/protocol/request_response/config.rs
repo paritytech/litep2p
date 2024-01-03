@@ -35,7 +35,7 @@ use std::{
     time::Duration,
 };
 
-/// Request-response configuration.
+/// Request-response protocol configuration.
 pub struct Config {
     /// Protocol name.
     pub(crate) protocol_name: ProtocolName,
@@ -148,7 +148,7 @@ impl ConfigBuilder {
     /// Specify the maximum number of concurrent inbound requests. By default the number of inbound
     /// requests is not limited.
     ///
-    /// If another request is received while the number of requests is already at a maximum,
+    /// If a new request is received while the number of inbound requests is already at a maximum,
     /// the request is dropped.
     pub fn with_max_concurrent_inbound_requests(
         mut self,

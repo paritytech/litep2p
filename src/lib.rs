@@ -33,7 +33,7 @@ use crate::{
         tcp::TcpTransport,
         webrtc::WebRtcTransport,
         websocket::WebSocketTransport,
-        TransportBuilder,
+        TransportBuilder, TransportEvent,
     },
 };
 
@@ -46,7 +46,6 @@ use std::{collections::HashSet, sync::Arc};
 pub use bandwidth::BandwidthSink;
 pub use error::Error;
 pub use peer_id::PeerId;
-pub use transport::TransportEvent;
 pub use types::protocol::ProtocolName;
 
 pub use yamux;
@@ -406,7 +405,7 @@ impl Litep2p {
         &self.local_peer_id
     }
 
-    /// Get listen address for protocol.
+    /// Get listen address of litep2p.
     pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
         self.listen_addresses.iter()
     }
@@ -427,6 +426,9 @@ impl Litep2p {
     }
 
     /// Add one ore more known addresses for peer.
+    ///
+    /// Return value denotes how many addresses were added for the peer.
+    // Addresses belonging to disabled/unsupported transports will be ignored.
     pub fn add_known_address(
         &mut self,
         peer: PeerId,
@@ -436,6 +438,8 @@ impl Litep2p {
     }
 
     /// Poll next event.
+    ///
+    /// This function must be called in order for litep2p to make progress.
     pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
         loop {
             match self.transport_manager.next().await? {

@@ -29,10 +29,9 @@ use crate::{
         notification, request_response, UserProtocol,
     },
     transport::{
-        quic::config::Config as QuicConfig,
-        tcp::config::Config as TcpConfig,
-        webrtc::config::Config as WebRtcConfig,
-        websocket::config::Config as WebSocketConfig, MAX_PARALLEL_DIALS,
+        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
+        webrtc::config::Config as WebRtcConfig, websocket::config::Config as WebSocketConfig,
+        MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
     PeerId,
@@ -113,7 +112,7 @@ pub struct ConfigBuilder {
 }
 
 impl ConfigBuilder {
-    /// Create new empty [`ConfigBuilder`].
+    /// Create empty [`ConfigBuilder`].
     pub fn new() -> Self {
         Self {
             tcp: None,
@@ -135,37 +134,39 @@ impl ConfigBuilder {
         }
     }
 
-    /// Add TCP transport configuration.
+    /// Add TCP transport configuration, enabling the transport.
     pub fn with_tcp(mut self, config: TcpConfig) -> Self {
         self.tcp = Some(config);
         self
     }
 
-    /// Add QUIC transport configuration.
+    /// Add QUIC transport configuration, enabling the transport.
     pub fn with_quic(mut self, config: QuicConfig) -> Self {
         self.quic = Some(config);
         self
     }
 
-    /// Add WebRTC transport configuration.
+    /// Add WebRTC transport configuration, enabling the transport.
     pub fn with_webrtc(mut self, config: WebRtcConfig) -> Self {
         self.webrtc = Some(config);
         self
     }
 
-    /// Add WebSocket transport configuration.
+    /// Add WebSocket transport configuration, enabling the transport.
     pub fn with_websocket(mut self, config: WebSocketConfig) -> Self {
         self.websocket = Some(config);
         self
     }
 
     /// Add keypair.
+    ///
+    /// If no keypair is specified, litep2p creates a new keypair.
     pub fn with_keypair(mut self, keypair: Keypair) -> Self {
         self.keypair = Some(keypair);
         self
     }
 
-    /// Install notification protocol.
+    /// Enable notification protocol.
     pub fn with_notification_protocol(mut self, config: notification::Config) -> Self {
         self.notification_protocols.insert(config.protocol_name().clone(), config);
         self
@@ -195,13 +196,13 @@ impl ConfigBuilder {
         self
     }
 
-    /// Install request-response protocol.
+    /// Enable request-response protocol.
     pub fn with_request_response_protocol(mut self, config: request_response::Config) -> Self {
         self.request_response_protocols.insert(config.protocol_name().clone(), config);
         self
     }
 
-    /// Install user protocol.
+    /// Enable user protocol.
     pub fn with_user_protocol(mut self, protocol: Box<dyn UserProtocol>) -> Self {
         self.user_protocols.insert(protocol.protocol(), protocol);
         self
@@ -230,16 +231,13 @@ impl ConfigBuilder {
         self
     }
 
-    /// How many addresses should litep2p attempt to dial in parallel when connection to a remote
-    /// peer.
+    /// How many addresses should litep2p attempt to dial in parallel.
     pub fn with_max_parallel_dials(mut self, max_parallel_dials: usize) -> Self {
         self.max_parallel_dials = max_parallel_dials;
         self
     }
 
     /// Build [`Litep2pConfig`].
-    ///
-    /// Generates a default keypair if user didn't provide one.
     pub fn build(mut self) -> Litep2pConfig {
         let keypair = match self.keypair {
             Some(keypair) => keypair,
@@ -315,5 +313,5 @@ pub struct Litep2pConfig {
     pub(crate) max_parallel_dials: usize,
 
     /// Known addresses.
-    pub known_addresses: Vec<(PeerId, Vec<Multiaddr>)>,
+    pub(crate) known_addresses: Vec<(PeerId, Vec<Multiaddr>)>,
 }

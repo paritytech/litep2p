@@ -24,8 +24,7 @@ use litep2p::{
     error::{AddressError, Error},
     protocol::libp2p::ping::{Config as PingConfig, PingEvent},
     transport::{
-        quic::config::Config as QuicConfig,
-        tcp::config::Config as TcpConfig,
+        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
         websocket::config::Config as WebSocketConfig,
     },
     Litep2p, Litep2pEvent, PeerId,

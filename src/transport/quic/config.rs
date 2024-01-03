@@ -30,6 +30,8 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct Config {
     /// Listen address for the transport.
+    ///
+    /// Default listen addres is `/ip4/127.0.0.1/udp/0/quic-v1`.
     pub listen_addresses: Vec<Multiaddr>,
 
     /// Connection open timeout.

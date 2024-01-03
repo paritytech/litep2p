@@ -29,46 +29,23 @@ use litep2p::{
     },
     transport::quic::config::Config as QuicConfig,
     types::protocol::ProtocolName,
-    Litep2p, Litep2pEvent,
+    Litep2p, PeerId,
 };
 
 use futures::StreamExt;
-use multiaddr::Multiaddr;
 
 use std::time::Duration;
 
 /// event loop for the client
-async fn client_event_loop(
-    mut litep2p: Litep2p,
-    mut handle: NotificationHandle,
-    address: Multiaddr,
-) {
-    // connect to server and open substream to them over the echo protocol
-    litep2p.dial_address(address).await.unwrap();
-
-    match litep2p.next_event().await.unwrap() {
-        Litep2pEvent::ConnectionEstablished { peer, .. } => {
-            handle.open_substream(peer).await.unwrap();
-        }
-        _ => panic!("unexpected event received"),
-    }
+async fn client_event_loop(mut litep2p: Litep2p, mut handle: NotificationHandle, peer: PeerId) {
+    // open substream to `litep2p` and since no connection exists, dial the peer first
+    handle.open_substream(peer).await.unwrap();
 
     // wait until the substream is opened
-    //
-    // note that both client and server must validate the substream as the notification protocol
-    // opens two bidirectional substreams. For client this can simply be an ack without validating
-    // the protocol/handshake but for more complex protocol implementations it may be necessary have
-    // validation in both ends.
-    //
-    // currently it's not possible to automatically accept inbound substreams but that is on the
-    // roadmap
     let peer = loop {
         tokio::select! {
             _ = litep2p.next_event() => {}
             event = handle.next() => match event.unwrap() {
-                NotificationEvent::ValidateSubstream { peer, .. } => {
-                    handle.send_validation_result(peer, ValidationResult::Accept);
-                }
                 NotificationEvent::NotificationStreamOpened { peer, .. } => break peer,
                 _ => {},
             }
@@ -112,9 +89,10 @@ async fn server_event_loop(mut litep2p: Litep2p, mut handle: NotificationHandle)
 
 /// helper function for creating `Litep2p` object
 fn make_litep2p() -> (Litep2p, NotificationHandle) {
-    // build notification config and handle for the first peer
+    // build notification config for the notification protocol
     let (echo_config, echo_handle) = NotificationConfigBuilder::new(ProtocolName::from("/echo/1"))
         .with_max_size(256)
+        .with_auto_accept_inbound(true)
         .with_handshake(vec![1, 3, 3, 7])
         .build();
 
@@ -137,14 +115,18 @@ fn make_litep2p() -> (Litep2p, NotificationHandle) {
 #[tokio::main]
 async fn main() {
     // build `Litep2p` objects for both peers
-    let (litep2p1, echo_handle1) = make_litep2p();
+    let (mut litep2p1, echo_handle1) = make_litep2p();
     let (litep2p2, echo_handle2) = make_litep2p();
 
     // get the first (and only) listen address for the second peer
+    // and add it as a known address for `litep2p1`
     let listen_address = litep2p2.listen_addresses().next().unwrap().clone();
+    let peer = *litep2p2.local_peer_id();
+
+    litep2p1.add_known_address(peer, vec![listen_address].into_iter());
 
     // start event loops for client and server
-    tokio::spawn(client_event_loop(litep2p1, echo_handle1, listen_address));
+    tokio::spawn(client_event_loop(litep2p1, echo_handle1, peer));
     tokio::spawn(server_event_loop(litep2p2, echo_handle2));
 
     loop {

@@ -272,7 +272,7 @@ impl TransportService {
 
     /// Dial `peer` using `PeerId`.
     ///
-    /// Call fails if `Litep2p` doesn't know have a known address for the peer.
+    /// Call fails if `Litep2p` doesn't have a known address for the peer.
     pub fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
         self.transport_handle.dial(peer)
     }
@@ -289,7 +289,7 @@ impl TransportService {
         self.transport_handle.dial_address(address)
     }
 
-    /// Add known one or more addresses for peer.
+    /// Add one or more addresses for `peer`.
     ///
     /// The list is filtered for duplicates and unsupported transports.
     pub fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
@@ -308,7 +308,7 @@ impl TransportService {
 
     /// Open substream to `peer`.
     ///
-    /// Call fails if there is no open connection to the peer or the channel towards
+    /// Call fails if there is no connection open to `peer` or the channel towards
     /// the connection is clogged.
     pub fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
         // always prefer the primary connection

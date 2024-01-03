@@ -62,12 +62,12 @@ impl BandwidthSink {
         let _ = self.0.outbound.fetch_add(bytes, Ordering::Relaxed);
     }
 
-    /// Get the number of inbound bytes.
+    /// Get total the number of bytes received.
     pub fn inbound(&self) -> usize {
         self.0.inbound.load(Ordering::Relaxed)
     }
 
-    /// Get the nubmer of outbound bytes.
+    /// Get total the nubmer of bytes sent.
     pub fn outbound(&self) -> usize {
         self.0.outbound.load(Ordering::Relaxed)
     }

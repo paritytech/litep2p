@@ -160,9 +160,9 @@ const BACKPRESSURE_BOUNDARY: usize = 65536;
 /// Implements [`tokio::io::AsyncRead`]/[`tokio::io::AsyncWrite`] traits which can be wrapped
 /// in a `Framed` to implement a custom codec.
 ///
-/// In case a codec for the protocol was specified, `Substream::send()`/`Substream::next()`
-/// are also provided which implement the necessary framing to read/write codec-encoded messages
-/// from the underlying socket.
+/// In case a codec for the protocol was specified,
+/// [`Sink::send()`](futures::Sink)/[`Stream::next()`](futures::Stream) are also provided which
+/// implement the necessary framing to read/write codec-encoded messages from the underlying socket.
 #[derive(Debug)]
 pub struct Substream {
     /// Remote peer ID.

@@ -41,7 +41,7 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
 
 // TODO: store record key instead of the actual record
 
-// Type representing a query ID.
+/// Type representing a query ID.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct QueryId(pub usize);
 

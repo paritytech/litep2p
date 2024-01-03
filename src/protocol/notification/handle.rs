@@ -144,7 +144,7 @@ impl NotificationSink {
         }
     }
 
-    /// Send notification to peer synchronously.
+    /// Send notification to `peer` synchronously.
     ///
     /// If the channel is clogged, [`NotificationError::ChannelClogged`] is returned.
     pub fn send_sync_notification(&self, notification: Vec<u8>) -> Result<(), NotificationError> {
@@ -154,7 +154,8 @@ impl NotificationSink {
         })
     }
 
-    /// Send notification to peer asynchronously.
+    /// Send notification to `peer` asynchronously, waiting for the channel to have capacity
+    /// if it's clogged.
     ///
     /// Returns [`Error::PeerDoesntExist(PeerId)`](crate::error::Error::PeerDoesntExist)
     /// if the connection has been closed.
@@ -210,6 +211,10 @@ impl NotificationHandle {
     ///
     /// Returns [`Error::PeerAlreadyExists(PeerId)`](crate::error::Error::PeerAlreadyExists) if
     /// substream is already open to `peer`.
+    ///
+    /// If connection to peer is closed, `NotificationProtocol` tries to dial the peer and if the
+    /// dial succeeds, tries to open a substream. This behavior can be disabled with
+    /// [`ConfigBuilder::with_dialing_enabled(false)`](super::config::ConfigBuilder::with_dialing_enabled()).
     pub async fn open_substream(&self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
 
@@ -227,7 +232,7 @@ impl NotificationHandle {
 
     /// Open substreams to multiple peers.
     ///
-    /// Similar to [`NotificationHandle::open_substream()`] but multiple connections are initiated
+    /// Similar to [`NotificationHandle::open_substream()`] but multiple substreams are initiated
     /// using a single call to `NotificationProtocol`.
     ///
     /// Peers who are already connected are ignored and returned as `Err(HashSet<PeerId>>)`.
@@ -278,7 +283,7 @@ impl NotificationHandle {
 
     /// Close substream to multiple peers.
     ///
-    /// Similar to [`NotificationHandle::close_substream()`] but multiple connections are closed
+    /// Similar to [`NotificationHandle::close_substream()`] but multiple substreams are closed
     /// using a single call to `NotificationProtocol`.
     pub async fn close_substream_batch(&self, peers: impl Iterator<Item = PeerId>) {
         let peers = peers
@@ -305,14 +310,15 @@ impl NotificationHandle {
         *self.handshake.write() = handshake;
     }
 
-    /// Send validation result to the notification protocol for the inbound substream.
+    /// Send validation result to the notification protocol for an inbound substream received from
+    /// `peer`.
     pub fn send_validation_result(&mut self, peer: PeerId, result: ValidationResult) {
         tracing::trace!(target: LOG_TARGET, ?peer, ?result, "send validation result");
 
         self.pending_validations.remove(&peer).map(|tx| tx.send(result));
     }
 
-    /// Send synchronous notification to `peer`.
+    /// Send notification to `peer` synchronously.
     ///
     /// If the channel is clogged, [`NotificationError::ChannelClogged`] is returned.
     pub fn send_sync_notification(
@@ -326,7 +332,8 @@ impl NotificationHandle {
         }
     }
 
-    /// Send asynchronous notification to `peer`.
+    /// Send notification to `peer` asynchronously, waiting for the channel to have capacity
+    /// if it's clogged.
     ///
     /// Returns [`Error::PeerDoesntExist(PeerId)`](crate::error::Error::PeerDoesntExist) if the
     /// connection has been closed.
@@ -342,6 +349,8 @@ impl NotificationHandle {
     }
 
     /// Get a copy of the underlying notification sink for the peer.
+    ///
+    /// `None` is returned if `peer` doesn't exist.
     pub fn notification_sink(&self, peer: PeerId) -> Option<NotificationSink> {
         self.peers.get(&peer).and_then(|sink| Some(sink.clone()))
     }

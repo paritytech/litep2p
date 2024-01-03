@@ -69,7 +69,7 @@ pub enum TransportEvent {
         endpoint: Endpoint,
     },
 
-    /// Connection closed.
+    /// Connection closed to peer.
     ConnectionClosed {
         /// Peer ID.
         peer: PeerId,

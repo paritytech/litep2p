@@ -47,7 +47,7 @@ pub(crate) const MAX_PARALLEL_DIALS: usize = 8;
 /// Connection endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endpoint {
-    /// Successful outbound connection.
+    /// Successfully established outbound connection.
     Dialer {
         /// Address that was dialed.
         address: Multiaddr,
@@ -56,7 +56,7 @@ pub enum Endpoint {
         connection_id: ConnectionId,
     },
 
-    /// Successful inbound connection.
+    /// Successfully established inbound connection.
     Listener {
         /// Local connection address.
         address: Multiaddr,
@@ -76,7 +76,7 @@ impl Endpoint {
     }
 
     /// Crate dialer.
-    pub fn dialer(address: Multiaddr, connection_id: ConnectionId) -> Self {
+    pub(crate) fn dialer(address: Multiaddr, connection_id: ConnectionId) -> Self {
         Endpoint::Dialer {
             address,
             connection_id,
@@ -84,7 +84,7 @@ impl Endpoint {
     }
 
     /// Create listener.
-    pub fn listener(address: Multiaddr, connection_id: ConnectionId) -> Self {
+    pub(crate) fn listener(address: Multiaddr, connection_id: ConnectionId) -> Self {
         Endpoint::Listener {
             address,
             connection_id,
@@ -102,7 +102,7 @@ impl Endpoint {
 
 /// Transport event.
 #[derive(Debug)]
-pub enum TransportEvent {
+pub(crate) enum TransportEvent {
     /// Fully negotiated connection established to remote peer.
     ConnectionEstablished {
         /// Peer ID.

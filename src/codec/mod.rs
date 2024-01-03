@@ -32,6 +32,6 @@ pub enum ProtocolCodec {
     /// Unsigned varint where the argument denotes the maximum message size, if specified.
     UnsignedVarint(Option<usize>),
 
-    /// Protocol doens't need framing for it's messages or is using a custom codec.
+    /// Protocol doens't need framing for its messages or is using a custom codec.
     Unspecified,
 }
