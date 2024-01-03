@@ -533,6 +533,7 @@ impl Kademlia {
                     num_peers = ?peers.len(),
                     "store record to found peers",
                 );
+                let key = record.key.clone();
                 let message = KademliaMessage::put_value(record);
 
                 for peer in peers {
@@ -545,12 +546,21 @@ impl Kademlia {
                                 .pending_actions
                                 .insert(substream_id, PeerAction::SendPutValue(message.clone()));
                         }
-                        Err(_) => {
-                            // TODO: handle error
-                            let _ = self.service.dial(&peer.peer);
-                            self.pending_dials
-                                .insert(peer.peer, PeerAction::SendPutValue(message.clone()));
-                        }
+                        Err(_) => match self.service.dial(&peer.peer) {
+                            Ok(_) => {
+                                self.pending_dials
+                                    .insert(peer.peer, PeerAction::SendPutValue(message.clone()));
+                            }
+                            Err(error) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?key,
+                                    ?error,
+                                    "failed to dial peer",
+                                );
+                            }
+                        },
                     }
                 }
 
