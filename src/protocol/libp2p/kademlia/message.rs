@@ -36,15 +36,11 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia::message";
 /// Kademlia message.
 #[derive(Debug, Clone)]
 pub enum KademliaMessage {
-    /// Inbound `FIND_NODE` query.
-    #[allow(unused)]
-    FindNodeRequest {
-        /// Peer ID of the target node.
+    /// `FIND_NODE` message.
+    FindNode {
+        /// Query target.
         target: PeerId,
-    },
 
-    /// Response to outbound `FIND_NODE` query.
-    FindNodeResponse {
         /// Found peers.
         peers: Vec<KademliaPeer>,
     },
@@ -63,16 +59,6 @@ pub enum KademliaMessage {
         /// Peers closest to key.
         peers: Vec<KademliaPeer>,
     },
-}
-
-impl KademliaMessage {
-    /// Check if the message is a response.
-    pub fn is_response(&self) -> bool {
-        std::matches!(
-            self,
-            KademliaMessage::FindNodeResponse { .. } | KademliaMessage::GetRecordResponse { .. }
-        )
-    }
 }
 
 impl KademliaMessage {
@@ -128,8 +114,9 @@ impl KademliaMessage {
     }
 
     /// Create `FIND_NODE` response.
-    pub fn find_node_response(peers: Vec<KademliaPeer>) -> Vec<u8> {
+    pub fn find_node_response(key: PeerId, peers: Vec<KademliaPeer>) -> Vec<u8> {
         let message = schema::kademlia::Message {
+            key: key.to_bytes(),
             cluster_level_raw: 10,
             r#type: schema::kademlia::MessageType::FindNode.into(),
             closer_peers: peers.iter().map(|peer| peer.into()).collect(),
@@ -153,7 +140,10 @@ impl KademliaMessage {
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
                         .collect();
 
-                    Some(Self::FindNodeResponse { peers })
+                    Some(Self::FindNode {
+                        target: PeerId::from_bytes(&message.key).ok()?,
+                        peers,
+                    })
                 }
                 0 => {
                     let record = message.record?;

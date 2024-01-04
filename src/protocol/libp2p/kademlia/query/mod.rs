@@ -277,11 +277,6 @@ impl QueryEngine {
 
     /// Register that `response` received from `peer`.
     pub fn register_response(&mut self, query: QueryId, peer: PeerId, message: KademliaMessage) {
-        if !message.is_response() {
-            tracing::warn!(target: LOG_TARGET, ?query, ?peer, "tried to register non-response");
-            return;
-        }
-
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response");
 
         match self.queries.get_mut(&query) {
@@ -290,13 +285,13 @@ impl QueryEngine {
                 return;
             }
             Some(QueryType::FindNode { context }) => match message {
-                KademliaMessage::FindNodeResponse { peers } => {
+                KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
                 _ => unreachable!(),
             },
             Some(QueryType::PutRecord { context, .. }) => match message {
-                KademliaMessage::FindNodeResponse { peers } => {
+                KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
                 _ => unreachable!(),
@@ -503,7 +498,8 @@ mod tests {
                 engine.register_response(
                     query,
                     peer,
-                    KademliaMessage::FindNodeResponse {
+                    KademliaMessage::FindNode {
+                        target: PeerId::random(),
                         peers: vec![
                             KademliaPeer::new(
                                 *iter.next().unwrap().1,
@@ -535,7 +531,10 @@ mod tests {
                     engine.register_response(
                         query,
                         peer,
-                        KademliaMessage::FindNodeResponse { peers: vec![] },
+                        KademliaMessage::FindNode {
+                            target: PeerId::random(),
+                            peers: vec![],
+                        },
                     );
                 }
                 _ => panic!("invalid event received"),
@@ -598,7 +597,8 @@ mod tests {
                 engine.register_response(
                     query,
                     peer,
-                    KademliaMessage::FindNodeResponse {
+                    KademliaMessage::FindNode {
+                        target: PeerId::random(),
                         peers: vec![
                             KademliaPeer::new(
                                 *iter.next().unwrap().1,
@@ -630,7 +630,10 @@ mod tests {
                     engine.register_response(
                         query,
                         peer,
-                        KademliaMessage::FindNodeResponse { peers: vec![] },
+                        KademliaMessage::FindNode {
+                            target: PeerId::random(),
+                            peers: vec![],
+                        },
                     );
                 }
                 _ => panic!("invalid event received"),

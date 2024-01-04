@@ -185,7 +185,6 @@ impl Kademlia {
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                // TODO: add peer to routing table
                 // TODO: verify that peer limit is respected
                 match self.pending_dials.remove(&peer) {
                     Some(action) => match self.service.open_substream(peer) {
@@ -357,38 +356,34 @@ impl Kademlia {
         tracing::trace!(target: LOG_TARGET, ?peer, ?query_id, "handle message from peer");
 
         match KademliaMessage::from_bytes(message).ok_or(Error::InvalidData)? {
-            KademliaMessage::FindNodeRequest { target } => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?target,
-                    "handle `FIND_NODE` request",
-                );
-
-                let message = KademliaMessage::find_node_response(
-                    self.routing_table.closest(Key::from(target), self.replication_factor),
-                );
-                self.executor.send_message(peer, message.into(), substream);
-            }
-            ref message @ KademliaMessage::FindNodeResponse { ref peers } => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?peers,
-                    "handle `FIND_NODE` response",
-                );
-
+            ref message @ KademliaMessage::FindNode { target, ref peers } => {
                 match query_id {
                     Some(query_id) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?target,
+                            "handle `FIND_NODE` response",
+                        );
+
                         // update routing table and inform user about the update
                         self.update_routing_table(peers).await;
                         self.engine.register_response(query_id, peer, message.clone());
                     }
-                    None => tracing::debug!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        "unexpected `FIND_NODE` response",
-                    ),
+                    None => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?target,
+                            "handle `FIND_NODE` request",
+                        );
+
+                        let message = KademliaMessage::find_node_response(
+                            target,
+                            self.routing_table.closest(Key::from(target), self.replication_factor),
+                        );
+                        self.executor.send_message(peer, message.into(), substream);
+                    }
                 }
             }
             KademliaMessage::PutValue { record } => {
