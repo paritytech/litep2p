@@ -131,6 +131,7 @@ impl KademliaMessage {
     pub fn find_node_response(peers: Vec<KademliaPeer>) -> Vec<u8> {
         let message = schema::kademlia::Message {
             cluster_level_raw: 10,
+            r#type: schema::kademlia::MessageType::FindNode.into(),
             closer_peers: peers.iter().map(|peer| peer.into()).collect(),
             ..Default::default()
         };
