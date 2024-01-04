@@ -154,6 +154,7 @@ pub(crate) struct Kademlia {
 impl Kademlia {
     /// Create new [`Kademlia`].
     pub(crate) fn new(mut service: TransportService, config: Config) -> Self {
+        let local_peer_id = service.local_peer_id;
         let local_key = Key::from(service.local_peer_id);
         let mut routing_table = RoutingTable::new(local_key.clone());
 
@@ -175,7 +176,7 @@ impl Kademlia {
             pending_substreams: HashMap::new(),
             update_mode: config.update_mode,
             replication_factor: config.replication_factor,
-            engine: QueryEngine::new(config.replication_factor, PARALLELISM_FACTOR),
+            engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
         }
     }
 
@@ -321,6 +322,11 @@ impl Kademlia {
     /// Inform user about the potential routing table, allowing them to update it manually if
     /// the mode was set to manual.
     async fn update_routing_table(&mut self, peers: &Vec<KademliaPeer>) {
+        let peers: Vec<_> = peers
+            .iter()
+            .filter_map(|peer| (peer.peer != self.service.local_peer_id).then_some(peer))
+            .collect();
+
         // inform user about the routing table update, regardless of what the routing table update
         // mode is
         let _ = self

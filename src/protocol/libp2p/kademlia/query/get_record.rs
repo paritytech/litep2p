@@ -38,6 +38,9 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_record";
 
 #[derive(Debug)]
 pub struct GetRecordContext {
+    /// Local peer ID.
+    local_peer_id: PeerId,
+
     /// How many records have been successfully found.
     pub record_count: usize,
 
@@ -75,6 +78,7 @@ pub struct GetRecordContext {
 impl GetRecordContext {
     /// Create new [`GetRecordContext`].
     pub fn new(
+        local_peer_id: PeerId,
         query: QueryId,
         target: Key<RecordKey>,
         in_peers: VecDeque<KademliaPeer>,
@@ -96,6 +100,7 @@ impl GetRecordContext {
             quorum,
             candidates,
             record_count,
+            local_peer_id,
             replication_factor,
             parallelism_factor,
             pending: HashMap::new(),
@@ -144,6 +149,10 @@ impl GetRecordContext {
             if !self.queried.contains(&candidate.peer)
                 && !self.pending.contains_key(&candidate.peer)
             {
+                if self.local_peer_id == candidate.peer {
+                    continue;
+                }
+
                 let distance = self.target.distance(&candidate.key);
                 self.candidates.insert(distance, candidate);
             }

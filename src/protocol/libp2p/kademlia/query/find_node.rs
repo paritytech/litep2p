@@ -35,6 +35,9 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_node";
 /// Context for `FIND_NODE` queries.
 #[derive(Debug)]
 pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
+    /// Local peer ID.
+    local_peer_id: PeerId,
+
     /// Query ID.
     pub query: QueryId,
 
@@ -66,6 +69,7 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
 impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     /// Create new [`FindNodeContext`].
     pub fn new(
+        local_peer_id: PeerId,
         query: QueryId,
         target: Key<T>,
         in_peers: VecDeque<KademliaPeer>,
@@ -83,6 +87,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             query,
             target,
             candidates,
+            local_peer_id,
             pending: HashMap::new(),
             queried: HashSet::new(),
             responses: BTreeMap::new(),
@@ -136,6 +141,10 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             if !self.queried.contains(&candidate.peer)
                 && !self.pending.contains_key(&candidate.peer)
             {
+                if self.local_peer_id == candidate.peer {
+                    continue;
+                }
+
                 let distance = self.target.distance(&candidate.key);
                 self.candidates.insert(distance, candidate);
             }
