@@ -112,6 +112,9 @@ pub enum IdentifyEvent {
 
         /// Observed address.
         observed_address: Multiaddr,
+
+        /// Listen addresses.
+        listen_addresses: Vec<Multiaddr>,
     },
 }
 
@@ -139,7 +142,10 @@ pub(crate) struct Identify {
 
     /// Pending outbound substreams.
     pending_outbound: FuturesUnordered<
-        BoxFuture<'static, crate::Result<(PeerId, HashSet<String>, Option<Multiaddr>)>>,
+        BoxFuture<
+            'static,
+            crate::Result<(PeerId, HashSet<String>, Option<Multiaddr>, Vec<Multiaddr>)>,
+        >,
     >,
 
     /// Pending inbound substreams.
@@ -249,15 +255,23 @@ impl Identify {
             let payload = substream.next().await.ok_or(Error::SubstreamError(
                 SubstreamError::ReadFailure(Some(substream_id)),
             ))??;
-
             let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
 
             tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
 
+            let listen_addresses = info
+                .listen_addrs
+                .iter()
+                .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
+                .collect();
+            let observed_address =
+                info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten();
+
             Ok((
                 peer,
                 HashSet::from_iter(info.protocols),
-                info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten(),
+                observed_address,
+                listen_addresses,
             ))
         }));
     }
@@ -290,12 +304,13 @@ impl Identify {
                 },
                 _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
-                    Some(Ok((peer, supported_protocols, observed_address))) => {
+                    Some(Ok((peer, supported_protocols, observed_address, listen_addresses))) => {
                         let _ = self.tx
                             .send(IdentifyEvent::PeerIdentified {
                                 peer,
                                 supported_protocols,
                                 observed_address: observed_address.map_or(Multiaddr::empty(), |address| address),
+                                listen_addresses,
                             })
                             .await;
                     }
