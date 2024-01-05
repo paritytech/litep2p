@@ -62,7 +62,7 @@ impl TcpListener {
         let (listeners, listen_addresses): (_, Vec<_>) = addresses
             .into_iter()
             .filter_map(|address| {
-                let socket = match Self::get_socket_address(&address).ok()?.0 {
+                let (socket, address) = match Self::get_socket_address(&address).ok()?.0 {
                     AddressType::Dns(_, _) => return None,
                     AddressType::Socket(address) => match address.is_ipv4() {
                         false => {
@@ -73,28 +73,22 @@ impl TcpListener {
                             )
                             .ok()?;
                             socket.set_only_v6(true).ok()?;
-                            socket.bind(&address.into()).ok()?;
-                            socket
+                            (socket, address)
                         }
-                        true => {
-                            let socket = Socket::new(
-                                Domain::IPV4,
-                                Type::STREAM,
-                                Some(socket2::Protocol::TCP),
-                            )
-                            .ok()?;
-                            socket.bind(&address.into()).ok()?;
-
-                            socket
-                        }
+                        true => (
+                            Socket::new(Domain::IPV4, Type::STREAM, Some(socket2::Protocol::TCP))
+                                .ok()?,
+                            address,
+                        ),
                     },
                 };
 
-                socket.listen(1024).ok()?;
-                socket.set_reuse_address(true).ok()?;
                 socket.set_nonblocking(true).ok()?;
+                socket.set_reuse_address(true).ok()?;
                 #[cfg(unix)]
                 socket.set_reuse_port(true).ok()?;
+                socket.bind(&address.into()).ok()?;
+                socket.listen(1024).ok()?;
 
                 let socket: std::net::TcpListener = socket.into();
                 let listener = TokioTcpListener::from_std(socket).ok()?;
