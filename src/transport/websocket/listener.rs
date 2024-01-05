@@ -59,25 +59,19 @@ impl WebSocketListener {
                             Socket::new(Domain::IPV6, Type::STREAM, Some(socket2::Protocol::TCP))
                                 .ok()?;
                         socket.set_only_v6(true).ok()?;
-                        socket.bind(&address.into()).ok()?;
 
                         socket
                     }
-                    true => {
-                        let socket =
-                            Socket::new(Domain::IPV4, Type::STREAM, Some(socket2::Protocol::TCP))
-                                .ok()?;
-                        socket.bind(&address.into()).ok()?;
-
-                        socket
-                    }
+                    true => Socket::new(Domain::IPV4, Type::STREAM, Some(socket2::Protocol::TCP))
+                        .ok()?,
                 };
 
-                socket.listen(1024).ok()?;
-                socket.set_reuse_address(true).ok()?;
                 socket.set_nonblocking(true).ok()?;
+                socket.set_reuse_address(true).ok()?;
                 #[cfg(unix)]
                 socket.set_reuse_port(true).ok()?;
+                socket.bind(&address.into()).ok()?;
+                socket.listen(1024).ok()?;
 
                 let socket: std::net::TcpListener = socket.into();
                 let listener = TokioTcpListener::from_std(socket).ok()?;
