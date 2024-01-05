@@ -308,7 +308,7 @@ impl QueryEngine {
                 _ => unreachable!(),
             },
             Some(QueryType::GetRecord { context }) => match message {
-                KademliaMessage::GetRecordResponse { record, peers } => {
+                KademliaMessage::GetRecord { record, peers, .. } => {
                     context.register_response(peer, record, peers);
                 }
                 _ => unreachable!(),
@@ -510,7 +510,7 @@ mod tests {
                     query,
                     peer,
                     KademliaMessage::FindNode {
-                        target: PeerId::random(),
+                        target: Vec::new(),
                         peers: vec![
                             KademliaPeer::new(
                                 *iter.next().unwrap().1,
@@ -543,7 +543,7 @@ mod tests {
                         query,
                         peer,
                         KademliaMessage::FindNode {
-                            target: PeerId::random(),
+                            target: Vec::new(),
                             peers: vec![],
                         },
                     );
@@ -609,7 +609,7 @@ mod tests {
                     query,
                     peer,
                     KademliaMessage::FindNode {
-                        target: PeerId::random(),
+                        target: Vec::new(),
                         peers: vec![
                             KademliaPeer::new(
                                 *iter.next().unwrap().1,
@@ -642,7 +642,7 @@ mod tests {
                         query,
                         peer,
                         KademliaMessage::FindNode {
-                            target: PeerId::random(),
+                            target: Vec::new(),
                             peers: vec![],
                         },
                     );
