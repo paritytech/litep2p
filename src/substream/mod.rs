@@ -35,7 +35,7 @@ use unsigned_varint::{decode, encode};
 
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
-    fmt::Debug,
+    fmt,
     hash::Hash,
     io::ErrorKind,
     pin::Pin,
@@ -143,13 +143,24 @@ macro_rules! check_size {
 }
 
 /// Substream type.
-#[derive(Debug)]
 enum SubstreamType {
     Tcp(tcp::Substream),
     WebSocket(websocket::Substream),
     Quic(quic::Substream),
     #[cfg(test)]
     Mock(Box<dyn crate::mock::substream::Substream>),
+}
+
+impl fmt::Debug for SubstreamType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tcp(_) => write!(f, "Tcp"),
+            Self::WebSocket(_) => write!(f, "WebSocket"),
+            Self::Quic(_) => write!(f, "Quic"),
+            #[cfg(test)]
+            Self::Mock(_) => write!(f, "Mock"),
+        }
+    }
 }
 
 /// Backpressure boundary for `Sink`.
@@ -163,7 +174,6 @@ const BACKPRESSURE_BOUNDARY: usize = 65536;
 /// In case a codec for the protocol was specified,
 /// [`Sink::send()`](futures::Sink)/[`Stream::next()`](futures::Stream) are also provided which
 /// implement the necessary framing to read/write codec-encoded messages from the underlying socket.
-#[derive(Debug)]
 pub struct Substream {
     /// Remote peer ID.
     peer: PeerId,
@@ -184,6 +194,16 @@ pub struct Substream {
     current_frame_size: Option<usize>,
 
     size_vec: BytesMut,
+}
+
+impl fmt::Debug for Substream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Substream")
+            .field("peer", &self.peer)
+            .field("codec", &self.codec)
+            .field("protocol", &self.substream)
+            .finish()
+    }
 }
 
 impl Substream {
@@ -640,9 +660,9 @@ impl Sink<Bytes> for Substream {
 }
 
 /// Substream set key.
-pub trait SubstreamSetKey: Hash + Unpin + Debug + PartialEq + Eq + Copy {}
+pub trait SubstreamSetKey: Hash + Unpin + fmt::Debug + PartialEq + Eq + Copy {}
 
-impl<K: Hash + Unpin + Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
+impl<K: Hash + Unpin + fmt::Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
 
 /// Substream set.
 #[derive(Debug, Default)]
