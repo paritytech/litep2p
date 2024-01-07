@@ -939,10 +939,14 @@ impl NotificationProtocol {
                 },
             },
             // if the user incorrectly send a validation result for a peer that doesn't require
-            // validation, set state back to what it was and add a `debug_assert!(false)` so it can
-            // be catched in tests and user can fix the logic in their code
+            // validation, set state back to what it was and ignore the event
+            //
+            // the user protocol may send a stale validation result not because of a programming
+            // error but because it has a backlock of unhandled events, with one event potentially
+            // nullifying the need for substream validation, and is just temporarily out of sync
+            // with `NotificationProtocol`
             state => {
-                tracing::warn!(
+                tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
                     protocol = %self.protocol,
@@ -951,7 +955,6 @@ impl NotificationProtocol {
                 );
 
                 context.state = state;
-                debug_assert!(false);
                 Ok(())
             }
         }
