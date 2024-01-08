@@ -392,7 +392,7 @@ impl RequestResponseProtocol {
             .ok_or(Error::PeerDoesntExist(peer))?
             .active_inbound
             .remove(&request_id)
-            .ok_or({
+            .ok_or_else(|| {
                 tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
@@ -403,17 +403,18 @@ impl RequestResponseProtocol {
 
                 Error::InvalidState
             })?;
-        let mut substream = self.pending_inbound_requests.remove(&(peer, request_id)).ok_or({
-            tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                protocol = %self.protocol,
-                ?request_id,
-                "request doesn't exist in pending requests",
-            );
+        let mut substream =
+            self.pending_inbound_requests.remove(&(peer, request_id)).ok_or_else(|| {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    ?request_id,
+                    "request doesn't exist in pending requests",
+                );
 
-            Error::InvalidState
-        })?;
+                Error::InvalidState
+            })?;
         let protocol = self.protocol.clone();
 
         tracing::trace!(

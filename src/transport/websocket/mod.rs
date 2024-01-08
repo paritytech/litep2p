@@ -298,6 +298,13 @@ impl Transport for WebSocketTransport {
             .map(|address| async move {
                 let (url, _) = Self::multiaddr_into_url(address.clone())?;
 
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?connection_id,
+                    ?url,
+                    "open connection to remote peer",
+                );
+
                 match tokio::time::timeout(
                     connection_open_timeout,
                     tokio_tungstenite::connect_async(url),
@@ -310,12 +317,6 @@ impl Transport for WebSocketTransport {
                 }
             })
             .collect();
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            num_addresses = futures.len(),
-            "open connection to remote peer",
-        );
 
         self.pending_raw_connections.push(Box::pin(async move {
             while let Some(result) = futures.next().await {

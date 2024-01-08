@@ -159,6 +159,8 @@ impl Kademlia {
         let mut routing_table = RoutingTable::new(local_key.clone());
 
         for (peer, addresses) in config.known_peers {
+            tracing::trace!(target: LOG_TARGET, ?peer, ?addresses, "add bootstrap peer");
+
             routing_table.add_known_peer(peer, addresses.clone(), ConnectionType::NotConnected);
             service.add_known_address(&peer, addresses.into_iter());
         }
@@ -733,6 +735,13 @@ impl Kademlia {
 
                         }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?addresses,
+                                "add known peer",
+                            );
+
                             self.routing_table.add_known_peer(
                                 peer,
                                 addresses.clone(),

@@ -280,7 +280,7 @@ impl WebSocketConnection {
             ?address,
             ?role,
             ?dialed_peer,
-            "negotiate connectoin"
+            "negotiate connection"
         );
         let stream = BufferedStream::new(stream);
 

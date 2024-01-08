@@ -1172,7 +1172,7 @@ impl TransportManager {
                             ?connection_id,
                             ?dial_record,
                             ?transport,
-                            "negotiate connection"
+                            "negotiation started"
                         );
 
                         self.pending_connections.insert(connection_id, peer);
