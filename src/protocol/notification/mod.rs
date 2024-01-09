@@ -64,6 +64,19 @@ mod tests;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::notification";
 
+/// Connection state.
+///
+/// Used to track transport level connectivity state when there is a pending validation.
+/// See [`PeerState::PendingValidation.`] for more details.
+#[derive(Debug, PartialEq, Eq)]
+enum ConnectionState {
+    /// There is a active, transport-level connection open to the peer.
+    Open,
+
+    /// There is no transport-level connection open to the peer.
+    Closed,
+}
+
 /// Inbound substream state.
 #[derive(Debug)]
 enum InboundState {
@@ -132,6 +145,29 @@ impl OutboundState {
 enum PeerState {
     /// Peer state is poisoned due to invalid state transition.
     Poisoned,
+
+    /// Validation for an inbound substream is still pending.
+    ///
+    /// In order to enforce valid state transitions, `NotificationProtocol` keeps track of pending
+    /// validations across connectivity events (open/closed) and enforces that no activity happens
+    /// for any peer that is still awaiting validation for their inbound substream.
+    ///
+    /// If connection closes while the substream is being validated, instead of removing peer from
+    /// `peers`, the peer state is set as `ValidationPending` which indicates to the state machine
+    /// that a response for a inbound substream is pending validation. The substream itself will be
+    /// dead by the time validation is received if the peer state is `ValidationPending` since the
+    /// substream was part of a previous, now-closed substream but this state allows
+    /// `NotificationProtocol` to enforce correct state transitions by, e.g., rejecting new inbound
+    /// substream while a previous substream is still being validated or rejecting outbound
+    /// substreams on new connections if that same condition holds.
+    ValidationPending {
+        /// What is current connectivity state of the peer.
+        ///
+        /// If `state` is `ConnectionState::Closed` when the validation is finally received, peer
+        /// is removed from `peer` and if the `state` is `ConnectionState::Open`, peer is moved to
+        /// state `PeerState::Closed` and user is allowed to retry opening an outbound substream.
+        state: ConnectionState,
+    },
 
     /// Connection to peer is closed.
     Closed {
@@ -303,6 +339,25 @@ impl NotificationProtocol {
                 context.state = PeerState::Closed { pending_open: None };
                 self.on_open_substream(peer).await
             }
+            // connection established but validation is still pending
+            //
+            // update the connection state so that `NotificationProtocol` can proceed
+            // to correct state after the validation result has beern received
+            PeerState::ValidationPending { state } => {
+                debug_assert_eq!(state, ConnectionState::Closed);
+
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    "new connection established while validation still pending",
+                );
+
+                context.state = PeerState::ValidationPending {
+                    state: ConnectionState::Open,
+                };
+                Ok(())
+            }
             state => {
                 tracing::error!(
                     target: LOG_TARGET,
@@ -354,16 +409,45 @@ impl NotificationProtocol {
             PeerState::Open { shutdown } => {
                 let _ = shutdown.send(());
             }
-            // if the substream was being validated, notify user only if the outbound state is not
-            // `Closed` states other than `Closed` indicate that the user was interested
-            // in opening the substream as well and so that user can have correct state
-            // tracking, it must be notified of this
-            PeerState::Validating { outbound, .. }
-                if !std::matches!(outbound, OutboundState::Closed) =>
-            {
-                self.event_handle
-                    .report_notification_stream_open_failure(peer, NotificationError::Rejected)
-                    .await;
+            // if the substream was being validated, user must be notified that the substream is
+            // now considered rejected if they had been made aware of the existence of the pending
+            // connection
+            PeerState::Validating {
+                outbound, inbound, ..
+            } => {
+                match (outbound, inbound) {
+                    // substream was being validated by the protocol when the connection was closed
+                    (OutboundState::Closed, InboundState::Validating { .. }) => {
+                        self.peers.insert(
+                            peer,
+                            PeerContext {
+                                state: PeerState::ValidationPending {
+                                    state: ConnectionState::Closed,
+                                },
+                            },
+                        );
+                    }
+                    // user either initiated an outbound substream or an outbound substream was
+                    // opened/being opened as a result of an accepted inbound substream but was not
+                    // yet fully open
+                    //
+                    // to have consistent state tracking in the user protocol, substream rejection
+                    // must be reported to the user
+                    (
+                        OutboundState::OutboundInitiated { .. }
+                        | OutboundState::Negotiating
+                        | OutboundState::Open { .. },
+                        _,
+                    ) => {
+                        self.event_handle
+                            .report_notification_stream_open_failure(
+                                peer,
+                                NotificationError::Rejected,
+                            )
+                            .await;
+                    }
+                    (_, _) => {}
+                }
             }
             _ => {}
         }
@@ -511,8 +595,9 @@ impl NotificationProtocol {
 
     /// Remote opened a substream to local node.
     ///
-    /// The peer can be in three different states for the inbound substream to be considered valid:
+    /// The peer can be in four different states for the inbound substream to be considered valid:
     ///   - the connection is closed
+    ///   - conneection is open but substream validation from a previous connection is still pending
     ///   - outbound substream has been opened but not yet acknowledged by the remote peer
     ///   - outbound substream has been opened and acknowledged by the remote peer and it's being
     ///     negotiated
@@ -538,6 +623,21 @@ impl NotificationProtocol {
         );
 
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
+            // inbound substream of a previous connection is still pending validation,
+            // reject any new inbound substreams until an answer is heard from the user
+            state @ PeerState::ValidationPending { .. } => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    %protocol,
+                    ?fallback,
+                    ?state,
+                    "validation for previous substream still pending",
+                );
+
+                let _ = substream.close().await;
+                context.state = state;
+            }
             // the peer state is closed so this is a fresh inbound substream.
             PeerState::Closed { .. } => {
                 self.negotiation.read_handshake(peer, substream);
@@ -767,10 +867,10 @@ impl NotificationProtocol {
             }
         };
 
-        // protocol can only request a new outbound substream to be opened if the state is `Closed`
-        // other states imply that it's already open
-        if std::matches!(context.state, PeerState::Closed { .. }) {
-            match self.service.open_substream(peer) {
+        match context.state {
+            // protocol can only request a new outbound substream to be opened if the state is
+            // `Closed` other states imply that it's already open
+            PeerState::Closed { .. } => match self.service.open_substream(peer) {
                 Ok(substream_id) => {
                     tracing::trace!(
                         target: LOG_TARGET,
@@ -802,7 +902,25 @@ impl NotificationProtocol {
                         .await;
                     context.state = PeerState::Closed { pending_open: None };
                 }
+            },
+            // while a validation is pending for an inbound substream, user is not allowed to open
+            // any outbound substreams until the old inbond substream is either accepted or rejected
+            PeerState::ValidationPending { .. } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    "validation still pending, rejecting outbound substream request",
+                );
+
+                self.event_handle
+                    .report_notification_stream_open_failure(
+                        peer,
+                        NotificationError::ValidationPending,
+                    )
+                    .await;
             }
+            _ => {}
         }
 
         Ok(())
@@ -938,6 +1056,35 @@ impl NotificationProtocol {
                     }
                 },
             },
+            // validation result received for an inbound substream which is now considered dead
+            // because while the substream was being validated, the connection had closed.
+            //
+            // if the substream was rejected and there is no active connection to the peer,
+            // just remove the peer from `peers` without informing user
+            //
+            // if the substream was accepted, the user must be informed that the substream failed to
+            // open. Depending on whether there is currently a connection open to the peer, either
+            // report `Rejected`/`NoConnection` and let the user try again.
+            PeerState::ValidationPending { state } => {
+                if let Some(error) = match state {
+                    ConnectionState::Open => {
+                        context.state = PeerState::Closed { pending_open: None };
+
+                        std::matches!(result, ValidationResult::Accept)
+                            .then_some(NotificationError::Rejected)
+                    }
+                    ConnectionState::Closed => {
+                        self.peers.remove(&peer);
+
+                        std::matches!(result, ValidationResult::Accept)
+                            .then_some(NotificationError::NoConnection)
+                    }
+                } {
+                    self.event_handle.report_notification_stream_open_failure(peer, error).await;
+                }
+
+                Ok(())
+            }
             // if the user incorrectly send a validation result for a peer that doesn't require
             // validation, set state back to what it was and ignore the event
             //

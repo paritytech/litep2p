@@ -3731,3 +3731,269 @@ async fn dialing_disabled(transport1: Transport, transport2: Transport) {
     })
     .await;
 }
+
+#[tokio::test]
+async fn validation_takes_too_long_tcp() {
+    validation_takes_too_long(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn validation_takes_too_long_quic() {
+    validation_takes_too_long(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn validation_takes_too_long_websocket() {
+    validation_takes_too_long(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn validation_takes_too_long(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (notif_config3, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config3);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+    let listen_address = litep2p2.listen_addresses().next().unwrap().clone();
+
+    litep2p1.add_known_address(peer2, vec![listen_address].into_iter());
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer2,
+            error: NotificationError::Rejected,
+        }
+    );
+
+    // give theh connection a moment to close
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer1,
+            error: NotificationError::NoConnection,
+        }
+    );
+}
+
+#[tokio::test]
+async fn ignored_validation_open_substream_tcp() {
+    ignored_validation_open_substream(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn ignored_validation_open_substream_quic() {
+    ignored_validation_open_substream(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn ignored_validation_open_substream_websocket() {
+    ignored_validation_open_substream(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn ignored_validation_open_substream(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (notif_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (notif_config3, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
+        .with_max_size(1024usize)
+        .with_handshake(vec![1, 2, 3, 4])
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config3);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+    let listen_address = litep2p2.listen_addresses().next().unwrap().clone();
+
+    litep2p1.add_known_address(peer2, vec![listen_address].into_iter());
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    // open substream for `peer2` and accept it
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::ValidateSubstream {
+            protocol: ProtocolName::from("/notif/1"),
+            fallback: None,
+            peer: peer1,
+            handshake: vec![1, 2, 3, 4],
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer2,
+            error: NotificationError::Rejected,
+        }
+    );
+
+    // wait a moment to allow the connection to close
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // verify that there are no events pending
+    futures::future::poll_fn(|cx| match handle2.poll_next_unpin(cx) {
+        Poll::Pending => Poll::Ready(()),
+        event => panic!("invalid event: {event:?}"),
+    })
+    .await;
+
+    // try to open a substream while the previous validation is still in progress
+    // and verify that the substream is rejected with `ValidationPending`
+    handle2.open_substream(peer1).await.unwrap();
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer1,
+            error: NotificationError::ValidationPending,
+        }
+    );
+
+    // try to open substream as `peer1` and verify the inbound substream gets rejected
+    // because the previous substream is still pending
+    handle1.open_substream(peer2).await.unwrap();
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer2,
+            error: NotificationError::Rejected,
+        }
+    );
+
+    // verify `peer2` is not notified of the new substream
+    futures::future::poll_fn(|cx| match handle2.poll_next_unpin(cx) {
+        Poll::Pending => Poll::Ready(()),
+        event => panic!("invalid event: {event:?}"),
+    })
+    .await;
+
+    // finally try to accept the original substream and verify it fails to open with `NoConnection`
+    handle2.send_validation_result(peer1, ValidationResult::Accept);
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationStreamOpenFailure {
+            peer: peer1,
+            error: NotificationError::Rejected,
+        }
+    );
+}

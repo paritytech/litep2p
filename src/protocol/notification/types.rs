@@ -65,6 +65,9 @@ pub enum NotificationError {
     /// Synchronous notification channel is clogged.
     ChannelClogged,
 
+    /// Validation for a previous substream still pending.
+    ValidationPending,
+
     /// Failed to dial peer.
     DialFailure,
 
