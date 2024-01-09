@@ -403,14 +403,17 @@ mod tests {
         Receiver<InnerTransportManagerCommand>,
     ) {
         let (cmd_tx, cmd_rx) = channel(64);
+        let peer = PeerId::random();
+
         let handle = TransportManagerHandle::new(
+            peer,
             Arc::new(RwLock::new(HashMap::new())),
             cmd_tx,
             HashSet::new(),
         );
 
         let (service, sender) = TransportService::new(
-            PeerId::random(),
+            peer,
             ProtocolName::from("/notif/1"),
             Vec::new(),
             Arc::new(AtomicUsize::new(0usize)),

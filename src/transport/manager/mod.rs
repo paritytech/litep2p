@@ -257,7 +257,8 @@ impl TransportManager {
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let handle = TransportManagerHandle::new(peers.clone(), cmd_tx, supported_transports);
+        let handle =
+            TransportManagerHandle::new(local_peer_id, peers.clone(), cmd_tx, supported_transports);
 
         (
             Self {
