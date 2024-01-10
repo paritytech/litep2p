@@ -630,6 +630,16 @@ impl TcpConnection {
                             }
                         }));
                     }
+                    Some(ProtocolCommand::ForceClose) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            connection_id = ?self.endpoint.connection_id(),
+                            "force closing connection",
+                        );
+
+                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await
+                    }
                     None => {
                         tracing::debug!(target: LOG_TARGET, "protocols have disconnected, closing connection");
                         return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await

@@ -1527,7 +1527,7 @@ impl NotificationProtocol {
                                     target: LOG_TARGET,
                                     ?peer,
                                     protocol = %self.protocol,
-                                    "peer didn't answer in 10 seconds, canceling substream",
+                                    "peer didn't answer in 10 seconds, canceling substream and closing connection",
                                 );
                                 context.state = PeerState::Closed { pending_open: None };
 
@@ -1535,6 +1535,16 @@ impl NotificationProtocol {
                                 self.event_handle
                                     .report_notification_stream_open_failure(peer, NotificationError::Rejected)
                                     .await;
+
+                                if let Err(error) = self.service.force_close(peer) {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        ?peer,
+                                        protocol = %self.protocol,
+                                        ?error,
+                                        "failed to force close connection",
+                                    );
+                                }
                             }
                             state => {
                                 tracing::trace!(

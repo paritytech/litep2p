@@ -336,6 +336,26 @@ impl TransportService {
             )
             .map(|_| substream_id)
     }
+
+    /// Forcibly close the connection, even if other protocols have substreams open over it.
+    pub fn force_close(&mut self, peer: PeerId) -> crate::Result<()> {
+        let connection =
+            &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?;
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            protocol = %self.protocol,
+            secondary = ?connection.secondary,
+            "forcibly closing the connection",
+        );
+
+        if let Some(ref mut connection) = connection.secondary {
+            let _ = connection.force_close();
+        }
+
+        connection.primary.force_close()
+    }
 }
 
 impl Stream for TransportService {

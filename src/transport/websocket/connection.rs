@@ -541,6 +541,16 @@ impl WebSocketConnection {
                             }
                         }));
                     }
+                    Some(ProtocolCommand::ForceClose) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            connection_id = ?self.connection_id,
+                            "force closing connection",
+                        );
+
+                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
+                    }
                     None => {
                         tracing::debug!(target: LOG_TARGET, "protocols have exited, shutting down connection");
                         return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
