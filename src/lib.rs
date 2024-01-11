@@ -344,7 +344,6 @@ impl Litep2p {
 
         // if identify was enabled, give it the enabled protocols and listen addresses and start it
         if let Some((service, mut identify_config)) = identify_info.take() {
-            identify_config.listen_addresses = listen_addresses.clone();
             identify_config.protocols = transport_manager.protocols().cloned().collect();
 
             litep2p_config.executor.run(Box::pin(async move {

@@ -67,7 +67,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (identify_config1, mut identify_event_stream1) = Config::new();
+    let (identify_config1, mut identify_event_stream1) = Config::new(Vec::new());
     let config_builder = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config1);
@@ -79,7 +79,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let (identify_config2, mut identify_event_stream2) = Config::new();
+    let (identify_config2, mut identify_event_stream2) = Config::new(Vec::new());
     let config_builder = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config2);
@@ -184,7 +184,7 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
     .with_libp2p_ping(ping_config)
     .build();
 
-    let (identify_config2, mut identify_event_stream2) = Config::new();
+    let (identify_config2, mut identify_event_stream2) = Config::new(Vec::new());
     let config_builder = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config2);

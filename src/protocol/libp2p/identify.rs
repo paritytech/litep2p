@@ -70,11 +70,11 @@ pub struct Config {
     // Public key of the local node, filled by `Litep2p`.
     pub(crate) public: Option<PublicKey>,
 
-    /// Listen addresses of the local node, filled by `Litep2p`.
-    pub(crate) listen_addresses: Vec<Multiaddr>,
-
     /// Protocols supported by the local node, filled by `Litep2p`.
     pub(crate) protocols: Vec<ProtocolName>,
+
+    /// Public addresses.
+    pub(crate) public_addresses: Vec<Multiaddr>,
 }
 
 impl Config {
@@ -82,15 +82,17 @@ impl Config {
     ///
     /// Returns a config that is given to `Litep2pConfig` and an event stream for
     /// [`IdentifyEvent`]s.
-    pub fn new() -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
+    pub fn new(
+        public_addresses: Vec<Multiaddr>,
+    ) -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
         (
             Self {
                 tx_event,
                 public: None,
+                public_addresses,
                 codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
-                listen_addresses: Vec::new(),
                 protocols: Vec::new(),
                 protocol: ProtocolName::from(PROTOCOL_NAME),
             },
@@ -131,8 +133,8 @@ pub(crate) struct Identify {
     // Public key of the local node, filled by `Litep2p`.
     public: PublicKey,
 
-    /// Listen addresses of the local node, filled by `Litep2p`.
-    listen_addresses: Vec<Multiaddr>,
+    /// Public addresses.
+    public_addresses: Vec<Multiaddr>,
 
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,
@@ -159,8 +161,8 @@ impl Identify {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
+            public_addresses: config.public_addresses,
             public: config.public.expect("public key to be supplied"),
-            listen_addresses: config.listen_addresses,
             pending_opens: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
             pending_outbound: FuturesUnordered::new(),
@@ -218,13 +220,21 @@ impl Identify {
             agent_version: None,
             public_key: Some(self.public.to_protobuf_encoding()),
             listen_addrs: self
-                .listen_addresses
+                .public_addresses
                 .iter()
                 .map(|address| address.to_vec())
                 .collect::<Vec<_>>(),
             observed_addr,
             protocols: self.protocols.clone(),
         };
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?identify,
+            "sending identify response",
+        );
+
         let mut msg = Vec::with_capacity(identify.encoded_len());
         identify.encode(&mut msg).expect("`msg` to have enough capacity");
 
