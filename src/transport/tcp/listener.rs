@@ -1,3 +1,4 @@
+// Copyright 2017 Parity Technologies (UK) Ltd.
 // Copyright 2023 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -29,7 +30,7 @@ use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
 use std::{
     io,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -50,7 +51,7 @@ pub(super) enum AddressType {
 /// TCP listener listening to zero or more addresses.
 pub struct TcpListener {
     /// Listen addresses.
-    _listen_addresses: Vec<SocketAddr>,
+    listen_addresses: Vec<SocketAddr>,
 
     /// Listeners.
     listeners: Vec<TokioTcpListener>,
@@ -111,10 +112,33 @@ impl TcpListener {
         (
             Self {
                 listeners,
-                _listen_addresses: listen_addresses,
+                listen_addresses,
             },
             listen_multi_addresses,
         )
+    }
+
+    /// Get local dial address for an outbound connection.
+    pub(super) fn local_dial_address(&self, remote_address: &IpAddr) -> Option<SocketAddr> {
+        for address in &self.listen_addresses {
+            if remote_address.is_ipv4() == address.is_ipv4()
+                && remote_address.is_loopback() == address.ip().is_loopback()
+            {
+                if remote_address.is_ipv4() {
+                    return Some(SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        address.port(),
+                    ));
+                } else {
+                    return Some(SocketAddr::new(
+                        IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                        address.port(),
+                    ));
+                }
+            }
+        }
+
+        None
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
@@ -300,5 +324,26 @@ mod tests {
         );
 
         assert!(res1.is_ok() && res2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn local_dial_address() {
+        let listener = TcpListener {
+            listen_addresses: vec![
+                "[2001:7d0:84aa:3900:2a5d:9e85::]:8888".parse().unwrap(),
+                "92.168.127.1:9999".parse().unwrap(),
+            ],
+            listeners: Vec::new(),
+        };
+
+        assert_eq!(
+            listener.local_dial_address(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))),
+            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 9999))
+        );
+
+        assert_eq!(
+            listener.local_dial_address(&IpAddr::V6(Ipv6Addr::new(0, 1, 2, 3, 4, 5, 6, 7))),
+            Some(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888))
+        );
     }
 }
