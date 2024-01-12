@@ -24,35 +24,88 @@ use crate::{error::AddressError, Error, PeerId};
 
 use futures::Stream;
 use multiaddr::{Multiaddr, Protocol};
+use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
 use std::{
     io,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::websocket::listener";
 
+/// Address type.
+#[derive(Debug)]
+pub(super) enum AddressType {
+    /// Socket address.
+    Socket(SocketAddr),
+
+    /// DNS address.
+    Dns(String, u16),
+}
+
 /// WebSocket listener listening to zero or more addresses.
 pub struct WebSocketListener {
-    /// Listen addresses.
-    _listen_addresses: Vec<SocketAddr>,
-
     /// Listeners.
     listeners: Vec<TokioTcpListener>,
 }
 
+#[derive(Clone, Default)]
+pub(super) struct DialAddresses {
+    /// Listen addresses.
+    listen_addresses: Arc<Vec<SocketAddr>>,
+}
+
+impl DialAddresses {
+    /// Get local dial address for an outbound connection.
+    #[allow(unused)]
+    pub(super) fn local_dial_address(&self, remote_address: &IpAddr) -> Option<SocketAddr> {
+        for address in self.listen_addresses.iter() {
+            if remote_address.is_ipv4() == address.is_ipv4()
+                && remote_address.is_loopback() == address.ip().is_loopback()
+            {
+                if remote_address.is_ipv4() {
+                    return Some(SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        address.port(),
+                    ));
+                } else {
+                    return Some(SocketAddr::new(
+                        IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                        address.port(),
+                    ));
+                }
+            }
+        }
+
+        None
+    }
+}
+
 impl WebSocketListener {
     /// Create new [`WebSocketListener`]
-    pub fn new(addresses: Vec<Multiaddr>) -> (Self, Vec<Multiaddr>) {
-        let (listeners, listen_addresses): (_, Vec<_>) = addresses
+    pub fn new(addresses: Vec<Multiaddr>) -> (Self, Vec<Multiaddr>, DialAddresses) {
+        let (listeners, listen_addresses): (_, Vec<Vec<_>>) = addresses
             .into_iter()
             .filter_map(|address| {
-                let address = Self::get_socket_address(&address).ok()?.0;
+                let address = match Self::get_socket_address(&address).ok()?.0 {
+                    AddressType::Socket(address) => address,
+                    AddressType::Dns(address, port) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?address,
+                            ?port,
+                            "dns not supported as bind address"
+                        );
+
+                        return None;
+                    }
+                };
                 let socket = match address.is_ipv4() {
                     false => {
                         let socket =
@@ -75,13 +128,50 @@ impl WebSocketListener {
 
                 let socket: std::net::TcpListener = socket.into();
                 let listener = TokioTcpListener::from_std(socket).ok()?;
+                let local_address = listener.local_addr().ok()?;
 
-                let listen_address = listener.local_addr().ok()?;
+                let listen_addresses = match address.ip().is_unspecified() {
+                    true => match NetworkInterface::show() {
+                        Ok(ifaces) => ifaces
+                            .into_iter()
+                            .flat_map(|record| {
+                                record.addr.into_iter().filter_map(|iface_address| {
+                                    match (iface_address, address.is_ipv4()) {
+                                        (Addr::V4(inner), true) => Some(SocketAddr::new(
+                                            IpAddr::V4(inner.ip),
+                                            local_address.port(),
+                                        )),
+                                        (Addr::V6(inner), false) =>
+                                            match inner.ip.segments().get(0) {
+                                                Some(0xfe80) => None,
+                                                _ => Some(SocketAddr::new(
+                                                    IpAddr::V6(inner.ip),
+                                                    local_address.port(),
+                                                )),
+                                            },
+                                        _ => None,
+                                    }
+                                })
+                            })
+                            .collect(),
+                        Err(error) => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to fetch network interfaces",
+                            );
 
-                Some((listener, listen_address))
+                            return None;
+                        }
+                    },
+                    false => vec![local_address],
+                };
+
+                Some((listener, listen_addresses))
             })
             .unzip();
 
+        let listen_addresses = listen_addresses.into_iter().flatten().collect::<Vec<_>>();
         let listen_multi_addresses = listen_addresses
             .iter()
             .cloned()
@@ -94,22 +184,25 @@ impl WebSocketListener {
             .collect();
 
         (
-            Self {
-                listeners,
-                _listen_addresses: listen_addresses,
-            },
+            Self { listeners },
             listen_multi_addresses,
+            DialAddresses {
+                listen_addresses: Arc::new(listen_addresses),
+            },
         )
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
-    pub fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
+    pub(super) fn get_socket_address(
+        address: &Multiaddr,
+    ) -> crate::Result<(AddressType, Option<PeerId>)> {
         tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
         let mut iter = address.iter();
         let socket_address = match iter.next() {
             Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V6(address), port),
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -120,7 +213,21 @@ impl WebSocketListener {
                 }
             },
             Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V4(address), port),
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid transport protocol, expected `Tcp`",
+                    );
+                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                }
+            },
+            Some(Protocol::Dns(address))
+            | Some(Protocol::Dns4(address))
+            | Some(Protocol::Dns6(address)) => match iter.next() {
+                Some(Protocol::Tcp(port)) => AddressType::Dns(address.to_string(), port),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -244,11 +351,35 @@ mod tests {
                 .expect("valid multiaddress")
         )
         .is_err());
+        assert!(WebSocketListener::get_socket_address(
+            &"/dns/hello.world/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_err());
+        assert!(WebSocketListener::get_socket_address(
+            &"/dns6/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_ok());
+        assert!(WebSocketListener::get_socket_address(
+            &"/dns4/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_ok());
+        assert!(WebSocketListener::get_socket_address(
+            &"/dns6/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_ok());
     }
 
     #[tokio::test]
     async fn no_listeners() {
-        let (mut listener, _) = WebSocketListener::new(Vec::new());
+        let (mut listener, _, _) = WebSocketListener::new(Vec::new());
 
         futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -260,7 +391,7 @@ mod tests {
     #[tokio::test]
     async fn one_listener() {
         let address: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
-        let (mut listener, listen_addresses) = WebSocketListener::new(vec![address.clone()]);
+        let (mut listener, listen_addresses, _) = WebSocketListener::new(vec![address.clone()]);
         let Some(Protocol::Tcp(port)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
@@ -277,7 +408,7 @@ mod tests {
     async fn two_listeners() {
         let address1: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
         let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap();
-        let (mut listener, listen_addresses) = WebSocketListener::new(vec![address1, address2]);
+        let (mut listener, listen_addresses, _) = WebSocketListener::new(vec![address1, address2]);
 
         let Some(Protocol::Tcp(port1)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
@@ -299,5 +430,25 @@ mod tests {
         );
 
         assert!(res1.is_ok() && res2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn local_dial_address() {
+        let dial_addresses = DialAddresses {
+            listen_addresses: Arc::new(vec![
+                "[2001:7d0:84aa:3900:2a5d:9e85::]:8888".parse().unwrap(),
+                "92.168.127.1:9999".parse().unwrap(),
+            ]),
+        };
+
+        assert_eq!(
+            dial_addresses.local_dial_address(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))),
+            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 9999))
+        );
+
+        assert_eq!(
+            dial_addresses.local_dial_address(&IpAddr::V6(Ipv6Addr::new(0, 1, 2, 3, 4, 5, 6, 7))),
+            Some(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888))
+        );
     }
 }

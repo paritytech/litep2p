@@ -22,7 +22,10 @@ use futures::{FutureExt, StreamExt};
 use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::libp2p::{identify::Config, ping::Config as PingConfig},
+    protocol::libp2p::{
+        identify::{Config, IdentifyEvent},
+        ping::Config as PingConfig,
+    },
     transport::quic::config::Config as QuicConfig,
     transport::tcp::config::Config as TcpConfig,
     transport::websocket::config::Config as WebSocketConfig,
@@ -93,9 +96,14 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
 
-    litep2p1.dial_address(address).await.unwrap();
+    let address1 = litep2p1.listen_addresses().next().unwrap().clone();
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+
+    tracing::info!("listen address of peer1: {address1}");
+    tracing::info!("listen address of peer2: {address2}");
+
+    litep2p1.dial_address(address2).await.unwrap();
 
     let mut litep2p1_done = false;
     let mut litep2p2_done = false;
@@ -104,14 +112,20 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
         tokio::select! {
             _event = litep2p1.next_event() => {}
             _event = litep2p2.next_event() => {}
-            _event = identify_event_stream1.next() => {
+            event = identify_event_stream1.next() => {
+                let IdentifyEvent::PeerIdentified { observed_address, .. } = event.unwrap();
+                tracing::info!("peer2 observed: {observed_address:?}");
+
                 litep2p1_done = true;
 
                 if litep2p1_done && litep2p2_done {
                     break
                 }
             }
-            _event = identify_event_stream2.next() => {
+            event = identify_event_stream2.next() => {
+                let IdentifyEvent::PeerIdentified { observed_address, .. } = event.unwrap();
+                tracing::info!("peer1 observed: {observed_address:?}");
+
                 litep2p2_done = true;
 
                 if litep2p1_done && litep2p2_done {

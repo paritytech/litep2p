@@ -1,3 +1,4 @@
+// Copyright 2020 Parity Technologies (UK) Ltd.
 // Copyright 2023 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -28,7 +29,7 @@ use crate::{
         tcp::{
             config::Config,
             connection::{NegotiatedConnection, TcpConnection},
-            listener::{AddressType, TcpListener},
+            listener::{AddressType, DialAddresses, TcpListener},
         },
         Transport, TransportBuilder, TransportEvent,
     },
@@ -39,14 +40,20 @@ use futures::{
     future::BoxFuture,
     stream::{FuturesUnordered, Stream, StreamExt},
 };
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
+use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
+use trust_dns_resolver::{
+    config::{ResolverConfig, ResolverOpts},
+    TokioAsyncResolver,
+};
 
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
+    time::Duration,
 };
 
 pub(crate) use substream::Substream;
@@ -73,6 +80,9 @@ pub(crate) struct TcpTransport {
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
+
+    /// Dial addresses.
+    dial_addresses: DialAddresses,
 
     /// Pending opening connections.
     pending_connections:
@@ -121,6 +131,114 @@ impl TcpTransport {
             .map_err(|error| (connection_id, error))
         }));
     }
+
+    /// Dial remote peer
+    async fn dial_peer(
+        address: Multiaddr,
+        dial_addresses: DialAddresses,
+        connection_open_timeout: Duration,
+    ) -> crate::Result<(Multiaddr, TcpStream)> {
+        let (socket_address, _) = TcpListener::get_socket_address(&address)?;
+        let remote_address = match socket_address {
+            AddressType::Socket(address) => address,
+            AddressType::Dns(url, port) => {
+                let address = address.clone();
+                let future = async move {
+                    match TokioAsyncResolver::tokio(
+                        ResolverConfig::default(),
+                        ResolverOpts::default(),
+                    )
+                    .lookup_ip(url.clone())
+                    .await
+                    {
+                        // TODO: ugly
+                        Ok(lookup) => {
+                            let mut iter = lookup.iter();
+                            while let Some(ip) = iter.next() {
+                                match (
+                                    address.iter().next().expect("protocol to exist"),
+                                    ip.is_ipv4(),
+                                ) {
+                                    (Protocol::Dns(_), true)
+                                    | (Protocol::Dns4(_), true)
+                                    | (Protocol::Dns6(_), false) => {
+                                        tracing::trace!(
+                                            target: LOG_TARGET,
+                                            ?address,
+                                            ?ip,
+                                            "address resolved",
+                                        );
+
+                                        return Ok(SocketAddr::new(ip, port));
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            Err(Error::Unknown)
+                        }
+                        Err(_) => Err(Error::Unknown),
+                    }
+                };
+
+                match tokio::time::timeout(connection_open_timeout, future).await {
+                    Err(_) => return Err(Error::Timeout),
+                    Ok(Err(error)) => return Err(error),
+                    Ok(Ok(address)) => address,
+                }
+            }
+        };
+
+        let domain = match remote_address.is_ipv4() {
+            true => Domain::IPV4,
+            false => Domain::IPV6,
+        };
+        let socket = Socket::new(domain, Type::STREAM, Some(socket2::Protocol::TCP))?;
+        if remote_address.is_ipv6() {
+            socket.set_only_v6(true)?;
+        }
+        socket.set_nonblocking(true)?;
+
+        match dial_addresses.local_dial_address(&remote_address.ip()) {
+            Some(dial_address) => {
+                socket.set_reuse_address(true)?;
+                #[cfg(unix)]
+                socket.set_reuse_port(true)?;
+                socket.bind(&dial_address.into())?;
+            }
+            None => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?remote_address,
+                    "tcp listener not enabled for remote address, using ephemeral port",
+                );
+            }
+        }
+
+        let future = async move {
+            match socket.connect(&remote_address.into()) {
+                Ok(()) => {}
+                Err(err) if err.raw_os_error() == Some(libc::EINPROGRESS) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(err) => return Err(err.into()),
+            }
+
+            let stream = TcpStream::try_from(Into::<std::net::TcpStream>::into(socket))?;
+            stream.writable().await?;
+
+            if let Some(e) = stream.take_error()? {
+                return Err(e);
+            }
+
+            Ok((address, stream))
+        };
+
+        match tokio::time::timeout(connection_open_timeout, future).await {
+            Err(_) => Err(Error::Timeout),
+            Ok(Err(error)) => Err(error.into()),
+            Ok(Ok((address, stream))) => Ok((address, stream)),
+        }
+    }
 }
 
 impl TransportBuilder for TcpTransport {
@@ -132,14 +250,14 @@ impl TransportBuilder for TcpTransport {
         context: TransportHandle,
         mut config: Self::Config,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
-        tracing::info!(
+        tracing::debug!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,
             "start tcp transport",
         );
 
         // start tcp listeners for all listen addresses
-        let (listener, listen_addresses) =
+        let (listener, listen_addresses, dial_addresses) =
             TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new()));
 
         Ok((
@@ -147,6 +265,7 @@ impl TransportBuilder for TcpTransport {
                 listener,
                 config,
                 context,
+                dial_addresses,
                 canceled: HashSet::new(),
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
@@ -169,13 +288,20 @@ impl Transport for TcpTransport {
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let connection_open_timeout = self.config.connection_open_timeout;
         let substream_open_timeout = self.config.substream_open_timeout;
+        let dial_addresses = self.dial_addresses.clone();
         let keypair = self.context.keypair.clone();
 
         self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
+            let (_, stream) =
+                TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout)
+                    .await
+                    .map_err(|error| (connection_id, error))?;
+
             TcpConnection::open_connection(
                 connection_id,
                 keypair,
+                stream,
                 socket_address,
                 peer,
                 yamux_config,
@@ -236,25 +362,14 @@ impl Transport for TcpTransport {
         connection_id: ConnectionId,
         addresses: Vec<Multiaddr>,
     ) -> crate::Result<()> {
-        let connection_open_timeout = self.config.connection_open_timeout;
         let mut futures: FuturesUnordered<_> = addresses
             .into_iter()
-            .map(|address| async move {
-                let (socket_address, _) = TcpListener::get_socket_address(&address)?;
+            .map(|address| {
+                let dial_addresses = self.dial_addresses.clone();
+                let connection_open_timeout = self.config.connection_open_timeout;
 
-                match tokio::time::timeout(connection_open_timeout, async move {
-                    match &socket_address {
-                        AddressType::Socket(socket_address) =>
-                            TcpStream::connect(socket_address).await,
-                        AddressType::Dns(address, port) =>
-                            TcpStream::connect(format!("{address}:{port}")).await,
-                    }
-                })
-                .await
-                {
-                    Err(_) => Err(Error::Timeout),
-                    Ok(Err(error)) => Err(error.into()),
-                    Ok(Ok(stream)) => Ok((address, stream)),
+                async move {
+                    TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout).await
                 }
             })
             .collect();
