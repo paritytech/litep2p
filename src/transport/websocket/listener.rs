@@ -38,6 +38,16 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::websocket::listener";
 
+/// Address type.
+#[derive(Debug)]
+pub(super) enum AddressType {
+    /// Socket address.
+    Socket(SocketAddr),
+
+    /// DNS address.
+    Dns(String, u16),
+}
+
 /// WebSocket listener listening to zero or more addresses.
 pub struct WebSocketListener {
     /// Listeners.
@@ -47,7 +57,6 @@ pub struct WebSocketListener {
 #[derive(Clone, Default)]
 pub(super) struct DialAddresses {
     /// Listen addresses.
-    #[allow(unused)]
     listen_addresses: Arc<Vec<SocketAddr>>,
 }
 
@@ -83,7 +92,19 @@ impl WebSocketListener {
         let (listeners, listen_addresses): (_, Vec<_>) = addresses
             .into_iter()
             .filter_map(|address| {
-                let address = Self::get_socket_address(&address).ok()?.0;
+                let address = match Self::get_socket_address(&address).ok()?.0 {
+                    AddressType::Socket(address) => address,
+                    AddressType::Dns(address, port) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?address,
+                            ?port,
+                            "dns not supported as bind address"
+                        );
+
+                        return None;
+                    }
+                };
                 let socket = match address.is_ipv4() {
                     false => {
                         let socket =
@@ -134,13 +155,16 @@ impl WebSocketListener {
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
-    pub fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
+    pub(super) fn get_socket_address(
+        address: &Multiaddr,
+    ) -> crate::Result<(AddressType, Option<PeerId>)> {
         tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
         let mut iter = address.iter();
         let socket_address = match iter.next() {
             Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V6(address), port),
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -151,7 +175,21 @@ impl WebSocketListener {
                 }
             },
             Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => SocketAddr::new(IpAddr::V4(address), port),
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid transport protocol, expected `Tcp`",
+                    );
+                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                }
+            },
+            Some(Protocol::Dns(address))
+            | Some(Protocol::Dns4(address))
+            | Some(Protocol::Dns6(address)) => match iter.next() {
+                Some(Protocol::Tcp(port)) => AddressType::Dns(address.to_string(), port),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -275,6 +313,30 @@ mod tests {
                 .expect("valid multiaddress")
         )
         .is_err());
+        assert!(WebSocketListener::get_socket_address(
+            &"/dns/hello.world/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_err());
+        assert!(WebSocketListener::get_socket_address(
+            &"/dns6/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_ok());
+        assert!(WebSocketListener::get_socket_address(
+            &"/dns4/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_ok());
+        assert!(WebSocketListener::get_socket_address(
+            &"/dns6/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        )
+        .is_ok());
     }
 
     #[tokio::test]
