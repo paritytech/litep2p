@@ -29,7 +29,7 @@ use crate::{
         tcp::{
             config::Config,
             connection::{NegotiatedConnection, TcpConnection},
-            listener::{AddressType, TcpListener},
+            listener::{AddressType, DialAddresses, TcpListener},
         },
         Transport, TransportBuilder, TransportEvent,
     },
@@ -79,6 +79,10 @@ pub(crate) struct TcpTransport {
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
+
+    /// Dial addresses.
+    #[allow(unused)]
+    dial_addresses: DialAddresses,
 
     /// Pending opening connections.
     pending_connections:
@@ -145,7 +149,7 @@ impl TransportBuilder for TcpTransport {
         );
 
         // start tcp listeners for all listen addresses
-        let (listener, listen_addresses) =
+        let (listener, listen_addresses, dial_addresses) =
             TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new()));
 
         Ok((
@@ -153,6 +157,7 @@ impl TransportBuilder for TcpTransport {
                 listener,
                 config,
                 context,
+                dial_addresses,
                 canceled: HashSet::new(),
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
