@@ -1,3 +1,4 @@
+// Copyright 2020 Parity Technologies (UK) Ltd.
 // Copyright 2023 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -40,7 +41,12 @@ use futures::{
     stream::{FuturesUnordered, Stream, StreamExt},
 };
 use multiaddr::Multiaddr;
+use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
+use trust_dns_resolver::{
+    config::{ResolverConfig, ResolverOpts},
+    TokioAsyncResolver,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -132,7 +138,7 @@ impl TransportBuilder for TcpTransport {
         context: TransportHandle,
         mut config: Self::Config,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
-        tracing::info!(
+        tracing::debug!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,
             "start tcp transport",
@@ -242,19 +248,67 @@ impl Transport for TcpTransport {
             .map(|address| async move {
                 let (socket_address, _) = TcpListener::get_socket_address(&address)?;
 
-                match tokio::time::timeout(connection_open_timeout, async move {
-                    match &socket_address {
-                        AddressType::Socket(socket_address) =>
-                            TcpStream::connect(socket_address).await,
-                        AddressType::Dns(address, port) =>
-                            TcpStream::connect(format!("{address}:{port}")).await,
+                let remote_address = match socket_address {
+                    AddressType::Socket(address) => address,
+                    AddressType::Dns(address, port) => {
+                        let future = async move {
+                            match TokioAsyncResolver::tokio(
+                                ResolverConfig::default(),
+                                ResolverOpts::default(),
+                            )
+                            .lookup_ip(address)
+                            .await
+                            {
+                                // TODO: ugly
+                                Ok(lookup) => match lookup.iter().next() {
+                                    Some(ip) => Ok(SocketAddr::new(ip, port)),
+                                    None => Err(Error::Unknown),
+                                },
+                                Err(_) => Err(Error::Unknown),
+                            }
+                        };
+
+                        match tokio::time::timeout(connection_open_timeout, future).await {
+                            Err(_) => return Err(Error::Timeout),
+                            Ok(Err(error)) => return Err(error),
+                            Ok(Ok(address)) => address,
+                        }
                     }
-                })
-                .await
-                {
+                };
+
+                let domain = match remote_address.is_ipv4() {
+                    true => Domain::IPV4,
+                    false => Domain::IPV6,
+                };
+                let socket = Socket::new(domain, Type::STREAM, Some(socket2::Protocol::TCP))?;
+                if remote_address.is_ipv6() {
+                    socket.set_only_v6(true)?;
+                }
+                socket.set_nonblocking(true)?;
+
+                let future = async move {
+                    match socket.connect(&remote_address.into()) {
+                        Ok(()) => {}
+                        Err(err) if err.raw_os_error() == Some(libc::EINPROGRESS) => {}
+                        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+                        Err(err) => return Err(err.into()),
+                    }
+
+                    let stream = TcpStream::try_from(Into::<std::net::TcpStream>::into(socket))?;
+                    stream.writable().await?;
+
+                    if let Some(e) = stream.take_error()? {
+                        return Err(e);
+                    }
+
+                    stream.peer_addr()?;
+                    Ok((address, stream))
+                };
+
+                match tokio::time::timeout(connection_open_timeout, future).await {
                     Err(_) => Err(Error::Timeout),
                     Ok(Err(error)) => Err(error.into()),
-                    Ok(Ok(stream)) => Ok((address, stream)),
+                    Ok(Ok((address, stream))) => Ok((address, stream)),
                 }
             })
             .collect();
