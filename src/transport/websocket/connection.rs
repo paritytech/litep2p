@@ -207,6 +207,7 @@ impl WebSocketConnection {
     pub(super) async fn open_connection(
         connection_id: ConnectionId,
         keypair: Keypair,
+        stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
         address: Multiaddr,
         dialed_peer: PeerId,
         ws_address: Url,
@@ -223,7 +224,7 @@ impl WebSocketConnection {
         );
 
         Self::negotiate_connection(
-            tokio_tungstenite::connect_async(ws_address).await?.0,
+            stream,
             Some(dialed_peer),
             Role::Dialer,
             address,
