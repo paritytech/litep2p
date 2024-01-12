@@ -29,8 +29,9 @@ use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
 use std::{
     io,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -39,16 +40,46 @@ const LOG_TARGET: &str = "litep2p::websocket::listener";
 
 /// WebSocket listener listening to zero or more addresses.
 pub struct WebSocketListener {
-    /// Listen addresses.
-    _listen_addresses: Vec<SocketAddr>,
-
     /// Listeners.
     listeners: Vec<TokioTcpListener>,
 }
 
+#[derive(Clone, Default)]
+pub(super) struct DialAddresses {
+    /// Listen addresses.
+    #[allow(unused)]
+    listen_addresses: Arc<Vec<SocketAddr>>,
+}
+
+impl DialAddresses {
+    /// Get local dial address for an outbound connection.
+    #[allow(unused)]
+    pub(super) fn local_dial_address(&self, remote_address: &IpAddr) -> Option<SocketAddr> {
+        for address in self.listen_addresses.iter() {
+            if remote_address.is_ipv4() == address.is_ipv4()
+                && remote_address.is_loopback() == address.ip().is_loopback()
+            {
+                if remote_address.is_ipv4() {
+                    return Some(SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        address.port(),
+                    ));
+                } else {
+                    return Some(SocketAddr::new(
+                        IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                        address.port(),
+                    ));
+                }
+            }
+        }
+
+        None
+    }
+}
+
 impl WebSocketListener {
     /// Create new [`WebSocketListener`]
-    pub fn new(addresses: Vec<Multiaddr>) -> (Self, Vec<Multiaddr>) {
+    pub fn new(addresses: Vec<Multiaddr>) -> (Self, Vec<Multiaddr>, DialAddresses) {
         let (listeners, listen_addresses): (_, Vec<_>) = addresses
             .into_iter()
             .filter_map(|address| {
@@ -94,11 +125,11 @@ impl WebSocketListener {
             .collect();
 
         (
-            Self {
-                listeners,
-                _listen_addresses: listen_addresses,
-            },
+            Self { listeners },
             listen_multi_addresses,
+            DialAddresses {
+                listen_addresses: Arc::new(listen_addresses),
+            },
         )
     }
 
@@ -248,7 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_listeners() {
-        let (mut listener, _) = WebSocketListener::new(Vec::new());
+        let (mut listener, _, _) = WebSocketListener::new(Vec::new());
 
         futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -260,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn one_listener() {
         let address: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
-        let (mut listener, listen_addresses) = WebSocketListener::new(vec![address.clone()]);
+        let (mut listener, listen_addresses, _) = WebSocketListener::new(vec![address.clone()]);
         let Some(Protocol::Tcp(port)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
@@ -277,7 +308,7 @@ mod tests {
     async fn two_listeners() {
         let address1: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
         let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap();
-        let (mut listener, listen_addresses) = WebSocketListener::new(vec![address1, address2]);
+        let (mut listener, listen_addresses, _) = WebSocketListener::new(vec![address1, address2]);
 
         let Some(Protocol::Tcp(port1)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
@@ -299,5 +330,25 @@ mod tests {
         );
 
         assert!(res1.is_ok() && res2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn local_dial_address() {
+        let dial_addresses = DialAddresses {
+            listen_addresses: Arc::new(vec![
+                "[2001:7d0:84aa:3900:2a5d:9e85::]:8888".parse().unwrap(),
+                "92.168.127.1:9999".parse().unwrap(),
+            ]),
+        };
+
+        assert_eq!(
+            dial_addresses.local_dial_address(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))),
+            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 9999))
+        );
+
+        assert_eq!(
+            dial_addresses.local_dial_address(&IpAddr::V6(Ipv6Addr::new(0, 1, 2, 3, 4, 5, 6, 7))),
+            Some(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888))
+        );
     }
 }

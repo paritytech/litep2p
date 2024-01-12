@@ -28,7 +28,7 @@ use crate::{
         websocket::{
             config::Config,
             connection::{NegotiatedConnection, WebSocketConnection},
-            listener::WebSocketListener,
+            listener::{DialAddresses, WebSocketListener},
         },
         Transport, TransportBuilder, TransportEvent,
     },
@@ -88,6 +88,10 @@ pub(crate) struct WebSocketTransport {
 
     /// WebSocket listener.
     listener: WebSocketListener,
+
+    /// Dial addresses.
+    #[allow(unused)]
+    dial_addresses: DialAddresses,
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
@@ -185,7 +189,7 @@ impl TransportBuilder for WebSocketTransport {
             listen_addresses = ?config.listen_addresses,
             "start websocket transport",
         );
-        let (listener, listen_addresses) =
+        let (listener, listen_addresses, dial_addresses) =
             WebSocketListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new()));
 
         Ok((
@@ -193,6 +197,7 @@ impl TransportBuilder for WebSocketTransport {
                 listener,
                 config,
                 context,
+                dial_addresses,
                 canceled: HashSet::new(),
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
