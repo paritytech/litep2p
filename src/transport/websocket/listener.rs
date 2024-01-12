@@ -246,7 +246,7 @@ impl WebSocketListener {
         // verify that `/ws`/`/wss` is part of the multi address
         match iter.next() {
             Some(Protocol::Ws(_address)) => {}
-            Some(Protocol::Wss(_address)) => unimplemented!("secure websocket not implemented"),
+            Some(Protocol::Wss(_address)) => {}
             protocol => {
                 tracing::error!(
                     target: LOG_TARGET,
