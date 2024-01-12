@@ -1166,7 +1166,7 @@ async fn unspecified_listen_address_tcp() {
     let peer1 = *litep2p1.local_peer_id();
 
     for address in litep2p1.listen_addresses() {
-        tracing::warn!("address: {address:?}");
+        tracing::info!("address: {address:?}");
     }
 
     let listen_address = litep2p1.listen_addresses().collect::<Vec<_>>();
@@ -1233,6 +1233,112 @@ async fn unspecified_listen_address_tcp() {
                         Multiaddr::empty()
                             .with(Protocol::Ip6(record.ip))
                             .with(Protocol::Tcp(ip6_port.unwrap()))
+                            .with(Protocol::P2p(Multihash::from(peer1))),
+                    )
+                }
+            };
+
+            litep2p.dial_address(dial_address).await.unwrap();
+            match litep2p.next_event().await {
+                Some(Litep2pEvent::ConnectionEstablished { .. }) => {}
+                event => panic!("invalid event: {event:?}"),
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn unspecified_listen_address_websocket() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (ping_config1, _ping_event_stream1) = PingConfig::default();
+    let config1 = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_websocket(WebSocketConfig {
+            listen_addresses: vec![
+                "/ip4/0.0.0.0/tcp/0/ws".parse().unwrap(),
+                "/ip6/::/tcp/0/ws".parse().unwrap(),
+            ],
+            ..Default::default()
+        })
+        .with_libp2p_ping(ping_config1)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+
+    for address in litep2p1.listen_addresses() {
+        tracing::info!("address: {address:?}");
+    }
+
+    let listen_address = litep2p1.listen_addresses().collect::<Vec<_>>();
+
+    let ip4_port = listen_address.iter().find_map(|address| {
+        let mut iter = address.iter();
+        match iter.next() {
+            Some(Protocol::Ip4(_)) => match iter.next() {
+                Some(Protocol::Tcp(port)) => Some(port),
+                _ => panic!("invalid protocol"),
+            },
+            _ => None,
+        }
+    });
+    let ip6_port = listen_address.iter().find_map(|address| {
+        let mut iter = address.iter();
+        match iter.next() {
+            Some(Protocol::Ip6(_)) => match iter.next() {
+                Some(Protocol::Tcp(port)) => Some(port),
+                _ => panic!("invalid protocol"),
+            },
+            _ => None,
+        }
+    });
+
+    tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
+
+    let network_interfaces = NetworkInterface::show().unwrap();
+    for iface in network_interfaces.iter() {
+        for address in &iface.addr {
+            let (ping_config2, _ping_event_stream2) = PingConfig::default();
+            let config = ConfigBuilder::new().with_libp2p_ping(ping_config2);
+
+            let (mut litep2p, dial_address) = match address {
+                network_interface::Addr::V4(record) => {
+                    if ip4_port.is_none() {
+                        continue;
+                    }
+
+                    let config = config
+                        .with_websocket(WebSocketConfig {
+                            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
+                            ..Default::default()
+                        })
+                        .build();
+
+                    (
+                        Litep2p::new(config).unwrap(),
+                        Multiaddr::empty()
+                            .with(Protocol::Ip4(record.ip))
+                            .with(Protocol::Tcp(ip4_port.unwrap()))
+                            .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))
+                            .with(Protocol::P2p(Multihash::from(peer1))),
+                    )
+                }
+                network_interface::Addr::V6(record) => {
+                    if record.ip.segments()[0] == 0xfe80 || ip6_port.is_none() {
+                        continue;
+                    }
+
+                    let config = config.with_websocket(Default::default()).build();
+
+                    (
+                        Litep2p::new(config).unwrap(),
+                        Multiaddr::empty()
+                            .with(Protocol::Ip6(record.ip))
+                            .with(Protocol::Tcp(ip6_port.unwrap()))
+                            .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))
                             .with(Protocol::P2p(Multihash::from(peer1))),
                     )
                 }

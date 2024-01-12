@@ -24,6 +24,7 @@ use crate::{error::AddressError, Error, PeerId};
 
 use futures::Stream;
 use multiaddr::{Multiaddr, Protocol};
+use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
@@ -89,7 +90,7 @@ impl DialAddresses {
 impl WebSocketListener {
     /// Create new [`WebSocketListener`]
     pub fn new(addresses: Vec<Multiaddr>) -> (Self, Vec<Multiaddr>, DialAddresses) {
-        let (listeners, listen_addresses): (_, Vec<_>) = addresses
+        let (listeners, listen_addresses): (_, Vec<Vec<_>>) = addresses
             .into_iter()
             .filter_map(|address| {
                 let address = match Self::get_socket_address(&address).ok()?.0 {
@@ -127,13 +128,50 @@ impl WebSocketListener {
 
                 let socket: std::net::TcpListener = socket.into();
                 let listener = TokioTcpListener::from_std(socket).ok()?;
+                let local_address = listener.local_addr().ok()?;
 
-                let listen_address = listener.local_addr().ok()?;
+                let listen_addresses = match address.ip().is_unspecified() {
+                    true => match NetworkInterface::show() {
+                        Ok(ifaces) => ifaces
+                            .into_iter()
+                            .flat_map(|record| {
+                                record.addr.into_iter().filter_map(|iface_address| {
+                                    match (iface_address, address.is_ipv4()) {
+                                        (Addr::V4(inner), true) => Some(SocketAddr::new(
+                                            IpAddr::V4(inner.ip),
+                                            local_address.port(),
+                                        )),
+                                        (Addr::V6(inner), false) =>
+                                            match inner.ip.segments().get(0) {
+                                                Some(0xfe80) => None,
+                                                _ => Some(SocketAddr::new(
+                                                    IpAddr::V6(inner.ip),
+                                                    local_address.port(),
+                                                )),
+                                            },
+                                        _ => None,
+                                    }
+                                })
+                            })
+                            .collect(),
+                        Err(error) => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to fetch network interfaces",
+                            );
 
-                Some((listener, listen_address))
+                            return None;
+                        }
+                    },
+                    false => vec![local_address],
+                };
+
+                Some((listener, listen_addresses))
             })
             .unzip();
 
+        let listen_addresses = listen_addresses.into_iter().flatten().collect::<Vec<_>>();
         let listen_multi_addresses = listen_addresses
             .iter()
             .cloned()
