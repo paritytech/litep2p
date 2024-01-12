@@ -55,7 +55,7 @@ pub struct TcpListener {
     listeners: Vec<TokioTcpListener>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DialAddresses {
     /// Listen addresses.
     listen_addresses: Arc<Vec<SocketAddr>>,

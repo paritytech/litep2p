@@ -819,7 +819,7 @@ async fn tcp_dns_resolution() {
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpConfig {
-            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .with_libp2p_ping(ping_config1)
@@ -830,7 +830,7 @@ async fn tcp_dns_resolution() {
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_tcp(TcpConfig {
-            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
             ..Default::default()
         })
         .with_libp2p_ping(ping_config2)
