@@ -110,7 +110,7 @@ pub enum IdentifyEvent {
         peer: PeerId,
 
         /// Supported protocols.
-        supported_protocols: HashSet<String>,
+        supported_protocols: HashSet<ProtocolName>,
 
         /// Observed address.
         observed_address: Multiaddr,
@@ -318,7 +318,7 @@ impl Identify {
                         let _ = self.tx
                             .send(IdentifyEvent::PeerIdentified {
                                 peer,
-                                supported_protocols,
+                                supported_protocols: supported_protocols.into_iter().map(From::from).collect(),
                                 observed_address: observed_address.map_or(Multiaddr::empty(), |address| address),
                                 listen_addresses,
                             })
