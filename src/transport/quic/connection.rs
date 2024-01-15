@@ -341,7 +341,7 @@ impl QuicConnection {
                                     connection,
                                     permit,
                                     Direction::Outbound(substream_id),
-                                    protocol,
+                                    protocol.clone(),
                                     fallback_names,
                                 ),
                             )
@@ -349,8 +349,8 @@ impl QuicConnection {
                             {
                                 Ok(Ok(substream)) => Ok(substream),
                                 Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
-                                    protocol: None,
-                                    substream_id: None,
+                                    protocol: Some(protocol),
+                                    substream_id: Some(substream_id),
                                     error,
                                 }),
                                 Err(_) => Err(ConnectionError::Timeout {

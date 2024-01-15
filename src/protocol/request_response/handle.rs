@@ -59,6 +59,9 @@ pub enum RequestResponseError {
 
     /// Too large payload.
     TooLargePayload,
+
+    /// Protocol not supported.
+    UnsupportedProtocol,
 }
 
 /// Request-response events.

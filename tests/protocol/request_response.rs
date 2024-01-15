@@ -723,7 +723,7 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected,
+            error: RequestResponseError::UnsupportedProtocol,
         }
     );
 }
@@ -1896,7 +1896,7 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected
+            error: RequestResponseError::UnsupportedProtocol,
         }
     );
 
