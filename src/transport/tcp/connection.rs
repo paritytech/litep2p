@@ -206,9 +206,11 @@ impl TcpConnection {
     }
 
     /// Open connection to remote peer at `address`.
+    // TODO: this function can be removed
     pub(super) async fn open_connection(
         connection_id: ConnectionId,
         keypair: Keypair,
+        stream: TcpStream,
         address: AddressType,
         peer: Option<PeerId>,
         yamux_config: yamux::Config,
@@ -225,12 +227,6 @@ impl TcpConnection {
         );
 
         match tokio::time::timeout(connection_open_timeout, async move {
-            let stream = match &address {
-                AddressType::Socket(socket_address) => TcpStream::connect(socket_address).await?,
-                AddressType::Dns(address, port) =>
-                    TcpStream::connect(format!("{address}:{port}")).await?,
-            };
-
             Self::negotiate_connection(
                 stream,
                 peer,
@@ -630,6 +626,16 @@ impl TcpConnection {
                             }
                         }));
                     }
+                    Some(ProtocolCommand::ForceClose) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            connection_id = ?self.endpoint.connection_id(),
+                            "force closing connection",
+                        );
+
+                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await
+                    }
                     None => {
                         tracing::debug!(target: LOG_TARGET, "protocols have disconnected, closing connection");
                         return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await
@@ -642,6 +648,8 @@ impl TcpConnection {
 
 #[cfg(test)]
 mod tests {
+    use crate::transport::tcp::TcpTransport;
+
     use super::*;
     use tokio::{io::AsyncWriteExt, net::TcpListener};
 
@@ -659,9 +667,20 @@ mod tests {
             let _ = stream.write_all(&vec![0x12u8; 256]).await;
         });
 
+        let (_, stream) = TcpTransport::dial_peer(
+            Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port())),
+            Default::default(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+
         match TcpConnection::open_connection(
             ConnectionId::from(0usize),
             Keypair::generate(),
+            stream,
             AddressType::Socket(address),
             None,
             Default::default(),
@@ -742,9 +761,20 @@ mod tests {
             assert!(listener_select_proto(stream, vec!["/yamux/1.0.0"]).await.is_err());
         });
 
+        let (_, stream) = TcpTransport::dial_peer(
+            Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port())),
+            Default::default(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+
         match TcpConnection::open_connection(
             ConnectionId::from(0usize),
             Keypair::generate(),
+            stream,
             AddressType::Socket(address),
             None,
             Default::default(),
@@ -872,9 +902,20 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         });
 
+        let (_, stream) = TcpTransport::dial_peer(
+            Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port())),
+            Default::default(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+
         match TcpConnection::open_connection(
             ConnectionId::from(0usize),
             Keypair::generate(),
+            stream,
             AddressType::Socket(address),
             None,
             Default::default(),
@@ -906,9 +947,20 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         });
 
+        let (_, stream) = TcpTransport::dial_peer(
+            Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port())),
+            Default::default(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+
         match TcpConnection::open_connection(
             ConnectionId::from(0usize),
             Keypair::generate(),
+            stream,
             AddressType::Socket(address),
             None,
             Default::default(),
@@ -1049,9 +1101,20 @@ mod tests {
             assert!(listener_select_proto(stream, vec!["/unsupported/1"]).await.is_err());
         });
 
+        let (_, stream) = TcpTransport::dial_peer(
+            Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port())),
+            Default::default(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+
         match TcpConnection::open_connection(
             ConnectionId::from(0usize),
             Keypair::generate(),
+            stream,
             AddressType::Socket(address),
             None,
             Default::default(),
@@ -1147,9 +1210,20 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         });
 
+        let (_, stream) = TcpTransport::dial_peer(
+            Multiaddr::empty()
+                .with(Protocol::from(address.ip()))
+                .with(Protocol::Tcp(address.port())),
+            Default::default(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+
         match TcpConnection::open_connection(
             ConnectionId::from(0usize),
             Keypair::generate(),
+            stream,
             AddressType::Socket(address),
             None,
             Default::default(),

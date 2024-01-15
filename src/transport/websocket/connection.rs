@@ -207,6 +207,7 @@ impl WebSocketConnection {
     pub(super) async fn open_connection(
         connection_id: ConnectionId,
         keypair: Keypair,
+        stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
         address: Multiaddr,
         dialed_peer: PeerId,
         ws_address: Url,
@@ -223,7 +224,7 @@ impl WebSocketConnection {
         );
 
         Self::negotiate_connection(
-            tokio_tungstenite::connect_async(ws_address).await?.0,
+            stream,
             Some(dialed_peer),
             Role::Dialer,
             address,
@@ -280,7 +281,7 @@ impl WebSocketConnection {
             ?address,
             ?role,
             ?dialed_peer,
-            "negotiate connectoin"
+            "negotiate connection"
         );
         let stream = BufferedStream::new(stream);
 
@@ -540,6 +541,16 @@ impl WebSocketConnection {
                                 }),
                             }
                         }));
+                    }
+                    Some(ProtocolCommand::ForceClose) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            connection_id = ?self.connection_id,
+                            "force closing connection",
+                        );
+
+                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, "protocols have exited, shutting down connection");

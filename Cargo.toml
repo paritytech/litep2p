@@ -18,9 +18,12 @@ futures = "0.3.27"
 futures-rustls = "0.22.2"
 futures-timer = "3.0.2"
 hex-literal = "0.4.1"
+indexmap = { version = "2.0.0", features = ["std"] }
+libc = "0.2.142"
 mockall = "0.11.4"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
+network-interface = "1.1.1"
 parking_lot = "0.12.1"
 pin-project = "1.1.0"
 prost = "0.11.8"
@@ -41,16 +44,16 @@ tokio-tungstenite = { version = "0.20.0", features = ["rustls-tls-native-roots"]
 tokio-util = { version = "0.7.7", features = ["compat", "io", "codec"] }
 tokio = { version = "1.26.0", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
 tracing = { version = "0.1.37", features = ["log"] }
+trust-dns-resolver = "0.23.2"
 uint = "0.9.5"
 unsigned-varint = { version = "0.7.2", features = ["codec"] }
 url = "2.4.0"
 webpki = "0.22.2"
+x25519-dalek = "2.0.0"
 x509-parser = "0.15.0"
 yamux = "0.11.0"
 yasna = "0.5.0"
 zeroize = "1.5.7"
-x25519-dalek = "2.0.0"
-indexmap = { version = "2.1.0", features = ["std"] }
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]

@@ -136,7 +136,10 @@ async fn substream_accepted() {
         protocol,
         substream_id,
         ..
-    } = proto_rx.recv().await.unwrap();
+    } = proto_rx.recv().await.unwrap()
+    else {
+        panic!("invalid commnd received");
+    };
     assert_eq!(protocol, ProtocolName::from("/notif/1"));
     assert_eq!(substream_id, SubstreamId::from(0usize));
 

@@ -198,6 +198,9 @@ pub enum ProtocolCommand {
         /// held.
         permit: Permit,
     },
+
+    /// Forcibly close the connection, even if other protocols have substreams open over it.
+    ForceClose,
 }
 
 /// Supported protocol information.

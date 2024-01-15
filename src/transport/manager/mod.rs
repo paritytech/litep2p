@@ -257,7 +257,8 @@ impl TransportManager {
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let handle = TransportManagerHandle::new(peers.clone(), cmd_tx, supported_transports);
+        let handle =
+            TransportManagerHandle::new(local_peer_id, peers.clone(), cmd_tx, supported_transports);
 
         (
             Self {
@@ -385,41 +386,155 @@ impl TransportManager {
         if peer == self.local_peer_id {
             return Err(Error::TriedToDialSelf);
         }
+        let mut peers = self.peers.write();
 
-        let addresses = match self.peers.write().get_mut(&peer) {
+        // if the peer is disconnected, return its context
+        //
+        // otherwise set the state back what it was and return dial status to caller
+        let PeerContext {
+            state,
+            secondary_connection,
+            mut addresses,
+        } = match peers.remove(&peer) {
             None => return Err(Error::PeerDoesntExist(peer)),
-            Some(PeerContext {
-                state: PeerState::Connected { .. },
-                ..
-            }) => return Err(Error::AlreadyConnected),
-            Some(PeerContext {
-                state: PeerState::Dialing { .. } | PeerState::Opening { .. },
-                ..
-            }) => return Ok(()),
-            Some(PeerContext {
-                state: PeerState::Disconnected { dial_record },
-                addresses,
-                ..
-            }) => {
-                if dial_record.is_some() {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?dial_record,
-                        "peer is aready being dialed",
-                    );
-                    return Ok(());
-                }
-
-                addresses
-                    .take(self.max_parallel_dials)
-                    .into_iter()
-                    .map(|record| (record.address().clone(), record))
-                    .collect()
+            Some(
+                context @ PeerContext {
+                    state: PeerState::Connected { .. },
+                    ..
+                },
+            ) => {
+                peers.insert(peer, context);
+                return Err(Error::AlreadyConnected);
             }
+            Some(
+                context @ PeerContext {
+                    state: PeerState::Dialing { .. } | PeerState::Opening { .. },
+                    ..
+                },
+            ) => {
+                peers.insert(peer, context);
+                return Ok(());
+            }
+            Some(context) => context,
         };
 
-        self.dial_inner(peer, addresses).await
+        if let PeerState::Disconnected {
+            dial_record: Some(_),
+        } = &state
+        {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "peer is aready being dialed",
+            );
+
+            peers.insert(
+                peer,
+                PeerContext {
+                    state,
+                    secondary_connection,
+                    addresses,
+                },
+            );
+
+            return Ok(());
+        }
+
+        let mut records: HashMap<_, _> = addresses
+            .take(self.max_parallel_dials)
+            .into_iter()
+            .map(|record| (record.address().clone(), record))
+            .collect();
+
+        if records.is_empty() {
+            return Err(Error::NoAddressAvailable(peer));
+        }
+
+        for (_, record) in &records {
+            if self.listen_addresses.contains(record.as_ref()) {
+                debug_assert!(false);
+                return Err(Error::TriedToDialSelf);
+            }
+        }
+
+        // set connection id for the address record and put peer into `Opening` state
+        let connection_id =
+            ConnectionId::from(self.next_connection_id.fetch_add(1usize, Ordering::Relaxed));
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?connection_id,
+            addresses = ?records,
+            "dial remote peer",
+        );
+
+        let mut transports = HashSet::new();
+        let mut websocket = Vec::new();
+        let mut quic = Vec::new();
+        let mut tcp = Vec::new();
+
+        for (address, record) in &mut records {
+            record.set_connection_id(connection_id);
+
+            let mut iter = address.iter();
+            match iter.find(|protocol| std::matches!(protocol, Protocol::QuicV1)) {
+                Some(_) => {
+                    quic.push(address.clone());
+                    transports.insert(SupportedTransport::Quic);
+                }
+                _ => match address
+                    .iter()
+                    .find(|protocol| std::matches!(protocol, Protocol::Ws(_) | Protocol::Wss(_)))
+                {
+                    Some(_) => {
+                        websocket.push(address.clone());
+                        transports.insert(SupportedTransport::WebSocket);
+                    }
+                    None => {
+                        tcp.push(address.clone());
+                        transports.insert(SupportedTransport::Tcp);
+                    }
+                },
+            }
+        }
+
+        peers.insert(
+            peer,
+            PeerContext {
+                state: PeerState::Opening {
+                    records,
+                    connection_id,
+                    transports,
+                },
+                secondary_connection,
+                addresses,
+            },
+        );
+
+        if !tcp.is_empty() {
+            self.transports
+                .get_mut(&SupportedTransport::Tcp)
+                .expect("transport to be supported")
+                .open(connection_id, tcp)?;
+        }
+
+        if !quic.is_empty() {
+            self.transports
+                .get_mut(&SupportedTransport::Quic)
+                .expect("transport to be supported")
+                .open(connection_id, quic)?;
+        }
+
+        if !websocket.is_empty() {
+            self.transports
+                .get_mut(&SupportedTransport::WebSocket)
+                .expect("transport to be supported")
+                .open(connection_id, websocket)?;
+        }
+
+        self.pending_connections.insert(connection_id, peer);
+
+        Ok(())
     }
 
     /// Dial peer using `Multiaddr`.
@@ -529,115 +644,6 @@ impl TransportManager {
             .ok_or(Error::TransportNotSupported(record.address().clone()))?
             .dial(connection_id, record.address().clone())?;
         self.pending_connections.insert(connection_id, remote_peer_id);
-
-        Ok(())
-    }
-
-    /// Dial remote peer using one or more address records.
-    async fn dial_inner(
-        &mut self,
-        peer: PeerId,
-        mut records: HashMap<Multiaddr, AddressRecord>,
-    ) -> crate::Result<()> {
-        if records.is_empty() {
-            return Err(Error::NoAddressAvailable(peer));
-        }
-
-        for (_, record) in &records {
-            if self.listen_addresses.contains(record.as_ref()) {
-                return Err(Error::TriedToDialSelf);
-            }
-        }
-
-        // set connection id for the address record and put peer into `Opening` state
-        let connection_id = self.next_connection_id();
-
-        tracing::debug!(
-            target: LOG_TARGET,
-            ?connection_id,
-            addresses = ?records,
-            "dial remote peer",
-        );
-
-        let (tcp, websocket, quic) = {
-            let mut peers = self.peers.write();
-
-            match peers.get_mut(&peer) {
-                Some(PeerContext {
-                    state:
-                        PeerState::Dialing { .. }
-                        | PeerState::Connected { .. }
-                        | PeerState::Opening { .. },
-                    ..
-                }) => return Ok(()),
-                // remote was dialed using `PeerId` but it doesn't exist in `TransportManager`
-                None => {
-                    debug_assert!(false);
-                    return Err(Error::InvalidState);
-                }
-                Some(PeerContext { ref mut state, .. }) => {
-                    let mut transports = HashSet::new();
-                    let mut websocket = Vec::new();
-                    let mut quic = Vec::new();
-                    let mut tcp = Vec::new();
-
-                    for (address, record) in &mut records {
-                        record.set_connection_id(connection_id);
-
-                        let mut iter = address.iter();
-                        match iter.find(|protocol| std::matches!(protocol, Protocol::QuicV1)) {
-                            Some(_) => {
-                                quic.push(address.clone());
-                                transports.insert(SupportedTransport::Quic);
-                            }
-                            _ => match address.iter().find(|protocol| {
-                                std::matches!(protocol, Protocol::Ws(_) | Protocol::Wss(_))
-                            }) {
-                                Some(_) => {
-                                    websocket.push(address.clone());
-                                    transports.insert(SupportedTransport::WebSocket);
-                                }
-                                None => {
-                                    tcp.push(address.clone());
-                                    transports.insert(SupportedTransport::Tcp);
-                                }
-                            },
-                        }
-                    }
-
-                    *state = PeerState::Opening {
-                        records,
-                        connection_id,
-                        transports,
-                    };
-
-                    (tcp, websocket, quic)
-                }
-            }
-        };
-
-        if !tcp.is_empty() {
-            self.transports
-                .get_mut(&SupportedTransport::Tcp)
-                .expect("transport to be supported")
-                .open(connection_id, tcp)?;
-        }
-
-        if !quic.is_empty() {
-            self.transports
-                .get_mut(&SupportedTransport::Quic)
-                .expect("transport to be supported")
-                .open(connection_id, quic)?;
-        }
-
-        if !websocket.is_empty() {
-            self.transports
-                .get_mut(&SupportedTransport::WebSocket)
-                .expect("transport to be supported")
-                .open(connection_id, websocket)?;
-        }
-
-        self.pending_connections.insert(connection_id, peer);
 
         Ok(())
     }
@@ -1032,8 +1038,9 @@ impl TransportManager {
                     );
 
                     let (record, dial_record) = match dial_record.take() {
-                        Some(dial_record) =>
+                        Some(mut dial_record) =>
                             if dial_record.address() == endpoint.address() {
+                                dial_record.set_connection_id(endpoint.connection_id());
                                 (dial_record, None)
                             } else {
                                 (
@@ -1167,7 +1174,7 @@ impl TransportManager {
                             ?connection_id,
                             ?dial_record,
                             ?transport,
-                            "negotiate connection"
+                            "negotiation started"
                         );
 
                         self.pending_connections.insert(connection_id, peer);

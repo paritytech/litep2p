@@ -70,11 +70,11 @@ pub struct Config {
     // Public key of the local node, filled by `Litep2p`.
     pub(crate) public: Option<PublicKey>,
 
-    /// Listen addresses of the local node, filled by `Litep2p`.
-    pub(crate) listen_addresses: Vec<Multiaddr>,
-
     /// Protocols supported by the local node, filled by `Litep2p`.
     pub(crate) protocols: Vec<ProtocolName>,
+
+    /// Public addresses.
+    pub(crate) public_addresses: Vec<Multiaddr>,
 }
 
 impl Config {
@@ -82,15 +82,17 @@ impl Config {
     ///
     /// Returns a config that is given to `Litep2pConfig` and an event stream for
     /// [`IdentifyEvent`]s.
-    pub fn new() -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
+    pub fn new(
+        public_addresses: Vec<Multiaddr>,
+    ) -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
         (
             Self {
                 tx_event,
                 public: None,
+                public_addresses,
                 codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
-                listen_addresses: Vec::new(),
                 protocols: Vec::new(),
                 protocol: ProtocolName::from(PROTOCOL_NAME),
             },
@@ -108,10 +110,13 @@ pub enum IdentifyEvent {
         peer: PeerId,
 
         /// Supported protocols.
-        supported_protocols: HashSet<String>,
+        supported_protocols: HashSet<ProtocolName>,
 
         /// Observed address.
         observed_address: Multiaddr,
+
+        /// Listen addresses.
+        listen_addresses: Vec<Multiaddr>,
     },
 }
 
@@ -128,8 +133,8 @@ pub(crate) struct Identify {
     // Public key of the local node, filled by `Litep2p`.
     public: PublicKey,
 
-    /// Listen addresses of the local node, filled by `Litep2p`.
-    listen_addresses: Vec<Multiaddr>,
+    /// Public addresses.
+    public_addresses: Vec<Multiaddr>,
 
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,
@@ -139,7 +144,10 @@ pub(crate) struct Identify {
 
     /// Pending outbound substreams.
     pending_outbound: FuturesUnordered<
-        BoxFuture<'static, crate::Result<(PeerId, HashSet<String>, Option<Multiaddr>)>>,
+        BoxFuture<
+            'static,
+            crate::Result<(PeerId, HashSet<String>, Option<Multiaddr>, Vec<Multiaddr>)>,
+        >,
     >,
 
     /// Pending inbound substreams.
@@ -153,8 +161,8 @@ impl Identify {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
+            public_addresses: config.public_addresses,
             public: config.public.expect("public key to be supplied"),
-            listen_addresses: config.listen_addresses,
             pending_opens: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
             pending_outbound: FuturesUnordered::new(),
@@ -212,13 +220,21 @@ impl Identify {
             agent_version: None,
             public_key: Some(self.public.to_protobuf_encoding()),
             listen_addrs: self
-                .listen_addresses
+                .public_addresses
                 .iter()
                 .map(|address| address.to_vec())
                 .collect::<Vec<_>>(),
             observed_addr,
             protocols: self.protocols.clone(),
         };
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?identify,
+            "sending identify response",
+        );
+
         let mut msg = Vec::with_capacity(identify.encoded_len());
         identify.encode(&mut msg).expect("`msg` to have enough capacity");
 
@@ -249,15 +265,23 @@ impl Identify {
             let payload = substream.next().await.ok_or(Error::SubstreamError(
                 SubstreamError::ReadFailure(Some(substream_id)),
             ))??;
-
             let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
 
             tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
 
+            let listen_addresses = info
+                .listen_addrs
+                .iter()
+                .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
+                .collect();
+            let observed_address =
+                info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten();
+
             Ok((
                 peer,
                 HashSet::from_iter(info.protocols),
-                info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten(),
+                observed_address,
+                listen_addresses,
             ))
         }));
     }
@@ -290,12 +314,13 @@ impl Identify {
                 },
                 _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
-                    Some(Ok((peer, supported_protocols, observed_address))) => {
+                    Some(Ok((peer, supported_protocols, observed_address, listen_addresses))) => {
                         let _ = self.tx
                             .send(IdentifyEvent::PeerIdentified {
                                 peer,
-                                supported_protocols,
+                                supported_protocols: supported_protocols.into_iter().map(From::from).collect(),
                                 observed_address: observed_address.map_or(Multiaddr::empty(), |address| address),
+                                listen_addresses,
                             })
                             .await;
                     }

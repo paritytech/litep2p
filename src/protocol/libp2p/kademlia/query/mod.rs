@@ -132,6 +132,9 @@ pub enum QueryAction {
 
 /// Kademlia query engine.
 pub struct QueryEngine {
+    /// Local peer ID.
+    local_peer_id: PeerId,
+
     /// Replication factor.
     replication_factor: usize,
 
@@ -144,8 +147,13 @@ pub struct QueryEngine {
 
 impl QueryEngine {
     /// Create new [`QueryEngine`].
-    pub fn new(replication_factor: usize, parallelism_factor: usize) -> Self {
+    pub fn new(
+        local_peer_id: PeerId,
+        replication_factor: usize,
+        parallelism_factor: usize,
+    ) -> Self {
         Self {
+            local_peer_id,
             replication_factor,
             parallelism_factor,
             queries: HashMap::new(),
@@ -171,6 +179,7 @@ impl QueryEngine {
             query_id,
             QueryType::FindNode {
                 context: FindNodeContext::new(
+                    self.local_peer_id,
                     query_id,
                     Key::from(target),
                     candidates,
@@ -205,6 +214,7 @@ impl QueryEngine {
             QueryType::PutRecord {
                 record,
                 context: FindNodeContext::new(
+                    self.local_peer_id,
                     query_id,
                     target,
                     candidates,
@@ -240,6 +250,7 @@ impl QueryEngine {
             query_id,
             QueryType::GetRecord {
                 context: GetRecordContext::new(
+                    self.local_peer_id,
                     query_id,
                     target,
                     candidates,
@@ -277,11 +288,6 @@ impl QueryEngine {
 
     /// Register that `response` received from `peer`.
     pub fn register_response(&mut self, query: QueryId, peer: PeerId, message: KademliaMessage) {
-        if !message.is_response() {
-            tracing::warn!(target: LOG_TARGET, ?query, ?peer, "tried to register non-response");
-            return;
-        }
-
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response");
 
         match self.queries.get_mut(&query) {
@@ -290,19 +296,19 @@ impl QueryEngine {
                 return;
             }
             Some(QueryType::FindNode { context }) => match message {
-                KademliaMessage::FindNodeResponse { peers } => {
+                KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
                 _ => unreachable!(),
             },
             Some(QueryType::PutRecord { context, .. }) => match message {
-                KademliaMessage::FindNodeResponse { peers } => {
+                KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
                 _ => unreachable!(),
             },
             Some(QueryType::GetRecord { context }) => match message {
-                KademliaMessage::GetRecordResponse { record, peers } => {
+                KademliaMessage::GetRecord { record, peers, .. } => {
                     context.register_response(peer, record, peers);
                 }
                 _ => unreachable!(),
@@ -404,7 +410,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let mut engine = QueryEngine::new(20usize, 3usize);
+        let mut engine = QueryEngine::new(PeerId::random(), 20usize, 3usize);
         let target_peer = PeerId::random();
         let _target_key = Key::from(target_peer);
 
@@ -435,7 +441,7 @@ mod tests {
 
     #[test]
     fn lookup_paused() {
-        let mut engine = QueryEngine::new(20usize, 3usize);
+        let mut engine = QueryEngine::new(PeerId::random(), 20usize, 3usize);
         let target_peer = PeerId::random();
         let _target_key = Key::from(target_peer);
 
@@ -464,7 +470,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let mut engine = QueryEngine::new(20usize, 3usize);
+        let mut engine = QueryEngine::new(PeerId::random(), 20usize, 3usize);
         let target_peer = make_peer_id(0, 0);
         let target_key = Key::from(target_peer);
 
@@ -503,7 +509,8 @@ mod tests {
                 engine.register_response(
                     query,
                     peer,
-                    KademliaMessage::FindNodeResponse {
+                    KademliaMessage::FindNode {
+                        target: Vec::new(),
                         peers: vec![
                             KademliaPeer::new(
                                 *iter.next().unwrap().1,
@@ -535,7 +542,10 @@ mod tests {
                     engine.register_response(
                         query,
                         peer,
-                        KademliaMessage::FindNodeResponse { peers: vec![] },
+                        KademliaMessage::FindNode {
+                            target: Vec::new(),
+                            peers: vec![],
+                        },
                     );
                 }
                 _ => panic!("invalid event received"),
@@ -558,7 +568,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let mut engine = QueryEngine::new(20usize, 3usize);
+        let mut engine = QueryEngine::new(PeerId::random(), 20usize, 3usize);
         let record_key = RecordKey::new(&vec![1, 2, 3, 4]);
         let target_key = Key::new(record_key.clone());
         let original_record = Record::new(record_key, vec![1, 3, 3, 7, 1, 3, 3, 8]);
@@ -598,7 +608,8 @@ mod tests {
                 engine.register_response(
                     query,
                     peer,
-                    KademliaMessage::FindNodeResponse {
+                    KademliaMessage::FindNode {
+                        target: Vec::new(),
                         peers: vec![
                             KademliaPeer::new(
                                 *iter.next().unwrap().1,
@@ -630,7 +641,10 @@ mod tests {
                     engine.register_response(
                         query,
                         peer,
-                        KademliaMessage::FindNodeResponse { peers: vec![] },
+                        KademliaMessage::FindNode {
+                            target: Vec::new(),
+                            peers: vec![],
+                        },
                     );
                 }
                 _ => panic!("invalid event received"),

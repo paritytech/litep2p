@@ -129,6 +129,20 @@ impl ConnectionHandle {
             TrySendError::Closed(_) => Error::ConnectionClosed,
         })
     }
+
+    /// Force close connection.
+    pub fn force_close(&mut self) -> crate::Result<()> {
+        match &self.connection {
+            ConnectionType::Active(active) => active.clone(),
+            ConnectionType::Inactive(inactive) =>
+                inactive.upgrade().ok_or(Error::ConnectionClosed)?,
+        }
+        .try_send(ProtocolCommand::ForceClose)
+        .map_err(|error| match error {
+            TrySendError::Full(_) => Error::ChannelClogged,
+            TrySendError::Closed(_) => Error::ConnectionClosed,
+        })
+    }
 }
 
 /// Type which allows the connection to be kept open.

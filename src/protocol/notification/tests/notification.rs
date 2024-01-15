@@ -681,7 +681,17 @@ async fn inbound_accepted_outbound_fails_to_open() {
     }
 
     // verify that the user is not reported anything
-    assert!(tokio::time::timeout(Duration::from_secs(1), handle.next()).await.is_err());
+    match tokio::time::timeout(Duration::from_secs(1), handle.next()).await {
+        Err(_) => panic!("unexpected timeout"),
+        Ok(Some(NotificationEvent::NotificationStreamOpenFailure {
+            peer: event_peer,
+            error,
+        })) => {
+            assert_eq!(peer, event_peer);
+            assert_eq!(error, NotificationError::Rejected)
+        }
+        _ => panic!("invalid event"),
+    }
 }
 
 #[tokio::test]

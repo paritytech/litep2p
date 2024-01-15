@@ -392,7 +392,7 @@ impl RequestResponseProtocol {
             .ok_or(Error::PeerDoesntExist(peer))?
             .active_inbound
             .remove(&request_id)
-            .ok_or({
+            .ok_or_else(|| {
                 tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
@@ -403,17 +403,18 @@ impl RequestResponseProtocol {
 
                 Error::InvalidState
             })?;
-        let mut substream = self.pending_inbound_requests.remove(&(peer, request_id)).ok_or({
-            tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                protocol = %self.protocol,
-                ?request_id,
-                "request doesn't exist in pending requests",
-            );
+        let mut substream =
+            self.pending_inbound_requests.remove(&(peer, request_id)).ok_or_else(|| {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    ?request_id,
+                    "request doesn't exist in pending requests",
+                );
 
-            Error::InvalidState
-        })?;
+                Error::InvalidState
+            })?;
         let protocol = self.protocol.clone();
 
         tracing::trace!(
@@ -447,24 +448,42 @@ impl RequestResponseProtocol {
         ) = oneshot::channel();
 
         self.pending_outbound_responses.push(Box::pin(async move {
-            tokio::select! {
-                response = rx => match response {
-                    Err(_) => {
-                        tracing::debug!(target: LOG_TARGET, ?peer, %protocol, ?request_id, "request rejected");
-                        let _ = substream.close().await;
-                    }
-                    Ok((response, feedback)) => {
-                        tracing::trace!(target: LOG_TARGET, ?peer, %protocol, ?request_id, "send response");
+            match rx.await {
+                Err(_) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        %protocol,
+                        ?request_id,
+                        "request rejected",
+                    );
+                    let _ = substream.close().await;
+                }
+                Ok((response, feedback)) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        %protocol,
+                        ?request_id,
+                        "send response",
+                    );
 
-                        if let Ok(_) = substream.send_framed(response.into()).await {
+                    match substream.send_framed(response.into()).await {
+                        Ok(_) =>
                             if let Some(feedback) = feedback {
                                 let _ = feedback.send(());
-                            }
+                            },
+                        Err(error) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                %protocol,
+                                ?request_id,
+                                ?error,
+                                "failed to send request to peer",
+                            );
                         }
                     }
-                },
-                event = substream.next() => {
-                    tracing::debug!(target: LOG_TARGET, ?event, "read an unexpected event from substream");
                 }
             }
         }));

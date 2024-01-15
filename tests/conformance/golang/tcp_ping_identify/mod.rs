@@ -46,7 +46,7 @@ async fn go_libp2p_dials() {
 
     let keypair = Keypair::generate();
     let (ping_config, mut ping_event_stream) = PingConfig::default();
-    let (identify_config, mut identify_event_stream) = IdentifyConfig::new();
+    let (identify_config, mut identify_event_stream) = IdentifyConfig::new(Vec::new());
 
     let mut litep2p = Litep2p::new(
         ConfigBuilder::new()

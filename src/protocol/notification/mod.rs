@@ -1027,13 +1027,32 @@ impl NotificationProtocol {
                             };
                             Ok(())
                         }
-                        // since the `OutboundState` was `Closed`, it means that the substream was
-                        // initiated by the remote node this means that a failure to open a
-                        // substream should not be reported to the local node as it's not the one
-                        // that initiated the substream, even if it accepted the connection.
+                        // failed to open outbound substream after accepting an inbound substream
+                        //
+                        // since the user was notified of this substream and they accepted it,
+                        // they expecting some kind of answer (open success/failure).
+                        //
+                        // report to user that the substream failed to open so they can track the
+                        // state transitions of the peer correctly
                         Err(error) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                protocol = %self.protocol,
+                                ?result,
+                                ?error,
+                                "failed to open outbound substream for accepted substream",
+                            );
+
                             let _ = inbound.close().await;
                             context.state = PeerState::Closed { pending_open: None };
+
+                            self.event_handle
+                                .report_notification_stream_open_failure(
+                                    peer,
+                                    NotificationError::Rejected,
+                                )
+                                .await;
 
                             Err(error)
                         }
@@ -1288,6 +1307,14 @@ impl NotificationProtocol {
                         inbound: InboundState::SendingHandshake,
                         outbound,
                     } => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            %protocol,
+                            ?fallback,
+                            "inbound substream negotiated, waiting for outbound substream to complete",
+                        );
+
                         context.state = PeerState::Validating {
                             protocol: protocol.clone(),
                             fallback: fallback.clone(),
@@ -1500,7 +1527,7 @@ impl NotificationProtocol {
                                     target: LOG_TARGET,
                                     ?peer,
                                     protocol = %self.protocol,
-                                    "peer didn't answer in 10 seconds, canceling substream",
+                                    "peer didn't answer in 10 seconds, canceling substream and closing connection",
                                 );
                                 context.state = PeerState::Closed { pending_open: None };
 
@@ -1508,6 +1535,16 @@ impl NotificationProtocol {
                                 self.event_handle
                                     .report_notification_stream_open_failure(peer, NotificationError::Rejected)
                                     .await;
+
+                                if let Err(error) = self.service.force_close(peer) {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        ?peer,
+                                        protocol = %self.protocol,
+                                        ?error,
+                                        "failed to force close connection",
+                                    );
+                                }
                             }
                             state => {
                                 tracing::trace!(

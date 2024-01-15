@@ -694,6 +694,10 @@ impl WebRtcConnection {
                         ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit } => {
                             self.open_substream(protocol, fallback_names, substream_id, permit);
                         }
+                        ProtocolCommand::ForceClose => {
+                            tracing::debug!(target: LOG_TARGET, "force closing connection");
+                            return Ok(());
+                        }
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, "handle to protocol closed, closing connection");

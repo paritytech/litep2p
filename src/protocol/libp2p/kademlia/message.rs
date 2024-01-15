@@ -18,13 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    protocol::libp2p::kademlia::{
-        record::{Key as RecordKey, Record},
-        schema,
-        types::KademliaPeer,
-    },
-    PeerId,
+use crate::protocol::libp2p::kademlia::{
+    record::{Key as RecordKey, Record},
+    schema,
+    types::KademliaPeer,
 };
 
 use bytes::{Bytes, BytesMut};
@@ -36,15 +33,11 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia::message";
 /// Kademlia message.
 #[derive(Debug, Clone)]
 pub enum KademliaMessage {
-    /// Inbound `FIND_NODE` query.
-    #[allow(unused)]
-    FindNodeRequest {
-        /// Peer ID of the target node.
-        target: PeerId,
-    },
+    /// `FIND_NODE` message.
+    FindNode {
+        /// Query target.
+        target: Vec<u8>,
 
-    /// Response to outbound `FIND_NODE` query.
-    FindNodeResponse {
         /// Found peers.
         peers: Vec<KademliaPeer>,
     },
@@ -55,24 +48,17 @@ pub enum KademliaMessage {
         record: Record,
     },
 
-    /// Response to outbound `GET_VALUE` query.
-    GetRecordResponse {
-        /// Found record, if any.
+    /// `GET_VALUE` message.
+    GetRecord {
+        /// Key.
+        key: Option<RecordKey>,
+
+        /// Record.
         record: Option<Record>,
 
         /// Peers closest to key.
         peers: Vec<KademliaPeer>,
     },
-}
-
-impl KademliaMessage {
-    /// Check if the message is a response.
-    pub fn is_response(&self) -> bool {
-        std::matches!(
-            self,
-            KademliaMessage::FindNodeResponse { .. } | KademliaMessage::GetRecordResponse { .. }
-        )
-    }
 }
 
 impl KademliaMessage {
@@ -128,10 +114,37 @@ impl KademliaMessage {
     }
 
     /// Create `FIND_NODE` response.
-    pub fn find_node_response(peers: Vec<KademliaPeer>) -> Vec<u8> {
+    pub fn find_node_response<K: AsRef<[u8]>>(key: K, peers: Vec<KademliaPeer>) -> Vec<u8> {
         let message = schema::kademlia::Message {
+            key: key.as_ref().to_vec(),
             cluster_level_raw: 10,
+            r#type: schema::kademlia::MessageType::FindNode.into(),
             closer_peers: peers.iter().map(|peer| peer.into()).collect(),
+            ..Default::default()
+        };
+
+        let mut buf = Vec::with_capacity(message.encoded_len());
+        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
+
+        buf
+    }
+
+    /// Create `PUT_VALUE` response.
+    pub fn get_value_response(
+        key: RecordKey,
+        peers: Vec<KademliaPeer>,
+        record: Option<Record>,
+    ) -> Vec<u8> {
+        let message = schema::kademlia::Message {
+            key: key.to_vec(),
+            cluster_level_raw: 10,
+            r#type: schema::kademlia::MessageType::GetValue.into(),
+            closer_peers: peers.iter().map(|peer| peer.into()).collect(),
+            record: record.map(|record| schema::kademlia::Record {
+                key: record.key.to_vec(),
+                value: record.value,
+                ..Default::default()
+            }),
             ..Default::default()
         };
 
@@ -152,7 +165,10 @@ impl KademliaMessage {
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
                         .collect();
 
-                    Some(Self::FindNodeResponse { peers })
+                    Some(Self::FindNode {
+                        target: message.key,
+                        peers,
+                    })
                 }
                 0 => {
                     let record = message.record?;
@@ -161,14 +177,29 @@ impl KademliaMessage {
                         record: Record::new(record.key, record.value),
                     })
                 }
-                1 => Some(Self::GetRecordResponse {
-                    record: message.record.map(|record| Record::new(record.key, record.value)),
-                    peers: message
-                        .closer_peers
-                        .iter()
-                        .filter_map(|peer| KademliaPeer::try_from(peer).ok())
-                        .collect(),
-                }),
+                1 => {
+                    let key = match message.key.is_empty() {
+                        true => message
+                            .record
+                            .as_ref()
+                            .map(|record| {
+                                (!record.key.is_empty())
+                                    .then_some(RecordKey::from(record.key.clone()))
+                            })
+                            .flatten(),
+                        false => Some(RecordKey::from(message.key.clone())),
+                    };
+
+                    Some(Self::GetRecord {
+                        key,
+                        record: message.record.map(|record| Record::new(record.key, record.value)),
+                        peers: message
+                            .closer_peers
+                            .iter()
+                            .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                            .collect(),
+                    })
+                }
                 message => {
                     tracing::warn!(target: LOG_TARGET, ?message, "unhandled message");
                     None

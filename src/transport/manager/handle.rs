@@ -62,6 +62,9 @@ pub enum InnerTransportManagerCommand {
 /// Handle for communicating with [`TransportManager`].
 #[derive(Debug, Clone)]
 pub struct TransportManagerHandle {
+    /// Local peer ID.
+    local_peer_id: PeerId,
+
     /// Peers.
     peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
 
@@ -75,6 +78,7 @@ pub struct TransportManagerHandle {
 impl TransportManagerHandle {
     /// Create new [`TransportManagerHandle`].
     pub fn new(
+        local_peer_id: PeerId,
         peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
         cmd_tx: Sender<InnerTransportManagerCommand>,
         supported_transport: HashSet<SupportedTransport>,
@@ -82,6 +86,7 @@ impl TransportManagerHandle {
         Self {
             peers,
             cmd_tx,
+            local_peer_id,
             supported_transport,
         }
     }
@@ -161,6 +166,13 @@ impl TransportManagerHandle {
             return 0usize;
         }
 
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?addresses,
+            "add known addresses",
+        );
+
         match peers.get_mut(&peer) {
             Some(context) =>
                 for record in addresses {
@@ -187,6 +199,10 @@ impl TransportManagerHandle {
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
     pub fn dial(&self, peer: &PeerId) -> crate::Result<()> {
+        if peer == &self.local_peer_id {
+            return Err(Error::TriedToDialSelf);
+        }
+
         {
             match self.peers.read().get(&peer) {
                 Some(PeerContext {
@@ -290,6 +306,7 @@ mod tests {
 
         (
             TransportManagerHandle {
+                local_peer_id: PeerId::random(),
                 cmd_tx,
                 peers: Default::default(),
                 supported_transport: HashSet::new(),
@@ -360,7 +377,7 @@ mod tests {
                     Multiaddr::empty()
                         .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                         .with(Protocol::Tcp(8888))
-                        .with(Protocol::Wss(std::borrow::Cow::Owned("".to_string()))),
+                        .with(Protocol::Wss(std::borrow::Cow::Owned("/".to_string()))),
                 ]
                 .into_iter()
             ) == 0usize
@@ -522,6 +539,18 @@ mod tests {
 
         match handle.dial(&peer) {
             Ok(()) => {}
+            _ => panic!("invalid return value"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn try_to_dial_self() {
+        let (mut handle, mut rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Tcp);
+
+        match handle.dial(&handle.local_peer_id) {
+            Err(Error::TriedToDialSelf) => {}
             _ => panic!("invalid return value"),
         }
         assert!(rx.try_recv().is_err());
