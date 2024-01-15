@@ -1038,8 +1038,9 @@ impl TransportManager {
                     );
 
                     let (record, dial_record) = match dial_record.take() {
-                        Some(dial_record) =>
+                        Some(mut dial_record) =>
                             if dial_record.address() == endpoint.address() {
+                                dial_record.set_connection_id(endpoint.connection_id());
                                 (dial_record, None)
                             } else {
                                 (
