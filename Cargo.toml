@@ -18,7 +18,7 @@ futures = "0.3.27"
 futures-rustls = "0.22.2"
 futures-timer = "3.0.2"
 hex-literal = "0.4.1"
-indexmap = { version = "2.1.0", features = ["std"] }
+indexmap = { version = "2.0.0", features = ["std"] }
 libc = "0.2.142"
 mockall = "0.11.4"
 multiaddr = "0.17.0"
