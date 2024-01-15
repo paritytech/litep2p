@@ -106,7 +106,7 @@ impl KBucket {
         target: Key<K>,
     ) -> impl Iterator<Item = &'a KademliaPeer> {
         self.nodes.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
-        self.nodes.iter()
+        self.nodes.iter().filter(|peer| !peer.addresses.is_empty())
     }
 }
 
@@ -139,5 +139,54 @@ mod tests {
 
             prev = Some(target.distance(&node.key));
         }
+    }
+
+    #[test]
+    fn ignore_peers_with_no_addresses() {
+        let mut bucket = KBucket::new();
+
+        // add peers with no addresses to the bucket
+        let _ = (0..10)
+            .map(|_| {
+                let peer = PeerId::random();
+                bucket.nodes.push(KademliaPeer::new(
+                    peer,
+                    vec![],
+                    ConnectionType::NotConnected,
+                ));
+
+                peer
+            })
+            .collect::<Vec<_>>();
+
+        // add three peers with an address
+        let _ = (0..3)
+            .map(|_| {
+                let peer = PeerId::random();
+                bucket.nodes.push(KademliaPeer::new(
+                    peer,
+                    vec!["/ip6/::/tcp/0".parse().unwrap()],
+                    ConnectionType::Connected,
+                ));
+
+                peer
+            })
+            .collect::<Vec<_>>();
+
+        let target = Key::from(PeerId::random());
+        let mut iter = bucket.closest_iter(target.clone());
+        let mut prev = None;
+        let mut num_peers = 0usize;
+
+        while let Some(node) = iter.next() {
+            if let Some(distance) = prev {
+                assert!(distance < target.distance(&node.key));
+            }
+
+            num_peers += 1;
+            prev = Some(target.distance(&node.key));
+        }
+
+        assert_eq!(num_peers, 3usize);
     }
 }
