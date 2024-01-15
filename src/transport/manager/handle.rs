@@ -377,7 +377,7 @@ mod tests {
                     Multiaddr::empty()
                         .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                         .with(Protocol::Tcp(8888))
-                        .with(Protocol::Wss(std::borrow::Cow::Owned("".to_string()))),
+                        .with(Protocol::Wss(std::borrow::Cow::Owned("/".to_string()))),
                 ]
                 .into_iter()
             ) == 0usize

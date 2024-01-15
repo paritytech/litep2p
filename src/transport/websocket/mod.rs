@@ -535,7 +535,7 @@ impl Stream for WebSocketTransport {
                     let address = Multiaddr::empty()
                         .with(Protocol::from(address.ip()))
                         .with(Protocol::Tcp(address.port()))
-                        .with(Protocol::Ws(std::borrow::Cow::Owned("".to_string())));
+                        .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())));
 
                     self.pending_connections.push(Box::pin(async move {
                         match tokio::time::timeout(connection_open_timeout, async move {
