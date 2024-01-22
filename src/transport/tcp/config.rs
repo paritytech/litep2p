@@ -72,7 +72,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            listen_addresses: vec!["/ip6/::/tcp/0".parse().expect("valid address")],
+            listen_addresses: vec![
+                "/ip4/0.0.0.0/tcp/0".parse().expect("valid address"),
+                "/ip6/::/tcp/0".parse().expect("valid address"),
+            ],
             yamux_config: Default::default(),
             noise_read_ahead_frame_count: MAX_READ_AHEAD_FACTOR,
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,
