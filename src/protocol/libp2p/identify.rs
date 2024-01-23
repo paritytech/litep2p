@@ -134,7 +134,7 @@ pub(crate) struct Identify {
     public: PublicKey,
 
     /// Public addresses.
-    public_addresses: Vec<Multiaddr>,
+    listen_addresses: HashSet<Multiaddr>,
 
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,
@@ -156,12 +156,20 @@ pub(crate) struct Identify {
 
 impl Identify {
     /// Create new [`Identify`] protocol.
-    pub(crate) fn new(service: TransportService, config: Config) -> Self {
+    pub(crate) fn new(
+        service: TransportService,
+        config: Config,
+        listen_addresses: Vec<Multiaddr>,
+    ) -> Self {
         Self {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            public_addresses: config.public_addresses,
+            listen_addresses: config
+                .public_addresses
+                .into_iter()
+                .chain(listen_addresses.into_iter())
+                .collect(),
             public: config.public.expect("public key to be supplied"),
             pending_opens: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
@@ -220,7 +228,7 @@ impl Identify {
             agent_version: None,
             public_key: Some(self.public.to_protobuf_encoding()),
             listen_addrs: self
-                .public_addresses
+                .listen_addresses
                 .iter()
                 .map(|address| address.to_vec())
                 .collect::<Vec<_>>(),
