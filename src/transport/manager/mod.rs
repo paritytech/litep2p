@@ -214,7 +214,7 @@ pub struct TransportManager {
     protocol_names: HashSet<ProtocolName>,
 
     /// Listen addresses.
-    listen_addresses: HashSet<Multiaddr>,
+    listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 
     /// Next connection ID.
     next_connection_id: Arc<AtomicUsize>,
@@ -257,8 +257,14 @@ impl TransportManager {
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let handle =
-            TransportManagerHandle::new(local_peer_id, peers.clone(), cmd_tx, supported_transports);
+        let listen_addresses = Arc::new(RwLock::new(HashSet::new()));
+        let handle = TransportManagerHandle::new(
+            local_peer_id,
+            peers.clone(),
+            cmd_tx,
+            supported_transports,
+            Arc::clone(&listen_addresses),
+        );
 
         (
             Self {
@@ -269,11 +275,11 @@ impl TransportManager {
                 event_rx,
                 local_peer_id,
                 bandwidth_sink,
+                listen_addresses,
                 max_parallel_dials,
                 protocols: HashMap::new(),
                 transports: TransportContext::new(),
                 protocol_names: HashSet::new(),
-                listen_addresses: HashSet::new(),
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
@@ -364,8 +370,12 @@ impl TransportManager {
 
     /// Register local listen address.
     pub fn register_listen_address(&mut self, address: Multiaddr) {
-        self.listen_addresses.insert(address.clone());
-        self.listen_addresses.insert(address.with(Protocol::P2p(
+        assert!(!address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))));
+
+        let mut listen_addresses = self.listen_addresses.write();
+
+        listen_addresses.insert(address.clone());
+        listen_addresses.insert(address.with(Protocol::P2p(
             Multihash::from_bytes(&self.local_peer_id.to_bytes()).unwrap(),
         )));
     }
@@ -451,7 +461,14 @@ impl TransportManager {
         }
 
         for (_, record) in &records {
-            if self.listen_addresses.contains(record.as_ref()) {
+            if self.listen_addresses.read().contains(record.as_ref()) {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?record,
+                    "tried to dial self",
+                );
+
                 debug_assert!(false);
                 return Err(Error::TriedToDialSelf);
             }
@@ -544,7 +561,7 @@ impl TransportManager {
         let mut record = AddressRecord::from_multiaddr(address)
             .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
 
-        if self.listen_addresses.contains(record.as_ref()) {
+        if self.listen_addresses.read().contains(record.as_ref()) {
             return Err(Error::TriedToDialSelf);
         }
 
@@ -936,6 +953,7 @@ impl TransportManager {
                                 ?peer,
                                 connection_id = ?endpoint.connection_id(),
                                 ?endpoint,
+                                ?record,
                                 "connection opened to remote",
                             );
 

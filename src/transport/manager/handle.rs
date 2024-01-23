@@ -73,6 +73,9 @@ pub struct TransportManagerHandle {
 
     /// Supported transports.
     supported_transport: HashSet<SupportedTransport>,
+
+    /// Local listen addresess.
+    listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 }
 
 impl TransportManagerHandle {
@@ -82,11 +85,13 @@ impl TransportManagerHandle {
         peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
         cmd_tx: Sender<InnerTransportManagerCommand>,
         supported_transport: HashSet<SupportedTransport>,
+        listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
     ) -> Self {
         Self {
             peers,
             cmd_tx,
             local_peer_id,
+            listen_addresses,
             supported_transport,
         }
     }
@@ -100,17 +105,17 @@ impl TransportManagerHandle {
     pub fn supported_transport(&self, address: &Multiaddr) -> bool {
         let mut iter = address.iter();
 
-        if !std::matches!(
-            iter.next(),
-            Some(
-                Protocol::Ip4(_)
-                    | Protocol::Ip6(_)
-                    | Protocol::Dns(_)
-                    | Protocol::Dns4(_)
-                    | Protocol::Dns6(_)
-            )
-        ) {
-            return false;
+        match iter.next() {
+            Some(Protocol::Ip4(address)) =>
+                if address.is_unspecified() {
+                    return false;
+                },
+            Some(Protocol::Ip6(address)) =>
+                if address.is_unspecified() {
+                    return false;
+                },
+            Some(Protocol::Dns(_)) | Some(Protocol::Dns4(_)) | Some(Protocol::Dns6(_)) => {}
+            _ => return false,
         }
 
         match iter.next() {
@@ -136,6 +141,16 @@ impl TransportManagerHandle {
         }
     }
 
+    /// Check if the address is a local listen address and if so, discard it.
+    fn is_local_address(&self, address: &Multiaddr) -> bool {
+        let address: Multiaddr = address
+            .iter()
+            .take_while(|protocol| !std::matches!(protocol, Protocol::P2p(_)))
+            .collect();
+
+        self.listen_addresses.read().contains(&address)
+    }
+
     /// Add one or more known addresses for peer.
     ///
     /// If peer doesn't exist, it will be added to known peers.
@@ -149,7 +164,7 @@ impl TransportManagerHandle {
         let mut peers = self.peers.write();
         let addresses = addresses
             .filter_map(|address| {
-                self.supported_transport(&address)
+                (self.supported_transport(&address) && !self.is_local_address(&address))
                     .then_some(AddressRecord::from_multiaddr(address)?)
             })
             .collect::<HashSet<_>>();
@@ -310,6 +325,7 @@ mod tests {
                 cmd_tx,
                 peers: Default::default(),
                 supported_transport: HashSet::new(),
+                listen_addresses: Default::default(),
             },
             cmd_rx,
         )
@@ -554,5 +570,63 @@ mod tests {
             _ => panic!("invalid return value"),
         }
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn is_local_address() {
+        let (cmd_tx, _cmd_rx) = channel(64);
+
+        let handle = TransportManagerHandle {
+            local_peer_id: PeerId::random(),
+            cmd_tx,
+            peers: Default::default(),
+            supported_transport: HashSet::new(),
+            listen_addresses: Arc::new(RwLock::new(HashSet::from_iter([
+                "/ip6/::1/tcp/8888".parse().expect("valid multiaddress"),
+                "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress"),
+                "/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                    .parse()
+                    .expect("valid multiaddress"),
+                "/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                    .parse()
+                    .expect("valid multiaddress"),
+            ]))),
+        };
+
+        // local addresses
+        assert!(handle.is_local_address(
+            &"/ip6/::1/tcp/8888".parse::<Multiaddr>().expect("valid multiaddress")
+        ));
+        assert!(handle
+            .is_local_address(&"/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress")));
+        assert!(handle.is_local_address(
+            &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        ));
+        assert!(handle.is_local_address(
+            &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+        ));
+
+        // same address but different peer id
+        assert!(handle.is_local_address(
+            &"/ip6/::1/tcp/8888/p2p/12D3KooWPGxxxQiBEBZ52RY31Z2chn4xsDrGCMouZ88izJrak2T1"
+                .parse::<Multiaddr>()
+                .expect("valid multiaddress")
+        ));
+        assert!(handle.is_local_address(
+            &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWPGxxxQiBEBZ52RY31Z2chn4xsDrGCMouZ88izJrak2T1"
+                .parse()
+                .expect("valid multiaddress")
+        ));
+
+        // different address
+        assert!(!handle
+            .is_local_address(&"/ip4/127.0.0.1/tcp/9999".parse().expect("valid multiaddress")));
+        // different address
+        assert!(!handle
+            .is_local_address(&"/ip4/127.0.0.1/tcp/7777".parse().expect("valid multiaddress")));
     }
 }

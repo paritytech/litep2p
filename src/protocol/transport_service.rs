@@ -430,6 +430,7 @@ mod tests {
             Arc::new(RwLock::new(HashMap::new())),
             cmd_tx,
             HashSet::new(),
+            Default::default(),
         );
 
         let (service, sender) = TransportService::new(
