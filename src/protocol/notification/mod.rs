@@ -870,6 +870,22 @@ impl NotificationProtocol {
         match context.state {
             // protocol can only request a new outbound substream to be opened if the state is
             // `Closed` other states imply that it's already open
+            PeerState::Closed {
+                pending_open: Some(substream_id),
+            } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    ?substream_id,
+                    "outbound substream opening, reusing pending open substream",
+                );
+
+                self.pending_outbound.insert(substream_id, peer);
+                context.state = PeerState::OutboundInitiated {
+                    substream: substream_id,
+                };
+            }
             PeerState::Closed { .. } => match self.service.open_substream(peer) {
                 Ok(substream_id) => {
                     tracing::trace!(
@@ -1337,7 +1353,7 @@ impl NotificationProtocol {
                     protocol = %self.protocol,
                     ?direction,
                     state = ?context.state,
-                    "failed to negotiate outbound substream",
+                    "failed to negotiate substream",
                 );
                 let _ = self.negotiation.remove_outbound(&peer);
                 let _ = self.negotiation.remove_inbound(&peer);
