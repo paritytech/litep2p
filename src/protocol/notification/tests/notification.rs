@@ -53,11 +53,19 @@ fn next_inbound_state(state: usize) -> InboundState {
         0 => InboundState::Closed,
         1 => InboundState::ReadingHandshake,
         2 => InboundState::Validating {
-            inbound: Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
+            inbound: Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(MockSubstream::new()),
+            ),
         },
         3 => InboundState::SendingHandshake,
         4 => InboundState::Open {
-            inbound: Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
+            inbound: Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(MockSubstream::new()),
+            ),
         },
         _ => panic!(),
     }
@@ -72,7 +80,11 @@ fn next_outbound_state(state: usize) -> OutboundState {
         2 => OutboundState::Negotiating,
         3 => OutboundState::Open {
             handshake: vec![1, 3, 3, 7],
-            outbound: Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
+            outbound: Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(MockSubstream::new()),
+            ),
         },
         _ => panic!(),
     }
@@ -91,7 +103,11 @@ async fn connection_closed_for_outbound_open_substream() {
                 fallback: None,
                 outbound: OutboundState::Open {
                     handshake: vec![1, 2, 3, 4],
-                    outbound: Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
+                    outbound: Substream::new_mock(
+                        PeerId::random(),
+                        SubstreamId::from(0usize),
+                        Box::new(MockSubstream::new()),
+                    ),
                 },
                 inbound: next_inbound_state(i),
             },
@@ -244,7 +260,11 @@ async fn handshake_event_unknown_peer() {
             HandshakeEvent::InboundNegotiated {
                 peer,
                 handshake: vec![1, 3, 3, 7],
-                substream: Substream::new_mock(peer, Box::new(DummySubstream::new())),
+                substream: Substream::new_mock(
+                    peer,
+                    SubstreamId::from(0usize),
+                    Box::new(DummySubstream::new()),
+                ),
             },
         )
         .await;
@@ -268,7 +288,11 @@ async fn handshake_event_invalid_state_for_outbound_substream() {
             HandshakeEvent::OutboundNegotiated {
                 peer,
                 handshake: vec![1, 3, 3, 7],
-                substream: Substream::new_mock(peer, Box::new(DummySubstream::new())),
+                substream: Substream::new_mock(
+                    peer,
+                    SubstreamId::from(0usize),
+                    Box::new(DummySubstream::new()),
+                ),
             },
         )
         .await;
@@ -441,7 +465,11 @@ async fn remote_opens_multiple_inbound_substreams() {
         protocol: protocol.clone(),
         fallback: None,
         direction: protocol::Direction::Inbound,
-        substream: Substream::new_mock(PeerId::random(), Box::new(DummySubstream::new())),
+        substream: Substream::new_mock(
+            PeerId::random(),
+            SubstreamId::from(0usize),
+            Box::new(DummySubstream::new()),
+        ),
     })
     .await
     .unwrap();
@@ -473,7 +501,11 @@ async fn remote_opens_multiple_inbound_substreams() {
         protocol: protocol.clone(),
         fallback: None,
         direction: protocol::Direction::Inbound,
-        substream: Substream::new_mock(PeerId::random(), Box::new(substream)),
+        substream: Substream::new_mock(
+            PeerId::random(),
+            SubstreamId::from(0usize),
+            Box::new(substream),
+        ),
     })
     .await
     .unwrap();
@@ -524,7 +556,11 @@ async fn pending_outbound_tracked_correctly() {
             protocol.clone(),
             None,
             peer,
-            Substream::new_mock(PeerId::random(), Box::new(DummySubstream::new())),
+            Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(DummySubstream::new()),
+            ),
         )
         .await
         .unwrap();
@@ -549,7 +585,11 @@ async fn pending_outbound_tracked_correctly() {
             HandshakeEvent::InboundNegotiated {
                 peer,
                 handshake: vec![1, 3, 3, 7],
-                substream: Substream::new_mock(PeerId::random(), Box::new(DummySubstream::new())),
+                substream: Substream::new_mock(
+                    PeerId::random(),
+                    SubstreamId::from(0usize),
+                    Box::new(DummySubstream::new()),
+                ),
             },
         )
         .await;
@@ -586,7 +626,11 @@ async fn pending_outbound_tracked_correctly() {
             None,
             peer,
             SubstreamId::new(),
-            Substream::new_mock(PeerId::random(), Box::new(DummySubstream::new())),
+            Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(DummySubstream::new()),
+            ),
         )
         .await
         .unwrap();
@@ -617,7 +661,11 @@ async fn inbound_accepted_outbound_fails_to_open() {
             protocol.clone(),
             None,
             peer,
-            Substream::new_mock(PeerId::random(), Box::new(DummySubstream::new())),
+            Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(DummySubstream::new()),
+            ),
         )
         .await
         .unwrap();
@@ -642,7 +690,11 @@ async fn inbound_accepted_outbound_fails_to_open() {
             HandshakeEvent::InboundNegotiated {
                 peer,
                 handshake: vec![1, 3, 3, 7],
-                substream: Substream::new_mock(PeerId::random(), Box::new(DummySubstream::new())),
+                substream: Substream::new_mock(
+                    PeerId::random(),
+                    SubstreamId::from(0usize),
+                    Box::new(DummySubstream::new()),
+                ),
             },
         )
         .await;
@@ -753,7 +805,11 @@ async fn close_already_closed_connection() {
                 direction: Direction::Inbound,
                 outbound: OutboundState::Open {
                     handshake: vec![1, 2, 3, 4],
-                    outbound: Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
+                    outbound: Substream::new_mock(
+                        PeerId::random(),
+                        SubstreamId::from(0usize),
+                        Box::new(MockSubstream::new()),
+                    ),
                 },
                 inbound: InboundState::SendingHandshake,
             },
@@ -765,7 +821,11 @@ async fn close_already_closed_connection() {
             HandshakeEvent::InboundNegotiated {
                 peer,
                 handshake: vec![1],
-                substream: Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
+                substream: Substream::new_mock(
+                    PeerId::random(),
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
             },
         )
         .await;
@@ -818,7 +878,11 @@ async fn open_failure_reported_once() {
                     substream: SubstreamId::from(1337usize),
                 },
                 inbound: InboundState::Open {
-                    inbound: Substream::new_mock(peer, Box::new(DummySubstream::new())),
+                    inbound: Substream::new_mock(
+                        peer,
+                        SubstreamId::from(0usize),
+                        Box::new(DummySubstream::new()),
+                    ),
                 },
             },
         },

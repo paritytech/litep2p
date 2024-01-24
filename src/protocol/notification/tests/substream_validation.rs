@@ -95,7 +95,11 @@ async fn substream_accepted() {
             ProtocolName::from("/notif/1"),
             None,
             peer,
-            Substream::new_mock(PeerId::random(), Box::new(substream)),
+            Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(substream),
+            ),
         )
         .await
         .unwrap();
@@ -189,7 +193,11 @@ async fn substream_rejected() {
             ProtocolName::from("/notif/1"),
             None,
             peer,
-            Substream::new_mock(PeerId::random(), Box::new(substream)),
+            Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(substream),
+            ),
         )
         .await
         .unwrap();
@@ -274,7 +282,11 @@ async fn accept_fails_due_to_closed_substream() {
             ProtocolName::from("/notif/1"),
             None,
             peer,
-            Substream::new_mock(PeerId::random(), Box::new(substream)),
+            Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(substream),
+            ),
         )
         .await
         .unwrap();
@@ -360,7 +372,11 @@ async fn accept_fails_due_to_closed_connection() {
             ProtocolName::from("/notif/1"),
             None,
             peer,
-            Substream::new_mock(PeerId::random(), Box::new(substream)),
+            Substream::new_mock(
+                PeerId::random(),
+                SubstreamId::from(0usize),
+                Box::new(substream),
+            ),
         )
         .await
         .unwrap();

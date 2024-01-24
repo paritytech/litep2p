@@ -25,6 +25,7 @@ use crate::{
     codec::ProtocolCodec,
     error::{Error, SubstreamError},
     transport::{quic, tcp, websocket},
+    types::SubstreamId,
     PeerId,
 };
 
@@ -181,6 +182,9 @@ pub struct Substream {
     // Inner substream.
     substream: SubstreamType,
 
+    /// Substream ID.
+    substream_id: SubstreamId,
+
     /// Protocol codec.
     codec: ProtocolCodec,
 
@@ -200,6 +204,7 @@ impl fmt::Debug for Substream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Substream")
             .field("peer", &self.peer)
+            .field("substream_id", &self.substream_id)
             .field("codec", &self.codec)
             .field("protocol", &self.substream)
             .finish()
@@ -208,11 +213,17 @@ impl fmt::Debug for Substream {
 
 impl Substream {
     /// Create new [`Substream`].
-    fn new(peer: PeerId, substream: SubstreamType, codec: ProtocolCodec) -> Self {
+    fn new(
+        peer: PeerId,
+        substream_id: SubstreamId,
+        substream: SubstreamType,
+        codec: ProtocolCodec,
+    ) -> Self {
         Self {
             peer,
             substream,
             codec,
+            substream_id,
             read_buffer: BytesMut::zeroed(1024),
             offset: 0usize,
             pending_frames: VecDeque::new(),
@@ -225,39 +236,58 @@ impl Substream {
     }
 
     /// Create new [`Substream`] for TCP.
-    pub(crate) fn new_tcp(peer: PeerId, substream: tcp::Substream, codec: ProtocolCodec) -> Self {
+    pub(crate) fn new_tcp(
+        peer: PeerId,
+        substream_id: SubstreamId,
+        substream: tcp::Substream,
+        codec: ProtocolCodec,
+    ) -> Self {
         tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for tcp");
 
-        Self::new(peer, SubstreamType::Tcp(substream), codec)
+        Self::new(peer, substream_id, SubstreamType::Tcp(substream), codec)
     }
+
     /// Create new [`Substream`] for WebSocket.
     pub(crate) fn new_websocket(
         peer: PeerId,
+        substream_id: SubstreamId,
         substream: websocket::Substream,
         codec: ProtocolCodec,
     ) -> Self {
         tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for websocket");
 
-        Self::new(peer, SubstreamType::WebSocket(substream), codec)
+        Self::new(
+            peer,
+            substream_id,
+            SubstreamType::WebSocket(substream),
+            codec,
+        )
     }
 
     /// Create new [`Substream`] for QUIC.
-    pub(crate) fn new_quic(peer: PeerId, substream: quic::Substream, codec: ProtocolCodec) -> Self {
+    pub(crate) fn new_quic(
+        peer: PeerId,
+        substream_id: SubstreamId,
+        substream: quic::Substream,
+        codec: ProtocolCodec,
+    ) -> Self {
         tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for quic");
 
-        Self::new(peer, SubstreamType::Quic(substream), codec)
+        Self::new(peer, substream_id, SubstreamType::Quic(substream), codec)
     }
 
     /// Create new [`Substream`] for mocking.
     #[cfg(test)]
     pub(crate) fn new_mock(
         peer: PeerId,
+        substream_id: SubstreamId,
         substream: Box<dyn crate::mock::substream::Substream>,
     ) -> Self {
         tracing::trace!(target: LOG_TARGET, ?peer, "create new substream for mocking");
 
         Self::new(
             peer,
+            substream_id,
             SubstreamType::Mock(substream),
             ProtocolCodec::Unspecified,
         )

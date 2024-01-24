@@ -360,7 +360,7 @@ impl Stream for HandshakeService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mock::substream::MockSubstream, Error};
+    use crate::{mock::substream::MockSubstream, types::SubstreamId, Error};
     use futures::StreamExt;
 
     #[tokio::test]
@@ -378,7 +378,7 @@ mod tests {
         substream.expect_start_send().times(1).return_once(|_| Err(Error::Unknown));
 
         let peer = PeerId::random();
-        let substream = Substream::new_mock(peer, Box::new(substream));
+        let substream = Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream));
 
         service.send_handshake(peer, substream);
         match service.next().await {
@@ -416,7 +416,7 @@ mod tests {
             .return_once(|_| Poll::Ready(Err(Error::Unknown)));
 
         let peer = PeerId::random();
-        let substream = Substream::new_mock(peer, Box::new(substream));
+        let substream = Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream));
 
         service.send_handshake(peer, substream);
         match service.next().await {

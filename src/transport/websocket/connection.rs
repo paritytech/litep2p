@@ -59,6 +59,9 @@ pub struct NegotiatedSubstream {
     /// Substream direction.
     direction: Direction,
 
+    /// Substream ID.
+    substream_id: SubstreamId,
+
     /// Protocol name.
     protocol: ProtocolName,
 
@@ -361,6 +364,7 @@ impl WebSocketConnection {
         Ok(NegotiatedSubstream {
             io: io.inner(),
             direction: Direction::Inbound,
+            substream_id,
             protocol,
             permit,
         })
@@ -370,25 +374,25 @@ impl WebSocketConnection {
     pub async fn open_substream(
         mut control: yamux::Control,
         permit: Permit,
-        direction: Direction,
+        substream_id: SubstreamId,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<NegotiatedSubstream> {
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
+        tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
 
         let stream = match control.open_stream().await {
             Ok(stream) => {
-                tracing::trace!(target: LOG_TARGET, ?direction, "substream opened");
+                tracing::trace!(target: LOG_TARGET, ?substream_id, "substream opened");
                 stream
             }
             Err(error) => {
                 tracing::debug!(
                     target: LOG_TARGET,
-                    ?direction,
+                    ?substream_id,
                     ?error,
                     "failed to open substream"
                 );
-                return Err(Error::YamuxError(direction, error));
+                return Err(Error::YamuxError(Direction::Outbound(substream_id), error));
             }
         };
 
@@ -402,7 +406,8 @@ impl WebSocketConnection {
 
         Ok(NegotiatedSubstream {
             io: io.inner(),
-            direction,
+            substream_id,
+            direction: Direction::Outbound(substream_id),
             protocol,
             permit,
         })
@@ -490,10 +495,13 @@ impl WebSocketConnection {
                         Ok(substream) => {
                             let protocol = substream.protocol.clone();
                             let direction = substream.direction;
+                            let substream_id = substream.substream_id;
                             let socket = FuturesAsyncReadCompatExt::compat(substream.io);
                             let bandwidth_sink = self.bandwidth_sink.clone();
+
                             let substream = substream::Substream::new_websocket(
                                 self.peer,
+                                substream_id,
                                 Substream::new(socket, bandwidth_sink, substream.permit),
                                 self.protocol_set.protocol_codec(&protocol)
                             );
@@ -522,7 +530,7 @@ impl WebSocketConnection {
                                 Self::open_substream(
                                     control,
                                     permit,
-                                    Direction::Outbound(substream_id),
+                                    substream_id,
                                     protocol.clone(),
                                     fallback_names
                                 ),

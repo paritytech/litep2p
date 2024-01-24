@@ -119,7 +119,11 @@ async fn unknown_outbound_substream_opened() {
         .on_outbound_substream(
             peer,
             SubstreamId::from(1337usize),
-            Substream::new_mock(peer, Box::new(MockSubstream::new())),
+            Substream::new_mock(
+                peer,
+                SubstreamId::from(0usize),
+                Box::new(MockSubstream::new()),
+            ),
         )
         .await
     {
@@ -187,7 +191,11 @@ async fn inbound_substream_error() {
 
     // register inbound substream from peer
     protocol
-        .on_inbound_substream(peer, None, Substream::new_mock(peer, Box::new(substream)))
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
+        )
         .await
         .unwrap();
 
@@ -223,7 +231,11 @@ async fn disconnect_peer_has_active_inbound_substream() {
         .on_inbound_substream(
             peer,
             None,
-            Substream::new_mock(peer, Box::new(DummySubstream::new())),
+            Substream::new_mock(
+                peer,
+                SubstreamId::from(0usize),
+                Box::new(DummySubstream::new()),
+            ),
         )
         .await
         .unwrap();

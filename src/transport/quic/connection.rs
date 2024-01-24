@@ -71,6 +71,9 @@ struct NegotiatedSubstream {
     /// Substream direction.
     direction: Direction,
 
+    /// Substream ID.
+    substream_id: SubstreamId,
+
     /// Protocol name.
     protocol: ProtocolName,
 
@@ -152,11 +155,11 @@ impl QuicConnection {
     async fn open_substream(
         handle: QuinnConnection,
         permit: Permit,
-        direction: Direction,
+        substream_id: SubstreamId,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<NegotiatedSubstream> {
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?direction, "open substream");
+        tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
 
         let stream = match handle.open_bi().await {
             Ok((send_stream, recv_stream)) => NegotiatingSubstream::new(send_stream, recv_stream),
@@ -174,7 +177,7 @@ impl QuicConnection {
         tracing::trace!(
             target: LOG_TARGET,
             ?protocol,
-            ?direction,
+            ?substream_id,
             "substream accepted and negotiated"
         );
 
@@ -184,7 +187,8 @@ impl QuicConnection {
         Ok(NegotiatedSubstream {
             sender,
             receiver,
-            direction,
+            substream_id,
+            direction: Direction::Outbound(substream_id),
             permit,
             protocol,
         })
@@ -221,6 +225,7 @@ impl QuicConnection {
             sender,
             receiver,
             protocol,
+            substream_id,
             direction: Direction::Inbound,
         })
     }
@@ -293,10 +298,12 @@ impl QuicConnection {
                         }
                         Ok(substream) => {
                             let protocol = substream.protocol.clone();
+                            let substream_id = substream.substream_id;
                             let direction = substream.direction;
                             let bandwidth_sink = self.bandwidth_sink.clone();
                             let substream = substream::Substream::new_quic(
                                 self.peer,
+                                substream_id,
                                 Substream::new(
                                     substream.permit,
                                     substream.sender,
@@ -340,7 +347,7 @@ impl QuicConnection {
                                 Self::open_substream(
                                     connection,
                                     permit,
-                                    Direction::Outbound(substream_id),
+                                    substream_id,
                                     protocol.clone(),
                                     fallback_names,
                                 ),

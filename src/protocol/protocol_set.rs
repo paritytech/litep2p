@@ -455,7 +455,11 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1/fallback/2"),
                 Direction::Inbound,
-                Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
+                Substream::new_mock(
+                    PeerId::random(),
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
             )
             .await
             .unwrap();
@@ -488,7 +492,11 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1"),
                 Direction::Inbound,
-                Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
+                Substream::new_mock(
+                    PeerId::random(),
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
             )
             .await
             .unwrap();
@@ -531,7 +539,11 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1/fallback/2"),
                 Direction::Inbound,
-                Substream::new_mock(PeerId::random(), Box::new(MockSubstream::new())),
+                Substream::new_mock(
+                    PeerId::random(),
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
             )
             .await
             .unwrap();

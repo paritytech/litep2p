@@ -191,7 +191,7 @@ impl Stream for QueryExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::substream::MockSubstream;
+    use crate::{mock::substream::MockSubstream, types::SubstreamId};
 
     #[tokio::test]
     async fn substream_read_timeout() {
@@ -199,7 +199,7 @@ mod tests {
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
         substream.expect_poll_next().returning(|_| Poll::Pending);
-        let substream = Substream::new_mock(peer, Box::new(substream));
+        let substream = Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream));
 
         executor.read_message(peer, None, substream);
 
@@ -230,7 +230,7 @@ mod tests {
         executor.read_message(
             peer,
             Some(QueryId(1338)),
-            Substream::new_mock(peer, Box::new(substream)),
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
         );
 
         match tokio::time::timeout(Duration::from_secs(20), executor.next()).await {
@@ -266,7 +266,7 @@ mod tests {
             peer,
             Some(QueryId(1337)),
             Bytes::from_static(b"hello, world"),
-            Substream::new_mock(peer, Box::new(substream)),
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
         );
 
         match tokio::time::timeout(Duration::from_secs(20), executor.next()).await {
@@ -300,7 +300,7 @@ mod tests {
             peer,
             Some(QueryId(1337)),
             Bytes::from_static(b"hello, world"),
-            Substream::new_mock(peer, Box::new(substream)),
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
         );
 
         match tokio::time::timeout(Duration::from_secs(20), executor.next()).await {
@@ -329,7 +329,7 @@ mod tests {
         executor.read_message(
             peer,
             Some(QueryId(1336)),
-            Substream::new_mock(peer, Box::new(substream)),
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
         );
 
         match tokio::time::timeout(Duration::from_secs(20), executor.next()).await {
@@ -361,7 +361,7 @@ mod tests {
         executor.read_message(
             peer,
             Some(QueryId(1335)),
-            Substream::new_mock(peer, Box::new(substream)),
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
         );
 
         match tokio::time::timeout(Duration::from_secs(20), executor.next()).await {
