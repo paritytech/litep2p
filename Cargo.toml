@@ -35,7 +35,7 @@ serde = "1.0.158"
 sha2 = "0.10.7"
 simple-dns = "0.5.3"
 smallvec = "1.10.0"
-snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
+snow = { version = "0.9.5", features = ["ring-resolver"], default-features = false }
 socket2 = { version = "0.5.5", features = ["all"] }
 str0m = "0.2.0"
 thiserror = "1.0.39"
