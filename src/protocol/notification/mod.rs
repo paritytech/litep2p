@@ -449,6 +449,17 @@ impl NotificationProtocol {
                     (_, _) => {}
                 }
             }
+            // pending validations must be tracked across connection open/close events
+            PeerState::ValidationPending { state } => {
+                self.peers.insert(
+                    peer,
+                    PeerContext {
+                        state: PeerState::ValidationPending {
+                            state: ConnectionState::Closed,
+                        },
+                    },
+                );
+            }
             _ => {}
         }
 
