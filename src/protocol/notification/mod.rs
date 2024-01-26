@@ -320,7 +320,7 @@ impl NotificationProtocol {
     ///
     /// Any other state indicates that there's an error in the state transition logic.
     async fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "connection established");
+        tracing::trace!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "connection established");
 
         let Some(context) = self.peers.get_mut(&peer) else {
             self.peers.insert(peer, PeerContext::new());
@@ -356,6 +356,7 @@ impl NotificationProtocol {
                 context.state = PeerState::ValidationPending {
                     state: ConnectionState::Open,
                 };
+
                 Ok(())
             }
             state => {
@@ -381,7 +382,7 @@ impl NotificationProtocol {
     /// reported about it only if they had opened an outbound substream (outbound is either fully
     /// open, it had been initiated or the substream was under negotiation).
     async fn on_connection_closed(&mut self, peer: PeerId) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "connection closed");
+        tracing::trace!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "connection closed");
 
         let Some(context) = self.peers.remove(&peer) else {
             tracing::error!(
@@ -418,6 +419,13 @@ impl NotificationProtocol {
                 match (outbound, inbound) {
                     // substream was being validated by the protocol when the connection was closed
                     (OutboundState::Closed, InboundState::Validating { .. }) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            "connection closed while validation pending",
+                        );
+
                         self.peers.insert(
                             peer,
                             PeerContext {
@@ -439,6 +447,13 @@ impl NotificationProtocol {
                         | OutboundState::Open { .. },
                         _,
                     ) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            "connection closed outbound substream under negotiation",
+                        );
+
                         self.event_handle
                             .report_notification_stream_open_failure(
                                 peer,
@@ -450,7 +465,14 @@ impl NotificationProtocol {
                 }
             }
             // pending validations must be tracked across connection open/close events
-            PeerState::ValidationPending { state } => {
+            PeerState::ValidationPending { .. } => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    "validation pending while connection closed",
+                );
+
                 self.peers.insert(
                     peer,
                     PeerContext {
@@ -515,6 +537,15 @@ impl NotificationProtocol {
             PeerState::OutboundInitiated { substream } => {
                 debug_assert!(substream == substream_id);
                 debug_assert!(pending_peer == Some(peer));
+
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    ?fallback,
+                    ?substream_id,
+                    "negotiate outbound protocol",
+                );
 
                 self.negotiation.negotiate_outbound(peer, outbound);
                 context.state = PeerState::Validating {
@@ -1568,6 +1599,12 @@ impl NotificationProtocol {
                 None => return,
                 Some(peer) => {
                     if let Some(context) = self.peers.get_mut(&peer) {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            "notification stream to peer closed",
+                        );
                         context.state = PeerState::Closed { pending_open: None };
                     }
                 }
