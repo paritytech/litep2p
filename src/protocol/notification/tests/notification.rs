@@ -28,8 +28,8 @@ use crate::{
             negotiation::HandshakeEvent,
             tests::make_notification_protocol,
             types::{Direction, NotificationError, NotificationEvent},
-            InboundState, NotificationProtocol, OutboundState, PeerContext, PeerState,
-            ValidationResult,
+            ConnectionState, InboundState, NotificationProtocol, OutboundState, PeerContext,
+            PeerState, ValidationResult,
         },
         InnerTransportEvent, ProtocolCommand,
     },
@@ -916,6 +916,80 @@ async fn open_failure_reported_once() {
     // connection to `peer` is closed
     notif.on_connection_closed(peer).await.unwrap();
 
+    futures::future::poll_fn(|cx| match handle.poll_next_unpin(cx) {
+        Poll::Pending => Poll::Ready(()),
+        result => panic!("didn't expect event from channel, got {result:?}"),
+    })
+    .await;
+}
+
+// inboud substrem was received and it was sent to user for validation
+//
+// the validation took so long that remote opened another substream while validation for the
+// previous inbound substrem was still pending
+//
+// verify that the new substream is rejected and that the peer state is set to `ValidationPending`
+#[tokio::test]
+async fn second_inbound_substream_rejected() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, mut handle, _, mut tx) = make_notification_protocol();
+    let (peer, _) = register_peer(&mut notif, &mut tx).await;
+
+    // move peer state to `Validating`
+    let mut substream1 = MockSubstream::new();
+    substream1.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
+
+    notif.peers.insert(
+        peer,
+        PeerContext {
+            state: PeerState::Validating {
+                protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
+                direction: Direction::Inbound,
+                outbound: OutboundState::Closed,
+                inbound: InboundState::Validating {
+                    inbound: Substream::new_mock(
+                        peer,
+                        SubstreamId::from(0usize),
+                        Box::new(substream1),
+                    ),
+                },
+            },
+        },
+    );
+
+    // open a new inbound substream because validation took so long that `peer` decided
+    // to open a new substream
+    let mut substream2 = MockSubstream::new();
+    substream2.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
+    notif
+        .on_inbound_substream(
+            ProtocolName::from("/notif/1"),
+            None,
+            peer,
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream2)),
+        )
+        .await
+        .unwrap();
+
+    // verify that peer is moved to `ValidationPending`
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::ValidationPending {
+                    state: ConnectionState::Open,
+                },
+        }) => {}
+        state => panic!("invalid state for peer: {state:?}"),
+    }
+
+    // user decide to reject the substream, verify that nothing is received over the event handle
+    notif.on_validation_result(peer, ValidationResult::Reject).await.unwrap();
+
+    notif.on_connection_closed(peer).await.unwrap();
     futures::future::poll_fn(|cx| match handle.poll_next_unpin(cx) {
         Poll::Pending => Poll::Ready(()),
         result => panic!("didn't expect event from channel, got {result:?}"),

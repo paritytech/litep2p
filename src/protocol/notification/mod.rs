@@ -699,6 +699,38 @@ impl NotificationProtocol {
                     inbound: InboundState::ReadingHandshake,
                 };
             }
+            // new inbound substream opend while validation for the previous substream was still
+            // pending
+            //
+            // the old substream can be considered dead because remote wouldn't open a new substream
+            // to us unless they had discarded the previous substream.
+            //
+            // set peer state to `ValidationPending` to indicate that the peer is "blocked" until a
+            // validation for the substream is heard, blocking any further activity for
+            // the connection and once the validation is received and in case the
+            // substream is accepted, it will be reported as open failure to to the peer
+            // because the states have gone out of sync.
+            PeerState::Validating {
+                outbound: OutboundState::Closed,
+                inbound:
+                    InboundState::Validating {
+                        inbound: pending_substream,
+                    },
+                ..
+            } => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    "remote opened substream while previous was still pending, connection failed",
+                );
+                let _ = substream.close().await;
+                let _ = pending_substream.close().await;
+
+                context.state = PeerState::ValidationPending {
+                    state: ConnectionState::Open,
+                };
+            }
             // remote opened another inbound substream, close it and otherwise ignore the event
             // as this is a non-serious protocol violation.
             state => {
