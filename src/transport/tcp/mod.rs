@@ -522,7 +522,7 @@ mod tests {
     use super::*;
     use crate::{
         codec::ProtocolCodec,
-        crypto::{ed25519::Keypair, PublicKey},
+        crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         transport::manager::{ProtocolContext, SupportedTransport, TransportManager},
         types::protocol::ProtocolName,
