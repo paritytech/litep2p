@@ -89,6 +89,9 @@ pub(super) enum InnerRequestResponseEvent {
         /// Peer Id.
         peer: PeerId,
 
+        /// Fallback protocol, if the substream was negotiated using a fallback.
+        fallback: Option<ProtocolName>,
+
         /// Request ID.
         request_id: RequestId,
 
@@ -116,10 +119,12 @@ impl From<InnerRequestResponseEvent> for RequestResponseEvent {
                 peer,
                 request_id,
                 response,
+                fallback,
             } => RequestResponseEvent::ResponseReceived {
                 peer,
                 request_id,
                 response,
+                fallback,
             },
             InnerRequestResponseEvent::RequestFailed {
                 peer,
@@ -164,6 +169,9 @@ pub enum RequestResponseEvent {
 
         /// Request ID.
         request_id: RequestId,
+
+        /// Fallback protocol, if the substream was negotiated using a fallback.
+        fallback: Option<ProtocolName>,
 
         /// Received request.
         response: Vec<u8>,
@@ -216,6 +224,23 @@ pub(crate) enum RequestResponseCommand {
 
         /// Request.
         request: Vec<u8>,
+
+        /// Dial options, see [`DialOptions`] for more details.
+        dial_options: DialOptions,
+    },
+
+    SendRequestWithFallback {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Request ID.
+        request_id: RequestId,
+
+        /// Request that is sent over the main protocol, if negotiated.
+        request: Vec<u8>,
+
+        /// Request that is sent over the fallback protocol, if negotiated.
+        fallback: (ProtocolName, Vec<u8>),
 
         /// Dial options, see [`DialOptions`] for more details.
         dial_options: DialOptions,
@@ -341,6 +366,66 @@ impl RequestResponseHandle {
             .try_send(RequestResponseCommand::SendRequest {
                 peer,
                 request_id,
+                request,
+                dial_options,
+            })
+            .map(|_| request_id)
+            .map_err(|_| Error::ChannelClogged)
+    }
+
+    /// Send request to remote peer with fallback.
+    pub async fn send_request_with_fallback(
+        &mut self,
+        peer: PeerId,
+        request: Vec<u8>,
+        fallback: (ProtocolName, Vec<u8>),
+        dial_options: DialOptions,
+    ) -> crate::Result<RequestId> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            fallback = %fallback.0,
+            ?dial_options,
+            "send request with fallback to peer",
+        );
+
+        let request_id = self.next_request_id();
+        self.command_tx
+            .send(RequestResponseCommand::SendRequestWithFallback {
+                peer,
+                request_id,
+                fallback,
+                request,
+                dial_options,
+            })
+            .await
+            .map(|_| request_id)
+            .map_err(From::from)
+    }
+
+    /// Attempt to send request to peer with fallback and if the channel is clogged,
+    /// return `Error::ChannelClogged`.
+    pub fn try_send_request_with_fallback(
+        &mut self,
+        peer: PeerId,
+        request: Vec<u8>,
+        fallback: (ProtocolName, Vec<u8>),
+        dial_options: DialOptions,
+    ) -> crate::Result<RequestId> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            fallback = %fallback.0,
+            ?dial_options,
+            "send request with fallback to peer",
+        );
+
+        let request_id = self.next_request_id();
+        self.command_tx
+            .try_send(RequestResponseCommand::SendRequestWithFallback {
+                peer,
+                request_id,
+                fallback,
                 request,
                 dial_options,
             })

@@ -124,6 +124,7 @@ async fn unknown_outbound_substream_opened() {
                 SubstreamId::from(0usize),
                 Box::new(MockSubstream::new()),
             ),
+            None,
         )
         .await
     {
@@ -166,7 +167,7 @@ async fn substream_event_for_unknown_peer() {
     assert!(protocol.peers.contains_key(&peer));
 
     match protocol
-        .on_substream_event(peer, RequestId::from(1337usize), Ok(vec![13, 37]))
+        .on_substream_event(peer, RequestId::from(1337usize), None, Ok(vec![13, 37]))
         .await
     {
         Err(Error::InvalidState) => {}
@@ -282,6 +283,7 @@ async fn request_failure_reported_once() {
             RequestId::from(1337usize),
             vec![1, 2, 3, 4],
             DialOptions::Reject,
+            None,
         )
         .await
         .unwrap();
@@ -349,6 +351,7 @@ async fn stale_connection() {
             RequestId::from(1337usize),
             vec![1, 2, 3, 4],
             DialOptions::Dial,
+            None,
         )
         .await
         .unwrap();
