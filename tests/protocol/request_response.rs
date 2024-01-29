@@ -204,6 +204,7 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
             peer: peer2,
             request_id,
             response: vec![1, 3, 3, 8],
+            fallback: None,
         }
     );
 }
@@ -488,6 +489,7 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
             peer,
             request_id,
             response,
+            ..
         } = handle1.next().await.unwrap()
         {
             assert_eq!(peer, peer2);
@@ -1307,6 +1309,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
             peer: peer2,
             request_id,
             response: vec![1, 3, 3, 8],
+            fallback: Some(ProtocolName::from("/protocol/1")),
         }
     );
 }
@@ -1431,6 +1434,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
             peer: peer2,
             request_id,
             response: vec![1, 3, 3, 8],
+            fallback: None,
         }
     );
 }
@@ -1555,6 +1559,7 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
             peer: peer2,
             request_id,
             response: vec![1, 3, 3, 8],
+            fallback: None,
         }
     );
 }
@@ -2152,6 +2157,7 @@ async fn feedback_received_for_succesful_response(transport1: Transport, transpo
             peer: peer2,
             request_id,
             response: vec![1, 3, 3, 8],
+            fallback: None,
         }
     );
     assert!(feedback_rx.await.is_ok());
@@ -2601,6 +2607,596 @@ async fn large_response(transport1: Transport, transport2: Transport) {
             peer: peer2,
             request_id,
             response,
+            fallback: None,
+        }
+    );
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_tcp() {
+    binary_incompatible_fallback(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_quic() {
+    binary_incompatible_fallback(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_websocket() {
+    binary_incompatible_fallback(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn binary_incompatible_fallback(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/protocol/2"))
+        .with_max_size(16 * 1024 * 1024)
+        .with_fallback_names(vec![ProtocolName::from("/protocol/1")])
+        .with_timeout(Duration::from_secs(8))
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(16 * 1024 * 1024)
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    let request_id = handle1
+        .send_request_with_fallback(
+            peer2,
+            vec![1, 2, 3, 4],
+            (ProtocolName::from("/protocol/1"), vec![5, 6, 7, 8]),
+            DialOptions::Reject,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer1,
+            fallback: None,
+            request_id,
+            request: vec![5, 6, 7, 8],
+        }
+    );
+
+    handle2.send_response(request_id, vec![1, 3, 3, 7]);
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::ResponseReceived {
+            peer: peer2,
+            request_id,
+            response: vec![1, 3, 3, 7],
+            fallback: Some(ProtocolName::from("/protocol/1")),
+        }
+    );
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_inbound_request_tcp() {
+    binary_incompatible_fallback_inbound_request(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_inbound_request_quic() {
+    binary_incompatible_fallback_inbound_request(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_inbound_request_websocket() {
+    binary_incompatible_fallback_inbound_request(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn binary_incompatible_fallback_inbound_request(
+    transport1: Transport,
+    transport2: Transport,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) = ConfigBuilder::new(ProtocolName::from("/protocol/2"))
+        .with_max_size(16 * 1024 * 1024)
+        .with_fallback_names(vec![ProtocolName::from("/protocol/1")])
+        .with_timeout(Duration::from_secs(8))
+        .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
+        .with_max_size(16 * 1024 * 1024)
+        .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    let request_id = handle2
+        .send_request(peer1, vec![1, 2, 3, 4], DialOptions::Reject)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer2,
+            fallback: Some(ProtocolName::from("/protocol/1")),
+            request_id,
+            request: vec![1, 2, 3, 4],
+        }
+    );
+
+    handle1.send_response(request_id, vec![1, 3, 3, 8]);
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::ResponseReceived {
+            peer: peer1,
+            request_id,
+            response: vec![1, 3, 3, 8],
+            fallback: None,
+        }
+    );
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_two_fallback_protocols_tcp() {
+    binary_incompatible_fallback_two_fallback_protocols(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_two_fallback_protocols_quic() {
+    binary_incompatible_fallback_two_fallback_protocols(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_two_fallback_protocols_websocket() {
+    binary_incompatible_fallback_two_fallback_protocols(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn binary_incompatible_fallback_two_fallback_protocols(
+    transport1: Transport,
+    transport2: Transport,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) =
+        ConfigBuilder::new(ProtocolName::from("/genesis/protocol/2"))
+            .with_max_size(16 * 1024 * 1024)
+            .with_fallback_names(vec![
+                ProtocolName::from("/genesis/protocol/1"),
+                ProtocolName::from("/dot/protocol/1"),
+            ])
+            .with_timeout(Duration::from_secs(8))
+            .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, mut handle2) =
+        ConfigBuilder::new(ProtocolName::from("/genesis/protocol/1"))
+            .with_fallback_names(vec![ProtocolName::from("/dot/protocol/1")])
+            .with_max_size(16 * 1024 * 1024)
+            .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    let request_id = handle1
+        .send_request_with_fallback(
+            peer2,
+            vec![1, 2, 3, 4],
+            (ProtocolName::from("/genesis/protocol/1"), vec![5, 6, 7, 8]),
+            DialOptions::Reject,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer1,
+            fallback: None,
+            request_id,
+            request: vec![5, 6, 7, 8],
+        }
+    );
+
+    handle2.send_response(request_id, vec![1, 3, 3, 7]);
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::ResponseReceived {
+            peer: peer2,
+            request_id,
+            response: vec![1, 3, 3, 7],
+            fallback: Some(ProtocolName::from("/genesis/protocol/1")),
+        }
+    );
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request_tcp() {
+    binary_incompatible_fallback_two_fallback_protocols_inbound_request(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request_quic() {
+    binary_incompatible_fallback_two_fallback_protocols_inbound_request(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request_websocket() {
+    binary_incompatible_fallback_two_fallback_protocols_inbound_request(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request(
+    transport1: Transport,
+    transport2: Transport,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) =
+        ConfigBuilder::new(ProtocolName::from("/genesis/protocol/2"))
+            .with_max_size(16 * 1024 * 1024)
+            .with_fallback_names(vec![
+                ProtocolName::from("/genesis/protocol/1"),
+                ProtocolName::from("/dot/protocol/1"),
+            ])
+            .with_timeout(Duration::from_secs(8))
+            .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, mut handle2) =
+        ConfigBuilder::new(ProtocolName::from("/genesis/protocol/1"))
+            .with_fallback_names(vec![ProtocolName::from("/dot/protocol/1")])
+            .with_max_size(16 * 1024 * 1024)
+            .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    let request_id = handle2
+        .send_request(peer1, vec![1, 2, 3, 4], DialOptions::Reject)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer2,
+            fallback: Some(ProtocolName::from("/genesis/protocol/1")),
+            request_id,
+            request: vec![1, 2, 3, 4],
+        }
+    );
+
+    handle1.send_response(request_id, vec![1, 3, 3, 7]);
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::ResponseReceived {
+            peer: peer1,
+            request_id,
+            response: vec![1, 3, 3, 7],
+            fallback: None,
+        }
+    );
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_compatible_nodes_tcp() {
+    binary_incompatible_fallback_compatible_nodes(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_compatible_nodes_quic() {
+    binary_incompatible_fallback_compatible_nodes(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn binary_incompatible_fallback_compatible_nodes_websocket() {
+    binary_incompatible_fallback_compatible_nodes(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
+}
+
+async fn binary_incompatible_fallback_compatible_nodes(
+    transport1: Transport,
+    transport2: Transport,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (req_resp_config1, mut handle1) =
+        ConfigBuilder::new(ProtocolName::from("/genesis/protocol/2"))
+            .with_max_size(16 * 1024 * 1024)
+            .with_fallback_names(vec![
+                ProtocolName::from("/genesis/protocol/1"),
+                ProtocolName::from("/dot/protocol/1"),
+            ])
+            .with_timeout(Duration::from_secs(8))
+            .build();
+
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (req_resp_config2, mut handle2) =
+        ConfigBuilder::new(ProtocolName::from("/genesis/protocol/2"))
+            .with_max_size(16 * 1024 * 1024)
+            .with_fallback_names(vec![
+                ProtocolName::from("/genesis/protocol/1"),
+                ProtocolName::from("/dot/protocol/1"),
+            ])
+            .with_timeout(Duration::from_secs(8))
+            .build();
+
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_request_response_protocol(req_resp_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    // wait until peers have connected
+    connect_peers(&mut litep2p1, &mut litep2p2).await;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {},
+                _ = litep2p1.next_event() => {},
+            }
+        }
+    });
+
+    let request_id = handle1
+        .send_request_with_fallback(
+            peer2,
+            vec![1, 2, 3, 4],
+            (ProtocolName::from("/genesis/protocol/1"), vec![5, 6, 7, 8]),
+            DialOptions::Reject,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        RequestResponseEvent::RequestReceived {
+            peer: peer1,
+            fallback: None,
+            request_id,
+            request: vec![1, 2, 3, 4],
+        }
+    );
+
+    handle2.send_response(request_id, vec![1, 3, 3, 7]);
+
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        RequestResponseEvent::ResponseReceived {
+            peer: peer2,
+            request_id,
+            response: vec![1, 3, 3, 7],
+            fallback: None,
         }
     );
 }

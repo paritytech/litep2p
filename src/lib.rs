@@ -20,7 +20,6 @@
 
 use crate::{
     config::Litep2pConfig,
-    crypto::PublicKey,
     protocol::{
         libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
         mdns::Mdns,
