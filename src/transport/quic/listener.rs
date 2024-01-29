@@ -183,7 +183,7 @@ impl Stream for QuicListener {
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::{tls::make_client_config, PublicKey};
+    use crate::crypto::tls::make_client_config;
 
     use super::*;
     use quinn::ClientConfig;
@@ -256,7 +256,7 @@ mod tests {
     async fn one_listener() {
         let address: Multiaddr = "/ip6/::1/udp/0/quic-v1".parse().unwrap();
         let keypair = Keypair::generate();
-        let peer = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let peer = PeerId::from_public_key(&keypair.public().into());
         let (mut listener, listen_addresses) =
             QuicListener::new(&keypair, vec![address.clone()]).unwrap();
         let Some(Protocol::Udp(port)) =
@@ -298,7 +298,7 @@ mod tests {
         let address1: Multiaddr = "/ip6/::1/udp/0/quic-v1".parse().unwrap();
         let address2: Multiaddr = "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap();
         let keypair = Keypair::generate();
-        let peer = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let peer = PeerId::from_public_key(&keypair.public().into());
 
         let (mut listener, listen_addresses) =
             QuicListener::new(&keypair, vec![address1, address2]).unwrap();
@@ -371,7 +371,7 @@ mod tests {
             .try_init();
 
         let keypair = Keypair::generate();
-        let peer = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let peer = PeerId::from_public_key(&keypair.public().into());
 
         let (mut listener, listen_addresses) = QuicListener::new(
             &keypair,

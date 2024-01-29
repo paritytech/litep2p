@@ -746,8 +746,8 @@ mod tests {
         let keypair1 = Keypair::generate();
         let keypair2 = Keypair::generate();
 
-        let peer1_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
-        let peer2_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
+        let peer1_id = PeerId::from_public_key(&keypair1.public().into());
+        let peer2_id = PeerId::from_public_key(&keypair2.public().into());
 
         let listener = TcpListener::bind("[::1]:0".parse::<SocketAddr>().unwrap()).await.unwrap();
 

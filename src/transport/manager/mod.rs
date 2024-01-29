@@ -20,7 +20,7 @@
 
 use crate::{
     codec::ProtocolCodec,
-    crypto::{ed25519::Keypair, PublicKey},
+    crypto::ed25519::Keypair,
     error::{AddressError, Error},
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
@@ -253,7 +253,7 @@ impl TransportManager {
         bandwidth_sink: BandwidthSink,
         max_parallel_dials: usize,
     ) -> (Self, TransportManagerHandle) {
-        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
@@ -1686,7 +1686,7 @@ mod tests {
     #[tokio::test]
     async fn tried_to_self_using_peer_id() {
         let keypair = Keypair::generate();
-        let local_peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let sink = BandwidthSink::new();
         let (mut manager, _handle) = TransportManager::new(keypair, HashSet::new(), sink, 8usize);
 

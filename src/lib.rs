@@ -121,8 +121,7 @@ pub struct Litep2p {
 impl Litep2p {
     /// Create new [`Litep2p`].
     pub fn new(mut litep2p_config: Litep2pConfig) -> crate::Result<Litep2p> {
-        let local_peer_id =
-            PeerId::from_public_key(&PublicKey::Ed25519(litep2p_config.keypair.public()));
+        let local_peer_id = PeerId::from_public_key(&litep2p_config.keypair.public().into());
         let bandwidth_sink = BandwidthSink::new();
         let mut listen_addresses = vec![];
 
@@ -244,7 +243,7 @@ impl Litep2p {
                     Vec::new(),
                     identify_config.codec.clone(),
                 );
-                identify_config.public = Some(PublicKey::Ed25519(litep2p_config.keypair.public()));
+                identify_config.public = Some(litep2p_config.keypair.public().into());
 
                 Some((service, identify_config))
             }

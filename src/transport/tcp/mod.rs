@@ -681,8 +681,8 @@ mod tests {
 
         let (mut transport2, _) = TcpTransport::new(handle2, Default::default()).unwrap();
 
-        let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
-        let peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
+        let peer1: PeerId = PeerId::from_public_key(&keypair1.public().into());
+        let peer2: PeerId = PeerId::from_public_key(&keypair2.public().into());
 
         tracing::info!(target: LOG_TARGET, "peer1 {peer1}, peer2 {peer2}");
 
@@ -733,7 +733,7 @@ mod tests {
         .unwrap();
 
         let keypair = Keypair::generate();
-        let peer_id = PeerId::from_public_key(&PublicKey::Ed25519(keypair.public()));
+        let peer_id = PeerId::from_public_key(&keypair.public().into());
         let multiaddr = Multiaddr::empty()
             .with(Protocol::Ip4(std::net::Ipv4Addr::new(255, 254, 253, 252)))
             .with(Protocol::Tcp(8888))

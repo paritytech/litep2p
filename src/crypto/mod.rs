@@ -104,3 +104,9 @@ impl TryFrom<keys_proto::PublicKey> for PublicKey {
         }
     }
 }
+
+impl From<ed25519::PublicKey> for PublicKey {
+    fn from(public_key: ed25519::PublicKey) -> Self {
+        PublicKey::Ed25519(public_key)
+    }
+}

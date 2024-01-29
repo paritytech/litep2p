@@ -262,10 +262,7 @@ mod tests {
     fn peer_id_is_public_key() {
         let key = Keypair::generate().public();
         let peer_id = key.to_peer_id();
-        assert_eq!(
-            peer_id.is_public_key(&crate::crypto::PublicKey::Ed25519(key)),
-            Some(true)
-        );
+        assert_eq!(peer_id.is_public_key(&key.into()), Some(true));
     }
 
     #[test]

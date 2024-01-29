@@ -474,7 +474,7 @@ mod tests {
     use super::*;
     use crate::{
         codec::ProtocolCodec,
-        crypto::{ed25519::Keypair, PublicKey},
+        crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         transport::manager::{ProtocolContext, TransportHandle},
         types::protocol::ProtocolName,
@@ -540,8 +540,8 @@ mod tests {
         };
 
         let (mut transport2, _) = QuicTransport::new(handle2, Default::default()).unwrap();
-        let peer1: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair1.public()));
-        let _peer2: PeerId = PeerId::from_public_key(&PublicKey::Ed25519(keypair2.public()));
+        let peer1: PeerId = PeerId::from_public_key(&keypair1.public().into());
+        let _peer2: PeerId = PeerId::from_public_key(&keypair2.public().into());
         let listen_address = listen_address.with(Protocol::P2p(
             Multihash::from_bytes(&peer1.to_bytes()).unwrap(),
         ));
