@@ -265,6 +265,41 @@ impl NotificationHandle {
         }
     }
 
+    /// Try to open substreams to multiple peers.
+    ///
+    /// Similar to [`NotificationHandle::open_substream()`] but multiple substreams are initiated
+    /// using a single call to `NotificationProtocol`.
+    ///
+    /// If the channel is clogged, peers for whom a connection is not yet open are returned as
+    /// `Err(HashSet<PeerId>)`.
+    pub fn try_open_substream_batch(
+        &self,
+        peers: impl Iterator<Item = PeerId>,
+    ) -> Result<(), HashSet<PeerId>> {
+        let (to_add, to_ignore): (Vec<_>, Vec<_>) = peers
+            .map(|peer| match self.peers.contains_key(&peer) {
+                true => (None, Some(peer)),
+                false => (Some(peer), None),
+            })
+            .unzip();
+
+        let to_add = to_add.into_iter().flatten().collect::<HashSet<_>>();
+        let to_ignore = to_ignore.into_iter().flatten().collect::<HashSet<_>>();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            peers_to_add = ?to_add.len(),
+            peers_to_ignore = ?to_ignore.len(),
+            "open substream",
+        );
+
+        self.command_tx
+            .try_send(NotificationCommand::OpenSubstream {
+                peers: to_add.clone(),
+            })
+            .map_err(|_| to_add)
+    }
+
     /// Close substream to `peer`.
     pub async fn close_substream(&self, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?peer, "close substream");
@@ -301,6 +336,40 @@ impl NotificationHandle {
         );
 
         let _ = self.command_tx.send(NotificationCommand::CloseSubstream { peers }).await;
+    }
+
+    /// Try close substream to multiple peers.
+    ///
+    /// Similar to [`NotificationHandle::close_substream()`] but multiple substreams are closed
+    /// using a single call to `NotificationProtocol`.
+    ///
+    /// If the channel is clogged, `peers` is returned as `Err(HashSet<PeerId>)`.
+    ///
+    /// If `peers` is empty after filtering all already-connected peers,
+    /// `Err(HashMap::new())` is returned.
+    pub fn try_close_substream_batch(
+        &self,
+        peers: impl Iterator<Item = PeerId>,
+    ) -> Result<(), HashSet<PeerId>> {
+        let peers = peers
+            .filter_map(|peer| self.peers.contains_key(&peer).then_some(peer))
+            .collect::<HashSet<_>>();
+
+        if peers.is_empty() {
+            return Err(HashSet::new());
+        }
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peers,
+            "close substreams",
+        );
+
+        self.command_tx
+            .try_send(NotificationCommand::CloseSubstream {
+                peers: peers.clone(),
+            })
+            .map_err(|_| peers)
     }
 
     /// Set new handshake.
