@@ -680,8 +680,26 @@ impl NotificationProtocol {
                 let _ = substream.close().await;
                 context.state = state;
             }
+            // outbound substream for previous connection still pending, reject inbound substream
+            // and wait for the outbound substream state to conclude as either succeeded or failed
+            // before accepting any inbound substreams.
+            PeerState::Closed {
+                pending_open: Some(substream_id),
+            } => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    "received inbound substream while outbound substream opening, rejecting",
+                );
+                let _ = substream.close().await;
+
+                context.state = PeerState::Closed {
+                    pending_open: Some(substream_id),
+                };
+            }
             // the peer state is closed so this is a fresh inbound substream.
-            PeerState::Closed { .. } => {
+            PeerState::Closed { pending_open: None } => {
                 self.negotiation.read_handshake(peer, substream);
 
                 context.state = PeerState::Validating {

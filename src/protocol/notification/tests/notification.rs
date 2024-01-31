@@ -996,3 +996,111 @@ async fn second_inbound_substream_rejected() {
     })
     .await;
 }
+
+// remote opened a substream, it was accepted by the local node and local node opened an outbound
+// substream but it took so long to open that the inbound substream was closed and while the
+// outbound substream was opening, another inbound substream was received from peer
+//
+// verify that this second inbound substream is rejected as an outbound substream for the previous
+// connection is still pending
+#[tokio::test]
+async fn second_inbound_substream_opened_while_outbound_substream_was_opening() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut notif, mut handle, _zz, mut tx) = make_notification_protocol();
+    let (peer, _zz) = register_peer(&mut notif, &mut tx).await;
+
+    // move peer state to `Validating`
+    let mut substream1 = MockSubstream::new();
+    substream1
+        .expect_poll_ready()
+        .times(1)
+        .return_once(|_| Poll::Ready(Err(Error::Unknown)));
+
+    notif.peers.insert(
+        peer,
+        PeerContext {
+            state: PeerState::Validating {
+                protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
+                direction: Direction::Inbound,
+                outbound: OutboundState::Closed,
+                inbound: InboundState::Validating {
+                    inbound: Substream::new_mock(
+                        peer,
+                        SubstreamId::from(0usize),
+                        Box::new(substream1),
+                    ),
+                },
+            },
+        },
+    );
+
+    // accept the inbound substream which is now closed
+    notif.on_validation_result(peer, ValidationResult::Accept).await.unwrap();
+
+    // verify that peer is sending handshake and that outbound substream is opening
+    let substream_id = match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Validating {
+                    fallback: None,
+                    direction: Direction::Inbound,
+                    outbound: OutboundState::OutboundInitiated { substream },
+                    inbound: InboundState::SendingHandshake,
+                    ..
+                },
+        }) => *substream,
+        state => panic!("invalid state for peer: {state:?}"),
+    };
+
+    // poll the protocol and send handshake over the inbound substream
+    notif.next_event().await;
+
+    // verify that peer is closed
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Closed {
+                    pending_open: Some(pending_open),
+                },
+        }) => {
+            assert_eq!(substream_id, *pending_open);
+        }
+        state => panic!("invalid state for peer: {state:?}"),
+    }
+
+    match handle.next().await {
+        Some(NotificationEvent::NotificationStreamOpenFailure { .. }) => {}
+        _ => panic!("invalid event received"),
+    }
+
+    // remote open second inbound substream
+    let mut substream2 = MockSubstream::new();
+    substream2.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
+
+    notif
+        .on_inbound_substream(
+            ProtocolName::from("/notif/1"),
+            None,
+            peer,
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream2)),
+        )
+        .await
+        .unwrap();
+
+    // verify that peer is still closed
+    match notif.peers.get(&peer) {
+        Some(PeerContext {
+            state:
+                PeerState::Closed {
+                    pending_open: Some(pending_open),
+                },
+        }) => {
+            assert_eq!(substream_id, *pending_open);
+        }
+        state => panic!("invalid state for peer: {state:?}"),
+    }
+}
