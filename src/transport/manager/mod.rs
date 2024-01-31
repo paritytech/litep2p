@@ -903,6 +903,7 @@ impl TransportManager {
                     target: LOG_TARGET,
                     ?dialed_peer,
                     ?peer,
+                    ?endpoint,
                     "peer ids do not match but transport was supposed to reject connection"
                 );
                 debug_assert!(false);
@@ -1433,12 +1434,18 @@ impl TransportManager {
                                             );
                                         }
                                         Err(error) => {
-                                            tracing::warn!(target: LOG_TARGET, ?address, ?error, "failed to parse `PeerId` from `Multiaddr`");
+                                            tracing::warn!(
+                                                target: LOG_TARGET,
+                                                ?address,
+                                                ?connection_id,
+                                                ?error,
+                                                "failed to parse `PeerId` from `Multiaddr`",
+                                            );
                                             debug_assert!(false);
                                         }
                                     },
                                     _ => {
-                                        tracing::warn!(target: LOG_TARGET, ?address, "address doesn't contain `PeerId`");
+                                        tracing::warn!(target: LOG_TARGET, ?address, ?connection_id, "address doesn't contain `PeerId`");
                                         debug_assert!(false);
                                     }
                                 }
