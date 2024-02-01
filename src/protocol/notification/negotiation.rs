@@ -187,37 +187,40 @@ impl HandshakeService {
     }
 
     /// Pop event from the event queue.
+    ///
+    /// The substream may not exist in the queue anymore as it may have been removed
+    /// by `NotificationProtocol` if either one of the substreams failed to negotiate.
     fn pop_event(&mut self) -> Option<(PeerId, HandshakeEvent)> {
-        let (peer, direction, handshake) = self.ready.pop_front()?;
-
-        match direction {
-            Direction::Outbound => {
-                let (substream, _, _) =
-                    self.substreams.remove(&(peer, direction)).expect("peer to exist");
-
-                return Some((
-                    peer,
-                    HandshakeEvent::OutboundNegotiated {
-                        peer,
-                        handshake,
-                        substream,
-                    },
-                ));
-            }
-            Direction::Inbound => {
-                let (substream, _, _) =
-                    self.substreams.remove(&(peer, direction)).expect("peer to exist");
-
-                return Some((
-                    peer,
-                    HandshakeEvent::InboundNegotiated {
-                        peer,
-                        handshake,
-                        substream,
-                    },
-                ));
+        while let Some((peer, direction, handshake)) = self.ready.pop_front() {
+            match direction {
+                Direction::Outbound => {
+                    if let Some((substream, _, _)) = self.substreams.remove(&(peer, direction)) {
+                        return Some((
+                            peer,
+                            HandshakeEvent::OutboundNegotiated {
+                                peer,
+                                handshake,
+                                substream,
+                            },
+                        ));
+                    }
+                }
+                Direction::Inbound => {
+                    if let Some((substream, _, _)) = self.substreams.remove(&(peer, direction)) {
+                        return Some((
+                            peer,
+                            HandshakeEvent::InboundNegotiated {
+                                peer,
+                                handshake,
+                                substream,
+                            },
+                        ));
+                    }
+                }
             }
         }
+
+        return None;
     }
 }
 
@@ -360,7 +363,11 @@ impl Stream for HandshakeService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mock::substream::MockSubstream, types::SubstreamId, Error};
+    use crate::{
+        mock::substream::{DummySubstream, MockSubstream},
+        types::SubstreamId,
+        Error,
+    };
     use futures::StreamExt;
 
     #[tokio::test]
@@ -433,5 +440,51 @@ mod tests {
             }
             _ => panic!("invalid event received"),
         }
+    }
+
+    // inbound substream is negotiated and it pushed into `inner` but outbound substream fails to
+    // negotiate
+    #[tokio::test]
+    async fn pop_event_but_substream_doesnt_exist() {
+        let mut service = HandshakeService::new(Arc::new(RwLock::new(vec![1, 2, 3, 4])));
+        let peer = PeerId::random();
+
+        // inbound substream has finished
+        service.ready.push_front((peer, Direction::Inbound, vec![]));
+        service.substreams.insert(
+            (peer, Direction::Inbound),
+            (
+                Substream::new_mock(
+                    peer,
+                    SubstreamId::from(1337usize),
+                    Box::new(DummySubstream::new()),
+                ),
+                Delay::new(NEGOTIATION_TIMEOUT),
+                HandshakeState::HandshakeSent,
+            ),
+        );
+        service.substreams.insert(
+            (peer, Direction::Outbound),
+            (
+                Substream::new_mock(
+                    peer,
+                    SubstreamId::from(1337usize),
+                    Box::new(DummySubstream::new()),
+                ),
+                Delay::new(NEGOTIATION_TIMEOUT),
+                HandshakeState::SendHandshake,
+            ),
+        );
+
+        // outbound substream failed and `NotificationProtocol` removes
+        // both substreams from `HandshakeService`
+        assert!(service.remove_outbound(&peer).is_some());
+        assert!(service.remove_inbound(&peer).is_some());
+
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            _ => panic!("invalid event received"),
+        })
+        .await
     }
 }
