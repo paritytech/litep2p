@@ -98,6 +98,11 @@ impl Endpoint {
             Self::Listener { connection_id, .. } => *connection_id,
         }
     }
+
+    /// Is this a listener endpoint?
+    pub fn is_listener(&self) -> bool {
+        return std::matches!(self, Self::Listener { .. });
+    }
 }
 
 /// Transport event.

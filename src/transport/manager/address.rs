@@ -202,19 +202,13 @@ impl AddressStore {
 
     /// Insert new address record into [`AddressStore`] with default address score.
     pub fn insert(&mut self, mut record: AddressRecord) {
+        if self.by_address.contains(record.address()) {
+            return;
+        }
+
         record.connection_id = None;
         self.by_address.insert(record.address.clone());
         self.by_score.push(record);
-    }
-
-    /// Insert new address into [`AddressStore`] with score.
-    pub fn insert_with_score(&mut self, address: Multiaddr, score: i32) {
-        self.by_address.insert(address.clone());
-        self.by_score.push(AddressRecord {
-            score,
-            address,
-            connection_id: None,
-        });
     }
 
     /// Pop address with the highest score from [`AddressScore`].

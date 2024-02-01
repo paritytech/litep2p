@@ -923,9 +923,19 @@ impl TransportManager {
                             ?endpoint,
                             "secondary connection already exists, ignoring connection",
                         );
-                        context
-                            .addresses
-                            .insert_with_score(endpoint.address().clone(), SCORE_DIAL_SUCCESS);
+
+                        // insert address into the store only if we're the dialer
+                        //
+                        // if we're the listener, remote might have dialed with an ephemeral port
+                        // which it might not be listening, making this address useless
+                        if endpoint.is_listener() {
+                            context.addresses.insert(AddressRecord::new(
+                                &peer,
+                                endpoint.address().clone(),
+                                SCORE_DIAL_SUCCESS,
+                                None,
+                            ))
+                        }
 
                         return Ok(ConnectionEstablishedResult::Reject);
                     }
