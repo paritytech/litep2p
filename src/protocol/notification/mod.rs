@@ -1272,168 +1272,170 @@ impl NotificationProtocol {
         );
 
         match event {
-            // outbound substream was negotiated, the only valid state for peer is `Validating`
-            // and only valid state for `OutboundState` is `Negotiating`
-            HandshakeEvent::OutboundNegotiated {
+            // either an inbound or outbound substream has been negotiated successfully
+            HandshakeEvent::Negotiated {
                 peer,
                 handshake,
                 substream,
-            } => {
-                self.negotiation.remove_outbound(&peer);
+                direction,
+            } => match direction {
+                // outbound substream was negotiated, the only valid state for peer is `Validating`
+                // and only valid state for `OutboundState` is `Negotiating`
+                negotiation::Direction::Outbound => {
+                    self.negotiation.remove_outbound(&peer);
 
-                match std::mem::replace(&mut context.state, PeerState::Poisoned) {
-                    PeerState::Validating {
-                        protocol,
-                        fallback,
-                        direction,
-                        outbound: OutboundState::Negotiating,
-                        inbound,
-                    } => {
-                        context.state = PeerState::Validating {
+                    match std::mem::replace(&mut context.state, PeerState::Poisoned) {
+                        PeerState::Validating {
                             protocol,
                             fallback,
                             direction,
-                            outbound: OutboundState::Open {
-                                handshake,
-                                outbound: substream,
-                            },
+                            outbound: OutboundState::Negotiating,
                             inbound,
-                        };
-                    }
-                    state => {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?state,
-                            "outbound substream negotiated but peer has invalid state",
-                        );
-                        debug_assert!(false);
+                        } => {
+                            context.state = PeerState::Validating {
+                                protocol,
+                                fallback,
+                                direction,
+                                outbound: OutboundState::Open {
+                                    handshake,
+                                    outbound: substream,
+                                },
+                                inbound,
+                            };
+                        }
+                        state => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?state,
+                                "outbound substream negotiated but peer has invalid state",
+                            );
+                            debug_assert!(false);
+                        }
                     }
                 }
-            }
-            // inbound negotiation event completed
-            //
-            // the negotiation event can be on of two different types:
-            //   - remote handshake was read from the substream
-            //   - local handshake has been sent to remote node
-            //
-            // For the first case, the substream has to be validated by the local node.
-            // This means reporting the protocol name, potential negotiated fallback and the
-            // handshake. Local node will then either accept or reject the substream which is
-            // handled by [`NotificationProtocol::on_validation_result()`]. Compared to
-            // Substrate, litep2p requires both peers to validate the inbound handshake to allow
-            // more complex connection validation. If this is not necessary and the protocol wishes
-            // to auto-accept the inbound substreams that are a result of an outbound substream
-            // already accepted by the remote node, the substream validation is skipped and the
-            // local handshake is sent right away.
-            //
-            // For the second case, the local handshake was sent to remote node successfully and the
-            // inbound substream is considered open and if the outbound substream is open as well,
-            // the connection is fully open.
-            //
-            // Only valid states for [`InboundState`] are [`InboundState::ReadingHandshake`] and
-            // [`InboundState::SendingHandshake`] because otherwise the inbound
-            // substream cannot be in [`HandshakeService`](super::negotiation::HandshakeService)
-            // unless there is a logic bug in the state machine.
-            HandshakeEvent::InboundNegotiated {
-                peer,
-                handshake,
-                substream,
-            } => {
-                self.negotiation.remove_inbound(&peer);
+                // inbound negotiation event completed
+                //
+                // the negotiation event can be on of two different types:
+                //   - remote handshake was read from the substream
+                //   - local handshake has been sent to remote node
+                //
+                // For the first case, the substream has to be validated by the local node.
+                // This means reporting the protocol name, potential negotiated fallback and the
+                // handshake. Local node will then either accept or reject the substream which is
+                // handled by [`NotificationProtocol::on_validation_result()`]. Compared to
+                // Substrate, litep2p requires both peers to validate the inbound handshake to allow
+                // more complex connection validation. If this is not necessary and the protocol
+                // wishes to auto-accept the inbound substreams that are a result of
+                // an outbound substream already accepted by the remote node, the
+                // substream validation is skipped and the local handshake is sent
+                // right away.
+                //
+                // For the second case, the local handshake was sent to remote node successfully and
+                // the inbound substream is considered open and if the outbound
+                // substream is open as well, the connection is fully open.
+                //
+                // Only valid states for [`InboundState`] are [`InboundState::ReadingHandshake`] and
+                // [`InboundState::SendingHandshake`] because otherwise the inbound
+                // substream cannot be in [`HandshakeService`](super::negotiation::HandshakeService)
+                // unless there is a logic bug in the state machine.
+                negotiation::Direction::Inbound => {
+                    self.negotiation.remove_inbound(&peer);
 
-                match std::mem::replace(&mut context.state, PeerState::Poisoned) {
-                    PeerState::Validating {
-                        protocol,
-                        fallback,
-                        direction,
-                        outbound,
-                        inbound: InboundState::ReadingHandshake,
-                    } => {
-                        if !std::matches!(outbound, OutboundState::Closed) && self.auto_accept {
+                    match std::mem::replace(&mut context.state, PeerState::Poisoned) {
+                        PeerState::Validating {
+                            protocol,
+                            fallback,
+                            direction,
+                            outbound,
+                            inbound: InboundState::ReadingHandshake,
+                        } => {
+                            if !std::matches!(outbound, OutboundState::Closed) && self.auto_accept {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    %protocol,
+                                    ?fallback,
+                                    ?direction,
+                                    ?outbound,
+                                    "auto-accept inbound substream",
+                                );
+
+                                self.negotiation.send_handshake(peer, substream);
+                                context.state = PeerState::Validating {
+                                    protocol,
+                                    fallback,
+                                    direction,
+                                    inbound: InboundState::SendingHandshake,
+                                    outbound,
+                                };
+
+                                return;
+                            }
+
                             tracing::trace!(
                                 target: LOG_TARGET,
                                 ?peer,
                                 %protocol,
                                 ?fallback,
-                                ?direction,
                                 ?outbound,
-                                "auto-accept inbound substream",
+                                "send inbound protocol for validation",
                             );
 
-                            self.negotiation.send_handshake(peer, substream);
                             context.state = PeerState::Validating {
-                                protocol,
-                                fallback,
-                                direction,
-                                inbound: InboundState::SendingHandshake,
+                                protocol: protocol.clone(),
+                                fallback: fallback.clone(),
+                                inbound: InboundState::Validating { inbound: substream },
                                 outbound,
+                                direction,
                             };
 
-                            return;
+                            let (tx, rx) = oneshot::channel();
+                            self.pending_validations.push(Box::pin(async move {
+                                match rx.await {
+                                    Ok(ValidationResult::Accept) =>
+                                        (peer, ValidationResult::Accept),
+                                    _ => (peer, ValidationResult::Reject),
+                                }
+                            }));
+
+                            self.event_handle
+                                .report_inbound_substream(
+                                    protocol,
+                                    fallback,
+                                    peer,
+                                    handshake.into(),
+                                    tx,
+                                )
+                                .await;
                         }
-
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            %protocol,
-                            ?fallback,
-                            ?outbound,
-                            "send inbound protocol for validation",
-                        );
-
-                        context.state = PeerState::Validating {
-                            protocol: protocol.clone(),
-                            fallback: fallback.clone(),
-                            inbound: InboundState::Validating { inbound: substream },
-                            outbound,
+                        PeerState::Validating {
+                            protocol,
+                            fallback,
                             direction,
-                        };
-
-                        let (tx, rx) = oneshot::channel();
-                        self.pending_validations.push(Box::pin(async move {
-                            match rx.await {
-                                Ok(ValidationResult::Accept) => (peer, ValidationResult::Accept),
-                                _ => (peer, ValidationResult::Reject),
-                            }
-                        }));
-
-                        self.event_handle
-                            .report_inbound_substream(
-                                protocol,
-                                fallback,
-                                peer,
-                                handshake.into(),
-                                tx,
-                            )
-                            .await;
-                    }
-                    PeerState::Validating {
-                        protocol,
-                        fallback,
-                        direction,
-                        inbound: InboundState::SendingHandshake,
-                        outbound,
-                    } => {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            %protocol,
-                            ?fallback,
-                            "inbound substream negotiated, waiting for outbound substream to complete",
-                        );
-
-                        context.state = PeerState::Validating {
-                            protocol: protocol.clone(),
-                            fallback: fallback.clone(),
-                            inbound: InboundState::Open { inbound: substream },
+                            inbound: InboundState::SendingHandshake,
                             outbound,
-                            direction,
-                        };
+                        } => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                %protocol,
+                                ?fallback,
+                                "inbound substream negotiated, waiting for outbound substream to complete",
+                            );
+
+                            context.state = PeerState::Validating {
+                                protocol: protocol.clone(),
+                                fallback: fallback.clone(),
+                                inbound: InboundState::Open { inbound: substream },
+                                outbound,
+                                direction,
+                            };
+                        }
+                        _state => debug_assert!(false),
                     }
-                    _state => debug_assert!(false),
                 }
-            }
+            },
             // error occurred during negotiation, eitehr for inbound or outbound substream
             // user is notified of the error only if they've either initiated an outbound substream
             // or if they accepted an inbound substream and as a result initiated an outbound

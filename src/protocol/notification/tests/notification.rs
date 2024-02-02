@@ -257,7 +257,7 @@ async fn handshake_event_unknown_peer() {
     notif
         .on_handshake_event(
             peer,
-            HandshakeEvent::InboundNegotiated {
+            HandshakeEvent::Negotiated {
                 peer,
                 handshake: vec![1, 3, 3, 7],
                 substream: Substream::new_mock(
@@ -265,6 +265,7 @@ async fn handshake_event_unknown_peer() {
                     SubstreamId::from(0usize),
                     Box::new(DummySubstream::new()),
                 ),
+                direction: protocol::notification::negotiation::Direction::Inbound,
             },
         )
         .await;
@@ -285,7 +286,7 @@ async fn handshake_event_invalid_state_for_outbound_substream() {
     notif
         .on_handshake_event(
             peer,
-            HandshakeEvent::OutboundNegotiated {
+            HandshakeEvent::Negotiated {
                 peer,
                 handshake: vec![1, 3, 3, 7],
                 substream: Substream::new_mock(
@@ -293,6 +294,7 @@ async fn handshake_event_invalid_state_for_outbound_substream() {
                     SubstreamId::from(0usize),
                     Box::new(DummySubstream::new()),
                 ),
+                direction: protocol::notification::negotiation::Direction::Outbound,
             },
         )
         .await;
@@ -582,7 +584,7 @@ async fn pending_outbound_tracked_correctly() {
     notif
         .on_handshake_event(
             peer,
-            HandshakeEvent::InboundNegotiated {
+            HandshakeEvent::Negotiated {
                 peer,
                 handshake: vec![1, 3, 3, 7],
                 substream: Substream::new_mock(
@@ -590,6 +592,7 @@ async fn pending_outbound_tracked_correctly() {
                     SubstreamId::from(0usize),
                     Box::new(DummySubstream::new()),
                 ),
+                direction: protocol::notification::negotiation::Direction::Inbound,
             },
         )
         .await;
@@ -687,7 +690,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
     notif
         .on_handshake_event(
             peer,
-            HandshakeEvent::InboundNegotiated {
+            HandshakeEvent::Negotiated {
                 peer,
                 handshake: vec![1, 3, 3, 7],
                 substream: Substream::new_mock(
@@ -695,6 +698,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
                     SubstreamId::from(0usize),
                     Box::new(DummySubstream::new()),
                 ),
+                direction: protocol::notification::negotiation::Direction::Inbound,
             },
         )
         .await;
@@ -818,7 +822,7 @@ async fn close_already_closed_connection() {
     notif
         .on_handshake_event(
             peer,
-            HandshakeEvent::InboundNegotiated {
+            HandshakeEvent::Negotiated {
                 peer,
                 handshake: vec![1],
                 substream: Substream::new_mock(
@@ -826,6 +830,7 @@ async fn close_already_closed_connection() {
                     SubstreamId::from(0usize),
                     Box::new(MockSubstream::new()),
                 ),
+                direction: protocol::notification::negotiation::Direction::Inbound,
             },
         )
         .await;

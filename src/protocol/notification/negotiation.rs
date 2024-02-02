@@ -53,8 +53,8 @@ pub enum Direction {
 /// Events emitted by [`HandshakeService`].
 #[derive(Debug)]
 pub enum HandshakeEvent {
-    /// Outbound substream has been negotiated.
-    OutboundNegotiated {
+    /// Substream has been negotiated.
+    Negotiated {
         /// Peer ID.
         peer: PeerId,
 
@@ -63,6 +63,9 @@ pub enum HandshakeEvent {
 
         /// Substream.
         substream: Substream,
+
+        /// Direction.
+        direction: Direction,
     },
 
     /// Outbound substream has been negotiated.
@@ -72,18 +75,6 @@ pub enum HandshakeEvent {
 
         /// Direction.
         direction: Direction,
-    },
-
-    /// Inbound substream has been negotiated.
-    InboundNegotiated {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Handshake.
-        handshake: Vec<u8>,
-
-        /// Substream.
-        substream: Substream,
     },
 }
 
@@ -192,31 +183,16 @@ impl HandshakeService {
     /// by `NotificationProtocol` if either one of the substreams failed to negotiate.
     fn pop_event(&mut self) -> Option<(PeerId, HandshakeEvent)> {
         while let Some((peer, direction, handshake)) = self.ready.pop_front() {
-            match direction {
-                Direction::Outbound => {
-                    if let Some((substream, _, _)) = self.substreams.remove(&(peer, direction)) {
-                        return Some((
-                            peer,
-                            HandshakeEvent::OutboundNegotiated {
-                                peer,
-                                handshake,
-                                substream,
-                            },
-                        ));
-                    }
-                }
-                Direction::Inbound => {
-                    if let Some((substream, _, _)) = self.substreams.remove(&(peer, direction)) {
-                        return Some((
-                            peer,
-                            HandshakeEvent::InboundNegotiated {
-                                peer,
-                                handshake,
-                                substream,
-                            },
-                        ));
-                    }
-                }
+            if let Some((substream, _, _)) = self.substreams.remove(&(peer, direction)) {
+                return Some((
+                    peer,
+                    HandshakeEvent::Negotiated {
+                        peer,
+                        handshake,
+                        substream,
+                        direction,
+                    },
+                ));
             }
         }
 
@@ -328,32 +304,18 @@ impl Stream for HandshakeService {
         }
 
         if let Some((peer, direction, handshake)) = inner.ready.pop_front() {
-            match direction {
-                Direction::Outbound => {
-                    let (substream, _, _) =
-                        inner.substreams.remove(&(peer, direction)).expect("peer to exist");
-                    return Poll::Ready(Some((
-                        peer,
-                        HandshakeEvent::OutboundNegotiated {
-                            peer,
-                            handshake,
-                            substream,
-                        },
-                    )));
-                }
-                Direction::Inbound => {
-                    let (substream, _, _) =
-                        inner.substreams.remove(&(peer, direction)).expect("peer to exist");
-                    return Poll::Ready(Some((
-                        peer,
-                        HandshakeEvent::InboundNegotiated {
-                            peer,
-                            handshake,
-                            substream,
-                        },
-                    )));
-                }
-            }
+            let (substream, _, _) =
+                inner.substreams.remove(&(peer, direction)).expect("peer to exist");
+
+            return Poll::Ready(Some((
+                peer,
+                HandshakeEvent::Negotiated {
+                    peer,
+                    handshake,
+                    substream,
+                    direction,
+                },
+            )));
         }
 
         Poll::Pending

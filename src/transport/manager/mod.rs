@@ -1293,7 +1293,7 @@ impl TransportManager {
                     ?peer,
                     ?connection_id,
                     ?transport,
-                    "open failure to peer",
+                    "open failure for peer",
                 );
                 transports.remove(&transport);
 
@@ -2614,7 +2614,7 @@ mod tests {
         let emit_event = manager
             .on_connection_established(
                 peer,
-                &Endpoint::dialer(address3.clone(), ConnectionId::from(2usize)),
+                &Endpoint::listener(address3.clone(), ConnectionId::from(2usize)),
             )
             .unwrap();
         assert!(std::matches!(
