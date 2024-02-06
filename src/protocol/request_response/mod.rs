@@ -265,7 +265,6 @@ impl RequestResponseProtocol {
                         ?error,
                         "failed to open substream",
                     );
-                    debug_assert!(false);
 
                     return self
                         .report_request_failure(
