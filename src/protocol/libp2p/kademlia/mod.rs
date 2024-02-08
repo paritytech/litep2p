@@ -213,6 +213,10 @@ impl Kademlia {
                     }
                 }
 
+                if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
+                    entry.connection = ConnectionType::Connected;
+                }
+
                 Ok(())
             }
             Entry::Occupied(_) => return Err(Error::PeerAlreadyExists(peer)),
