@@ -1426,13 +1426,6 @@ impl TransportManager {
                                                             .await;
                                                     }
                                                 }
-                                                // let _ = context
-                                                //     .tx
-                                                //     .send(InnerTransportEvent::DialFailure {
-                                                //         peer,
-                                                //         address: address.clone(),
-                                                //     })
-                                                //     .await;
                                             }
 
                                             tracing::trace!(
@@ -1547,15 +1540,7 @@ impl TransportManager {
                                     );
 
                                     for (protocol, context) in &self.protocols {
-                                        tracing::trace!(
-                                            target: LOG_TARGET,
-                                            ?peer,
-                                            %protocol,
-                                            ?connection_id,
-                                            "inform protocol",
-                                        );
-
-                                        let result = match  context
+                                        let _ = match context
                                             .tx
                                             .try_send(InnerTransportEvent::DialFailure {
                                                 peer,
@@ -1580,15 +1565,6 @@ impl TransportManager {
                                                     .await
                                             }
                                         };
-
-                                        tracing::trace!(
-                                            target: LOG_TARGET,
-                                            ?peer,
-                                            %protocol,
-                                            ?connection_id,
-                                            ?result,
-                                            "protocol informed maybe",
-                                        );
                                     }
 
                                     return Some(TransportEvent::DialFailure {
