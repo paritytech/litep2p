@@ -39,8 +39,12 @@ async fn go_libp2p_dials() {
     let mut file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     file_path.push("tests/conformance/golang/tcp_ping_identify/ping_test");
 
-    let _ = std::process::Command::new(file_path).spawn().expect("to succeed");
+    let mut ping_test = std::process::Command::new(file_path.clone()).spawn().expect("to succeed");
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    if ping_test.try_wait().unwrap().is_some() {
+        panic!("{file_path:?} terminated early. Is libc dependency satisfied?");
+    }
 
     let mut stream = UnixStream::connect("/tmp/ping-test.sock").unwrap();
 
