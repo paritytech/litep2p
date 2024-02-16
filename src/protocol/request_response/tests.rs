@@ -23,7 +23,6 @@ use crate::{
     mock::substream::DummySubstream,
     mock::substream::MockSubstream,
     protocol::{
-        connection::ConnectionHandle,
         request_response::{
             ConfigBuilder, DialOptions, RequestResponseError, RequestResponseEvent,
             RequestResponseHandle, RequestResponseProtocol,
@@ -31,20 +30,15 @@ use crate::{
         InnerTransportEvent, TransportService,
     },
     substream::Substream,
-    transport::{
-        dummy::DummyTransport,
-        manager::{SupportedTransport, TransportManager},
-    },
-    types::{ConnectionId, RequestId, SubstreamId},
-    BandwidthSink, Endpoint, Error, PeerId, ProtocolName,
+    transport::manager::TransportManager,
+    types::{RequestId, SubstreamId},
+    BandwidthSink, Error, PeerId, ProtocolName,
 };
 
 use futures::StreamExt;
-use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::Sender;
 
-use std::{collections::HashSet, net::Ipv4Addr, task::Poll};
+use std::{collections::HashSet, task::Poll};
 
 // create new protocol for testing
 fn protocol() -> (
