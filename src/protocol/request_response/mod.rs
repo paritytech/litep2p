@@ -896,6 +896,8 @@ impl RequestResponseProtocol {
                             "failed to handle substream event",
                         );
                     }
+
+                    self.pending_outbound_cancels.remove(&request_id);
                 }
                 _ = self.pending_outbound_responses.next(), if !self.pending_outbound_responses.is_empty() => {}
                 event = self.pending_inbound_requests.next() => match event {
