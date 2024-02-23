@@ -20,6 +20,8 @@
 
 //! Channel-backed substream.
 
+#![allow(unused)]
+
 use crate::{
     codec::{identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
     error::Error,
