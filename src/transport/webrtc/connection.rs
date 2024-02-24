@@ -28,10 +28,7 @@ use crate::{
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream,
     transport::{
-        webrtc::{
-            substream::SubstreamBackend,
-            util::{SubstreamContext, WebRtcMessage},
-        },
+        webrtc::util::{SubstreamContext, WebRtcMessage},
         Endpoint,
     },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},

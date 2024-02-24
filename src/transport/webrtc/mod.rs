@@ -56,12 +56,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub mod config;
+pub(crate) use substream::Substream;
 
 mod connection;
 mod opening;
 mod substream;
 mod util;
+
+pub mod config;
 
 mod schema {
     pub(super) mod webrtc {
