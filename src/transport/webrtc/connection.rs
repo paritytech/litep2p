@@ -24,7 +24,7 @@ use crate::{
     config::Role,
     crypto::{ed25519::Keypair, noise::NoiseContext},
     error::Error,
-    multistream_select::{listener_negotiate, DialerState, HandshakeResult},
+    multistream_select::{listener_negotiate, DialerState, HandshakeResult, ListenerSelectResult},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream,
     transport::{
@@ -199,11 +199,14 @@ impl WebRtcConnection {
         );
 
         let payload = WebRtcMessage::decode(&d.data)?.payload.ok_or(Error::InvalidData)?;
-        let (protocol, response) =
-            listener_negotiate(&mut self.protocol_set.protocols().iter(), payload.into())?;
-
-        // TODO: change to trace
-        tracing::error!(target: LOG_TARGET, "negotiated {protocol:?}");
+        let response =
+            match listener_negotiate(&mut self.protocol_set.protocols().iter(), payload.into())? {
+                ListenerSelectResult::Accepted { protocol, message } => {
+                    tracing::error!(target: LOG_TARGET, "negotiated {protocol:?}");
+                    message
+                }
+                ListenerSelectResult::Rejected { message } => message,
+            };
 
         let message = WebRtcMessage::encode(response.to_vec());
 
