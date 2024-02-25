@@ -479,7 +479,7 @@ mod tests {
             ProtocolName::from("/13371338/proto/4"),
         ];
 
-        // send only header line
+        // header line missing
         let mut bytes = BytesMut::with_capacity(256);
         let message = Message::Protocols(vec![
             Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
