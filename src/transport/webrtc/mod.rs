@@ -38,7 +38,7 @@ use socket2::{Domain, Socket, Type};
 use str0m::{
     change::{DtlsCert, IceCreds},
     channel::{ChannelConfig, ChannelId},
-    net::{DatagramRecv, Receive},
+    net::{DatagramRecv, Protocol as Str0mProtocol, Receive},
     Candidate, Input, Rtc,
 };
 use tokio::{
@@ -65,7 +65,7 @@ mod util;
 
 pub mod config;
 
-mod schema {
+pub(super) mod schema {
     pub(super) mod webrtc {
         include!(concat!(env!("OUT_DIR"), "/webrtc.rs"));
     }
@@ -81,21 +81,6 @@ const LOG_TARGET: &str = "litep2p::webrtc";
 /// Hardcoded remote fingerprint.
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
-
-/// Socket input event.
-enum SocketInputAction {
-    /// New client connected.
-    PollUntilTimeout,
-
-    /// Client disconnected.
-    ReportDisconnection {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Connection ID.
-        connection_id: ConnectionId,
-    },
-}
 
 /// Connection context.
 struct ConnectionContext {
@@ -240,8 +225,8 @@ impl WebRtcTransport {
             .set_dtls_cert(self.dtls_cert.clone())
             .set_fingerprint_verification(false)
             .build();
-        rtc.add_local_candidate(Candidate::host(destination).unwrap());
-        rtc.add_remote_candidate(Candidate::host(source).unwrap());
+        rtc.add_local_candidate(Candidate::host(destination, Str0mProtocol::Udp).unwrap());
+        rtc.add_remote_candidate(Candidate::host(source, Str0mProtocol::Udp).unwrap());
         rtc.direct_api()
             .set_remote_fingerprint(REMOTE_FINGERPRINT.parse().expect("parse() to succeed"));
         rtc.direct_api().set_remote_ice_credentials(IceCreds {
@@ -326,11 +311,9 @@ impl WebRtcTransport {
     /// handler, if there is space in the queue. If the datagram opened a new connection or it
     /// belonged to a client who is opening, the event loop is instructed to poll the client
     /// until it timeouts.
-    fn on_socket_input(
-        &mut self,
-        source: SocketAddr,
-        buffer: Vec<u8>,
-    ) -> crate::Result<Option<SocketInputAction>> {
+    ///
+    /// Returns `true` if the client should be polled.
+    fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<bool> {
         if let Some(ConnectionContext {
             peer,
             connection_id,
@@ -338,21 +321,19 @@ impl WebRtcTransport {
         }) = self.open.get_mut(&source)
         {
             match tx.try_send(buffer) {
-                Ok(_) => return Ok(None),
+                Ok(_) => return Ok(false),
                 Err(TrySendError::Full(_)) => {
                     tracing::warn!(
                         target: LOG_TARGET,
                         ?source,
+                        ?peer,
+                        ?connection_id,
                         "channel full, dropping datagram",
                     );
 
-                    return Ok(None);
+                    return Ok(false);
                 }
-                Err(TrySendError::Closed(_)) =>
-                    return Ok(Some(SocketInputAction::ReportDisconnection {
-                        peer: *peer,
-                        connection_id: *connection_id,
-                    })),
+                Err(TrySendError::Closed(_)) => return Ok(false),
             }
         }
 
@@ -384,6 +365,7 @@ impl WebRtcTransport {
                         Instant::now(),
                         Receive {
                             source,
+                            proto: Str0mProtocol::Udp,
                             destination: self.socket.local_addr().unwrap(),
                             contents: DatagramRecv::Stun(message.clone()),
                         },
@@ -403,8 +385,6 @@ impl WebRtcTransport {
                 }
             }
             msg => {
-                tracing::warn!("handle message {msg:?}");
-
                 if let Err(error) = self.opening.get_mut(&source).expect("to exist").on_input(msg) {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -416,7 +396,7 @@ impl WebRtcTransport {
             }
         }
 
-        Ok(Some(SocketInputAction::PollUntilTimeout))
+        Ok(true)
     }
 }
 
@@ -538,7 +518,6 @@ impl Transport for WebRtcTransport {
 
         let connection = WebRtcConnection::new(
             rtc,
-            self.context.keypair.clone(),
             peer,
             source,
             self.listen_address,
@@ -639,15 +618,8 @@ impl Stream for WebRtcTransport {
                     buf.truncate(nread);
 
                     match this.on_socket_input(source, buf) {
-                        Ok(None) => {}
-                        Ok(Some(SocketInputAction::ReportDisconnection {
-                            peer,
-                            connection_id,
-                        })) => this.pending_events.push_back(TransportEvent::ConnectionClosed {
-                            peer,
-                            connection_id,
-                        }),
-                        Ok(Some(SocketInputAction::PollUntilTimeout)) => loop {
+                        Ok(false) => {}
+                        Ok(true) => loop {
                             match this.poll_connection(&source) {
                                 ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
                                     this.connections.insert(

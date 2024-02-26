@@ -372,6 +372,12 @@ pub fn listener_negotiate<'a>(
     }
 
     for protocol in protocol_iter {
+        tracing::trace!(
+            target: LOG_TARGET,
+            protocol = ?std::str::from_utf8(protocol.as_ref()),
+            "listener: checking protocol",
+        );
+
         for supported in &mut *supported_protocols {
             if protocol.as_ref() == supported.as_bytes() {
                 return Ok(ListenerSelectResult::Accepted {
@@ -383,6 +389,11 @@ pub fn listener_negotiate<'a>(
             }
         }
     }
+
+    tracing::trace!(
+        target: LOG_TARGET,
+        "listener: handshake rejected, no supported protocol found",
+    );
 
     Ok(ListenerSelectResult::Rejected {
         message: encode_multistream_message(std::iter::once(Message::NotAvailable))?,

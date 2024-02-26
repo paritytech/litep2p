@@ -44,7 +44,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "substream";
+const LOG_TARGET: &str = "litep2p::substream";
 
 macro_rules! poll_flush {
     ($substream:expr, $cx:ident) => {{
@@ -667,6 +667,14 @@ impl Sink<Bytes> for Substream {
         // `MockSubstream` implements `Sink` so calls to `start_send()` must be delegated
         delegate_start_send!(&mut self.substream, item);
 
+        tracing::trace!(
+            target: LOG_TARGET,
+            peer = ?self.peer,
+            substream_id = ?self.substream_id,
+            data_len = item.len(),
+            "Substream::start_send()",
+        );
+
         match self.codec {
             ProtocolCodec::Identity(payload_size) => {
                 if item.len() != payload_size {
@@ -712,6 +720,7 @@ impl Sink<Bytes> for Substream {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error.into())),
                 Poll::Pending => {
                     self.pending_out_frame = Some(pending_frame);
+                    break;
                 }
                 Poll::Ready(Ok(nwritten)) => {
                     pending_frame.advance(nwritten);

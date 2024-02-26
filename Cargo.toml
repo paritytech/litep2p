@@ -37,7 +37,7 @@ simple-dns = "0.5.3"
 smallvec = "1.10.0"
 snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
 socket2 = { version = "0.5.5", features = ["all"] }
-str0m = "0.2.0"
+str0m = "0.4.1"
 thiserror = "1.0.39"
 tokio-stream = "0.1.12"
 tokio-tungstenite = { version = "0.20.0", features = ["rustls-tls-native-roots"] }

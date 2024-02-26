@@ -37,7 +37,8 @@ async fn webrtc_test() {
 
     let (ping_config, mut ping_event_stream) = ping::Config::default();
     let (notif_config, mut notif_event_stream) = ConfigBuilder::new(ProtocolName::from(
-        "/c0c89622f83f6f3c6b94bc307fec1652a3aa58ac88a564c34706633f44cbb3d1/block-announces/1",
+        // "/c0c89622f83f6f3c6b94bc307fec1652a3aa58ac88a564c34706633f44cbb3d1/block-announces/1",
+        "/e143f23803ac50e8f6f8e62695d1ce9e4e1d68aa36c1cd2cfd15340213f3423e/block-announces/1",
     ))
     .with_max_size(5 * 1024 * 1024)
     .with_handshake(vec![1, 2, 3, 4])
@@ -48,6 +49,7 @@ async fn webrtc_test() {
         .with_keypair(Keypair::generate())
         .with_webrtc(Config {
             listen_addresses: vec!["/ip4/192.168.1.170/udp/8888/webrtc-direct".parse().unwrap()],
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config)
         .with_notification_protocol(notif_config)
@@ -68,10 +70,10 @@ async fn webrtc_test() {
                     tracing::error!("ping event stream termintated");
                     break
                 }
-                tracing::info!("ping event received: {event:?}");
+                tracing::error!("ping event received: {event:?}");
             }
-            event = notif_event_stream.next() => {
-                tracing::error!("notification event received: {event:?}");
+            _event = notif_event_stream.next() => {
+                // tracing::error!("notification event received: {event:?}");
             }
         }
     }

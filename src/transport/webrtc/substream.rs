@@ -18,9 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
-use crate::PeerId;
+use crate::{
+    transport::webrtc::{schema::webrtc::message::Flag, util::WebRtcMessage},
+    Error,
+};
 
 use bytes::{Buf, BufMut, BytesMut};
 use futures::{Future, Stream};
@@ -38,11 +39,8 @@ const MAX_FRAME_SIZE: usize = 16384;
 
 /// Substream event.
 #[derive(Debug, PartialEq, Eq)]
-enum Event {
-    /// Sender side has been closed.
-    SendClosed,
-
-    /// Receiver side has been closed.
+pub enum Event {
+    /// Receiver closed.
     RecvClosed,
 
     /// Send/receive message.
@@ -59,16 +57,10 @@ enum State {
 
     /// Remote is no longer interested in receiving anything.
     SendClosed,
-
-    /// Remote is no longer interested in sending anything.
-    RecvClosed,
 }
 
 /// Channel-backedn substream.
 pub struct Substream {
-    /// Remote peer ID.
-    peer: PeerId,
-
     /// Substream state.
     state: Arc<Mutex<State>>,
 
@@ -83,7 +75,8 @@ pub struct Substream {
 }
 
 impl Substream {
-    fn new(peer: PeerId) -> (Self, SubstreamHandle) {
+    /// Create new [`Substream`].
+    pub fn new() -> (Self, SubstreamHandle) {
         let (outbound_tx, outbound_rx) = channel(256);
         let (inbound_tx, inbound_rx) = channel(256);
         let state = Arc::new(Mutex::new(State::Open));
@@ -95,7 +88,6 @@ impl Substream {
 
         (
             Self {
-                peer,
                 state,
                 tx: outbound_tx,
                 rx: inbound_rx,
@@ -107,7 +99,7 @@ impl Substream {
 }
 
 /// Substream handle that is given to the transport backend.
-struct SubstreamHandle {
+pub struct SubstreamHandle {
     state: Arc<Mutex<State>>,
 
     /// TX channel for sending messages to `peer`.
@@ -118,14 +110,33 @@ struct SubstreamHandle {
 }
 
 impl SubstreamHandle {
-    /// Remote has stopped listening to inbound messages.
-    fn close_send(&self) {
-        *self.state.lock() = State::RecvClosed;
-    }
+    /// Handle message received from a remote peer.
+    ///
+    /// If the message contains any flags, handle them first and appropriately close the correct
+    /// side of the substream. If the message contained any payload, send it to the protocol for
+    /// further processing.
+    pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
+        if let Some(flags) = message.flags {
+            if flags == Flag::Fin as i32 {
+                let _ = self.tx.send(Event::RecvClosed).await?;
+            }
 
-    /// Remote has stopped sending messages.
-    fn close_recv(&self) {
-        *self.state.lock() = State::SendClosed;
+            if flags & 1 == Flag::StopSending as i32 {
+                *self.state.lock() = State::SendClosed;
+            }
+
+            if flags & 2 == Flag::ResetStream as i32 {
+                return Err(Error::ConnectionClosed);
+            }
+        }
+
+        if let Some(payload) = message.payload {
+            if !payload.is_empty() {
+                return self.tx.send(Event::Message(payload)).await.map_err(From::from);
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -143,10 +154,6 @@ impl tokio::io::AsyncRead for Substream {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        if let State::SendClosed = *self.state.lock() {
-            return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
-        }
-
         // if there are any remaining bytes from a previous read, consume them first
         if self.read_buffer.remaining() > 0 {
             let num_bytes = std::cmp::min(self.read_buffer.remaining(), buf.remaining());
@@ -160,10 +167,8 @@ impl tokio::io::AsyncRead for Substream {
 
         loop {
             match futures::ready!(self.rx.poll_recv(cx)) {
-                None | Some(Event::Close) | Some(Event::SendClosed) =>
-                    return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-                Some(Event::RecvClosed) => {
-                    *self.state.lock() = State::RecvClosed;
+                None | Some(Event::Close) | Some(Event::RecvClosed) => {
+                    return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
                 }
                 Some(Event::Message(message)) => {
                     if message.len() > MAX_FRAME_SIZE {
@@ -192,9 +197,11 @@ impl tokio::io::AsyncWrite for Substream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        if let State::RecvClosed = *self.state.lock() {
+        if let State::SendClosed = *self.state.lock() {
             return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
+
+        // TODO: try to coalesce multiple calls to `poll_write()` into single `Event::Message`
 
         let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
         let future = self.tx.reserve();
@@ -240,7 +247,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_small_frame() {
-        let (mut substream, mut handle) = Substream::new(PeerId::random());
+        let (mut substream, mut handle) = Substream::new();
 
         substream.write_all(&vec![0u8; 1337]).await.unwrap();
 
@@ -255,7 +262,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_large_frame() {
-        let (mut substream, mut handle) = Substream::new(PeerId::random());
+        let (mut substream, mut handle) = Substream::new();
 
         substream.write_all(&vec![0u8; (2 * MAX_FRAME_SIZE) + 1]).await.unwrap();
 
@@ -278,8 +285,8 @@ mod tests {
 
     #[tokio::test]
     async fn try_to_write_to_closed_substream() {
-        let (mut substream, handle) = Substream::new(PeerId::random());
-        handle.close_send();
+        let (mut substream, handle) = Substream::new();
+        *handle.state.lock() = State::SendClosed;
 
         match substream.write_all(&vec![0u8; 1337]).await {
             Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
@@ -289,7 +296,7 @@ mod tests {
 
     #[tokio::test]
     async fn substream_shutdown() {
-        let (mut substream, mut handle) = Substream::new(PeerId::random());
+        let (mut substream, mut handle) = Substream::new();
 
         substream.write_all(&vec![1u8; 1337]).await.unwrap();
         substream.shutdown().await.unwrap();
@@ -300,8 +307,14 @@ mod tests {
 
     #[tokio::test]
     async fn try_to_read_from_closed_substream() {
-        let (mut substream, handle) = Substream::new(PeerId::random());
-        handle.close_recv();
+        let (mut substream, handle) = Substream::new();
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(0i32),
+            })
+            .await
+            .unwrap();
 
         match substream.read(&mut vec![0u8; 256]).await {
             Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
@@ -311,7 +324,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_small_frame() {
-        let (mut substream, handle) = Substream::new(PeerId::random());
+        let (mut substream, handle) = Substream::new();
         handle.tx.send(Event::Message(vec![1u8; 256])).await.unwrap();
 
         let mut buf = vec![0u8; 2048];
@@ -336,7 +349,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_small_frame_in_two_reads() {
-        let (mut substream, handle) = Substream::new(PeerId::random());
+        let (mut substream, handle) = Substream::new();
         let mut first = vec![1u8; 256];
         first.extend_from_slice(&vec![2u8; 256]);
 
@@ -372,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_frames() {
-        let (mut substream, handle) = Substream::new(PeerId::random());
+        let (mut substream, handle) = Substream::new();
         let mut first = vec![1u8; 256];
         first.extend_from_slice(&vec![2u8; 256]);
 
@@ -431,7 +444,7 @@ mod tests {
 
     #[tokio::test]
     async fn backpressure_works() {
-        let (mut substream, _handle) = Substream::new(PeerId::random());
+        let (mut substream, _handle) = Substream::new();
 
         // use all available bandwidth which by default is `256 * MAX_FRAME_SIZE`,
         for _ in 0..128 {

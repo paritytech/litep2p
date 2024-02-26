@@ -32,7 +32,7 @@ use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
     change::Fingerprint,
     channel::ChannelId,
-    net::{DatagramRecv, DatagramSend, Receive},
+    net::{DatagramRecv, DatagramSend, Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
 
@@ -307,6 +307,7 @@ impl OpeningWebRtcConnection {
             self.rtc.channel(self.noise_channel_id).ok_or(Error::ChannelDoesntExist)?;
 
         channel.write(true, payload.as_slice()).map_err(|error| Error::WebRtc(error))?;
+        self.rtc.direct_api().close_data_channel(self.noise_channel_id);
 
         Ok(self.rtc)
     }
@@ -323,6 +324,7 @@ impl OpeningWebRtcConnection {
             Instant::now(),
             Receive {
                 source: self.peer_address,
+                proto: Str0mProtocol::Udp,
                 destination: self.local_address,
                 contents: buffer,
             },
@@ -386,33 +388,48 @@ impl OpeningWebRtcConnection {
                 Output::Event(e) => match e {
                     Event::IceConnectionStateChange(v) =>
                         if v == IceConnectionState::Disconnected {
-                            tracing::debug!(target: LOG_TARGET, "ice connection closed");
+                            tracing::trace!(target: LOG_TARGET, "ice connection closed");
                             return WebRtcEvent::ConnectionClosed;
                         },
-                    Event::ChannelOpen(cid, name) => {
-                        tracing::warn!(
+                    Event::ChannelOpen(channel_id, name) => {
+                        tracing::trace!(
                             target: LOG_TARGET,
-                            ?cid,
+                            connection_id = ?self.connection_id,
+                            ?channel_id,
                             ?name,
                             "channel opened",
                         );
 
-                        if cid != self.noise_channel_id {
-                            panic!("unknown channel opened {cid:?}");
+                        if channel_id != self.noise_channel_id {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                connection_id = ?self.connection_id,
+                                ?channel_id,
+                                "ignoring opened channel",
+                            );
+                            continue;
                         }
 
+                        // TODO: no expect
                         self.on_noise_channel_open().expect("to succeed");
                     }
                     Event::ChannelData(data) => {
-                        tracing::warn!(
+                        tracing::trace!(
                             target: LOG_TARGET,
                             "data received over channel",
                         );
 
                         if data.id != self.noise_channel_id {
-                            panic!("data from an unknown channel");
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                channel_id = ?data.id,
+                                connection_id = ?self.connection_id,
+                                "ignoring data from channel",
+                            );
+                            continue;
                         }
 
+                        // TODO: no expect
                         return self.on_noise_channel_data(data.data).expect("to succeed");
                     }
                     Event::ChannelClose(channel_id) => {
