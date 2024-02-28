@@ -20,6 +20,8 @@
 
 //! This example demonstrates a simple echo server using the notification protocol
 //! in which client connects to server and sends a message to server every 3 seconds
+//!
+//! Run: `cargo run --example echo_notification`
 
 use litep2p::{
     config::ConfigBuilder,
@@ -38,19 +40,22 @@ use std::time::Duration;
 
 /// event loop for the client
 async fn client_event_loop(mut litep2p: Litep2p, mut handle: NotificationHandle, peer: PeerId) {
-    // open substream to `litep2p` and since no connection exists, dial the peer first
+    // open substream to `peer`
+    //
+    // if `litep2p` is not connected to `peer` but it has at least one known address,
+    // `NotifcationHandle::open_substream()` will automatically dial `peer`
     handle.open_substream(peer).await.unwrap();
 
     // wait until the substream is opened
-    let peer = loop {
+    loop {
         tokio::select! {
             _ = litep2p.next_event() => {}
             event = handle.next() => match event.unwrap() {
-                NotificationEvent::NotificationStreamOpened { peer, .. } => break peer,
+                NotificationEvent::NotificationStreamOpened { .. } => break,
                 _ => {},
             }
         }
-    };
+    }
 
     // after the substream is open, send notification to server and print the response to stdout
     loop {
