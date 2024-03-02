@@ -25,15 +25,17 @@
 //! to add some extra features, such as couting how many times each future has been polled
 //! and for how long, they can be implemented on top of the custom task executor.
 //!
-//! This example doesn't really do anything, apart from showing how the custom executor can be used.
+//! Run: `RUST_LOG=info cargo run --example custom_executor`
 
 use litep2p::{
-    config::ConfigBuilder, executor::Executor,
-    protocol::notification::ConfigBuilder as NotificationConfigBuilder,
-    transport::tcp::config::Config as TcpConfig, types::protocol::ProtocolName, Litep2p,
+    config::ConfigBuilder,
+    executor::Executor,
+    protocol::libp2p::ping::{Config as PingConfig, PingEvent},
+    transport::tcp::config::Config as TcpConfig,
+    Litep2p,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{future::Future, pin::Pin, sync::Arc};
@@ -85,41 +87,69 @@ impl Executor for TaskExecutorHandle {
     }
 }
 
+fn make_litep2p() -> (
+    Litep2p,
+    TaskExecutor,
+    Box<dyn Stream<Item = PingEvent> + Send + Unpin>,
+) {
+    let (executor, sender) = TaskExecutor::new();
+    let (ping_config, ping_event_stream) = PingConfig::default();
+
+    let litep2p = Litep2p::new(
+        ConfigBuilder::new()
+            .with_executor(Arc::new(TaskExecutorHandle { tx: sender.clone() }))
+            .with_tcp(TcpConfig {
+                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+                ..Default::default()
+            })
+            .with_libp2p_ping(ping_config)
+            .build(),
+    )
+    .unwrap();
+
+    (litep2p, executor, ping_event_stream)
+}
+
 #[tokio::main]
 async fn main() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (mut executor, sender) = TaskExecutor::new();
+    // create two identical litep2ps
+    let (mut litep2p1, mut executor1, mut ping_event_stream1) = make_litep2p();
+    let (mut litep2p2, mut executor2, mut ping_event_stream2) = make_litep2p();
 
-    let (notif_config, mut notif_handle) =
-        NotificationConfigBuilder::new(ProtocolName::from("/notif/1"))
-            .with_handshake(vec![1, 2, 3, 4])
-            .with_max_size(1024usize)
-            .build();
+    // dial `litep2p1`
+    litep2p2
+        .dial_address(litep2p1.listen_addresses().next().unwrap().clone())
+        .await
+        .unwrap();
 
-    let mut litep2p = Litep2p::new(
-        ConfigBuilder::new()
-            .with_notification_protocol(notif_config)
-            .with_executor(Arc::new(TaskExecutorHandle { tx: sender.clone() }))
-            .with_tcp(TcpConfig {
-                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-                ..Default::default()
-            })
-            .build(),
-    )
-    .unwrap();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = executor1.next() => {}
+                _ = litep2p1.next_event() => {},
+                _ = ping_event_stream1.next() => {},
+            }
+        }
+    });
 
-    // poll litep2p, task executor and the notification handle all together
+    // poll litep2p, task executor and ping event stream all together
     //
     // since a custom task executor was provided, it's now the user's responsibility
     // to actually make sure to poll those futures so that litep2p can make progress
     loop {
         tokio::select! {
-            _ = executor.next() => {}
-            _ = litep2p.next_event() => {},
-            _ = notif_handle.next() => {},
+            _ = executor2.next() => {}
+            _ = litep2p2.next_event() => {},
+            event = ping_event_stream2.next() => match event {
+                Some(PingEvent::Ping { peer, ping }) => tracing::info!(
+                    "ping time with {peer:?}: {ping:?}"
+                ),
+                _ => {}
+            }
         }
     }
 }
