@@ -36,7 +36,7 @@ use std::collections::HashMap;
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
 
 /// Kademlia replication factor.
-const REPLICATION_FACTOR: usize = 20usize;
+const REPLICATION_FACTOR: usize = super::K_VALUE;
 
 /// Kademlia configuration.
 #[derive(Debug)]

@@ -2871,6 +2871,7 @@ checksum = "57bcfdad1b858c2db7c38303a6d2ad4dfaf5eb53dfeb0910128b2c26d6158503"
 name = "litep2p"
 version = "0.2.0"
 dependencies = [
+ "arrayvec 0.7.4",
  "async-trait",
  "asynchronous-codec",
  "bs58",
@@ -2892,7 +2893,7 @@ dependencies = [
  "pin-project",
  "prost",
  "prost-build",
- "quickcheck",
+ "quickcheck-ext",
  "quinn",
  "rand 0.8.5",
  "rcgen 0.10.0",
@@ -4031,6 +4032,14 @@ dependencies = [
  "env_logger 0.8.4",
  "log",
  "rand 0.8.5",
+]
+
+[[package]]
+name = "quickcheck-ext"
+version = "0.1.0"
+dependencies = [
+ "num-traits",
+ "quickcheck",
 ]
 
 [[package]]

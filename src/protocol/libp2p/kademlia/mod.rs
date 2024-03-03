@@ -1,4 +1,5 @@
 // Copyright 2023 litep2p developers
+// Copyright 2018-2019 Parity Technologies (UK) Ltd.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
 // copy of this software and associated documentation files (the "Software"),
@@ -57,13 +58,34 @@ pub use {
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
 
+/// The `k` parameter of the Kademlia specification.
+///
+/// This parameter determines:
+///
+///   1) The (fixed) maximum number of nodes in a bucket.
+///   2) The (default) replication factor, which in turn determines: a) The number of closer peers
+///      returned in response to a request. b) The number of closest peers to a key to search for in
+///      an iterative query.
+///
+/// The choice of (1) is fixed to this constant. The replication factor is configurable
+/// but should generally be no greater than `K_VALUE`. All nodes in a Kademlia
+/// DHT should agree on the choices made for (1) and (2).
+///
+/// The current value is `20`.
+pub const K_VALUE: usize = 20;
+
 /// Parallelism factor, `α`.
 const PARALLELISM_FACTOR: usize = 3;
+
+/// Constant shared across tests for the `Multihash` type.
+#[cfg(test)]
+const SHA_256_MH: u64 = 0x12;
 
 mod bucket;
 mod config;
 mod executor;
 mod handle;
+mod kbucketstable;
 mod message;
 mod query;
 mod record;
