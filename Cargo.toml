@@ -77,7 +77,7 @@ libp2p = { version = "0.51.3", features = [
     "yamux",
     "quic",
 ]}
-quickcheck = "1.0.3"
+quickcheck = { package = "quickcheck-ext", path = "misc/quickcheck-ext" }
 sc-network = "0.28.0"
 sc-utils = "8.0.0"
 serde_json = "1.0.108"
