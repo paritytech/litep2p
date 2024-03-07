@@ -230,23 +230,13 @@ impl ClosestBucketsIter {
     }
 
     fn next_in(&self, i: BucketIndex) -> Option<BucketIndex> {
-        (0..i.get()).rev().find_map(|i| {
-            if self.distance.0.bit(i) {
-                Some(BucketIndex(i))
-            } else {
-                None
-            }
-        })
+        (0..i.get())
+            .rev()
+            .find_map(|i| self.distance.0.bit(i).then_some(BucketIndex(i)))
     }
 
     fn next_out(&self, i: BucketIndex) -> Option<BucketIndex> {
-        (i.get() + 1..NUM_BUCKETS).find_map(|i| {
-            if !self.distance.0.bit(i) {
-                Some(BucketIndex(i))
-            } else {
-                None
-            }
-        })
+        (i.get() + 1..NUM_BUCKETS).find_map(|i| (!self.distance.0.bit(i)).then_some(BucketIndex(i)))
     }
 }
 
