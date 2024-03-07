@@ -221,6 +221,101 @@ impl RoutingTable {
     }
 }
 
+/// An iterator over the bucket indices, in the order determined by the `Distance` of a target from
+/// the `local_key`, such that the entries in the buckets are incrementally further away from the
+/// target, starting with the bucket covering the target.
+/// The original implementation is taken from `rust-libp2p`, see [1] for the explanation of the
+/// algorithm used.
+///  [1]: https://github.com/libp2p/rust-libp2p/pull/1117#issuecomment-494694635
+struct ClosestBucketsIter {
+    /// The distance to the `local_key`.
+    distance: Distance,
+    /// The current state of the iterator.
+    state: ClosestBucketsIterState,
+}
+
+/// Operating states of a `ClosestBucketsIter`.
+enum ClosestBucketsIterState {
+    /// The starting state of the iterator yields the first bucket index and
+    /// then transitions to `ZoomIn`.
+    Start(BucketIndex),
+    /// The iterator "zooms in" to to yield the next bucket cotaining nodes that
+    /// are incrementally closer to the local node but further from the `target`.
+    /// These buckets are identified by a `1` in the corresponding bit position
+    /// of the distance bit string. When bucket `0` is reached, the iterator
+    /// transitions to `ZoomOut`.
+    ZoomIn(BucketIndex),
+    /// Once bucket `0` has been reached, the iterator starts "zooming out"
+    /// to buckets containing nodes that are incrementally further away from
+    /// both the local key and the target. These are identified by a `0` in
+    /// the corresponding bit position of the distance bit string. When bucket
+    /// `255` is reached, the iterator transitions to state `Done`.
+    ZoomOut(BucketIndex),
+    /// The iterator is in this state once it has visited all buckets.
+    Done,
+}
+
+impl ClosestBucketsIter {
+    fn new(distance: Distance) -> Self {
+        let state = match BucketIndex::new(&distance) {
+            Some(i) => ClosestBucketsIterState::Start(i),
+            None => ClosestBucketsIterState::Start(BucketIndex(0)),
+        };
+        Self { distance, state }
+    }
+
+    fn next_in(&self, i: BucketIndex) -> Option<BucketIndex> {
+        (0..i.get()).rev().find_map(|i| {
+            if self.distance.0.bit(i) {
+                Some(BucketIndex(i))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn next_out(&self, i: BucketIndex) -> Option<BucketIndex> {
+        (i.get() + 1..NUM_BUCKETS).find_map(|i| {
+            if !self.distance.0.bit(i) {
+                Some(BucketIndex(i))
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl Iterator for ClosestBucketsIter {
+    type Item = BucketIndex;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.state {
+            ClosestBucketsIterState::Start(i) => {
+                self.state = ClosestBucketsIterState::ZoomIn(i);
+                Some(i)
+            }
+            ClosestBucketsIterState::ZoomIn(i) =>
+                if let Some(i) = self.next_in(i) {
+                    self.state = ClosestBucketsIterState::ZoomIn(i);
+                    Some(i)
+                } else {
+                    let i = BucketIndex(0);
+                    self.state = ClosestBucketsIterState::ZoomOut(i);
+                    Some(i)
+                },
+            ClosestBucketsIterState::ZoomOut(i) =>
+                if let Some(i) = self.next_out(i) {
+                    self.state = ClosestBucketsIterState::ZoomOut(i);
+                    Some(i)
+                } else {
+                    self.state = ClosestBucketsIterState::Done;
+                    None
+                },
+            ClosestBucketsIterState::Done => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,5 +535,39 @@ mod tests {
             vec!["/ip6/::1/tcp/8888".parse().unwrap()],
             ConnectionType::CanConnect,
         ));
+    }
+
+    #[test]
+    fn closest_buckets_iterator_set_lsb() {
+        // Test zooming-in & zooming-out of the iterator using a toy example with set LSB.
+        let d = Distance(U256::from(0b10011011));
+        let mut iter = ClosestBucketsIter::new(d);
+        // Note that bucket 0 is visited twice. This is, technically, a bug, but to not complicate
+        // the implementation and keep it consistent with `libp2p` it's kept as is. There are
+        // virtually no practical consequences of this, because to have bucket 0 populated we have
+        // to encounter two sha256 hash values differing only in one least significant bit.
+        let expected_buckets = vec![7, 4, 3, 1, 0, 0, 2, 5, 6]
+            .into_iter()
+            .chain(8..=255)
+            .map(|i| BucketIndex(i));
+        for expected in expected_buckets {
+            let got = iter.next().unwrap();
+            assert_eq!(got, expected);
+        }
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn closest_buckets_iterator_unset_lsb() {
+        // Test zooming-in & zooming-out of the iterator using a toy example with unset LSB.
+        let d = Distance(U256::from(0b01011010));
+        let mut iter = ClosestBucketsIter::new(d);
+        let expected_buckets =
+            vec![6, 4, 3, 1, 0, 2, 5, 7].into_iter().chain(8..=255).map(|i| BucketIndex(i));
+        for expected in expected_buckets {
+            let got = iter.next().unwrap();
+            assert_eq!(got, expected);
+        }
+        assert!(iter.next().is_none());
     }
 }
