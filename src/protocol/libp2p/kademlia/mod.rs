@@ -243,7 +243,13 @@ impl Kademlia {
             self.engine.register_response_failure(query, peer);
         }
 
-        self.peers.remove(&peer);
+        if let Some(PeerContext { pending_actions }) = self.peers.remove(&peer) {
+            pending_actions.into_iter().for_each(|(_, action)| {
+                if let PeerAction::SendFindNode(query_id) = action {
+                    self.engine.register_response_failure(query_id, peer);
+                }
+            });
+        }
 
         if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
             entry.connection = ConnectionType::NotConnected;
