@@ -95,17 +95,16 @@ struct PeerContext {
 }
 
 impl PeerContext {
+    /// Create new [`PeerContext`].
     pub fn new() -> Self {
         Self {
             pending_actions: HashMap::new(),
         }
     }
 
-    /// Create new [`PeerContext`] with pending [`PeerAction`].
-    pub fn with_pending_action(substream_id: SubstreamId, action: PeerAction) -> Self {
-        Self {
-            pending_actions: HashMap::from_iter([(substream_id, action)]),
-        }
+    /// Add pending action for peer.
+    pub fn add_pending_action(&mut self, substream_id: SubstreamId, action: PeerAction) {
+        self.pending_actions.insert(substream_id, action);
     }
 }
 
@@ -139,7 +138,7 @@ pub(crate) struct Kademlia {
     pending_substreams: HashMap<SubstreamId, PeerId>,
 
     /// Pending dials.
-    pending_dials: HashMap<PeerId, PeerAction>,
+    pending_dials: HashMap<PeerId, Vec<PeerAction>>,
 
     /// Routing table update mode.
     update_mode: RoutingTableUpdateMode,
@@ -188,11 +187,23 @@ impl Kademlia {
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                // TODO: verify that peer limit is respected
-                match self.pending_dials.remove(&peer) {
-                    Some(action) => match self.service.open_substream(peer) {
+                if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
+                    entry.connection = ConnectionType::Connected;
+                }
+
+                let Some(actions) = self.pending_dials.remove(&peer) else {
+                    entry.insert(PeerContext::new());
+                    return Ok(());
+                };
+
+                // go over all pending actions, open substreams and save the state to `PeerContext`
+                // from which it will be later queried when the substream opens
+                let mut context = PeerContext::new();
+
+                for action in actions {
+                    match self.service.open_substream(peer) {
                         Ok(substream_id) => {
-                            entry.insert(PeerContext::with_pending_action(substream_id, action));
+                            context.add_pending_action(substream_id, action);
                         }
                         Err(error) => {
                             tracing::debug!(
@@ -207,16 +218,10 @@ impl Kademlia {
                                 self.engine.register_response_failure(query_id, peer);
                             }
                         }
-                    },
-                    None => {
-                        entry.insert(PeerContext::new());
                     }
                 }
 
-                if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
-                    entry.connection = ConnectionType::Connected;
-                }
-
+                entry.insert(context);
                 Ok(())
             }
             Entry::Occupied(_) => return Err(Error::PeerAlreadyExists(peer)),
@@ -238,7 +243,13 @@ impl Kademlia {
             self.engine.register_response_failure(query, peer);
         }
 
-        self.peers.remove(&peer);
+        if let Some(PeerContext { pending_actions }) = self.peers.remove(&peer) {
+            pending_actions.into_iter().for_each(|(_, action)| {
+                if let PeerAction::SendFindNode(query_id) = action {
+                    self.engine.register_response_failure(query_id, peer);
+                }
+            });
+        }
 
         if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
             entry.connection = ConnectionType::NotConnected;
@@ -495,10 +506,24 @@ impl Kademlia {
 
     /// Handle dial failure.
     fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
-        if let Some(PeerAction::SendFindNode(query)) = self.pending_dials.remove(&peer) {
-            tracing::trace!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
+        tracing::trace!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
 
-            self.engine.register_response_failure(query, peer);
+        let Some(actions) = self.pending_dials.remove(&peer) else {
+            return;
+        };
+
+        for action in actions {
+            if let PeerAction::SendFindNode(query_id) = action {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?query_id,
+                    ?address,
+                    "report failure for pending query",
+                );
+
+                self.engine.register_response_failure(query_id, peer);
+            }
         }
     }
 
@@ -511,9 +536,14 @@ impl Kademlia {
                     tracing::trace!(target: LOG_TARGET, ?query, ?peer, "dial peer");
 
                     match self.service.dial(&peer) {
-                        Ok(_) => {
-                            self.pending_dials.insert(peer, PeerAction::SendFindNode(query));
-                        }
+                        Ok(_) => match self.pending_dials.entry(peer) {
+                            Entry::Occupied(entry) => {
+                                entry.into_mut().push(PeerAction::SendFindNode(query));
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(vec![PeerAction::SendFindNode(query)]);
+                            }
+                        },
                         Err(error) => {
                             tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?error, "failed to dial peer");
                             self.engine.register_response_failure(query, peer);
@@ -585,10 +615,16 @@ impl Kademlia {
                                 .insert(substream_id, PeerAction::SendPutValue(message.clone()));
                         }
                         Err(_) => match self.service.dial(&peer.peer) {
-                            Ok(_) => {
-                                self.pending_dials
-                                    .insert(peer.peer, PeerAction::SendPutValue(message.clone()));
-                            }
+                            Ok(_) => match self.pending_dials.entry(peer.peer) {
+                                Entry::Occupied(entry) => {
+                                    entry
+                                        .into_mut()
+                                        .push(PeerAction::SendPutValue(message.clone()));
+                                }
+                                Entry::Vacant(entry) => {
+                                    entry.insert(vec![PeerAction::SendPutValue(message.clone())]);
+                                }
+                            },
                             Err(error) => {
                                 tracing::debug!(
                                     target: LOG_TARGET,
