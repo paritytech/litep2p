@@ -1775,6 +1775,9 @@ impl NotificationProtocol {
                             self.on_close_substream(peer).await;
                         }
                     }
+                    NotificationCommand::ForceClose { peer } => {
+                        let _ = self.service.force_close(peer);
+                    }
                 }
             },
         }

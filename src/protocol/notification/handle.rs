@@ -182,6 +182,9 @@ pub struct NotificationHandle {
     /// Peers.
     peers: HashMap<PeerId, NotificationSink>,
 
+    /// Clogged peers.
+    clogged: HashSet<PeerId>,
+
     /// Pending validations.
     pending_validations: HashMap<PeerId, oneshot::Sender<ValidationResult>>,
 
@@ -203,6 +206,7 @@ impl NotificationHandle {
             command_tx,
             handshake,
             peers: HashMap::new(),
+            clogged: HashSet::new(),
             pending_validations: HashMap::new(),
         }
     }
@@ -396,7 +400,21 @@ impl NotificationHandle {
         notification: Vec<u8>,
     ) -> Result<(), NotificationError> {
         match self.peers.get_mut(&peer) {
-            Some(sink) => sink.send_sync_notification(notification),
+            Some(sink) => match sink.send_sync_notification(notification) {
+                Ok(()) => Ok(()),
+                Err(error) => match error {
+                    NotificationError::NoConnection => return Err(NotificationError::NoConnection),
+                    NotificationError::ChannelClogged => {
+                        let _ = self.clogged.insert(peer).then(|| {
+                            self.command_tx.try_send(NotificationCommand::ForceClose { peer })
+                        });
+
+                        Err(NotificationError::ChannelClogged)
+                    }
+                    // sink doesn't emit any other `NotificationError`s
+                    _ => unreachable!(),
+                },
+            },
             None => Ok(()),
         }
     }
@@ -454,6 +472,7 @@ impl Stream for NotificationHandle {
                     }
                     InnerNotificationEvent::NotificationStreamClosed { peer } => {
                         self.peers.remove(&peer);
+                        self.clogged.remove(&peer);
 
                         return Poll::Ready(Some(NotificationEvent::NotificationStreamClosed {
                             peer,
