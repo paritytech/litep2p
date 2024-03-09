@@ -34,7 +34,7 @@ pub struct Config {
     pub listen_addresses: Vec<multiaddr::Multiaddr>,
 
     /// Yamux configuration.
-    pub yamux_config: yamux::Config,
+    pub yamux_config: crate::yamux::Config,
 
     /// Noise read-ahead frame count.
     ///

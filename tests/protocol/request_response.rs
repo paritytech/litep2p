@@ -1088,7 +1088,7 @@ async fn too_many_pending_requests() {
         Duration::from_secs(5),
         None,
     );
-    let mut yamux_config = yamux::Config::default();
+    let mut yamux_config = litep2p::yamux::Config::default();
     yamux_config.set_max_num_streams(4);
 
     let config1 = Litep2pConfigBuilder::new()
@@ -1107,7 +1107,7 @@ async fn too_many_pending_requests() {
         Duration::from_secs(5),
         None,
     );
-    let mut yamux_config = yamux::Config::default();
+    let mut yamux_config = litep2p::yamux::Config::default();
     yamux_config.set_max_num_streams(4);
 
     let config2 = Litep2pConfigBuilder::new()
