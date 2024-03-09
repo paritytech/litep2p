@@ -51,11 +51,11 @@ pub enum Role {
     Listener,
 }
 
-impl From<Role> for yamux::Mode {
+impl From<Role> for crate::yamux::Mode {
     fn from(value: Role) -> Self {
         match value {
-            Role::Dialer => yamux::Mode::Client,
-            Role::Listener => yamux::Mode::Server,
+            Role::Dialer => crate::yamux::Mode::Client,
+            Role::Listener => crate::yamux::Mode::Server,
         }
     }
 }

@@ -66,7 +66,7 @@ pub enum Error {
     #[error("Transport not supported")]
     TransportNotSupported(Multiaddr),
     #[error("Yamux error for substream `{0:?}`: `{1}`")]
-    YamuxError(Direction, yamux::ConnectionError),
+    YamuxError(Direction, crate::yamux::ConnectionError),
     #[error("Operation not supported: `{0}`")]
     NotSupported(String),
     #[error("Other error occurred: `{0}`")]
@@ -142,7 +142,7 @@ pub enum SubstreamError {
     #[error("Connection closed")]
     ConnectionClosed,
     #[error("yamux error: `{0}`")]
-    YamuxError(yamux::ConnectionError),
+    YamuxError(crate::yamux::ConnectionError),
     #[error("Failed to read from substream, substream id `{0:?}`")]
     ReadFailure(Option<SubstreamId>),
     #[error("Failed to write to substream, substream id `{0:?}`")]
@@ -245,7 +245,7 @@ mod tests {
         tracing::trace!("{:?}", DialError::AlreadyConnected);
         tracing::trace!(
             "{:?}",
-            SubstreamError::YamuxError(yamux::ConnectionError::Closed)
+            SubstreamError::YamuxError(crate::yamux::ConnectionError::Closed)
         );
         tracing::trace!("{:?}", AddressError::PeerIdMissing);
         tracing::trace!(
