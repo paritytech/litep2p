@@ -124,15 +124,23 @@ impl Ping {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle outbound substream");
 
         self.pending_outbound.push(Box::pin(async move {
-            // TODO: generate random payload and verify it
-            let _ = substream.send_framed(vec![0u8; 32].into()).await?;
-            let now = Instant::now();
-            let _ = substream.next().await.ok_or(Error::SubstreamError(
-                SubstreamError::ReadFailure(Some(substream_id)),
-            ))?;
-            let _ = substream.close().await;
+            let future = async move {
+                // TODO: generate random payload and verify it
+                let _ = substream.send_framed(vec![0u8; 32].into()).await?;
+                let now = Instant::now();
+                let _ = substream.next().await.ok_or(Error::SubstreamError(
+                    SubstreamError::ReadFailure(Some(substream_id)),
+                ))?;
+                let _ = substream.close().await;
 
-            Ok((peer, now.elapsed()))
+                Ok(now.elapsed())
+            };
+
+            match tokio::time::timeout(Duration::from_secs(10), future).await {
+                Err(_) => return Err(Error::Timeout),
+                Ok(Err(error)) => return Err(error),
+                Ok(Ok(elapsed)) => Ok((peer, elapsed)),
+            }
         }));
     }
 
@@ -141,14 +149,22 @@ impl Ping {
         tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
         self.pending_inbound.push(Box::pin(async move {
-            let payload = substream
-                .next()
-                .await
-                .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(None)))??;
-            substream.send_framed(payload.freeze()).await?;
-            let _ = substream.next().await.map(|_| ());
+            let future = async move {
+                let payload = substream
+                    .next()
+                    .await
+                    .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(None)))??;
+                substream.send_framed(payload.freeze()).await?;
+                let _ = substream.next().await.map(|_| ());
 
-            Ok(())
+                Ok(())
+            };
+
+            match tokio::time::timeout(Duration::from_secs(10), future).await {
+                Err(_) => return Err(Error::Timeout),
+                Ok(Err(error)) => return Err(error),
+                Ok(Ok(())) => Ok(()),
+            }
         }));
     }
 
