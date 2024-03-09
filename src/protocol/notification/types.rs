@@ -211,4 +211,10 @@ pub(crate) enum NotificationCommand {
         /// Peer IDs.
         peers: HashSet<PeerId>,
     },
+
+    /// Force close the connection because notification channel is clogged.
+    ForceClose {
+        /// Peer to disconnect.
+        peer: PeerId,
+    },
 }
