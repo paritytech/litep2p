@@ -670,6 +670,7 @@ impl Sink<Bytes> for Substream {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error.into())),
                 Poll::Pending => {
                     self.pending_out_frame = Some(pending_frame);
+                    break;
                 }
                 Poll::Ready(Ok(nwritten)) => {
                     pending_frame.advance(nwritten);
