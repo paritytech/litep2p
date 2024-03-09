@@ -361,8 +361,36 @@ impl RequestResponseProtocol {
         self.pending_outbound_cancels.insert(request_id, tx);
 
         self.pending_inbound.push(Box::pin(async move {
-            match substream.send_framed(request.into()).await {
-                Ok(_) => {
+            match tokio::time::timeout(request_timeout, substream.send_framed(request.into())).await
+            {
+                Err(_) => (
+                    peer,
+                    request_id,
+                    fallback_protocol,
+                    Err(RequestResponseError::Timeout),
+                ),
+                Ok(Err(Error::IoError(ErrorKind::PermissionDenied))) => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        %protocol,
+                        "tried to send too large request",
+                    );
+
+                    (
+                        peer,
+                        request_id,
+                        fallback_protocol,
+                        Err(RequestResponseError::TooLargePayload),
+                    )
+                }
+                Ok(Err(_error)) => (
+                    peer,
+                    request_id,
+                    fallback_protocol,
+                    Err(RequestResponseError::NotConnected),
+                ),
+                Ok(Ok(_)) => {
                     tokio::select! {
                         _ = rx => {
                             tracing::debug!(
@@ -374,7 +402,11 @@ impl RequestResponseProtocol {
                             );
 
                             let _ = substream.close().await;
-                            (peer, request_id, fallback_protocol, Err(RequestResponseError::Canceled))
+                            (
+                                peer,
+                                request_id,
+                                fallback_protocol,
+                                Err(RequestResponseError::Canceled))
                         }
                         _ = sleep(request_timeout) => {
                             tracing::debug!(
@@ -396,11 +428,6 @@ impl RequestResponseProtocol {
                         }
                     }
                 }
-                Err(Error::IoError(ErrorKind::PermissionDenied)) => {
-                    tracing::warn!(target: LOG_TARGET, ?peer, %protocol, "tried to send too large request");
-                    (peer, request_id, fallback_protocol, Err(RequestResponseError::TooLargePayload))
-                }
-                Err(_error) => (peer, request_id, fallback_protocol, Err(RequestResponseError::NotConnected))
             }
         }));
 
@@ -470,6 +497,7 @@ impl RequestResponseProtocol {
         //
         // the input is either a response (succes) or rejection (failure) which is communicated
         // by sending the response over the `oneshot::Sender` or closing it, respectively.
+        let timeout = self.timeout;
         let (response_tx, rx): (
             oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>,
             _,
@@ -487,7 +515,7 @@ impl RequestResponseProtocol {
                     );
                     let _ = substream.close().await;
                 }
-                Ok((response, feedback)) => {
+                Ok((response, mut feedback)) => {
                     tracing::trace!(
                         target: LOG_TARGET,
                         ?peer,
@@ -496,21 +524,27 @@ impl RequestResponseProtocol {
                         "send response",
                     );
 
-                    match substream.send_framed(response.into()).await {
-                        Ok(_) =>
-                            if let Some(feedback) = feedback {
-                                let _ = feedback.send(());
-                            },
-                        Err(error) => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                %protocol,
-                                ?request_id,
-                                ?error,
-                                "failed to send request to peer",
-                            );
-                        }
+                    match tokio::time::timeout(timeout, substream.send_framed(response.into()))
+                        .await
+                    {
+                        Err(_) => tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            %protocol,
+                            ?request_id,
+                            "timed out while sending response",
+                        ),
+                        Ok(Ok(_)) => feedback.take().map_or((), |feedback| {
+                            let _ = feedback.send(());
+                        }),
+                        Ok(Err(error)) => tracing::trace!(
+                        target: LOG_TARGET,
+                            ?peer,
+                            %protocol,
+                            ?request_id,
+                            ?error,
+                            "failed to send request to peer",
+                        ),
                     }
                 }
             }
