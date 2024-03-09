@@ -37,7 +37,10 @@ use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 /// Log target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::identify";
@@ -247,8 +250,26 @@ impl Identify {
         identify.encode(&mut msg).expect("`msg` to have enough capacity");
 
         self.pending_inbound.push(Box::pin(async move {
-            if let Err(error) = substream.send_framed(msg.into()).await {
-                tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to send ipfs identify response");
+            match tokio::time::timeout(Duration::from_secs(10), substream.send_framed(msg.into()))
+                .await
+            {
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?error,
+                        "timed out while sending ipfs identify response",
+                    );
+                }
+                Ok(Err(error)) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?error,
+                        "failed to send ipfs identify response",
+                    );
+                }
+                Ok(_) => {}
             }
         }))
     }
@@ -270,9 +291,17 @@ impl Identify {
         );
 
         self.pending_outbound.push(Box::pin(async move {
-            let payload = substream.next().await.ok_or(Error::SubstreamError(
-                SubstreamError::ReadFailure(Some(substream_id)),
-            ))??;
+            let payload =
+                match tokio::time::timeout(Duration::from_secs(10), substream.next()).await {
+                    Err(_) => return Err(Error::Timeout),
+                    Ok(None) =>
+                        return Err(Error::SubstreamError(SubstreamError::ReadFailure(Some(
+                            substream_id,
+                        )))),
+                    Ok(Some(Err(error))) => return Err(error),
+                    Ok(Some(Ok(payload))) => payload,
+                };
+
             let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
 
             tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
