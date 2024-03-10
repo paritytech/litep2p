@@ -1907,7 +1907,7 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
 
     loop {
         match litep2p1.next_event().await {
-            Some(Litep2pEvent::ConnectionClosed { peer }) => {
+            Some(Litep2pEvent::ConnectionClosed { peer, .. }) => {
                 assert_eq!(peer, peer2);
                 break;
             }
