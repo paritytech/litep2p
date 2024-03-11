@@ -169,7 +169,7 @@ pub enum ConnectionEvent {
     /// If `NotificationProtocol` requested [`Connection`] to be closed, it doesn't need to be
     /// notified. If, on the other hand, connection closes because it encountered an error or one
     /// of the substreams was closed, `NotificationProtocol` must be informed so it can inform the
-    /// user. If the connection should be closed because [`Connection`] encountered an error
+    /// user.
     CloseConnection {
         /// Whether to notify `NotificationProtocol` or not.
         notify: NotifyProtocol,
