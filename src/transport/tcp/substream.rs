@@ -36,7 +36,7 @@ use std::{
 #[derive(Debug)]
 pub struct Substream {
     /// Underlying socket.
-    io: Compat<yamux::Stream>,
+    io: Compat<crate::yamux::Stream>,
 
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
@@ -47,7 +47,11 @@ pub struct Substream {
 
 impl Substream {
     /// Create new [`Substream`].
-    pub fn new(io: Compat<yamux::Stream>, bandwidth_sink: BandwidthSink, _permit: Permit) -> Self {
+    pub fn new(
+        io: Compat<crate::yamux::Stream>,
+        bandwidth_sink: BandwidthSink,
+        _permit: Permit,
+    ) -> Self {
         Self {
             io,
             bandwidth_sink,

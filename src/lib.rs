@@ -48,7 +48,7 @@ pub use error::Error;
 pub use peer_id::PeerId;
 pub use types::protocol::ProtocolName;
 
-pub use yamux;
+// pub use yamux;
 
 pub(crate) mod peer_id;
 
@@ -61,6 +61,7 @@ pub mod protocol;
 pub mod substream;
 pub mod transport;
 pub mod types;
+pub mod yamux;
 
 mod bandwidth;
 mod mock;
