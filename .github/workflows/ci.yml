@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Disable previous runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: "CI"
+    container:
+      image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
+    steps:
+      - uses: actions/checkout@v3
+
+      # uncomment if needed
+      # - name: fmt
+      #   run: |
+      #     cargo fmt --all --check
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.5.0
+        with:
+          cache-on-failure: true
+          cache-all-crates: true
+
+      - name: check
+        run: cargo check
+
+      - name: test
+        run: cargo test
+
+      - name: doc
+        run: cargo doc
+
+      - name: clippy
+        continue-on-error: true
+        run: cargo clippy
