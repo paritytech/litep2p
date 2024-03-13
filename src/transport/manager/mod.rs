@@ -460,7 +460,7 @@ impl TransportManager {
             return Err(Error::NoAddressAvailable(peer));
         }
 
-        for (_, record) in &records {
+        for record in records.values() {
             if self.listen_addresses.read().contains(record.as_ref()) {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -1067,7 +1067,7 @@ impl TransportManager {
                     );
 
                     let (record, dial_record) = match dial_record.take() {
-                        Some(mut dial_record) => {
+                        Some(mut dial_record) =>
                             if dial_record.address() == endpoint.address() {
                                 dial_record.set_connection_id(endpoint.connection_id());
                                 (dial_record, None)
@@ -1081,8 +1081,7 @@ impl TransportManager {
                                     ),
                                     Some(dial_record),
                                 )
-                            }
-                        }
+                            },
                         None => (
                             AddressRecord::new(
                                 &peer,
