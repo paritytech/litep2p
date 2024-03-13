@@ -85,8 +85,8 @@ pub(crate) enum Flag {
 
 /// A multiplexed Yamux stream.
 ///
-/// Streams are created either outbound via [`crate::Control::open_stream`]
-/// or inbound via [`crate::Connection::next_stream`].
+/// Streams are created either outbound via [`crate::yamux::Control::open_stream`]
+/// or inbound via [`crate::yamux::Connection::poll_next_inbound`].
 ///
 /// `Stream` implements [`AsyncRead`] and [`AsyncWrite`] and also
 /// [`futures::stream::Stream`].
