@@ -13,6 +13,7 @@ concurrency:
 jobs:
   ci:
     name: "CI"
+    runs-on: ubuntu-latest
     container:
       image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
     steps:
