@@ -18,6 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(clippy::large_enum_variant)]
+#![allow(clippy::result_large_err)]
+
 use crate::{
     config::Litep2pConfig,
     protocol::{
