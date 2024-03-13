@@ -347,14 +347,12 @@ impl Substream {
 
         match &mut self.substream {
             #[cfg(test)]
-            SubstreamType::Mock(ref mut substream) => {
-                futures::SinkExt::send(substream, bytes).await
-            }
+            SubstreamType::Mock(ref mut substream) =>
+                futures::SinkExt::send(substream, bytes).await,
             SubstreamType::Tcp(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) => {
-                    Self::send_identity_payload(substream, payload_size, bytes).await
-                }
+                ProtocolCodec::Identity(payload_size) =>
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
                     check_size!(max_size, bytes.len());
 
@@ -376,9 +374,8 @@ impl Substream {
             },
             SubstreamType::WebSocket(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) => {
-                    Self::send_identity_payload(substream, payload_size, bytes).await
-                }
+                ProtocolCodec::Identity(payload_size) =>
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
                     check_size!(max_size, bytes.len());
 
@@ -400,9 +397,8 @@ impl Substream {
             },
             SubstreamType::Quic(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) => {
-                    Self::send_identity_payload(substream, payload_size, bytes).await
-                }
+                ProtocolCodec::Identity(payload_size) =>
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
                     check_size!(max_size, bytes.len());
 
@@ -580,9 +576,8 @@ impl Stream for Substream {
 
                                         match read_payload_size(&this.size_vec[..this.offset]) {
                                             Err(ReadError::NotEnoughBytes) => continue,
-                                            Err(_) => {
-                                                return Poll::Ready(Some(Err(Error::InvalidData)))
-                                            }
+                                            Err(_) =>
+                                                return Poll::Ready(Some(Err(Error::InvalidData))),
                                             Ok((size, num_bytes)) => {
                                                 debug_assert_eq!(num_bytes, this.offset);
 
@@ -750,6 +745,11 @@ where
     pub fn len(&self) -> usize {
         self.substreams.len()
     }
+
+    /// Returns `true` if [`SubstreamSet`] contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.substreams.is_empty()
+    }
 }
 
 impl<K, S> Stream for SubstreamSet<K, S>
@@ -767,12 +767,11 @@ where
             match Pin::new(&mut substream).poll_next(cx) {
                 Poll::Pending => continue,
                 Poll::Ready(Some(data)) => return Poll::Ready(Some((*key, data))),
-                Poll::Ready(None) => {
+                Poll::Ready(None) =>
                     return Poll::Ready(Some((
                         *key,
                         Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
-                    )))
-                }
+                    ))),
             }
         }
 

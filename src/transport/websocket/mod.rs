@@ -85,6 +85,20 @@ impl WebSocketError {
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::websocket";
 
+type PendingRawConnections = FuturesUnordered<
+    BoxFuture<
+        'static,
+        Result<
+            (
+                ConnectionId,
+                Multiaddr,
+                WebSocketStream<MaybeTlsStream<TcpStream>>,
+            ),
+            ConnectionId,
+        >,
+    >,
+>;
+
 /// WebSocket transport.
 pub(crate) struct WebSocketTransport {
     /// Transport context.
@@ -107,19 +121,7 @@ pub(crate) struct WebSocketTransport {
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedConnection, WebSocketError>>>,
 
     /// Pending raw, unnegotiated connections.
-    pending_raw_connections: FuturesUnordered<
-        BoxFuture<
-            'static,
-            Result<
-                (
-                    ConnectionId,
-                    Multiaddr,
-                    WebSocketStream<MaybeTlsStream<TcpStream>>,
-                ),
-                ConnectionId,
-            >,
-        >,
-    >,
+    pending_raw_connections: PendingRawConnections,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (WebSocketStream<MaybeTlsStream<TcpStream>>, Multiaddr)>,
@@ -142,9 +144,8 @@ impl WebSocketTransport {
         {
             Protocol::Ip4(address) => address.to_string(),
             Protocol::Ip6(address) => format!("[{}]", address),
-            Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) => {
-                address.to_string()
-            }
+            Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) =>
+                address.to_string(),
 
             _ => return Err(Error::TransportNotSupported(address)),
         };
@@ -347,7 +348,7 @@ impl Transport for WebSocketTransport {
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
         self.pending_connections.push(Box::pin(async move {
-            match tokio::time::timeout(connection_open_timeout, async move {
+            let future = async move {
                 let (_, stream) = WebSocketTransport::dial_peer(
                     address.clone(),
                     dial_addresses,
@@ -369,9 +370,9 @@ impl Transport for WebSocketTransport {
                 )
                 .await
                 .map_err(|error| WebSocketError::new(error, Some(connection_id)))
-            })
-            .await
-            {
+            };
+
+            match tokio::time::timeout(connection_open_timeout, future).await {
                 Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection_id))),
                 Ok(Err(error)) => Err(error),
                 Ok(Ok(result)) => Ok(result),
@@ -583,11 +584,10 @@ impl Stream for WebSocketTransport {
                         }));
                     }
                 }
-                Err(connection_id) => {
+                Err(connection_id) =>
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
-                    }
-                }
+                    },
             }
         }
 
@@ -605,13 +605,12 @@ impl Stream for WebSocketTransport {
                 }
                 Err(error) => match error.connection_id {
                     Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                        Some(address) => {
+                        Some(address) =>
                             return Poll::Ready(Some(TransportEvent::DialFailure {
                                 connection_id,
                                 address,
                                 error: error.error,
-                            }))
-                        }
+                            })),
                         None => {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
                         }

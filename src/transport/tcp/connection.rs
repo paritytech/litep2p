@@ -552,9 +552,8 @@ impl TcpConnection {
                                 }
                             };
 
-                            match (protocol, substream_id) {
-                                (Some(protocol), Some(substream_id)) => {
-                                    if let Err(error) = self.protocol_set
+                            if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
+                                if let Err(error) = self.protocol_set
                                         .report_substream_open_failure(protocol, substream_id, error)
                                         .await
                                     {
@@ -564,8 +563,6 @@ impl TcpConnection {
                                             "failed to register opened substream to protocol"
                                         );
                                     }
-                                }
-                                _ => {}
                             }
                         }
                         Ok(substream) => {

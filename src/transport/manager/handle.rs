@@ -106,16 +106,14 @@ impl TransportManagerHandle {
         let mut iter = address.iter();
 
         match iter.next() {
-            Some(Protocol::Ip4(address)) => {
+            Some(Protocol::Ip4(address)) =>
                 if address.is_unspecified() {
                     return false;
-                }
-            }
-            Some(Protocol::Ip6(address)) => {
+                },
+            Some(Protocol::Ip6(address)) =>
                 if address.is_unspecified() {
                     return false;
-                }
-            }
+                },
             Some(Protocol::Dns(_)) | Some(Protocol::Dns4(_)) | Some(Protocol::Dns6(_)) => {}
             _ => return false,
         }
@@ -128,18 +126,17 @@ impl TransportManagerHandle {
             ) {
                 (Some(Protocol::Ws(_)), true) => true,
                 (Some(Protocol::Wss(_)), true) => true,
-                (Some(Protocol::P2p(_)), _) => {
-                    self.supported_transport.contains(&SupportedTransport::Tcp)
-                }
+                (Some(Protocol::P2p(_)), _) =>
+                    self.supported_transport.contains(&SupportedTransport::Tcp),
                 _ => false,
             },
-            Some(Protocol::Udp(_)) => match (
-                iter.next(),
-                self.supported_transport.contains(&SupportedTransport::Quic),
-            ) {
-                (Some(Protocol::QuicV1), true) => true,
-                _ => false,
-            },
+            Some(Protocol::Udp(_)) => matches!(
+                (
+                    iter.next(),
+                    self.supported_transport.contains(&SupportedTransport::Quic),
+                ),
+                (Some(Protocol::QuicV1), true)
+            ),
             _ => false,
         }
     }
@@ -192,13 +189,12 @@ impl TransportManagerHandle {
         );
 
         match peers.get_mut(peer) {
-            Some(context) => {
+            Some(context) =>
                 for record in addresses {
                     if !context.addresses.contains(record.address()) {
                         context.addresses.insert(record);
                     }
-                }
-            }
+                },
             None => {
                 peers.insert(
                     *peer,

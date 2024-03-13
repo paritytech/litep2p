@@ -81,7 +81,7 @@ pub(super) enum InnerRequestResponseEvent {
         request: Vec<u8>,
 
         /// `oneshot::Sender` for response.
-        response_tx: oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>,
+        response_tx: PendingResponses,
     },
 
     /// Response received.
@@ -253,6 +253,8 @@ pub(crate) enum RequestResponseCommand {
     },
 }
 
+pub(crate) type PendingResponses = oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>;
+
 /// Handle given to the user protocol which allows it to interact with the request-response
 /// protocol.
 pub struct RequestResponseHandle {
@@ -263,8 +265,7 @@ pub struct RequestResponseHandle {
     command_tx: Sender<RequestResponseCommand>,
 
     /// Pending responses.
-    pending_responses:
-        HashMap<RequestId, oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>>,
+    pending_responses: HashMap<RequestId, PendingResponses>,
 
     /// Next ephemeral request ID.
     next_request_id: Arc<AtomicUsize>,
@@ -442,7 +443,7 @@ impl RequestResponseHandle {
             Some(response_tx) => {
                 tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
 
-                if let Err(_) = response_tx.send((response, None)) {
+                if response_tx.send((response, None)).is_err() {
                     tracing::debug!(target: LOG_TARGET, ?request_id, "substream closed");
                 }
             }
@@ -470,7 +471,7 @@ impl RequestResponseHandle {
             Some(response_tx) => {
                 tracing::trace!(target: LOG_TARGET, ?request_id, "send response to peer");
 
-                if let Err(_) = response_tx.send((response, Some(feedback))) {
+                if response_tx.send((response, Some(feedback))).is_err() {
                     tracing::debug!(target: LOG_TARGET, ?request_id, "substream closed");
                 }
             }

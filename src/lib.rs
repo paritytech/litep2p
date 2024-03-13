@@ -23,6 +23,8 @@
 #![allow(clippy::result_unit_err)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::should_implement_trait)]
+#![allow(clippy::assign_op_pattern)]
+#![allow(clippy::derived_hash_with_manual_eq)]
 
 use crate::{
     config::Litep2pConfig,

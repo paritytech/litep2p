@@ -67,6 +67,10 @@ pub mod config;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::tcp";
 
+type PendingRawConnections = FuturesUnordered<
+    BoxFuture<'static, Result<(ConnectionId, Multiaddr, TcpStream), ConnectionId>>,
+>;
+
 /// TCP transport.
 pub(crate) struct TcpTransport {
     /// Transport context.
@@ -89,9 +93,7 @@ pub(crate) struct TcpTransport {
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, Error)>>>,
 
     /// Pending raw, unnegotiated connections.
-    pending_raw_connections: FuturesUnordered<
-        BoxFuture<'static, Result<(ConnectionId, Multiaddr, TcpStream), ConnectionId>>,
-    >,
+    pending_raw_connections: PendingRawConnections,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (TcpStream, Multiaddr)>,
@@ -482,11 +484,10 @@ impl Stream for TcpTransport {
                         }));
                     }
                 }
-                Err(connection_id) => {
+                Err(connection_id) =>
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
-                    }
-                }
+                    },
             }
         }
 

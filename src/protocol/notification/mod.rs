@@ -1620,8 +1620,7 @@ impl NotificationProtocol {
                 }
             },
             // TODO: this could be combined with `Negotiation`
-            peer = self.timers.next(), if !self.timers.is_empty() => match peer {
-                Some(peer) => {
+            peer = self.timers.next(), if !self.timers.is_empty() => if let Some(peer) = peer {
                     match self.peers.get_mut(&peer) {
                         Some(context) => match std::mem::replace(&mut context.state, PeerState::Poisoned) {
                             PeerState::Validating {
@@ -1670,8 +1669,6 @@ impl NotificationProtocol {
                             "peer doesn't exist anymore",
                         ),
                     }
-                }
-                None => (),
             },
             event = self.service.next() => match event {
                 Some(TransportEvent::ConnectionEstablished { peer, .. }) => {

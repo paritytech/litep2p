@@ -66,6 +66,10 @@ struct NegotiatedConnection {
     connection: Connection,
 }
 
+type PendingRawConnections = FuturesUnordered<
+    BoxFuture<'static, Result<(ConnectionId, Multiaddr, NegotiatedConnection), ConnectionId>>,
+>;
+
 /// QUIC transport object.
 pub(crate) struct QuicTransport {
     /// Transport handle.
@@ -88,9 +92,7 @@ pub(crate) struct QuicTransport {
     pending_open: HashMap<ConnectionId, (NegotiatedConnection, Litep2pEndpoint)>,
 
     /// Pending raw, unnegotiated connections.
-    pending_raw_connections: FuturesUnordered<
-        BoxFuture<'static, Result<(ConnectionId, Multiaddr, NegotiatedConnection), ConnectionId>>,
-    >,
+    pending_raw_connections: PendingRawConnections,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (NegotiatedConnection, Multiaddr)>,
@@ -322,18 +324,15 @@ impl Transport for QuicTransport {
                     client_config.transport_config(Arc::new(transport_config));
 
                     let client_listen_address = match address.iter().next() {
-                        Some(Protocol::Ip6(_)) => {
-                            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
-                        }
-                        Some(Protocol::Ip4(_)) => {
-                            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
-                        }
-                        _ => {
+                        Some(Protocol::Ip6(_)) =>
+                            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+                        Some(Protocol::Ip4(_)) =>
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+                        _ =>
                             return (
                                 connection_id,
                                 Err(Error::AddressError(AddressError::InvalidProtocol)),
-                            )
-                        }
+                            ),
                     };
 
                     let client = match Endpoint::client(client_listen_address) {
@@ -452,20 +451,18 @@ impl Stream for QuicTransport {
                         }));
                     }
                 }
-                Err(connection_id) => {
+                Err(connection_id) =>
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
-                    }
-                }
+                    },
             }
         }
 
         while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
             let (connection_id, result) = connection;
 
-            match self.on_connection_established(connection_id, result) {
-                Some(event) => return Poll::Ready(Some(event)),
-                None => {}
+            if let Some(event) = self.on_connection_established(connection_id, result) {
+                return Poll::Ready(Some(event));
             }
         }
 

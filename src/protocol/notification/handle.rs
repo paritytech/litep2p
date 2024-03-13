@@ -490,22 +490,24 @@ impl Stream for NotificationHandle {
                             handshake,
                         }));
                     }
-                    InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
+                    InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
                         return Poll::Ready(Some(
                             NotificationEvent::NotificationStreamOpenFailure { peer, error },
-                        )),
+                        ))
+                    }
                 },
             }
 
             match futures::ready!(self.notif_rx.poll_recv(cx)) {
                 None => return Poll::Ready(None),
-                Some((peer, notification)) =>
+                Some((peer, notification)) => {
                     if self.peers.contains_key(&peer) {
                         return Poll::Ready(Some(NotificationEvent::NotificationReceived {
                             peer,
                             notification,
                         }));
-                    },
+                    }
+                }
             }
         }
     }

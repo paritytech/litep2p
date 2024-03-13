@@ -214,10 +214,11 @@ impl Stream for Connection {
 
                     match future.poll_unpin(cx) {
                         Poll::Pending => None,
-                        Poll::Ready(None) =>
+                        Poll::Ready(None) => {
                             return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                                 notify: NotifyProtocol::Yes,
-                            })),
+                            }))
+                        }
                         Poll::Ready(Some(notification)) => Some(notification),
                     }
                 }
@@ -233,10 +234,11 @@ impl Stream for Connection {
                     this.next_notification = Some(notification);
                     break;
                 }
-                Poll::Ready(Err(_)) =>
+                Poll::Ready(Err(_)) => {
                     return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                         notify: NotifyProtocol::Yes,
-                    })),
+                    }))
+                }
             }
 
             if this.outbound.start_send_unpin(notification.into()).is_err() {
@@ -247,10 +249,11 @@ impl Stream for Connection {
         }
 
         match this.outbound.poll_flush_unpin(cx) {
-            Poll::Ready(Err(_)) =>
+            Poll::Ready(Err(_)) => {
                 return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                     notify: NotifyProtocol::Yes,
-                })),
+                }))
+            }
             Poll::Ready(Ok(())) | Poll::Pending => {}
         }
 
@@ -264,8 +267,9 @@ impl Stream for Connection {
             None | Some(Err(_)) => Poll::Ready(Some(ConnectionEvent::CloseConnection {
                 notify: NotifyProtocol::Yes,
             })),
-            Some(Ok(notification)) =>
-                Poll::Ready(Some(ConnectionEvent::NotificationReceived { notification })),
+            Some(Ok(notification)) => {
+                Poll::Ready(Some(ConnectionEvent::NotificationReceived { notification }))
+            }
         }
     }
 }

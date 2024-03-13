@@ -289,10 +289,11 @@ impl Identify {
             let payload =
                 match tokio::time::timeout(Duration::from_secs(10), substream.next()).await {
                     Err(_) => return Err(Error::Timeout),
-                    Ok(None) =>
+                    Ok(None) => {
                         return Err(Error::SubstreamError(SubstreamError::ReadFailure(Some(
                             substream_id,
-                        )))),
+                        ))))
+                    }
                     Ok(Some(Err(error))) => return Err(error),
                     Ok(Some(Ok(payload))) => payload,
                 };

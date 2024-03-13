@@ -24,16 +24,17 @@ use crate::{
     error::{Error, NegotiationError},
     multistream_select::NegotiationError::Failed as MultistreamFailed,
     protocol::{
-        request_response::handle::{InnerRequestResponseEvent, RequestResponseCommand},
+        request_response::handle::{
+            InnerRequestResponseEvent, PendingResponses, RequestResponseCommand,
+        },
         Direction, TransportEvent, TransportService,
     },
     substream::{Substream, SubstreamSet},
     types::{protocol::ProtocolName, RequestId, SubstreamId},
     PeerId,
 };
-
 use bytes::BytesMut;
-use futures::{channel, future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
@@ -351,9 +352,7 @@ impl RequestResponseProtocol {
         let request = match (&fallback_protocol, fallback) {
             (Some(protocol), Some((fallback_protocol, fallback_request)))
                 if protocol == &fallback_protocol =>
-            {
-                fallback_request
-            }
+                fallback_request,
             _ => request,
         };
 
@@ -500,10 +499,7 @@ impl RequestResponseProtocol {
         // the input is either a response (succes) or rejection (failure) which is communicated
         // by sending the response over the `oneshot::Sender` or closing it, respectively.
         let timeout = self.timeout;
-        let (response_tx, rx): (
-            oneshot::Sender<(Vec<u8>, Option<channel::oneshot::Sender<()>>)>,
-            _,
-        ) = oneshot::channel();
+        let (response_tx, rx): (PendingResponses, _) = oneshot::channel();
 
         self.pending_outbound_responses.push(Box::pin(async move {
             match rx.await {
