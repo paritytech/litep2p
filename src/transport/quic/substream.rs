@@ -76,7 +76,7 @@ impl Substream {
                 self.bandwidth_sink.increase_outbound(nwritten);
                 Ok(())
             }
-            Err(error) => return Err(error),
+            Err(error) => Err(error),
         }
     }
 }

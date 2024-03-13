@@ -388,8 +388,9 @@ impl Error for NegotiationError {
 impl fmt::Display for NegotiationError {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
-            NegotiationError::ProtocolError(p) =>
-                fmt.write_fmt(format_args!("Protocol error: {p}")),
+            NegotiationError::ProtocolError(p) => {
+                fmt.write_fmt(format_args!("Protocol error: {p}"))
+            }
             NegotiationError::Failed => fmt.write_str("Protocol negotiation failed."),
         }
     }

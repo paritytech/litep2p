@@ -88,18 +88,16 @@ impl QueryExecutor {
     pub fn send_message(&mut self, peer: PeerId, message: Bytes, mut substream: Substream) {
         self.futures.push(Box::pin(async move {
             match substream.send_framed(message).await {
-                Ok(_) =>
-                    return QueryContext {
-                        peer,
-                        query_id: None,
-                        result: QueryResult::SendSuccess { substream },
-                    },
-                Err(_) =>
-                    return QueryContext {
-                        peer,
-                        query_id: None,
-                        result: QueryResult::SubstreamClosed,
-                    },
+                Ok(_) => QueryContext {
+                    peer,
+                    query_id: None,
+                    result: QueryResult::SendSuccess { substream },
+                },
+                Err(_) => QueryContext {
+                    peer,
+                    query_id: None,
+                    result: QueryResult::SubstreamClosed,
+                },
             }
         }));
     }
@@ -113,24 +111,21 @@ impl QueryExecutor {
     ) {
         self.futures.push(Box::pin(async move {
             match tokio::time::timeout(READ_TIMEOUT, substream.next()).await {
-                Err(_) =>
-                    return QueryContext {
-                        peer,
-                        query_id,
-                        result: QueryResult::Timeout,
-                    },
-                Ok(Some(Ok(message))) =>
-                    return QueryContext {
-                        peer,
-                        query_id,
-                        result: QueryResult::ReadSuccess { substream, message },
-                    },
-                Ok(None) | Ok(Some(Err(_))) =>
-                    return QueryContext {
-                        peer,
-                        query_id,
-                        result: QueryResult::SubstreamClosed,
-                    },
+                Err(_) => QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::Timeout,
+                },
+                Ok(Some(Ok(message))) => QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::ReadSuccess { substream, message },
+                },
+                Ok(None) | Ok(Some(Err(_))) => QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::SubstreamClosed,
+                },
             }
         }));
     }
@@ -154,24 +149,21 @@ impl QueryExecutor {
             }
 
             match tokio::time::timeout(READ_TIMEOUT, substream.next()).await {
-                Err(_) =>
-                    return QueryContext {
-                        peer,
-                        query_id,
-                        result: QueryResult::Timeout,
-                    },
-                Ok(Some(Ok(message))) =>
-                    return QueryContext {
-                        peer,
-                        query_id,
-                        result: QueryResult::ReadSuccess { substream, message },
-                    },
-                Ok(None) | Ok(Some(Err(_))) =>
-                    return QueryContext {
-                        peer,
-                        query_id,
-                        result: QueryResult::SubstreamClosed,
-                    },
+                Err(_) => QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::Timeout,
+                },
+                Ok(Some(Ok(message))) => QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::ReadSuccess { substream, message },
+                },
+                Ok(None) | Ok(Some(Err(_))) => QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::SubstreamClosed,
+                },
             }
         }));
     }

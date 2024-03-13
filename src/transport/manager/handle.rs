@@ -106,29 +106,32 @@ impl TransportManagerHandle {
         let mut iter = address.iter();
 
         match iter.next() {
-            Some(Protocol::Ip4(address)) =>
+            Some(Protocol::Ip4(address)) => {
                 if address.is_unspecified() {
                     return false;
-                },
-            Some(Protocol::Ip6(address)) =>
+                }
+            }
+            Some(Protocol::Ip6(address)) => {
                 if address.is_unspecified() {
                     return false;
-                },
+                }
+            }
             Some(Protocol::Dns(_)) | Some(Protocol::Dns4(_)) | Some(Protocol::Dns6(_)) => {}
             _ => return false,
         }
 
         match iter.next() {
-            None => return false,
+            None => false,
             Some(Protocol::Tcp(_)) => match (
                 iter.next(),
                 self.supported_transport.contains(&SupportedTransport::WebSocket),
             ) {
                 (Some(Protocol::Ws(_)), true) => true,
                 (Some(Protocol::Wss(_)), true) => true,
-                (Some(Protocol::P2p(_)), _) =>
-                    self.supported_transport.contains(&SupportedTransport::Tcp),
-                _ => return false,
+                (Some(Protocol::P2p(_)), _) => {
+                    self.supported_transport.contains(&SupportedTransport::Tcp)
+                }
+                _ => false,
             },
             Some(Protocol::Udp(_)) => match (
                 iter.next(),
@@ -188,19 +191,20 @@ impl TransportManagerHandle {
             "add known addresses",
         );
 
-        match peers.get_mut(&peer) {
-            Some(context) =>
+        match peers.get_mut(peer) {
+            Some(context) => {
                 for record in addresses {
                     if !context.addresses.contains(record.address()) {
                         context.addresses.insert(record);
                     }
-                },
+                }
+            }
             None => {
                 peers.insert(
                     *peer,
                     PeerContext {
                         state: PeerState::Disconnected { dial_record: None },
-                        addresses: AddressStore::from_iter(addresses.into_iter()),
+                        addresses: AddressStore::from_iter(addresses),
                         secondary_connection: None,
                     },
                 );
@@ -219,7 +223,7 @@ impl TransportManagerHandle {
         }
 
         {
-            match self.peers.read().get(&peer) {
+            match self.peers.read().get(peer) {
                 Some(PeerContext {
                     state: PeerState::Connected { .. },
                     ..

@@ -104,7 +104,7 @@ impl QuicTransport {
     fn extract_peer_id(connection: &Connection) -> Option<PeerId> {
         let certificates: Box<Vec<rustls::Certificate>> =
             connection.peer_identity()?.downcast().ok()?;
-        let p2p_cert = crate::crypto::tls::certificate::parse(certificates.get(0)?)
+        let p2p_cert = crate::crypto::tls::certificate::parse(certificates.first()?)
             .expect("the certificate was validated during TLS handshake; qed");
 
         Some(p2p_cert.peer_id())
@@ -181,7 +181,7 @@ impl TransportBuilder for QuicTransport {
 
         let (listener, listen_addresses) = QuicListener::new(
             &context.keypair,
-            std::mem::replace(&mut config.listen_addresses, Vec::new()),
+            std::mem::take(&mut config.listen_addresses),
         )?;
 
         Ok((
@@ -322,15 +322,18 @@ impl Transport for QuicTransport {
                     client_config.transport_config(Arc::new(transport_config));
 
                     let client_listen_address = match address.iter().next() {
-                        Some(Protocol::Ip6(_)) =>
-                            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-                        Some(Protocol::Ip4(_)) =>
-                            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-                        _ =>
+                        Some(Protocol::Ip6(_)) => {
+                            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
+                        }
+                        Some(Protocol::Ip4(_)) => {
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
+                        }
+                        _ => {
                             return (
                                 connection_id,
                                 Err(Error::AddressError(AddressError::InvalidProtocol)),
-                            ),
+                            )
+                        }
                     };
 
                     let client = match Endpoint::client(client_listen_address) {
@@ -449,10 +452,11 @@ impl Stream for QuicTransport {
                         }));
                     }
                 }
-                Err(connection_id) =>
+                Err(connection_id) => {
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
-                    },
+                    }
+                }
             }
         }
 

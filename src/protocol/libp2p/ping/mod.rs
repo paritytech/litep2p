@@ -126,7 +126,7 @@ impl Ping {
         self.pending_outbound.push(Box::pin(async move {
             let future = async move {
                 // TODO: generate random payload and verify it
-                let _ = substream.send_framed(vec![0u8; 32].into()).await?;
+                substream.send_framed(vec![0u8; 32].into()).await?;
                 let now = Instant::now();
                 let _ = substream.next().await.ok_or(Error::SubstreamError(
                     SubstreamError::ReadFailure(Some(substream_id)),
@@ -137,8 +137,8 @@ impl Ping {
             };
 
             match tokio::time::timeout(Duration::from_secs(10), future).await {
-                Err(_) => return Err(Error::Timeout),
-                Ok(Err(error)) => return Err(error),
+                Err(_) => Err(Error::Timeout),
+                Ok(Err(error)) => Err(error),
                 Ok(Ok(elapsed)) => Ok((peer, elapsed)),
             }
         }));
@@ -161,8 +161,8 @@ impl Ping {
             };
 
             match tokio::time::timeout(Duration::from_secs(10), future).await {
-                Err(_) => return Err(Error::Timeout),
-                Ok(Err(error)) => return Err(error),
+                Err(_) => Err(Error::Timeout),
+                Ok(Err(error)) => Err(error),
                 Ok(Ok(())) => Ok(()),
             }
         }));

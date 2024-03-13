@@ -28,6 +28,12 @@ pub mod protocol;
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct SubstreamId(usize);
 
+impl Default for SubstreamId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubstreamId {
     /// Create new [`SubstreamId`].
     pub fn new() -> Self {
@@ -54,6 +60,12 @@ impl RequestId {
 /// Connection ID.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct ConnectionId(usize);
+
+impl Default for ConnectionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ConnectionId {
     /// Create new [`ConnectionId`].

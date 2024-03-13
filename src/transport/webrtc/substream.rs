@@ -87,8 +87,8 @@ impl Sink<bytes::Bytes> for Substream {
 
     fn start_send(mut self: Pin<&mut Self>, item: bytes::Bytes) -> Result<(), Error> {
         let item: Vec<u8> = match self.codec.as_ref().expect("codec to exist") {
-            ProtocolCodec::Identity(_) => Identity::encode(item)?.into(),
-            ProtocolCodec::UnsignedVarint(_) => UnsignedVarint::encode(item)?.into(),
+            ProtocolCodec::Identity(_) => Identity::encode(item)?,
+            ProtocolCodec::UnsignedVarint(_) => UnsignedVarint::encode(item)?,
             ProtocolCodec::Unspecified => unreachable!(), // TODO: may not be correct
         };
         let id = self.id;

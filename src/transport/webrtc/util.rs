@@ -84,7 +84,7 @@ impl WebRtcMessage {
                 payload: message.message,
                 flags: message.flag,
             }),
-            Err(_) => return Err(Error::InvalidData),
+            Err(_) => Err(Error::InvalidData),
         }
     }
 }

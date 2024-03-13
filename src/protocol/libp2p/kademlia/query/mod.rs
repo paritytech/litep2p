@@ -272,7 +272,6 @@ impl QueryEngine {
         match self.queries.get_mut(&query) {
             None => {
                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                return;
             }
             Some(QueryType::FindNode { context }) => {
                 context.register_response_failure(peer);
@@ -293,7 +292,6 @@ impl QueryEngine {
         match self.queries.get_mut(&query) {
             None => {
                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                return;
             }
             Some(QueryType::FindNode { context }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
@@ -323,11 +321,11 @@ impl QueryEngine {
         match self.queries.get_mut(query) {
             None => {
                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                return None;
+                None
             }
-            Some(QueryType::FindNode { context }) => return context.next_peer_action(peer),
-            Some(QueryType::PutRecord { context, .. }) => return context.next_peer_action(peer),
-            Some(QueryType::GetRecord { context }) => return context.next_peer_action(peer),
+            Some(QueryType::FindNode { context }) => context.next_peer_action(peer),
+            Some(QueryType::PutRecord { context, .. }) => context.next_peer_action(peer),
+            Some(QueryType::GetRecord { context }) => context.next_peer_action(peer),
         }
     }
 
@@ -338,11 +336,11 @@ impl QueryEngine {
             QueryType::FindNode { context } => QueryAction::FindNodeQuerySucceeded {
                 query,
                 target: context.target.into_preimage(),
-                peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
+                peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
                 record,
-                peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
+                peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.query,
@@ -372,8 +370,9 @@ impl QueryEngine {
                 Some(QueryAction::QuerySucceeded { query }) => {
                     return Some(self.on_query_succeeded(query));
                 }
-                Some(QueryAction::QueryFailed { query }) =>
-                    return Some(self.on_query_failed(query)),
+                Some(QueryAction::QueryFailed { query }) => {
+                    return Some(self.on_query_failed(query))
+                }
                 Some(_) => return action,
                 _ => continue,
             }

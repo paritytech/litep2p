@@ -167,10 +167,11 @@ async fn find_node() {
 
     loop {
         if let Some(KademliaEvent::FindNodeSuccess {
-                target: query_target,
-                peers,
-                ..
-            }) = kad_handle.next().await {
+            target: query_target,
+            peers,
+            ..
+        }) = kad_handle.next().await
+        {
             assert_eq!(target, query_target);
             assert!(!peers.is_empty());
             break;

@@ -224,7 +224,7 @@ impl Kademlia {
                 entry.insert(context);
                 Ok(())
             }
-            Entry::Occupied(_) => return Err(Error::PeerAlreadyExists(peer)),
+            Entry::Occupied(_) => Err(Error::PeerAlreadyExists(peer)),
         }
     }
 
@@ -278,7 +278,7 @@ impl Kademlia {
             .pending_actions
             .remove(&substream_id);
 
-        match std::mem::replace(pending_action, None) {
+        match pending_action.take() {
             None => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -451,7 +451,7 @@ impl Kademlia {
                             "handle `GET_VALUE` request",
                         );
 
-                        let value = self.store.get(key).map(|value| value.clone());
+                        let value = self.store.get(key).cloned();
                         let closest_peers = self
                             .routing_table
                             .closest(Key::from(key.to_vec()), self.replication_factor);

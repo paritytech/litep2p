@@ -192,10 +192,8 @@ impl NoiseContext {
 
         let payload = handshake_schema::NoiseHandshakePayload::decode(inner.as_slice())?;
 
-        Ok(PublicKey::from_protobuf_encoding(
-            &payload.identity_key.ok_or(error::Error::NegotiationError(
-                error::NegotiationError::PeerIdMissing,
-            ))?,
+        PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
+            error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
         )?)
     }
 
@@ -600,7 +598,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
                             return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                         }
                         Ok(nwritten) => {
-                            this.encrypt_buffer[offset + 0] = (nwritten >> 8) as u8;
+                            this.encrypt_buffer[offset] = (nwritten >> 8) as u8;
                             this.encrypt_buffer[offset + 1] = (nwritten & 0xff) as u8;
 
                             if let Some(next_chunk) = chunks.peek() {
@@ -691,7 +689,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
             // write initial message
             let first_message = noise.first_message(Role::Dialer);
             let _ = io.write(&first_message).await?;
-            let _ = io.flush().await?;
+            io.flush().await?;
 
             // read back response which contains the remote peer id
             let message = noise.read_handshake_message(&mut io).await?;
@@ -699,7 +697,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
             // send the final message which contains local peer id
             let second_message = noise.second_message();
             let _ = io.write(&second_message).await?;
-            let _ = io.flush().await?;
+            io.flush().await?;
 
             parse_peer_id(&message)?
         }
@@ -710,7 +708,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
             // send local peer id.
             let second_message = noise.second_message();
             let _ = io.write(&second_message).await?;
-            let _ = io.flush().await?;
+            io.flush().await?;
 
             // read remote's second message which contains their peer id
             let message = noise.read_handshake_message(&mut io).await?;
@@ -795,7 +793,7 @@ mod tests {
 
     #[test]
     fn invalid_peer_id_schema() {
-        match parse_peer_id(&vec![1, 2, 3, 4]).unwrap_err() {
+        match parse_peer_id(&[1, 2, 3, 4]).unwrap_err() {
             crate::Error::ParseError(_) => {}
             _ => panic!("invalid error"),
         }

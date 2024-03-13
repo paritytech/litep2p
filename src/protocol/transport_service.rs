@@ -254,7 +254,7 @@ impl TransportService {
                     "secondary connection closed",
                 );
 
-                return None;
+                None
             }
             connection_state => {
                 tracing::debug!(
@@ -265,7 +265,7 @@ impl TransportService {
                     "connection closed but it doesn't exist",
                 );
 
-                return None;
+                None
             }
         }
     }

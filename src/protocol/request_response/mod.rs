@@ -351,7 +351,9 @@ impl RequestResponseProtocol {
         let request = match (&fallback_protocol, fallback) {
             (Some(protocol), Some((fallback_protocol, fallback_request)))
                 if protocol == &fallback_protocol =>
-                fallback_request,
+            {
+                fallback_request
+            }
             _ => request,
         };
 

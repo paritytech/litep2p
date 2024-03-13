@@ -483,7 +483,7 @@ impl futures::Stream for RequestResponseHandle {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match futures::ready!(self.event_rx.poll_recv(cx)) {
-            None => return Poll::Ready(None),
+            None => Poll::Ready(None),
             Some(event) => match event {
                 InnerRequestResponseEvent::RequestReceived {
                     peer,

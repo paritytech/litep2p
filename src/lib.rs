@@ -219,7 +219,7 @@ impl Litep2p {
             );
 
             let main_protocol =
-                kademlia_config.protocol_names.get(0).expect("protocol name to exist");
+                kademlia_config.protocol_names.first().expect("protocol name to exist");
             let fallback_names = kademlia_config.protocol_names.iter().skip(1).cloned().collect();
 
             let service = transport_manager.register_protocol(
@@ -245,7 +245,7 @@ impl Litep2p {
                 let service = transport_manager.register_protocol(
                     identify_config.protocol.clone(),
                     Vec::new(),
-                    identify_config.codec.clone(),
+                    identify_config.codec,
                 );
                 identify_config.public = Some(litep2p_config.keypair.public().into());
 
@@ -446,18 +446,21 @@ impl Litep2p {
     pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
         loop {
             match self.transport_manager.next().await? {
-                TransportEvent::ConnectionEstablished { peer, endpoint, .. } =>
-                    return Some(Litep2pEvent::ConnectionEstablished { peer, endpoint }),
+                TransportEvent::ConnectionEstablished { peer, endpoint, .. } => {
+                    return Some(Litep2pEvent::ConnectionEstablished { peer, endpoint })
+                }
                 TransportEvent::ConnectionClosed {
                     peer,
                     connection_id,
-                } =>
+                } => {
                     return Some(Litep2pEvent::ConnectionClosed {
                         peer,
                         connection_id,
-                    }),
-                TransportEvent::DialFailure { address, error, .. } =>
-                    return Some(Litep2pEvent::DialFailure { address, error }),
+                    })
+                }
+                TransportEvent::DialFailure { address, error, .. } => {
+                    return Some(Litep2pEvent::DialFailure { address, error })
+                }
                 _ => {}
             }
         }

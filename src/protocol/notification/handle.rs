@@ -403,7 +403,7 @@ impl NotificationHandle {
             Some(sink) => match sink.send_sync_notification(notification) {
                 Ok(()) => Ok(()),
                 Err(error) => match error {
-                    NotificationError::NoConnection => return Err(NotificationError::NoConnection),
+                    NotificationError::NoConnection => Err(NotificationError::NoConnection),
                     NotificationError::ChannelClogged => {
                         let _ = self.clogged.insert(peer).then(|| {
                             self.command_tx.try_send(NotificationCommand::ForceClose { peer })
@@ -439,7 +439,7 @@ impl NotificationHandle {
     ///
     /// `None` is returned if `peer` doesn't exist.
     pub fn notification_sink(&self, peer: PeerId) -> Option<NotificationSink> {
-        self.peers.get(&peer).and_then(|sink| Some(sink.clone()))
+        self.peers.get(&peer).cloned()
     }
 }
 
@@ -494,22 +494,24 @@ impl Stream for NotificationHandle {
                             handshake,
                         }));
                     }
-                    InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
+                    InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
                         return Poll::Ready(Some(
                             NotificationEvent::NotificationStreamOpenFailure { peer, error },
-                        )),
+                        ))
+                    }
                 },
             }
 
             match futures::ready!(self.notif_rx.poll_recv(cx)) {
                 None => return Poll::Ready(None),
-                Some((peer, notification)) =>
+                Some((peer, notification)) => {
                     if self.peers.contains_key(&peer) {
                         return Poll::Ready(Some(NotificationEvent::NotificationReceived {
                             peer,
                             notification,
                         }));
-                    },
+                    }
+                }
             }
         }
     }

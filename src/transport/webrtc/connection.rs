@@ -222,7 +222,7 @@ impl WebRtcConnection {
                     ?error,
                     "`WebRtcConnection::poll_output()` failed",
                 );
-                return Err(Error::WebRtc(error));
+                Err(Error::WebRtc(error))
             }
         }
     }
@@ -243,7 +243,7 @@ impl WebRtcConnection {
                 tracing::debug!(target: LOG_TARGET, source = ?self.peer_address, ?error, "failed to handle data");
                 Error::InputRejected
             }),
-            false => return Err(Error::InputRejected),
+            false => Err(Error::InputRejected),
         }
     }
 
@@ -347,7 +347,7 @@ impl WebRtcConnection {
             .channel(self._noise_channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, payload.as_slice())
-            .map_err(|error| Error::WebRtc(error))?;
+            .map_err(Error::WebRtc)?;
 
         self.state = State::HandshakeSent { handshaker };
         Ok(())
@@ -375,7 +375,7 @@ impl WebRtcConnection {
                     .channel(channel_id)
                     .ok_or(Error::ChannelDoesntExist)?
                     .write(true, message.as_ref())
-                    .map_err(|error| Error::WebRtc(error))?;
+                    .map_err(Error::WebRtc)?;
 
                 self.substreams.insert(
                     channel_id,
@@ -418,7 +418,7 @@ impl WebRtcConnection {
         let mut channel =
             self.rtc.channel(self._noise_channel_id).ok_or(Error::ChannelDoesntExist)?;
 
-        channel.write(true, payload.as_slice()).map_err(|error| Error::WebRtc(error))?;
+        channel.write(true, payload.as_slice()).map_err(Error::WebRtc)?;
 
         let remote_fingerprint = self
             .rtc
@@ -503,7 +503,7 @@ impl WebRtcConnection {
             .channel(d.id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, message.as_ref())
-            .map_err(|error| Error::WebRtc(error))?;
+            .map_err(Error::WebRtc)?;
 
         self.report_open_substream(d.id, protocol).await
 
@@ -551,7 +551,7 @@ impl WebRtcConnection {
                             Ok(WebRtcEvent::Noop)
                         }
                     },
-                    Some(SubstreamState::Poisoned) => return Err(Error::ConnectionClosed),
+                    Some(SubstreamState::Poisoned) => Err(Error::ConnectionClosed),
                     Some(SubstreamState::Opening {
                         ref mut dialer_state,
                         ..
@@ -685,7 +685,7 @@ impl WebRtcConnection {
                                 .channel(channel_id)
                                 .ok_or(Error::ChannelDoesntExist)?
                                 .write(true, message.as_ref())
-                                .map_err(|error| Error::WebRtc(error))?;
+                                .map_err(Error::WebRtc)?;
                         }
                     }
                 }

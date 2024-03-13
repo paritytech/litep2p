@@ -289,9 +289,11 @@ async fn main() {
         }
     });
 
-    for message in [b"hello, world".to_vec(),
+    for message in [
+        b"hello, world".to_vec(),
         b"testing 123".to_vec(),
-        b"goodbye, world".to_vec()] {
+        b"goodbye, world".to_vec(),
+    ] {
         handle1
             .cmd_tx
             .send(CustomProtocolCommand::SendMessage {

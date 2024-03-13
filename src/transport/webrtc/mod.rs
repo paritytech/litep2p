@@ -360,7 +360,7 @@ impl Transport for WebRtcTransport {
             "webrtc cannot dial",
         );
 
-        Err(Error::NotSupported(format!("webrtc cannot dial peers")))
+        Err(Error::NotSupported("webrtc cannot dial peers".to_string()))
     }
 
     fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {

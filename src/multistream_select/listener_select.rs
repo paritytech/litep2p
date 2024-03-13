@@ -138,8 +138,9 @@ where
                         Poll::Ready(Some(Ok(Message::Header(h)))) => match h {
                             HeaderLine::V1 => *this.state = State::SendHeader { io },
                         },
-                        Poll::Ready(Some(Ok(_))) =>
-                            return Poll::Ready(Err(ProtocolError::InvalidMessage.into())),
+                        Poll::Ready(Some(Ok(_))) => {
+                            return Poll::Ready(Err(ProtocolError::InvalidMessage.into()))
+                        }
                         Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(From::from(err))),
                         // Treat EOF error as [`NegotiationError::Failed`], not as
                         // [`NegotiationError::ProtocolError`], allowing dropping or closing an I/O
@@ -356,16 +357,16 @@ pub fn listener_negotiate<'a>(
                 // encode `/multistream-select/1.0.0` header
                 let mut bytes = BytesMut::with_capacity(64);
                 let message = Message::Header(HeaderLine::V1);
-                let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
+                message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
                 let mut header = UnsignedVarint::encode(bytes)?;
 
                 // encode negotiated protocol
                 let mut proto_bytes = BytesMut::with_capacity(512);
                 let message = Message::Protocol(protocol);
-                let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
-                let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
+                message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
+                let mut proto_bytes = UnsignedVarint::encode(proto_bytes)?;
 
-                header.append(&mut proto_bytes.into());
+                header.append(&mut proto_bytes);
 
                 return Ok((supported.clone(), BytesMut::from(&header[..])));
             }

@@ -1393,20 +1393,15 @@ impl NotificationProtocol {
                             let (tx, rx) = oneshot::channel();
                             self.pending_validations.push(Box::pin(async move {
                                 match rx.await {
-                                    Ok(ValidationResult::Accept) =>
-                                        (peer, ValidationResult::Accept),
+                                    Ok(ValidationResult::Accept) => {
+                                        (peer, ValidationResult::Accept)
+                                    }
                                     _ => (peer, ValidationResult::Reject),
                                 }
                             }));
 
                             self.event_handle
-                                .report_inbound_substream(
-                                    protocol,
-                                    fallback,
-                                    peer,
-                                    handshake.into(),
-                                    tx,
-                                )
+                                .report_inbound_substream(protocol, fallback, peer, handshake, tx)
                                 .await;
                         }
                         PeerState::Validating {
@@ -1529,12 +1524,7 @@ impl NotificationProtocol {
                 context.state = PeerState::Open { shutdown };
                 self.event_handle
                     .report_notification_stream_opened(
-                        protocol,
-                        fallback,
-                        direction,
-                        peer,
-                        handshake.into(),
-                        sink,
+                        protocol, fallback, direction, peer, handshake, sink,
                     )
                     .await;
 
@@ -1616,7 +1606,7 @@ impl NotificationProtocol {
                 self.on_handshake_event(peer, event).await;
             }
             event = self.shutdown_rx.recv() => match event {
-                None => return,
+                None => (),
                 Some(peer) => {
                     if let Some(context) = self.peers.get_mut(&peer) {
                         tracing::trace!(
@@ -1681,7 +1671,7 @@ impl NotificationProtocol {
                         ),
                     }
                 }
-                None => return,
+                None => (),
             },
             event = self.service.next() => match event {
                 Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
@@ -1739,7 +1729,7 @@ impl NotificationProtocol {
                     self.on_substream_open_failure(substream, error).await;
                 }
                 Some(TransportEvent::DialFailure { peer, address }) => self.on_dial_failure(peer, address).await,
-                None => return,
+                None => (),
             },
             result = self.pending_validations.select_next_some(), if !self.pending_validations.is_empty() => {
                 if let Err(error) = self.on_validation_result(result.0, result.1).await {
@@ -1755,7 +1745,6 @@ impl NotificationProtocol {
             command = self.command_rx.recv() => match command {
                 None => {
                     tracing::debug!(target: LOG_TARGET, "user protocol has exited, exiting");
-                    return
                 }
                 Some(command) => match command {
                     NotificationCommand::OpenSubstream { peers } => {

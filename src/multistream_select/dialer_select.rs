@@ -272,18 +272,18 @@ impl DialerState {
         // encode `/multistream-select/1.0.0` header
         let mut bytes = BytesMut::with_capacity(64);
         let message = Message::Header(HeaderLine::V1);
-        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
+        message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
         let mut header = UnsignedVarint::encode(bytes)?;
 
         // encode proposed protocol
         let mut proto_bytes = BytesMut::with_capacity(512);
         let message = Message::Protocol(Protocol::try_from(protocol.as_bytes()).unwrap());
-        let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
-        let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
+        message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
+        let mut proto_bytes = UnsignedVarint::encode(proto_bytes)?;
 
         // TODO: add fallback names
 
-        header.append(&mut proto_bytes.into());
+        header.append(&mut proto_bytes);
 
         Ok((
             Self {

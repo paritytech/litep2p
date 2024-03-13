@@ -4137,5 +4137,8 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
             }
         }
     })
-    .await { panic!("timeout") }
+    .await
+    {
+        panic!("timeout")
+    }
 }

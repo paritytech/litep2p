@@ -196,7 +196,7 @@ impl HandshakeService {
             }
         }
 
-        return None;
+        None
     }
 }
 
@@ -236,14 +236,15 @@ impl Stream for HandshakeService {
                             *state = HandshakeState::SinkReady;
                             continue;
                         }
-                        Poll::Ready(Err(_)) =>
+                        Poll::Ready(Err(_)) => {
                             return Poll::Ready(Some((
                                 *peer,
                                 HandshakeEvent::NegotiationError {
                                     peer: *peer,
                                     direction: *direction,
                                 },
-                            ))),
+                            )))
+                        }
                         Poll::Pending => continue 'outer,
                     },
                     HandshakeState::SinkReady => {
@@ -252,14 +253,15 @@ impl Stream for HandshakeService {
                                 *state = HandshakeState::HandshakeSent;
                                 continue;
                             }
-                            Err(_) =>
+                            Err(_) => {
                                 return Poll::Ready(Some((
                                     *peer,
                                     HandshakeEvent::NegotiationError {
                                         peer: *peer,
                                         direction: *direction,
                                     },
-                                ))),
+                                )))
+                            }
                         }
                     }
                     HandshakeState::HandshakeSent => match pinned.poll_flush(cx) {
@@ -273,14 +275,15 @@ impl Stream for HandshakeService {
                                 continue 'outer;
                             }
                         },
-                        Poll::Ready(Err(_)) =>
+                        Poll::Ready(Err(_)) => {
                             return Poll::Ready(Some((
                                 *peer,
                                 HandshakeEvent::NegotiationError {
                                     peer: *peer,
                                     direction: *direction,
                                 },
-                            ))),
+                            )))
+                        }
                         Poll::Pending => continue 'outer,
                     },
                     HandshakeState::ReadHandshake => match pinned.poll_next(cx) {

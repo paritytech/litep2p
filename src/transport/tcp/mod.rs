@@ -153,8 +153,8 @@ impl TcpTransport {
                     {
                         // TODO: ugly
                         Ok(lookup) => {
-                            let mut iter = lookup.iter();
-                            while let Some(ip) = iter.next() {
+                            let iter = lookup.iter();
+                            for ip in iter {
                                 match (
                                     address.iter().next().expect("protocol to exist"),
                                     ip.is_ipv4(),
@@ -220,7 +220,7 @@ impl TcpTransport {
                 Ok(()) => {}
                 Err(err) if err.raw_os_error() == Some(libc::EINPROGRESS) => {}
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(err) => return Err(err.into()),
+                Err(err) => return Err(err),
             }
 
             let stream = TcpStream::try_from(Into::<std::net::TcpStream>::into(socket))?;
@@ -258,7 +258,7 @@ impl TransportBuilder for TcpTransport {
 
         // start tcp listeners for all listen addresses
         let (listener, listen_addresses, dial_addresses) =
-            TcpListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new()));
+            TcpListener::new(std::mem::take(&mut config.listen_addresses));
 
         Ok((
             Self {
@@ -482,10 +482,11 @@ impl Stream for TcpTransport {
                         }));
                     }
                 }
-                Err(connection_id) =>
+                Err(connection_id) => {
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
-                    },
+                    }
+                }
             }
         }
 

@@ -168,11 +168,7 @@ impl Identify {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            listen_addresses: config
-                .public_addresses
-                .into_iter()
-                .chain(listen_addresses.into_iter())
-                .collect(),
+            listen_addresses: config.public_addresses.into_iter().chain(listen_addresses).collect(),
             public: config.public.expect("public key to be supplied"),
             pending_opens: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
@@ -294,10 +290,11 @@ impl Identify {
             let payload =
                 match tokio::time::timeout(Duration::from_secs(10), substream.next()).await {
                     Err(_) => return Err(Error::Timeout),
-                    Ok(None) =>
+                    Ok(None) => {
                         return Err(Error::SubstreamError(SubstreamError::ReadFailure(Some(
                             substream_id,
-                        )))),
+                        ))))
+                    }
                     Ok(Some(Err(error))) => return Err(error),
                     Ok(Some(Ok(payload))) => payload,
                 };
@@ -312,7 +309,7 @@ impl Identify {
                 .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
                 .collect();
             let observed_address =
-                info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten();
+                info.observed_addr.and_then(|address| Multiaddr::try_from(address).ok());
 
             Ok((
                 peer,

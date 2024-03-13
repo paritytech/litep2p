@@ -98,8 +98,9 @@ impl TryFrom<keys_proto::PublicKey> for PublicKey {
             .ok_or_else(|| Error::Other(format!("Unknown key type: {}", pubkey.r#type)))?;
 
         match key_type {
-            keys_proto::KeyType::Ed25519 =>
-                Ok(ed25519::PublicKey::decode(&pubkey.data).map(PublicKey::Ed25519)?),
+            keys_proto::KeyType::Ed25519 => {
+                Ok(ed25519::PublicKey::decode(&pubkey.data).map(PublicKey::Ed25519)?)
+            }
             _ => unimplemented!("unsupported key type"),
         }
     }

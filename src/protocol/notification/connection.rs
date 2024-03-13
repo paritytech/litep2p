@@ -194,7 +194,7 @@ impl Stream for Connection {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = Pin::into_inner(self);
 
-        if let Poll::Ready(_) = this.rx.poll_unpin(cx) {
+        if this.rx.poll_unpin(cx).is_ready() {
             return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                 notify: NotifyProtocol::No,
             }));
@@ -214,10 +214,11 @@ impl Stream for Connection {
 
                     match future.poll_unpin(cx) {
                         Poll::Pending => None,
-                        Poll::Ready(None) =>
+                        Poll::Ready(None) => {
                             return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                                 notify: NotifyProtocol::Yes,
-                            })),
+                            }))
+                        }
                         Poll::Ready(Some(notification)) => Some(notification),
                     }
                 }
@@ -233,10 +234,11 @@ impl Stream for Connection {
                     this.next_notification = Some(notification);
                     break;
                 }
-                Poll::Ready(Err(_)) =>
+                Poll::Ready(Err(_)) => {
                     return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                         notify: NotifyProtocol::Yes,
-                    })),
+                    }))
+                }
             }
 
             if let Err(_) = this.outbound.start_send_unpin(notification.into()) {
@@ -247,10 +249,11 @@ impl Stream for Connection {
         }
 
         match this.outbound.poll_flush_unpin(cx) {
-            Poll::Ready(Err(_)) =>
+            Poll::Ready(Err(_)) => {
                 return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                     notify: NotifyProtocol::Yes,
-                })),
+                }))
+            }
             Poll::Ready(Ok(())) | Poll::Pending => {}
         }
 
@@ -261,12 +264,12 @@ impl Stream for Connection {
         }
 
         match futures::ready!(this.inbound.poll_next_unpin(cx)) {
-            None | Some(Err(_)) =>
-                return Poll::Ready(Some(ConnectionEvent::CloseConnection {
-                    notify: NotifyProtocol::Yes,
-                })),
-            Some(Ok(notification)) =>
-                return Poll::Ready(Some(ConnectionEvent::NotificationReceived { notification })),
+            None | Some(Err(_)) => Poll::Ready(Some(ConnectionEvent::CloseConnection {
+                notify: NotifyProtocol::Yes,
+            })),
+            Some(Ok(notification)) => {
+                Poll::Ready(Some(ConnectionEvent::NotificationReceived { notification }))
+            }
         }
     }
 }

@@ -70,7 +70,7 @@ impl KBucket {
 
     /// Get entry into the bucket.
     // TODO: this is horrible code
-    pub fn entry<'a, K: Clone>(&'a mut self, key: Key<K>) -> KBucketEntry<'a> {
+    pub fn entry<K: Clone>(&mut self, key: Key<K>) -> KBucketEntry<'_> {
         for i in 0..self.nodes.len() {
             if &self.nodes[i].key == &key {
                 return KBucketEntry::Occupied(&mut self.nodes[i]);
@@ -127,10 +127,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         let target = Key::from(PeerId::random());
-        let mut iter = bucket.closest_iter(&target);
+        let iter = bucket.closest_iter(&target);
         let mut prev = None;
 
-        while let Some(node) = iter.next() {
+        for node in iter {
             if let Some(distance) = prev {
                 assert!(distance < target.distance(&node.key));
             }
@@ -172,11 +172,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         let target = Key::from(PeerId::random());
-        let mut iter = bucket.closest_iter(&target);
+        let iter = bucket.closest_iter(&target);
         let mut prev = None;
         let mut num_peers = 0usize;
 
-        while let Some(node) = iter.next() {
+        for node in iter {
             if let Some(distance) = prev {
                 assert!(distance < target.distance(&node.key));
             }

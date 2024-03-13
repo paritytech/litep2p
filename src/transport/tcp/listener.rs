@@ -136,14 +136,15 @@ impl TcpListener {
                                             IpAddr::V4(inner.ip),
                                             local_address.port(),
                                         )),
-                                        (Addr::V6(inner), false) =>
-                                            match inner.ip.segments().get(0) {
+                                        (Addr::V6(inner), false) => {
+                                            match inner.ip.segments().first() {
                                                 Some(0xfe80) => None,
                                                 _ => Some(SocketAddr::new(
                                                     IpAddr::V6(inner.ip),
                                                     local_address.port(),
                                                 )),
-                                            },
+                                            }
+                                        }
                                         _ => None,
                                     }
                                 })
@@ -195,8 +196,9 @@ impl TcpListener {
         let mut iter = address.iter();
         let socket_address = match iter.next() {
             Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) =>
-                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
+                Some(Protocol::Tcp(port)) => {
+                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port))
+                }
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -207,8 +209,9 @@ impl TcpListener {
                 }
             },
             Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) =>
-                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
+                Some(Protocol::Tcp(port)) => {
+                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port))
+                }
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -267,8 +270,9 @@ impl Stream for TcpListener {
             match listener.poll_accept(cx) {
                 Poll::Pending => {}
                 Poll::Ready(Err(error)) => return Poll::Ready(Some(Err(error))),
-                Poll::Ready(Ok((stream, address))) =>
-                    return Poll::Ready(Some(Ok((stream, address)))),
+                Poll::Ready(Ok((stream, address))) => {
+                    return Poll::Ready(Some(Ok((stream, address))))
+                }
             }
         }
 
@@ -332,8 +336,7 @@ mod tests {
     async fn one_listener() {
         let address: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
         let (mut listener, listen_addresses, _) = TcpListener::new(vec![address.clone()]);
-        let Some(Protocol::Tcp(port)) =
-            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        let Some(Protocol::Tcp(port)) = listen_addresses.first().unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
@@ -349,14 +352,13 @@ mod tests {
         let address1: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
         let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
         let (mut listener, listen_addresses, _) = TcpListener::new(vec![address1, address2]);
-        let Some(Protocol::Tcp(port1)) =
-            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        let Some(Protocol::Tcp(port1)) = listen_addresses.first().unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
 
         let Some(Protocol::Tcp(port2)) =
-            listen_addresses.iter().skip(1).next().unwrap().clone().iter().skip(1).next()
+            listen_addresses.iter().nth(1).unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };

@@ -179,14 +179,9 @@ impl KademliaMessage {
                 }
                 1 => {
                     let key = match message.key.is_empty() {
-                        true => message
-                            .record
-                            .as_ref()
-                            .map(|record| {
-                                (!record.key.is_empty())
-                                    .then_some(RecordKey::from(record.key.clone()))
-                            })
-                            .flatten(),
+                        true => message.record.as_ref().and_then(|record| {
+                            (!record.key.is_empty()).then_some(RecordKey::from(record.key.clone()))
+                        }),
                         false => Some(RecordKey::from(message.key.clone())),
                     };
 

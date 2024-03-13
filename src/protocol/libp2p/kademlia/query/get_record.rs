@@ -201,8 +201,9 @@ impl GetRecordContext {
         let continue_search = match self.quorum {
             Quorum::All => (self.record_count + self.found_records.len() < self.replication_factor),
             Quorum::One => (self.record_count + self.found_records.len() < 1),
-            Quorum::N(num_responses) =>
-                (self.record_count + self.found_records.len() < num_responses.into()),
+            Quorum::N(num_responses) => {
+                (self.record_count + self.found_records.len() < num_responses.into())
+            }
         };
 
         // if enough replicas for the record have been received (defined by the quorum size),

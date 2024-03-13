@@ -47,10 +47,11 @@ impl Future for Cleanup {
                     Poll::Ready(Some(cmd)) => {
                         drop(cmd);
                     }
-                    Poll::Ready(None) | Poll::Pending =>
+                    Poll::Ready(None) | Poll::Pending => {
                         return Poll::Ready(
                             this.error.take().expect("to not be called after completion"),
-                        ),
+                        )
+                    }
                 },
             }
         }

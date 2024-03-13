@@ -43,9 +43,9 @@ impl Key {
     }
 }
 
-impl Into<Vec<u8>> for Key {
-    fn into(self) -> Vec<u8> {
-        Vec::from(&self.0[..])
+impl From<Key> for Vec<u8> {
+    fn from(val: Key) -> Self {
+        Vec::from(&val.0[..])
     }
 }
 
