@@ -42,7 +42,7 @@ fn spawn_litep2p(port: u16) {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
-    tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
+    tokio::spawn(async move { while (litep2p1.next_event().await).is_some() {} });
 }
 
 #[tokio::test]

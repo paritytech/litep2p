@@ -140,17 +140,11 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
 
     while !litep2p1_done || !litep2p2_done {
         tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionClosed { .. } => {
-                    litep2p1_done = true;
-                }
-                _ => {}
+            event = litep2p1.next_event() => if let Litep2pEvent::ConnectionClosed { .. } = event.unwrap() {
+                litep2p1_done = true;
             },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionClosed { .. } => {
-                    litep2p2_done = true;
-                }
-                _ => {}
+            event = litep2p2.next_event() => if let Litep2pEvent::ConnectionClosed { .. } = event.unwrap() {
+                litep2p2_done = true;
             }
         }
     }
@@ -221,19 +215,13 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
 
     while !litep2p1_done || !litep2p2_done {
         tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    tracing::error!("litep2p1 connection established");
-                    litep2p1_done = true;
-                }
-                _ => {}
+            event = litep2p1.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                tracing::error!("litep2p1 connection established");
+                litep2p1_done = true;
             },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    tracing::error!("litep2p2 connection established");
-                    litep2p2_done = true;
-                }
-                _ => {}
+            event = litep2p2.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                tracing::error!("litep2p2 connection established");
+                litep2p2_done = true;
             }
         }
     }
@@ -243,19 +231,13 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
 
     while !litep2p1_done || !litep2p2_done {
         tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionClosed { .. } => {
-                    tracing::error!("litep2p1 connection closed");
-                    litep2p1_done = true;
-                }
-                _ => {}
+            event = litep2p1.next_event() => if let Litep2pEvent::ConnectionClosed { .. } = event.unwrap() {
+                tracing::error!("litep2p1 connection closed");
+                litep2p1_done = true;
             },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionClosed { .. } => {
-                    tracing::error!("litep2p2 connection closed");
-                    litep2p2_done = true;
-                }
-                _ => {}
+            event = litep2p2.next_event() => if let Litep2pEvent::ConnectionClosed { .. } = event.unwrap() {
+                tracing::error!("litep2p2 connection closed");
+                litep2p2_done = true;
             }
         }
     }

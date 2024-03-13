@@ -166,17 +166,14 @@ async fn find_node() {
     let _ = kad_handle.find_node(target).await;
 
     loop {
-        match kad_handle.next().await {
-            Some(KademliaEvent::FindNodeSuccess {
+        if let Some(KademliaEvent::FindNodeSuccess {
                 target: query_target,
                 peers,
                 ..
-            }) => {
-                assert_eq!(target, query_target);
-                assert!(!peers.is_empty());
-                break;
-            }
-            _ => {}
+            }) = kad_handle.next().await {
+            assert_eq!(target, query_target);
+            assert!(!peers.is_empty());
+            break;
         }
     }
 }
@@ -356,11 +353,8 @@ async fn get_record() {
 
     loop {
         tokio::select! {
-            event = libp2p.select_next_some() => match event {
-                SwarmEvent::NewListenAddr { address, .. } => {
-                    listen_addr = Some(address);
-                }
-                _ => {}
+            event = libp2p.select_next_some() => if let SwarmEvent::NewListenAddr { address, .. } = event {
+                listen_addr = Some(address);
             },
             _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
                 if counter.load(std::sync::atomic::Ordering::SeqCst) == 3 {

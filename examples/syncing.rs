@@ -135,8 +135,7 @@ async fn main() {
 
     // poll `litep2p` to allow connection-related activity to make progress
     loop {
-        match litep2p.next_event().await.unwrap() {
-            _ => {}
-        }
+        litep2p.next_event().await.unwrap();
+        {}
     }
 }

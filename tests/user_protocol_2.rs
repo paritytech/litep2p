@@ -64,7 +64,7 @@ impl UserProtocol for CustomProtocol {
     }
 
     fn codec(&self) -> ProtocolCodec {
-        self.codec.clone()
+        self.codec
     }
 
     async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {
@@ -131,17 +131,11 @@ async fn user_protocol_2() {
 
     while !litep2p1_ready && !litep2p2_ready {
         tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    litep2p1_ready = true;
-                }
-                _ => {}
+            event = litep2p1.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                litep2p1_ready = true;
             },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    litep2p2_ready = true;
-                }
-                _ => {}
+            event = litep2p2.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                litep2p2_ready = true;
             }
         }
     }

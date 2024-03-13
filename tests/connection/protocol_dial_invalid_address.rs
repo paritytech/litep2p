@@ -64,7 +64,7 @@ impl UserProtocol for CustomProtocol {
     }
 
     fn codec(&self) -> ProtocolCodec {
-        self.codec.clone()
+        self.codec
     }
 
     async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {
@@ -116,7 +116,7 @@ async fn protocol_dial_invalid_dns_address() {
         }
     });
 
-    let _ = rx.await.unwrap();
+    rx.await.unwrap();
 }
 
 #[tokio::test]
@@ -148,5 +148,5 @@ async fn protocol_dial_peer_id_missing() {
         }
     });
 
-    let _ = rx.await.unwrap();
+    rx.await.unwrap();
 }

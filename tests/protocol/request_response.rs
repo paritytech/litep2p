@@ -62,17 +62,11 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
 
     loop {
         tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    litep2p1_connected = true;
-                }
-                _ => {},
+            event = litep2p1.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                litep2p1_connected = true;
             },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    litep2p2_connected = true;
-                }
-                _ => {},
+            event = litep2p2.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                litep2p2_connected = true;
             }
         }
 
@@ -1165,26 +1159,17 @@ async fn too_many_pending_requests() {
 
     while !litep2p1_closed || !litep2p2_closed || !request_ids.is_empty() {
         tokio::select! {
-            event = litep2p1.next_event() => match event {
-                Some(Litep2pEvent::ConnectionClosed { .. }) => {
-                    litep2p1_closed = true;
-                }
-                _ => {}
+            event = litep2p1.next_event() => if let Some(Litep2pEvent::ConnectionClosed { .. }) = event {
+                litep2p1_closed = true;
             },
-            event = litep2p2.next_event() => match event {
-                Some(Litep2pEvent::ConnectionClosed { .. }) => {
-                    litep2p2_closed = true;
-                }
-                _ => {}
+            event = litep2p2.next_event() => if let Some(Litep2pEvent::ConnectionClosed { .. }) = event {
+                litep2p2_closed = true;
             },
-            event = handle1.next() => match event {
-                Some(RequestResponseEvent::RequestFailed {
+            event = handle1.next() => if let Some(RequestResponseEvent::RequestFailed {
                     request_id,
                     ..
-                }) => {
-                    request_ids.remove(&request_id);
-                }
-                _ => {}
+                }) = event {
+                request_ids.remove(&request_id);
             }
         }
     }
@@ -2414,7 +2399,7 @@ async fn outbound_request_for_unconnected_peer(transport1: Transport) {
 
     tokio::spawn(async move {
         let mut litep2p1 = Litep2p::new(config1).unwrap();
-        while let Some(_) = litep2p1.next_event().await {}
+        while (litep2p1.next_event().await).is_some() {}
     });
 
     let peer2 = PeerId::random();
@@ -2489,7 +2474,7 @@ async fn dial_failure(transport: Transport) {
 
     let mut litep2p = Litep2p::new(config).unwrap();
     litep2p.add_known_address(peer, vec![known_address].into_iter());
-    tokio::spawn(async move { while let Some(_) = litep2p.next_event().await {} });
+    tokio::spawn(async move { while (litep2p.next_event().await).is_some() {} });
 
     let request_id = handle.send_request(peer, vec![1, 3, 3, 7], DialOptions::Dial).await.unwrap();
 

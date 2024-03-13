@@ -243,10 +243,10 @@ async fn main() {
     litep2p3.add_known_address(peer2, vec![listen_address.clone()].into_iter());
     litep2p4.add_known_address(peer2, vec![listen_address].into_iter());
 
-    tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
-    tokio::spawn(async move { while let Some(_) = litep2p2.next_event().await {} });
-    tokio::spawn(async move { while let Some(_) = litep2p3.next_event().await {} });
-    tokio::spawn(async move { while let Some(_) = litep2p4.next_event().await {} });
+    tokio::spawn(async move { while (litep2p1.next_event().await).is_some() {} });
+    tokio::spawn(async move { while (litep2p2.next_event().await).is_some() {} });
+    tokio::spawn(async move { while (litep2p3.next_event().await).is_some() {} });
+    tokio::spawn(async move { while (litep2p4.next_event().await).is_some() {} });
 
     // open substreams
     tx1.tx_handle.open_substream(peer2).await.unwrap();
