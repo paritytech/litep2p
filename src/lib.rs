@@ -20,6 +20,9 @@
 
 #![allow(clippy::large_enum_variant)]
 #![allow(clippy::result_large_err)]
+#![allow(clippy::result_unit_err)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::should_implement_trait)]
 
 use crate::{
     config::Litep2pConfig,
@@ -449,21 +452,18 @@ impl Litep2p {
     pub async fn next_event(&mut self) -> Option<Litep2pEvent> {
         loop {
             match self.transport_manager.next().await? {
-                TransportEvent::ConnectionEstablished { peer, endpoint, .. } => {
-                    return Some(Litep2pEvent::ConnectionEstablished { peer, endpoint })
-                }
+                TransportEvent::ConnectionEstablished { peer, endpoint, .. } =>
+                    return Some(Litep2pEvent::ConnectionEstablished { peer, endpoint }),
                 TransportEvent::ConnectionClosed {
                     peer,
                     connection_id,
-                } => {
+                } =>
                     return Some(Litep2pEvent::ConnectionClosed {
                         peer,
                         connection_id,
-                    })
-                }
-                TransportEvent::DialFailure { address, error, .. } => {
-                    return Some(Litep2pEvent::DialFailure { address, error })
-                }
+                    }),
+                TransportEvent::DialFailure { address, error, .. } =>
+                    return Some(Litep2pEvent::DialFailure { address, error }),
                 _ => {}
             }
         }

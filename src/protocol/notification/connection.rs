@@ -153,7 +153,7 @@ impl Connection {
                     notify: NotifyProtocol::No,
                 }) => return self.close_connection(NotifyProtocol::No).await,
                 Some(ConnectionEvent::NotificationReceived { notification }) => {
-                    if let Err(_) = self.notif_tx.send_item((self.peer, notification)) {
+                    if self.notif_tx.send_item((self.peer, notification)).is_err() {
                         return self.close_connection(NotifyProtocol::Yes).await;
                     }
                 }
@@ -214,11 +214,10 @@ impl Stream for Connection {
 
                     match future.poll_unpin(cx) {
                         Poll::Pending => None,
-                        Poll::Ready(None) => {
+                        Poll::Ready(None) =>
                             return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                                 notify: NotifyProtocol::Yes,
-                            }))
-                        }
+                            })),
                         Poll::Ready(Some(notification)) => Some(notification),
                     }
                 }
@@ -234,14 +233,13 @@ impl Stream for Connection {
                     this.next_notification = Some(notification);
                     break;
                 }
-                Poll::Ready(Err(_)) => {
+                Poll::Ready(Err(_)) =>
                     return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                         notify: NotifyProtocol::Yes,
-                    }))
-                }
+                    })),
             }
 
-            if let Err(_) = this.outbound.start_send_unpin(notification.into()) {
+            if this.outbound.start_send_unpin(notification.into()).is_err() {
                 return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                     notify: NotifyProtocol::Yes,
                 }));
@@ -249,15 +247,14 @@ impl Stream for Connection {
         }
 
         match this.outbound.poll_flush_unpin(cx) {
-            Poll::Ready(Err(_)) => {
+            Poll::Ready(Err(_)) =>
                 return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                     notify: NotifyProtocol::Yes,
-                }))
-            }
+                })),
             Poll::Ready(Ok(())) | Poll::Pending => {}
         }
 
-        if let Err(_) = futures::ready!(this.notif_tx.poll_reserve(cx)) {
+        if futures::ready!(this.notif_tx.poll_reserve(cx)).is_err() {
             return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                 notify: NotifyProtocol::Yes,
             }));
@@ -267,9 +264,8 @@ impl Stream for Connection {
             None | Some(Err(_)) => Poll::Ready(Some(ConnectionEvent::CloseConnection {
                 notify: NotifyProtocol::Yes,
             })),
-            Some(Ok(notification)) => {
-                Poll::Ready(Some(ConnectionEvent::NotificationReceived { notification }))
-            }
+            Some(Ok(notification)) =>
+                Poll::Ready(Some(ConnectionEvent::NotificationReceived { notification })),
         }
     }
 }

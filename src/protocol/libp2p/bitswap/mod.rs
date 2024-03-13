@@ -94,6 +94,9 @@ impl Prefix {
     }
 }
 
+type PendingInboundFutures =
+    FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Vec<(Cid, WantType)>)>>>;
+
 /// Bitswap protocol.
 pub(crate) struct Bitswap {
     // Connection service.
@@ -109,8 +112,7 @@ pub(crate) struct Bitswap {
     pending_outbound: HashMap<SubstreamId, Vec<ResponseType>>,
 
     /// Pending inbound substreams.
-    pending_inbound:
-        FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Vec<(Cid, WantType)>)>>>,
+    pending_inbound: PendingInboundFutures,
 }
 
 impl Bitswap {

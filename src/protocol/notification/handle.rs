@@ -325,9 +325,7 @@ impl NotificationHandle {
     /// Similar to [`NotificationHandle::close_substream()`] but multiple substreams are closed
     /// using a single call to `NotificationProtocol`.
     pub async fn close_substream_batch(&self, peers: impl Iterator<Item = PeerId>) {
-        let peers = peers
-            .filter_map(|peer| self.peers.contains_key(&peer).then_some(peer))
-            .collect::<HashSet<_>>();
+        let peers = peers.filter(|peer| self.peers.contains_key(peer)).collect::<HashSet<_>>();
 
         if peers.is_empty() {
             return;
@@ -355,9 +353,7 @@ impl NotificationHandle {
         &self,
         peers: impl Iterator<Item = PeerId>,
     ) -> Result<(), HashSet<PeerId>> {
-        let peers = peers
-            .filter_map(|peer| self.peers.contains_key(&peer).then_some(peer))
-            .collect::<HashSet<_>>();
+        let peers = peers.filter(|peer| self.peers.contains_key(peer)).collect::<HashSet<_>>();
 
         if peers.is_empty() {
             return Err(HashSet::new());
@@ -494,24 +490,22 @@ impl Stream for NotificationHandle {
                             handshake,
                         }));
                     }
-                    InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
+                    InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
                         return Poll::Ready(Some(
                             NotificationEvent::NotificationStreamOpenFailure { peer, error },
-                        ))
-                    }
+                        )),
                 },
             }
 
             match futures::ready!(self.notif_rx.poll_recv(cx)) {
                 None => return Poll::Ready(None),
-                Some((peer, notification)) => {
+                Some((peer, notification)) =>
                     if self.peers.contains_key(&peer) {
                         return Poll::Ready(Some(NotificationEvent::NotificationReceived {
                             peer,
                             notification,
                         }));
-                    }
-                }
+                    },
             }
         }
     }

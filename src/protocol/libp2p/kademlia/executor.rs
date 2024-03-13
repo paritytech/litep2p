@@ -139,7 +139,7 @@ impl QueryExecutor {
         mut substream: Substream,
     ) {
         self.futures.push(Box::pin(async move {
-            if let Err(_) = substream.send_framed(message).await {
+            if substream.send_framed(message).await.is_err() {
                 let _ = substream.close().await;
                 return QueryContext {
                     peer,

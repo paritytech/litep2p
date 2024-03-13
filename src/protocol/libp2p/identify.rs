@@ -123,6 +123,10 @@ pub enum IdentifyEvent {
     },
 }
 
+type PendingOutboundFutures = FuturesUnordered<
+    BoxFuture<'static, crate::Result<(PeerId, HashSet<String>, Option<Multiaddr>, Vec<Multiaddr>)>>,
+>;
+
 pub(crate) struct Identify {
     // Connection service.
     service: TransportService,
@@ -146,12 +150,7 @@ pub(crate) struct Identify {
     pending_opens: HashMap<SubstreamId, PeerId>,
 
     /// Pending outbound substreams.
-    pending_outbound: FuturesUnordered<
-        BoxFuture<
-            'static,
-            crate::Result<(PeerId, HashSet<String>, Option<Multiaddr>, Vec<Multiaddr>)>,
-        >,
-    >,
+    pending_outbound: PendingOutboundFutures,
 
     /// Pending inbound substreams.
     pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
@@ -290,11 +289,10 @@ impl Identify {
             let payload =
                 match tokio::time::timeout(Duration::from_secs(10), substream.next()).await {
                     Err(_) => return Err(Error::Timeout),
-                    Ok(None) => {
+                    Ok(None) =>
                         return Err(Error::SubstreamError(SubstreamError::ReadFailure(Some(
                             substream_id,
-                        ))))
-                    }
+                        )))),
                     Ok(Some(Err(error))) => return Err(error),
                     Ok(Some(Ok(payload))) => payload,
                 };
