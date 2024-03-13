@@ -338,7 +338,7 @@ impl Kademlia {
     ///
     /// Inform user about the potential routing table, allowing them to update it manually if
     /// the mode was set to manual.
-    async fn update_routing_table(&mut self, peers: &Vec<KademliaPeer>) {
+    async fn update_routing_table(&mut self, peers: &[KademliaPeer]) {
         let peers: Vec<_> = peers
             .iter()
             .filter_map(|peer| (peer.peer != self.service.local_peer_id).then_some(peer))
