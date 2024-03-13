@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   check:
-    name: "CI"
+    name: "check"
     runs-on: ubuntu-latest
     container:
       image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
@@ -33,7 +33,7 @@ jobs:
         run: cargo check
 
   test:
-    name: "CI"
+    name: "test"
     runs-on: ubuntu-latest
     container:
       image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
@@ -50,7 +50,7 @@ jobs:
         run: cargo test
 
   doc:
-    name: "CI"
+    name: "doc"
     runs-on: ubuntu-latest
     container:
       image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
@@ -66,7 +66,7 @@ jobs:
         run: cargo doc
 
   clippy:
-    name: "CI"
+    name: "clippy"
     runs-on: ubuntu-latest
     container:
       image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
