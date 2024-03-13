@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  check:
     name: "CI"
     runs-on: ubuntu-latest
     container:
@@ -32,11 +32,52 @@ jobs:
       - name: check
         run: cargo check
 
+  test:
+    name: "CI"
+    runs-on: ubuntu-latest
+    container:
+      image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.5.0
+        with:
+          cache-on-failure: true
+          cache-all-crates: true
+
       - name: test
         run: cargo test
 
+  doc:
+    name: "CI"
+    runs-on: ubuntu-latest
+    container:
+      image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.5.0
+        with:
+          cache-on-failure: true
+          cache-all-crates: true
       - name: doc
         run: cargo doc
+
+  clippy:
+    name: "CI"
+    runs-on: ubuntu-latest
+    container:
+      image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.5.0
+        with:
+          cache-on-failure: true
+          cache-all-crates: true
 
       - name: clippy
         continue-on-error: true
