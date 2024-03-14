@@ -9,12 +9,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# ${{ vars.CI_UNIFIED_IMAGE }} is defined in the repository variables
+
 jobs:
   check:
     name: "check"
     runs-on: ubuntu-latest
     container:
-      image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
+      image: ${{ vars.CI_IMAGE }}
     steps:
       - uses: actions/checkout@v3
 
@@ -36,7 +38,7 @@ jobs:
     name: "test"
     runs-on: ubuntu-latest
     container:
-      image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
+      image: ${{ vars.CI_IMAGE }}
     steps:
       - uses: actions/checkout@v3
 
@@ -47,13 +49,16 @@ jobs:
           cache-all-crates: true
 
       - name: test
-        run: cargo test
+        run: |
+          apt-get update && apt-get install -y iproute2
+          ip a
+          cargo test
 
   doc:
     name: "doc"
     runs-on: ubuntu-latest
     container:
-      image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
+      image: ${{ vars.CI_IMAGE }}
     steps:
       - uses: actions/checkout@v3
 
@@ -69,7 +74,7 @@ jobs:
     name: "clippy"
     runs-on: ubuntu-latest
     container:
-      image: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
+      image: ${{ vars.CI_IMAGE }}
     steps:
       - uses: actions/checkout@v3
 
