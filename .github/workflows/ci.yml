@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.CI_IMAGE }}
-      # options: --privileged
+      options: --privileged
     steps:
       - uses: actions/checkout@v3
 
