@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.CI_IMAGE }}
-      options: --privileged
+      # options: --privileged
     steps:
       - uses: actions/checkout@v3
 
@@ -69,6 +69,7 @@ jobs:
           ping -c 1 127.0.0.1
           echo "Starting a simple HTTP server..."
           python3 -m http.server --bind 127.0.0.1 8080 &
+          sleep 1
           curl 127.0.0.1:8080
           echo "Running tests..."
           cargo test
