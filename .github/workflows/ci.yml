@@ -37,11 +37,17 @@ jobs:
   test:
     name: "test"
     runs-on: ubuntu-latest
-    container:
-      image: ${{ vars.CI_IMAGE }}
-      options: --privileged
+    # container:
+    #   image: ${{ vars.CI_IMAGE }}
     steps:
       - uses: actions/checkout@v3
+
+      - name: Install Rust stable toolchain
+        uses: actions-rs/toolchain@v1.0.7
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.5.0
@@ -51,7 +57,7 @@ jobs:
 
       - name: test
         run: |
-          apt-get update && apt-get install -y iproute2
+          sudo apt-get update && sudo apt-get install -y iproute2
           ip a
           cargo test
 
