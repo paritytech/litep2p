@@ -297,7 +297,7 @@ async fn connect_over_dns() {
 #[tokio::test]
 async fn connection_timeout_tcp() {
     // create tcp listener but don't accept any inbound connections
-    let listener = TcpListener::bind("[::1]:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let address = Multiaddr::empty()
         .with(Protocol::from(address.ip()))
@@ -1065,7 +1065,7 @@ async fn port_in_use_tcp() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let listener = TcpListener::bind("[::1]:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
 
     let _litep2p = Litep2p::new(
@@ -1087,7 +1087,7 @@ async fn port_in_use_websocket() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let listener = TcpListener::bind("[::1]:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
 
     let _litep2p = Litep2p::new(
