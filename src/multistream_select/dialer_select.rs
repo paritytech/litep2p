@@ -584,12 +584,12 @@ mod tests {
                 send_message.push(len as u8);
                 send_message.extend_from_slice(multistream);
 
-                server_connection.write(&mut send_message).await.unwrap();
+                server_connection.write_all(&mut send_message).await.unwrap();
 
                 let mut send_message = Vec::new();
                 send_message.push(proto_len as u8);
                 send_message.extend_from_slice(proto);
-                server_connection.write(&mut send_message).await.unwrap();
+                server_connection.write_all(&mut send_message).await.unwrap();
 
                 // Handle handshake.
                 match version {
@@ -599,11 +599,11 @@ mod tests {
                         out.truncate(n);
                         assert_eq!(out, b"ping");
 
-                        server_connection.write(b"pong").await.unwrap();
+                        server_connection.write_all(b"pong").await.unwrap();
                     }
                     Version::V1Lazy => {
                         // Ping (handshake) payload expected in the initial message.
-                        server_connection.write(b"pong").await.unwrap();
+                        server_connection.write_all(b"pong").await.unwrap();
                     }
                 }
             });
@@ -629,5 +629,131 @@ mod tests {
 
         run(Version::V1).await;
         run(Version::V1Lazy).await;
+    }
+
+    #[tokio::test]
+    async fn v1_low_level_negotiate_multiple_headers() {
+        let (client_connection, mut server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
+
+        let server: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
+            let protos = vec!["/proto2"];
+
+            let multistream = b"/multistream/1.0.0\n";
+            let len = multistream.len();
+            let proto = b"/proto2\n";
+            let proto_len = proto.len();
+
+            // Check that our implementation writes optimally
+            // the multistream ++ protocol in a single message.
+            let mut expected_message = Vec::new();
+            expected_message.push(len as u8);
+            expected_message.extend_from_slice(multistream);
+            expected_message.push(proto_len as u8);
+            expected_message.extend_from_slice(proto);
+
+            let mut out = vec![0; 64];
+            let n = server_connection.read(&mut out).await.unwrap();
+            out.truncate(n);
+            assert_eq!(out, expected_message);
+
+            // We must send the back the multistream packet.
+            let mut send_message = Vec::new();
+            send_message.push(len as u8);
+            send_message.extend_from_slice(multistream);
+
+            server_connection.write_all(&mut send_message).await.unwrap();
+
+            // We must send the back the multistream packet again.
+            let mut send_message = Vec::new();
+            send_message.push(len as u8);
+            send_message.extend_from_slice(multistream);
+
+            server_connection.write_all(&mut send_message).await.unwrap();
+
+            Ok(())
+        });
+
+        let client: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
+            let protos = vec!["/proto2"];
+
+            // Negotiation fails because the protocol receives the `/multistream/1.0.0` header
+            // multiple times.
+            let result =
+                dialer_select_proto(client_connection, protos, Version::V1).await.unwrap_err();
+            match result {
+                NegotiationError::ProtocolError(ProtocolError::InvalidMessage) => {}
+                _ => panic!("unexpected error: {:?}", result),
+            };
+
+            Ok(())
+        });
+
+        server.await.unwrap();
+        client.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn v1_lazy_low_level_negotiate_multiple_headers() {
+        let (client_connection, mut server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
+
+        let server: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
+            let protos = vec!["/proto2"];
+
+            let multistream = b"/multistream/1.0.0\n";
+            let len = multistream.len();
+            let proto = b"/proto2\n";
+            let proto_len = proto.len();
+
+            // Check that our implementation writes optimally
+            // the multistream ++ protocol in a single message.
+            let mut expected_message = Vec::new();
+            expected_message.push(len as u8);
+            expected_message.extend_from_slice(multistream);
+            expected_message.push(proto_len as u8);
+            expected_message.extend_from_slice(proto);
+
+            let mut out = vec![0; 64];
+            let n = server_connection.read(&mut out).await.unwrap();
+            out.truncate(n);
+            assert_eq!(out, expected_message);
+
+            // We must send the back the multistream packet.
+            let mut send_message = Vec::new();
+            send_message.push(len as u8);
+            send_message.extend_from_slice(multistream);
+
+            server_connection.write_all(&mut send_message).await.unwrap();
+
+            // We must send the back the multistream packet again.
+            let mut send_message = Vec::new();
+            send_message.push(len as u8);
+            send_message.extend_from_slice(multistream);
+
+            server_connection.write_all(&mut send_message).await.unwrap();
+
+            Ok(())
+        });
+
+        let client: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
+            let protos = vec!["/proto2"];
+
+            // Negotiation fails because the protocol receives the `/multistream/1.0.0` header
+            // multiple times.
+            let (proto, to_negociate) =
+                dialer_select_proto(client_connection, protos, Version::V1Lazy).await.unwrap();
+            assert_eq!(proto, "/proto2");
+
+            let result = to_negociate.complete().await.unwrap_err();
+
+            match result {
+                NegotiationError::ProtocolError(ProtocolError::InvalidMessage) => {}
+                _ => panic!("unexpected error: {:?}", result),
+            };
+
+            Ok(())
+        });
+
+        server.await.unwrap();
+        client.await.unwrap();
     }
 }
