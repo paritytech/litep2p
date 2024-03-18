@@ -86,10 +86,24 @@ pub struct DialerSelectFuture<R, I: Iterator> {
 }
 
 enum State<R, N> {
-    SendHeader { io: MessageIO<R> },
-    SendProtocol { io: MessageIO<R>, protocol: N },
-    FlushProtocol { io: MessageIO<R>, protocol: N },
-    AwaitProtocol { io: MessageIO<R>, protocol: N },
+    SendHeader {
+        io: MessageIO<R>,
+    },
+    SendProtocol {
+        io: MessageIO<R>,
+        protocol: N,
+        header_received: bool,
+    },
+    FlushProtocol {
+        io: MessageIO<R>,
+        protocol: N,
+        header_received: bool,
+    },
+    AwaitProtocol {
+        io: MessageIO<R>,
+        protocol: N,
+        header_received: bool,
+    },
     Done,
 }
 
@@ -127,14 +141,26 @@ where
 
                     // The dialer always sends the header and the first protocol
                     // proposal in one go for efficiency.
-                    *this.state = State::SendProtocol { io, protocol };
+                    *this.state = State::SendProtocol {
+                        io,
+                        protocol,
+                        header_received: false,
+                    };
                 }
 
-                State::SendProtocol { mut io, protocol } => {
+                State::SendProtocol {
+                    mut io,
+                    protocol,
+                    header_received,
+                } => {
                     match Pin::new(&mut io).poll_ready(cx)? {
                         Poll::Ready(()) => {}
                         Poll::Pending => {
-                            *this.state = State::SendProtocol { io, protocol };
+                            *this.state = State::SendProtocol {
+                                io,
+                                protocol,
+                                header_received,
+                            };
                             return Poll::Pending;
                         }
                     }
@@ -146,10 +172,19 @@ where
                     tracing::debug!(target: LOG_TARGET, "Dialer: Proposed protocol: {}", p);
 
                     if this.protocols.peek().is_some() {
-                        *this.state = State::FlushProtocol { io, protocol }
+                        *this.state = State::FlushProtocol {
+                            io,
+                            protocol,
+                            header_received,
+                        }
                     } else {
                         match this.version {
-                            Version::V1 => *this.state = State::FlushProtocol { io, protocol },
+                            Version::V1 =>
+                                *this.state = State::FlushProtocol {
+                                    io,
+                                    protocol,
+                                    header_received,
+                                },
                             // This is the only effect that `V1Lazy` has compared to `V1`:
                             // Optimistically settling on the only protocol that
                             // the dialer supports for this negotiation. Notably,
@@ -168,21 +203,40 @@ where
                     }
                 }
 
-                State::FlushProtocol { mut io, protocol } => {
-                    match Pin::new(&mut io).poll_flush(cx)? {
-                        Poll::Ready(()) => *this.state = State::AwaitProtocol { io, protocol },
-                        Poll::Pending => {
-                            *this.state = State::FlushProtocol { io, protocol };
-                            return Poll::Pending;
-                        }
+                State::FlushProtocol {
+                    mut io,
+                    protocol,
+                    header_received,
+                } => match Pin::new(&mut io).poll_flush(cx)? {
+                    Poll::Ready(()) =>
+                        *this.state = State::AwaitProtocol {
+                            io,
+                            protocol,
+                            header_received,
+                        },
+                    Poll::Pending => {
+                        *this.state = State::FlushProtocol {
+                            io,
+                            protocol,
+                            header_received,
+                        };
+                        return Poll::Pending;
                     }
-                }
+                },
 
-                State::AwaitProtocol { mut io, protocol } => {
+                State::AwaitProtocol {
+                    mut io,
+                    protocol,
+                    header_received,
+                } => {
                     let msg = match Pin::new(&mut io).poll_next(cx)? {
                         Poll::Ready(Some(msg)) => msg,
                         Poll::Pending => {
-                            *this.state = State::AwaitProtocol { io, protocol };
+                            *this.state = State::AwaitProtocol {
+                                io,
+                                protocol,
+                                header_received,
+                            };
                             return Poll::Pending;
                         }
                         // Treat EOF error as [`NegotiationError::Failed`], not as
@@ -192,8 +246,14 @@ where
                     };
 
                     match msg {
-                        Message::Header(v) if v == HeaderLine::from(*this.version) => {
-                            *this.state = State::AwaitProtocol { io, protocol };
+                        Message::Header(v)
+                            if v == HeaderLine::from(*this.version) && !header_received =>
+                        {
+                            *this.state = State::AwaitProtocol {
+                                io,
+                                protocol,
+                                header_received: true,
+                            };
                         }
                         Message::Protocol(ref p) if p.as_ref() == protocol.as_ref() => {
                             tracing::debug!(
@@ -211,7 +271,11 @@ where
                                 String::from_utf8_lossy(protocol.as_ref())
                             );
                             let protocol = this.protocols.next().ok_or(NegotiationError::Failed)?;
-                            *this.state = State::SendProtocol { io, protocol }
+                            *this.state = State::SendProtocol {
+                                io,
+                                protocol,
+                                header_received,
+                            }
                         }
                         _ => return Poll::Ready(Err(ProtocolError::InvalidMessage.into())),
                     }
