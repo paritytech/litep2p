@@ -37,6 +37,7 @@ jobs:
   test:
     name: "test"
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container:
       image: ${{ vars.CI_IMAGE }}
       # options: --privileged
