@@ -423,7 +423,7 @@ mod tests {
         async fn run(version: Version) {
             let (client_connection, server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
 
-            let server = tokio::spawn(async move {
+            let server: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
                 let protos = vec!["/proto1", "/proto2"];
                 let (proto, mut io) =
                     listener_select_proto(server_connection, protos).await.unwrap();
@@ -436,9 +436,11 @@ mod tests {
 
                 io.write_all(b"pong").await.unwrap();
                 io.flush().await.unwrap();
+
+                Ok(())
             });
 
-            let client = tokio::spawn(async move {
+            let client: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
                 let protos = vec!["/proto3", "/proto2"];
                 let (proto, mut io) =
                     dialer_select_proto(client_connection, protos, version).await.unwrap();
@@ -451,10 +453,12 @@ mod tests {
                 let n = io.read(&mut out).await.unwrap();
                 out.truncate(n);
                 assert_eq!(out, b"pong");
+
+                Ok(())
             });
 
-            server.await;
-            client.await;
+            server.await.unwrap();
+            client.await.unwrap();
         }
 
         run(Version::V1).await;
@@ -472,7 +476,7 @@ mod tests {
         ) {
             let (client_connection, server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
 
-            let server = tokio::spawn(async move {
+            let server: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
                 let io = match tokio::time::timeout(
                     Duration::from_secs(2),
                     listener_select_proto(server_connection, listen_protos),
@@ -481,7 +485,7 @@ mod tests {
                 .unwrap()
                 {
                     Ok((_, io)) => io,
-                    Err(NegotiationError::Failed) => return,
+                    Err(NegotiationError::Failed) => return Ok(()),
                     Err(NegotiationError::ProtocolError(e)) => {
                         panic!("Unexpected protocol error {e}")
                     }
@@ -490,9 +494,11 @@ mod tests {
                     Err(NegotiationError::Failed) => {}
                     _ => panic!(),
                 }
+
+                Ok(())
             });
 
-            let client = tokio::spawn(async move {
+            let client: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
                 let mut io = match tokio::time::timeout(
                     Duration::from_secs(2),
                     dialer_select_proto(client_connection, dial_protos, version),
@@ -500,7 +506,7 @@ mod tests {
                 .await
                 .unwrap()
                 {
-                    Err(NegotiationError::Failed) => return,
+                    Err(NegotiationError::Failed) => return Ok(()),
                     Ok((_, io)) => io,
                     Err(_) => panic!(),
                 };
@@ -513,10 +519,12 @@ mod tests {
                     Err(NegotiationError::Failed) => {}
                     _ => panic!(),
                 }
+
+                Ok(())
             });
 
-            server.await;
-            client.await;
+            server.await.unwrap();
+            client.await.unwrap();
         }
 
         // Incompatible protocols.
