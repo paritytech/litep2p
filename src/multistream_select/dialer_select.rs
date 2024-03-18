@@ -415,6 +415,8 @@ impl DialerState {
 mod tests {
     use super::*;
     use crate::multistream_select::listener_select_proto;
+    use std::time::Duration;
+    use tokio::net::{TcpListener, TcpStream};
 
     #[tokio::test]
     async fn select_proto_basic() {
@@ -457,5 +459,68 @@ mod tests {
 
         run(Version::V1).await;
         run(Version::V1Lazy).await;
+    }
+
+    /// Tests the expected behaviour of failed negotiations.
+    #[tokio::test]
+    async fn negotiation_failed() {
+        async fn run(
+            version: Version,
+            dial_protos: Vec<&'static str>,
+            dial_payload: Vec<u8>,
+            listen_protos: Vec<&'static str>,
+        ) {
+            let (client_connection, server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
+
+            let server = tokio::spawn(async move {
+                let io = match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    listener_select_proto(server_connection, listen_protos),
+                )
+                .await
+                .unwrap()
+                {
+                    Ok((_, io)) => io,
+                    Err(NegotiationError::Failed) => return,
+                    Err(NegotiationError::ProtocolError(e)) => {
+                        panic!("Unexpected protocol error {e}")
+                    }
+                };
+                match io.complete().await {
+                    Err(NegotiationError::Failed) => {}
+                    _ => panic!(),
+                }
+            });
+
+            let client = tokio::spawn(async move {
+                let mut io = match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    dialer_select_proto(client_connection, dial_protos, version),
+                )
+                .await
+                .unwrap()
+                {
+                    Err(NegotiationError::Failed) => return,
+                    Ok((_, io)) => io,
+                    Err(_) => panic!(),
+                };
+
+                // The dialer may write a payload that is even sent before it
+                // got confirmation of the last proposed protocol, when `V1Lazy`
+                // is used.
+                io.write_all(&dial_payload).await.unwrap();
+                match io.complete().await {
+                    Err(NegotiationError::Failed) => {}
+                    _ => panic!(),
+                }
+            });
+
+            server.await;
+            client.await;
+        }
+
+        // Incompatible protocols.
+        run(Version::V1, vec!["/proto1"], vec![1], vec!["/proto2"]).await;
+        run(Version::V1Lazy, vec!["/proto1"], vec![1], vec!["/proto2"]).await;
     }
 }
