@@ -749,7 +749,7 @@ mod tests {
         let peer1_id = PeerId::from_public_key(&keypair1.public().into());
         let peer2_id = PeerId::from_public_key(&keypair2.public().into());
 
-        let listener = TcpListener::bind("[::1]:0".parse::<SocketAddr>().unwrap()).await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
 
         let (stream1, stream2) = tokio::join!(
             TcpStream::connect(listener.local_addr().unwrap()),
