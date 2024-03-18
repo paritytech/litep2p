@@ -523,4 +523,28 @@ mod tests {
         run(Version::V1, vec!["/proto1"], vec![1], vec!["/proto2"]).await;
         run(Version::V1Lazy, vec!["/proto1"], vec![1], vec!["/proto2"]).await;
     }
+
+    #[tokio::test]
+    async fn v1_lazy_do_not_wait_for_negotiation_on_poll_close() {
+        let (client_connection, _server_connection) =
+            futures_ringbuf::Endpoint::pair(1024 * 1024, 1);
+
+        let client = tokio::spawn(async move {
+            // Single protocol to allow for lazy (or optimistic) protocol negotiation.
+            let protos = vec!["/proto1"];
+            let (proto, mut io) =
+                dialer_select_proto(client_connection, protos, Version::V1Lazy).await.unwrap();
+            assert_eq!(proto, "/proto1");
+
+            // In Libp2p the lazy negotation of protocols can be closed at any time,
+            // even if the negotiation is not yet done.
+
+            // However, for the Litep2p the negotation must conclude before closing the
+            // lazy negotation of protocol. We'll wait for the close until the
+            // server has produced a message, in this test that means forever.
+            io.close().await.unwrap();
+        });
+
+        assert!(tokio::time::timeout(Duration::from_secs(10), client).await.is_err());
+    }
 }
