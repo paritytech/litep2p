@@ -410,3 +410,52 @@ impl DialerState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::multistream_select::listener_select_proto;
+
+    #[tokio::test]
+    async fn select_proto_basic() {
+        async fn run(version: Version) {
+            let (client_connection, server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
+
+            let server = tokio::spawn(async move {
+                let protos = vec!["/proto1", "/proto2"];
+                let (proto, mut io) =
+                    listener_select_proto(server_connection, protos).await.unwrap();
+                assert_eq!(proto, "/proto2");
+
+                let mut out = vec![0; 32];
+                let n = io.read(&mut out).await.unwrap();
+                out.truncate(n);
+                assert_eq!(out, b"ping");
+
+                io.write_all(b"pong").await.unwrap();
+                io.flush().await.unwrap();
+            });
+
+            let client = tokio::spawn(async move {
+                let protos = vec!["/proto3", "/proto2"];
+                let (proto, mut io) =
+                    dialer_select_proto(client_connection, protos, version).await.unwrap();
+                assert_eq!(proto, "/proto2");
+
+                io.write_all(b"ping").await.unwrap();
+                io.flush().await.unwrap();
+
+                let mut out = vec![0; 32];
+                let n = io.read(&mut out).await.unwrap();
+                out.truncate(n);
+                assert_eq!(out, b"pong");
+            });
+
+            server.await;
+            client.await;
+        }
+
+        run(Version::V1).await;
+        run(Version::V1Lazy).await;
+    }
+}
