@@ -547,4 +547,87 @@ mod tests {
 
         assert!(tokio::time::timeout(Duration::from_secs(10), client).await.is_err());
     }
+
+    #[tokio::test]
+    async fn low_level_negotiate() {
+        async fn run(version: Version) {
+            let (client_connection, mut server_connection) =
+                futures_ringbuf::Endpoint::pair(100, 100);
+
+            let server = tokio::spawn(async move {
+                let protos = vec!["/proto2"];
+
+                let multistream = b"/multistream/1.0.0\n";
+                let len = multistream.len();
+                let proto = b"/proto2\n";
+                let proto_len = proto.len();
+
+                // Check that our implementation writes optimally
+                // the multistream ++ protocol in a single message.
+                let mut expected_message = Vec::new();
+                expected_message.push(len as u8);
+                expected_message.extend_from_slice(multistream);
+                expected_message.push(proto_len as u8);
+                expected_message.extend_from_slice(proto);
+
+                if version == Version::V1Lazy {
+                    expected_message.extend_from_slice(b"ping");
+                }
+
+                let mut out = vec![0; 64];
+                let n = server_connection.read(&mut out).await.unwrap();
+                out.truncate(n);
+                assert_eq!(out, expected_message);
+
+                // We must send the back the multistream packet.
+                let mut send_message = Vec::new();
+                send_message.push(len as u8);
+                send_message.extend_from_slice(multistream);
+
+                server_connection.write(&mut send_message).await.unwrap();
+
+                let mut send_message = Vec::new();
+                send_message.push(proto_len as u8);
+                send_message.extend_from_slice(proto);
+                server_connection.write(&mut send_message).await.unwrap();
+
+                // Handle handshake.
+                match version {
+                    Version::V1 => {
+                        let mut out = vec![0; 64];
+                        let n = server_connection.read(&mut out).await.unwrap();
+                        out.truncate(n);
+                        assert_eq!(out, b"ping");
+
+                        server_connection.write(b"pong").await.unwrap();
+                    }
+                    Version::V1Lazy => {
+                        // Ping (handshake) payload expected in the initial message.
+                        server_connection.write(b"pong").await.unwrap();
+                    }
+                }
+            });
+
+            let client = tokio::spawn(async move {
+                let protos = vec!["/proto2"];
+                let (proto, mut io) =
+                    dialer_select_proto(client_connection, protos, version).await.unwrap();
+                assert_eq!(proto, "/proto2");
+
+                io.write_all(b"ping").await.unwrap();
+                io.flush().await.unwrap();
+
+                let mut out = vec![0; 32];
+                let n = io.read(&mut out).await.unwrap();
+                out.truncate(n);
+                assert_eq!(out, b"pong");
+            });
+
+            server.await;
+            client.await;
+        }
+
+        run(Version::V1).await;
+        run(Version::V1Lazy).await;
+    }
 }
