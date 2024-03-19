@@ -30,6 +30,9 @@ jobs:
       - name: Cargo fmt
         run: cargo fmt --all -- --check
 
+      - if: "failure()"
+        uses: "andymckay/cancel-action@271cfbfa11ca9222f7be99a47e8f929574549e0a" # v0.4
+
   machete:
     name: Check unused dependencies
     runs-on: ubuntu-latest
@@ -51,6 +54,9 @@ jobs:
       - name: Check unused dependencies 
         run: cargo machete
 
+      - if: "failure()"
+        uses: "andymckay/cancel-action@271cfbfa11ca9222f7be99a47e8f929574549e0a" # v0.4
+
   check:
     name: Cargo check
     runs-on: ubuntu-latest
@@ -68,6 +74,50 @@ jobs:
 
       - name: Cargo check
         run: cargo check
+
+      - if: "failure()"
+        uses: "andymckay/cancel-action@271cfbfa11ca9222f7be99a47e8f929574549e0a" # v0.4
+
+  doc:
+    name: Check documentation
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
+        with:
+          cache-on-failure: true
+          cache-all-crates: true
+      - name: Check documentation
+        run: cargo doc
+
+      - if: "failure()"
+        uses: "andymckay/cancel-action@271cfbfa11ca9222f7be99a47e8f929574549e0a" # v0.4
+
+  clippy:
+    name: Cargo clippy
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
+        with:
+          cache-on-failure: true
+          cache-all-crates: true
+
+      - name: Run clippy
+        run: cargo clippy
+
+      - if: "failure()"
+        uses: "andymckay/cancel-action@271cfbfa11ca9222f7be99a47e8f929574549e0a" # v0.4
 
   test:
     name: Test
@@ -89,37 +139,5 @@ jobs:
       - name: Run tests
         run: cargo test
 
-  doc:
-    name: Check documentation
-    runs-on: ubuntu-latest
-    container:
-      image: ${{ vars.CI_IMAGE }}
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
-        with:
-          cache-on-failure: true
-          cache-all-crates: true
-      - name: Check documentation
-        run: cargo doc
-
-  clippy:
-    name: Cargo clippy
-    runs-on: ubuntu-latest
-    container:
-      image: ${{ vars.CI_IMAGE }}
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
-        with:
-          cache-on-failure: true
-          cache-all-crates: true
-
-      - name: Run clippy
-        run: cargo clippy
+      - if: "failure()"
+        uses: "andymckay/cancel-action@271cfbfa11ca9222f7be99a47e8f929574549e0a" # v0.4
