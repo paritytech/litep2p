@@ -15,6 +15,8 @@ jobs:
   fmt:
     name: Cargo fmt
     runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.CI_IMAGE }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -36,6 +38,33 @@ jobs:
           command: fmt
           args: --all -- --check
 
+  machete:
+    name: "Check unused dependencies"
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
+
+      - name: Install cargo-machete
+        run: cargo install cargo-machete
+
+      - name: Check unused dependencies
+        uses: actions-rs/cargo@v1.0.3
+        with:
+          command: machete
+
   check:
     name: "check"
     runs-on: ubuntu-latest
@@ -43,11 +72,6 @@ jobs:
       image: ${{ vars.CI_IMAGE }}
     steps:
       - uses: actions/checkout@v3
-
-      # uncomment if needed
-      # - name: fmt
-      #   run: |
-      #     cargo fmt --all --check
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.5.0
