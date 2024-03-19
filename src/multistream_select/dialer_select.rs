@@ -553,6 +553,8 @@ mod tests {
             io.close().await.unwrap();
         });
 
+        // TODO: Once https://github.com/paritytech/litep2p/pull/62 is merged, this
+        // should be changed to `is_ok`.
         assert!(tokio::time::timeout(Duration::from_secs(10), client).await.is_err());
     }
 
