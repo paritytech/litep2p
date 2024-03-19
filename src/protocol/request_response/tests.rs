@@ -20,8 +20,7 @@
 
 use crate::{
     crypto::ed25519::Keypair,
-    mock::substream::DummySubstream,
-    mock::substream::MockSubstream,
+    mock::substream::{DummySubstream, MockSubstream},
     protocol::{
         request_response::{
             ConfigBuilder, DialOptions, RequestResponseError, RequestResponseEvent,

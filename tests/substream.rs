@@ -23,9 +23,10 @@ use litep2p::{
     config::ConfigBuilder,
     protocol::{Direction, TransportEvent, TransportService, UserProtocol},
     substream::{Substream, SubstreamSet},
-    transport::quic::config::Config as QuicConfig,
-    transport::tcp::config::Config as TcpConfig,
-    transport::websocket::config::Config as WebSocketConfig,
+    transport::{
+        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
+        websocket::config::Config as WebSocketConfig,
+    },
     types::{protocol::ProtocolName, SubstreamId},
     Error, Litep2p, Litep2pEvent, PeerId,
 };

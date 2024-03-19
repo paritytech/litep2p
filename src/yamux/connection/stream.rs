@@ -8,12 +8,11 @@
 // at https://www.apache.org/licenses/LICENSE-2.0 and a copy of the MIT license
 // at https://opensource.org/licenses/MIT.
 
-use crate::yamux::frame::header::ACK;
 use crate::yamux::{
     chunks::Chunks,
     connection::{self, StreamCommand},
     frame::{
-        header::{Data, Header, StreamId, WindowUpdate},
+        header::{Data, Header, StreamId, WindowUpdate, ACK},
         Frame,
     },
     Config, WindowUpdateMode, DEFAULT_CREDIT,
@@ -25,8 +24,8 @@ use futures::{
     ready, SinkExt,
 };
 use parking_lot::{Mutex, MutexGuard};
-use std::convert::TryInto;
 use std::{
+    convert::TryInto,
     fmt, io,
     pin::Pin,
     sync::Arc,

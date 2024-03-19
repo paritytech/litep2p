@@ -75,14 +75,12 @@ mod listener_select;
 mod negotiated;
 mod protocol;
 
-pub use crate::multistream_select::dialer_select::{
-    dialer_select_proto, DialerSelectFuture, DialerState, HandshakeResult,
+pub use crate::multistream_select::{
+    dialer_select::{dialer_select_proto, DialerSelectFuture, DialerState, HandshakeResult},
+    listener_select::{listener_negotiate, listener_select_proto, ListenerSelectFuture},
+    negotiated::{Negotiated, NegotiatedComplete, NegotiationError},
+    protocol::{HeaderLine, Message, Protocol, ProtocolError},
 };
-pub use crate::multistream_select::listener_select::{
-    listener_negotiate, listener_select_proto, ListenerSelectFuture,
-};
-pub use crate::multistream_select::negotiated::{Negotiated, NegotiatedComplete, NegotiationError};
-pub use crate::multistream_select::protocol::{HeaderLine, Message, Protocol, ProtocolError};
 
 /// Supported multistream-select versions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
