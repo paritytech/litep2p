@@ -101,7 +101,7 @@ jobs:
           cache-on-failure: true
           cache-all-crates: true
       - name: Check documentation
-        run: RUSTDOCFLAGS="--deny rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps --document-private-items
+        run: RUSTDOCFLAGS="-D warnings -D rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps --document-private-items
 
       - if: "failure()"
         uses: "andymckay/cancel-action@271cfbfa11ca9222f7be99a47e8f929574549e0a" # v0.4

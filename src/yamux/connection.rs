@@ -343,7 +343,7 @@ impl<T> fmt::Debug for ConnectionState<T> {
 /// A Yamux connection object.
 ///
 /// Wraps the underlying I/O resource and makes progress via its
-/// [`Connection::next_stream`] method which must be called repeatedly
+/// [`Connection::poll_next_inbound`] method which must be called repeatedly
 /// until `Ok(None)` signals EOF or an error is encountered.
 struct Active<T> {
     id: Id,

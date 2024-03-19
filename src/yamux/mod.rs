@@ -60,7 +60,7 @@ const MAX_ACK_BACKLOG: usize = 256;
 ///    instead of concurrently with its respective counterpart.
 ///
 /// For details on why this concrete value was chosen, see
-/// https://github.com/paritytech/yamux/issues/100.
+/// <https://github.com/paritytech/yamux/issues/100>.
 const DEFAULT_SPLIT_SEND_SIZE: usize = 16 * 1024;
 
 /// Specifies when window update frames are sent.

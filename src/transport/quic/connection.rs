@@ -113,7 +113,7 @@ pub struct QuicConnection {
 }
 
 impl QuicConnection {
-    /// Create new [`Connection`].
+    /// Creates a new [`QuicConnection`].
     pub fn new(
         peer: PeerId,
         endpoint: Endpoint,
@@ -230,7 +230,7 @@ impl QuicConnection {
         })
     }
 
-    /// Start event loop for [`Connection`].
+    /// Start event loop for [`QuicConnection`].
     pub async fn start(mut self) -> crate::Result<()> {
         self.protocol_set
             .report_connection_established(self.peer, self.endpoint.clone())

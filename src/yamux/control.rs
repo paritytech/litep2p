@@ -223,7 +223,7 @@ enum State<T> {
 ///
 /// Closing connection involves two steps:
 ///
-/// 1. Draining and answered all remaining [`ControlCommands`].
+/// 1. Draining and answered all remaining [`Closing::DrainingControlCommands`].
 /// 1. Closing the underlying [`Connection`].
 enum Closing<T> {
     DrainingControlCommands { connection: Connection<T> },
