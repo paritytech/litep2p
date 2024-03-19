@@ -124,8 +124,11 @@ jobs:
       - name: Run clippy
         run: cargo clippy
 
-      - if: "failure()"
-        uses: "andymckay/cancel-action@271cfbfa11ca9222f7be99a47e8f929574549e0a" # v0.4
+      # TODO: Allow clippy to fail and do not cancel other tasks.
+      # Clippy is fixed by: https://github.com/paritytech/litep2p/pull/57.
+      #
+      # - if: "failure()"
+      #   uses: "andymckay/cancel-action@271cfbfa11ca9222f7be99a47e8f929574549e0a" # v0.4
 
   test:
     name: Test
