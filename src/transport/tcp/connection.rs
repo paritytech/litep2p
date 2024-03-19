@@ -667,7 +667,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
@@ -715,7 +715,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         let (Ok(mut dialer), Ok((stream, dialer_address))) =
@@ -757,7 +757,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
@@ -807,7 +807,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
@@ -851,7 +851,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
@@ -896,7 +896,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
@@ -946,7 +946,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
@@ -991,7 +991,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         let (Ok(_dialer), Ok((listener, dialer_address))) =
@@ -1031,7 +1031,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
@@ -1088,7 +1088,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
@@ -1147,7 +1147,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
@@ -1198,7 +1198,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
