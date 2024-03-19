@@ -2878,7 +2878,6 @@ dependencies = [
  "cid",
  "ed25519-dalek",
  "futures",
- "futures-rustls",
  "futures-timer",
  "hex-literal",
  "indexmap 2.1.0",
