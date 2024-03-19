@@ -21,25 +21,17 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Install Rust nightly toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt
-
       - name: Rust Cache
         uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
+        with:
+          cache-on-failure: true
+          cache-all-crates: true
 
       - name: Cargo fmt
-        uses: actions-rs/cargo@v1.0.3
-        with:
-          command: fmt
-          args: --all -- --check
+        run: cargo fmt --all -- --check
 
   machete:
-    name: "Check unused dependencies"
+    name: Check unused dependencies
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.CI_IMAGE }}
@@ -47,113 +39,87 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Install Rust stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-
       - name: Rust Cache
         uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
+        with:
+          cache-on-failure: true
+          cache-all-crates: true
 
       - name: Install cargo-machete
         run: cargo install cargo-machete
 
-      - name: Check unused dependencies
-        uses: actions-rs/cargo@v1.0.3
-        with:
-          command: machete
+      - name: Check unused dependencies 
+        run: cargo machete
 
   check:
-    name: "check"
+    name: Cargo check
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.CI_IMAGE }}
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout sources
+        uses: actions/checkout@v4
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.5.0
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
         with:
           cache-on-failure: true
           cache-all-crates: true
 
-      - name: check
+      - name: Cargo check
         run: cargo check
 
   test:
-    name: "test"
+    name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
       image: ${{ vars.CI_IMAGE }}
-      # options: --privileged
       options: --sysctl net.ipv6.conf.all.disable_ipv6=0
     steps:
-      - uses: actions/checkout@v3
-
-      # - name: Install Rust stable toolchain
-      #   uses: actions-rs/toolchain@v1.0.7
-      #   with:
-      #     profile: minimal
-      #     toolchain: 1.75.0
-      #     override: true
+      - name: Checkout sources
+        uses: actions/checkout@v4
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.5.0
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
         with:
           cache-on-failure: true
           cache-all-crates: true
 
-      - name: test
-        run: |
-          # sudo apt-get update && sudo apt-get install -y iproute2 protobuf-compiler
-          echo "Installing iproute2..."
-          apt-get update && apt-get install -y iproute2 iputils-ping
-          # ip a
-          # echo "Enabling loopback interface explicitly..."
-          # ip link set lo up
-          echo "Result"
-          ip a
-          ping -c 1 127.0.0.1
-          echo "Starting a simple HTTP server..."
-          python3 -m http.server --bind 127.0.0.1 8080 &
-          sleep 1
-          curl 127.0.0.1:8080
-          echo "Running tests..."
-          cargo test
+      - name: Run tests
+        run: cargo test
 
   doc:
-    name: "doc"
+    name: Check documentation
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.CI_IMAGE }}
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout sources
+        uses: actions/checkout@v4
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.5.0
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
         with:
           cache-on-failure: true
           cache-all-crates: true
-      - name: doc
+      - name: Check documentation
         run: cargo doc
 
   clippy:
-    name: "clippy"
+    name: Cargo clippy
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.CI_IMAGE }}
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout sources
+        uses: actions/checkout@v4
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.5.0
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
         with:
           cache-on-failure: true
           cache-all-crates: true
 
-      - name: clippy
-        continue-on-error: true
+      - name: Run clippy
         run: cargo clippy
