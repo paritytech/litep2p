@@ -71,7 +71,8 @@ fn initialize_litep2p() -> (
 ) {
     let keypair = Keypair::generate();
     let (ping_config, ping_event_stream) = PingConfig::default();
-    let (identify_config, identify_event_stream) = IdentifyConfig::new(Vec::new());
+    let (identify_config, identify_event_stream) =
+        IdentifyConfig::new("proto v1".to_string(), None, Vec::new());
 
     let litep2p = Litep2p::new(
         ConfigBuilder::new()
@@ -97,10 +98,10 @@ fn initialize_libp2p() -> Swarm<MyBehaviour> {
 
     let transport = libp2p::tokio_development_transport(local_key.clone()).unwrap();
     let behaviour = MyBehaviour {
-        identify: identify::Behaviour::new(identify::Config::new(
-            "/ipfs/1.0.0".into(),
-            local_key.public(),
-        )),
+        identify: identify::Behaviour::new(
+            identify::Config::new("/ipfs/1.0.0".into(), local_key.public())
+                .with_agent_version("libp2p agent".to_string()),
+        ),
         ping: Default::default(),
     };
     let mut swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, local_peer_id).build();
@@ -139,23 +140,33 @@ async fn identify_works() {
                         tracing::info!("Listening on {address:?}")
                     }
                     SwarmEvent::Behaviour(MyBehaviourEvent::Ping(_event)) => {},
-                    SwarmEvent::Behaviour(MyBehaviourEvent::Identify(_event)) => {
-                        libp2p_done = true;
+                    SwarmEvent::Behaviour(MyBehaviourEvent::Identify(event)) => match event {
+                        identify::Event::Received { info, .. } => {
+                            libp2p_done = true;
 
-                        if libp2p_done && litep2p_done {
-                            break
+                            assert_eq!(info.agent_version, "litep2p/1.0.0");
+
+                            if libp2p_done && litep2p_done {
+                                break
+                            }
                         }
+                        _ => {}
                     }
                     _ => {}
                 }
             },
-            _event = identify_event_stream.next() => {
-                litep2p_done = true;
+            event = identify_event_stream.next() => match event {
+                Some(IdentifyEvent::PeerIdentified { user_agent, .. }) => {
+                    litep2p_done = true;
 
-                if libp2p_done && litep2p_done {
-                    break
+                    assert_eq!(user_agent, Some("libp2p agent".to_string()));
+
+                    if libp2p_done && litep2p_done {
+                        break
+                    }
                 }
-            }
+                None => panic!("identify exited"),
+            },
             _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
                 panic!("failed to receive identify in time");
             }
