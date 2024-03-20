@@ -211,7 +211,7 @@ impl AddressStore {
         self.by_score.push(record);
     }
 
-    /// Pop address with the highest score from [`AddressScore`].
+    /// Pop address with the highest score from [`AddressStore`].
     pub fn pop(&mut self) -> Option<AddressRecord> {
         self.by_score.pop().map(|record| {
             self.by_address.remove(&record.address);

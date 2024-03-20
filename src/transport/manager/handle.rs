@@ -44,7 +44,8 @@ use std::{
     },
 };
 
-/// Inner commands sent from [`TransportManagerHandle`] to [`TransportManager`].
+/// Inner commands sent from [`TransportManagerHandle`] to
+/// [`crate::transport::manager::TransportManager`].
 pub enum InnerTransportManagerCommand {
     /// Dial peer.
     DialPeer {
@@ -59,7 +60,7 @@ pub enum InnerTransportManagerCommand {
     },
 }
 
-/// Handle for communicating with [`TransportManager`].
+/// Handle for communicating with [`crate::transport::manager::TransportManager`].
 #[derive(Debug, Clone)]
 pub struct TransportManagerHandle {
     /// Local peer ID.
@@ -68,7 +69,7 @@ pub struct TransportManagerHandle {
     /// Peers.
     peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
 
-    /// TX channel for sending commands to [`TransportManager`].
+    /// TX channel for sending commands to [`crate::transport::manager::TransportManager`].
     cmd_tx: Sender<InnerTransportManagerCommand>,
 
     /// Supported transports.

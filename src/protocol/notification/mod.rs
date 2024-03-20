@@ -508,7 +508,7 @@ impl NotificationProtocol {
     /// substream is a result of a valid state transition.
     ///
     /// For the third case, if the nodes have opened substreams at the same time, the outbound state
-    /// must be [`OutbounState::OutboundInitiated`] to ascertain that the an outbound substream was
+    /// must be [`OutboundState::OutboundInitiated`] to ascertain that the an outbound substream was
     /// actually opened. Any other state would be a state mismatch and would mean that the
     /// connection is opening substreams without the permission of the protocol handler.
     async fn on_outbound_substream(

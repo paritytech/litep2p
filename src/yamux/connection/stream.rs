@@ -8,12 +8,11 @@
 // at https://www.apache.org/licenses/LICENSE-2.0 and a copy of the MIT license
 // at https://opensource.org/licenses/MIT.
 
-use crate::yamux::frame::header::ACK;
 use crate::yamux::{
     chunks::Chunks,
     connection::{self, StreamCommand},
     frame::{
-        header::{Data, Header, StreamId, WindowUpdate},
+        header::{Data, Header, StreamId, WindowUpdate, ACK},
         Frame,
     },
     Config, WindowUpdateMode, DEFAULT_CREDIT,
@@ -25,8 +24,8 @@ use futures::{
     ready, SinkExt,
 };
 use parking_lot::{Mutex, MutexGuard};
-use std::convert::TryInto;
 use std::{
+    convert::TryInto,
     fmt, io,
     pin::Pin,
     sync::Arc,
@@ -85,10 +84,10 @@ pub(crate) enum Flag {
 
 /// A multiplexed Yamux stream.
 ///
-/// Streams are created either outbound via [`crate::Control::open_stream`]
-/// or inbound via [`crate::Connection::next_stream`].
+/// Streams are created either outbound via [`crate::yamux::Control::open_stream`]
+/// or inbound via [`crate::yamux::Connection::poll_next_inbound`].
 ///
-/// `Stream` implements [`AsyncRead`] and [`AsyncWrite`] and also
+/// [`Stream`] implements [`AsyncRead`] and [`AsyncWrite`] and also
 /// [`futures::stream::Stream`].
 pub struct Stream {
     id: StreamId,
