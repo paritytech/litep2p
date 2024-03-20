@@ -633,8 +633,8 @@ mod tests {
                 assert_eq!(out, b"pong");
             });
 
-            server.await;
-            client.await;
+            server.await.unwrap();
+            client.await.unwrap();
         }
 
         run(Version::V1).await;
@@ -645,7 +645,7 @@ mod tests {
     async fn v1_low_level_negotiate_multiple_headers() {
         let (client_connection, mut server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
 
-        let server: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
+        let server = tokio::spawn(async move {
             let protos = vec!["/proto2"];
 
             let multistream = b"/multistream/1.0.0\n";
@@ -679,11 +679,9 @@ mod tests {
             send_message.extend_from_slice(multistream);
 
             server_connection.write_all(&mut send_message).await.unwrap();
-
-            Ok(())
         });
 
-        let client: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
+        let client = tokio::spawn(async move {
             let protos = vec!["/proto2"];
 
             // Negotiation fails because the protocol receives the `/multistream/1.0.0` header
@@ -694,8 +692,6 @@ mod tests {
                 NegotiationError::ProtocolError(ProtocolError::InvalidMessage) => {}
                 _ => panic!("unexpected error: {:?}", result),
             };
-
-            Ok(())
         });
 
         server.await.unwrap();
@@ -706,7 +702,7 @@ mod tests {
     async fn v1_lazy_low_level_negotiate_multiple_headers() {
         let (client_connection, mut server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
 
-        let server: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
+        let server = tokio::spawn(async move {
             let protos = vec!["/proto2"];
 
             let multistream = b"/multistream/1.0.0\n";
@@ -740,11 +736,9 @@ mod tests {
             send_message.extend_from_slice(multistream);
 
             server_connection.write_all(&mut send_message).await.unwrap();
-
-            Ok(())
         });
 
-        let client: tokio::task::JoinHandle<Result<(), ()>> = tokio::spawn(async move {
+        let client = tokio::spawn(async move {
             let protos = vec!["/proto2"];
 
             // Negotiation fails because the protocol receives the `/multistream/1.0.0` header
@@ -759,8 +753,6 @@ mod tests {
                 NegotiationError::ProtocolError(ProtocolError::InvalidMessage) => {}
                 _ => panic!("unexpected error: {:?}", result),
             };
-
-            Ok(())
         });
 
         server.await.unwrap();
