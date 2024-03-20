@@ -198,7 +198,7 @@ pub enum NotificationEvent {
     },
 }
 
-/// Notification commands sent by the [`NotificationService`] to the protocol.
+/// Notification commands sent to the protocol.
 pub(crate) enum NotificationCommand {
     /// Open substreams to one or more peers.
     OpenSubstream {

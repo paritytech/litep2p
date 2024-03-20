@@ -57,8 +57,8 @@ impl<T: Clone> Key<T> {
     /// Constructs a new `Key` by running the given value through a random
     /// oracle.
     ///
-    /// The preimage of type `T` is preserved. See [`Key::preimage`] and
-    /// [`Key::into_preimage`].
+    /// The preimage of type `T` is preserved.
+    /// See [`Key::into_preimage`] for more details.
     pub fn new(_preimage: T) -> Key<T>
     where
         T: Borrow<[u8]>,

@@ -84,23 +84,33 @@ mod cleanup;
 mod closing;
 mod stream;
 
-use crate::yamux::tagged_stream::TaggedStream;
 use crate::yamux::{
     error::ConnectionError,
-    frame::header::{self, Data, GoAway, Header, Ping, StreamId, Tag, WindowUpdate, CONNECTION_ID},
-    frame::{self, Frame},
-    Config, WindowUpdateMode, DEFAULT_CREDIT,
+    frame::{
+        self,
+        header::{self, Data, GoAway, Header, Ping, StreamId, Tag, WindowUpdate, CONNECTION_ID},
+        Frame,
+    },
+    tagged_stream::TaggedStream,
+    Config, Result, WindowUpdateMode, DEFAULT_CREDIT, MAX_ACK_BACKLOG,
 };
-use crate::yamux::{Result, MAX_ACK_BACKLOG};
 use cleanup::Cleanup;
 use closing::Closing;
-use futures::stream::SelectAll;
-use futures::{channel::mpsc, future::Either, prelude::*, sink::SinkExt, stream::Fuse};
+use futures::{
+    channel::mpsc,
+    future::Either,
+    prelude::*,
+    sink::SinkExt,
+    stream::{Fuse, SelectAll},
+};
 use nohash_hasher::IntMap;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
-use std::task::{Context, Waker};
-use std::{fmt, sync::Arc, task::Poll};
+use std::{
+    collections::VecDeque,
+    fmt,
+    sync::Arc,
+    task::{Context, Poll, Waker},
+};
 
 pub use stream::{Packet, State, Stream};
 
@@ -343,7 +353,7 @@ impl<T> fmt::Debug for ConnectionState<T> {
 /// A Yamux connection object.
 ///
 /// Wraps the underlying I/O resource and makes progress via its
-/// [`Connection::next_stream`] method which must be called repeatedly
+/// [`Connection::poll_next_inbound`] method which must be called repeatedly
 /// until `Ok(None)` signals EOF or an error is encountered.
 struct Active<T> {
     id: Id,

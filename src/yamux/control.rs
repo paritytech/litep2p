@@ -8,14 +8,15 @@
 // at https://www.apache.org/licenses/LICENSE-2.0 and a copy of the MIT license
 // at https://opensource.org/licenses/MIT.
 
-use crate::yamux::MAX_ACK_BACKLOG;
-use crate::yamux::{error::ConnectionError, Connection, Result, Stream};
+use crate::yamux::{error::ConnectionError, Connection, Result, Stream, MAX_ACK_BACKLOG};
 use futures::{
     channel::{mpsc, oneshot},
     prelude::*,
 };
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// A Yamux [`Connection`] controller.
 ///
@@ -223,7 +224,7 @@ enum State<T> {
 ///
 /// Closing connection involves two steps:
 ///
-/// 1. Draining and answered all remaining [`ControlCommands`].
+/// 1. Draining and answered all remaining [`Closing::DrainingControlCommands`].
 /// 1. Closing the underlying [`Connection`].
 enum Closing<T> {
     DrainingControlCommands { connection: Connection<T> },

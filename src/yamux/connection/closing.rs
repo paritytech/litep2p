@@ -1,15 +1,18 @@
-use crate::yamux::connection::StreamCommand;
-use crate::yamux::frame::Frame;
-use crate::yamux::tagged_stream::TaggedStream;
-use crate::yamux::Result;
-use crate::yamux::{frame, StreamId};
-use futures::channel::mpsc;
-use futures::stream::{Fuse, SelectAll};
-use futures::{ready, AsyncRead, AsyncWrite, SinkExt, StreamExt};
-use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use crate::yamux::{
+    connection::StreamCommand, frame, frame::Frame, tagged_stream::TaggedStream, Result, StreamId,
+};
+use futures::{
+    channel::mpsc,
+    ready,
+    stream::{Fuse, SelectAll},
+    AsyncRead, AsyncWrite, SinkExt, StreamExt,
+};
+use std::{
+    collections::VecDeque,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// A [`Future`] that gracefully closes the yamux connection.
 #[must_use]

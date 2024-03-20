@@ -25,8 +25,10 @@
 //! `Stream` and `Sink` implementations of `MessageIO` and
 //! `MessageReader`.
 
-use crate::multistream_select::length_delimited::{LengthDelimited, LengthDelimitedReader};
-use crate::multistream_select::Version;
+use crate::multistream_select::{
+    length_delimited::{LengthDelimited, LengthDelimitedReader},
+    Version,
+};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{io::IoSlice, prelude::*, ready};

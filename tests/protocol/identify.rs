@@ -26,9 +26,10 @@ use litep2p::{
         identify::{Config, IdentifyEvent},
         ping::Config as PingConfig,
     },
-    transport::quic::config::Config as QuicConfig,
-    transport::tcp::config::Config as TcpConfig,
-    transport::websocket::config::Config as WebSocketConfig,
+    transport::{
+        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
+        websocket::config::Config as WebSocketConfig,
+    },
     Litep2p, Litep2pEvent,
 };
 

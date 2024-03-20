@@ -1,6 +1,8 @@
 use futures::Stream;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// A stream that yields its tag with every item.
 #[pin_project::pin_project]

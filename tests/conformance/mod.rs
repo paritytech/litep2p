@@ -19,8 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 #[cfg(test)]
-mod golang;
-#[cfg(test)]
 mod rust;
 #[cfg(test)]
 mod substrate;
