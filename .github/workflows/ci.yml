@@ -9,26 +9,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# ${{ vars.CI_UNIFIED_IMAGE }} is defined in the repository variables
-env:
-  CI_IMAGE: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
+# ${{ secrets.CI_IMAGE_SECRET }} is defined in the repository secrets
 
 jobs:
-  set-image:
-    # This workaround sets the container image for each job using 'set-image' job output.
-    # env variables don't work for PR from forks, so we need to use outputs.
-    runs-on: ubuntu-latest
-    outputs:
-      CI_IMAGE: ${{ steps.set_image.outputs.CI_IMAGE }}
-    steps:
-      - id: set_image
-        run: echo "CI_IMAGE=${{ env.CI_IMAGE }}" >> $GITHUB_OUTPUT
   fmt:
     name: Cargo fmt
     runs-on: ubuntu-latest
-    needs: [set-image]
     container:
-      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+      image: ${{ secrets.CI_IMAGE_SECRET }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -45,9 +33,8 @@ jobs:
   machete:
     name: Check unused dependencies
     runs-on: ubuntu-latest
-    needs: [set-image]
     container:
-      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+      image: ${{ secrets.CI_IMAGE_SECRET }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -67,9 +54,8 @@ jobs:
   check:
     name: Cargo check
     runs-on: ubuntu-latest
-    needs: [set-image]
     container:
-      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+      image: ${{ secrets.CI_IMAGE_SECRET }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -86,9 +72,8 @@ jobs:
   doc:
     name: Check documentation
     runs-on: ubuntu-latest
-    needs: [set-image]
     container:
-      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+      image: ${{ secrets.CI_IMAGE_SECRET }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -104,9 +89,8 @@ jobs:
   clippy:
     name: Cargo clippy
     runs-on: ubuntu-latest
-    needs: [set-image]
     container:
-      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+      image: ${{ secrets.CI_IMAGE_SECRET }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -127,9 +111,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [set-image]
     container:
-      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+      image: ${{ secrets.CI_IMAGE_SECRET }}
       options: --sysctl net.ipv6.conf.all.disable_ipv6=0
     steps:
       - name: Checkout sources
