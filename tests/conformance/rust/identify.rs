@@ -144,6 +144,7 @@ async fn identify_works() {
                         identify::Event::Received { info, .. } => {
                             libp2p_done = true;
 
+                            assert_eq!(info.protocol_version, "proto v1");
                             assert_eq!(info.agent_version, "litep2p/1.0.0");
 
                             if libp2p_done && litep2p_done {
@@ -156,9 +157,10 @@ async fn identify_works() {
                 }
             },
             event = identify_event_stream.next() => match event {
-                Some(IdentifyEvent::PeerIdentified { user_agent, .. }) => {
+                Some(IdentifyEvent::PeerIdentified { protocol_version, user_agent, .. }) => {
                     litep2p_done = true;
 
+                    assert_eq!(protocol_version, Some("/ipfs/1.0.0".to_string()));
                     assert_eq!(user_agent, Some("libp2p agent".to_string()));
 
                     if libp2p_done && litep2p_done {
