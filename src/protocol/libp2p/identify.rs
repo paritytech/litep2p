@@ -51,6 +51,9 @@ const PROTOCOL_NAME: &str = "/ipfs/id/1.0.0";
 /// IPFS Identify push protocol name.
 const _PUSH_PROTOCOL_NAME: &str = "/ipfs/id/push/1.0.0";
 
+/// Default agent version.
+const DEFAULT_AGENT: &str = "litep2p/1.0.0";
+
 /// Size for `/ipfs/ping/1.0.0` payloads.
 // TODO: what is the max size?
 const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
@@ -78,6 +81,12 @@ pub struct Config {
 
     /// Public addresses.
     pub(crate) public_addresses: Vec<Multiaddr>,
+
+    /// Protocol version.
+    pub(crate) protocol_version: String,
+
+    /// User agent.
+    pub(crate) user_agent: Option<String>,
 }
 
 impl Config {
@@ -86,6 +95,8 @@ impl Config {
     /// Returns a config that is given to `Litep2pConfig` and an event stream for
     /// [`IdentifyEvent`]s.
     pub fn new(
+        protocol_version: String,
+        user_agent: Option<String>,
         public_addresses: Vec<Multiaddr>,
     ) -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
@@ -95,6 +106,8 @@ impl Config {
                 tx_event,
                 public: None,
                 public_addresses,
+                protocol_version,
+                user_agent,
                 codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
                 protocols: Vec::new(),
                 protocol: ProtocolName::from(PROTOCOL_NAME),
@@ -112,6 +125,12 @@ pub enum IdentifyEvent {
         /// Peer ID.
         peer: PeerId,
 
+        /// Protocol version.
+        protocol_version: Option<String>,
+
+        /// User agent.
+        user_agent: Option<String>,
+
         /// Supported protocols.
         supported_protocols: HashSet<ProtocolName>,
 
@@ -121,6 +140,27 @@ pub enum IdentifyEvent {
         /// Listen addresses.
         listen_addresses: Vec<Multiaddr>,
     },
+}
+
+/// Identify response received from remote.
+struct IdentifyResponse {
+    /// Remote peer ID.
+    peer: PeerId,
+
+    /// Protocol version.
+    protocol_version: Option<String>,
+
+    /// User agent.
+    user_agent: Option<String>,
+
+    /// Protocols supported by remote.
+    supported_protocols: HashSet<String>,
+
+    /// Remote's listen addresses.
+    listen_addresses: Vec<Multiaddr>,
+
+    /// Observed address.
+    observed_address: Option<Multiaddr>,
 }
 
 pub(crate) struct Identify {
@@ -136,6 +176,12 @@ pub(crate) struct Identify {
     // Public key of the local node, filled by `Litep2p`.
     public: PublicKey,
 
+    /// Protocol version.
+    protocol_version: String,
+
+    /// User agent.
+    user_agent: String,
+
     /// Public addresses.
     listen_addresses: HashSet<Multiaddr>,
 
@@ -146,12 +192,7 @@ pub(crate) struct Identify {
     pending_opens: HashMap<SubstreamId, PeerId>,
 
     /// Pending outbound substreams.
-    pending_outbound: FuturesUnordered<
-        BoxFuture<
-            'static,
-            crate::Result<(PeerId, HashSet<String>, Option<Multiaddr>, Vec<Multiaddr>)>,
-        >,
-    >,
+    pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
 
     /// Pending inbound substreams.
     pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
@@ -174,6 +215,8 @@ impl Identify {
                 .chain(listen_addresses.into_iter())
                 .collect(),
             public: config.public.expect("public key to be supplied"),
+            protocol_version: config.protocol_version,
+            user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
             pending_opens: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
             pending_outbound: FuturesUnordered::new(),
@@ -227,8 +270,8 @@ impl Identify {
         };
 
         let identify = identify_schema::Identify {
-            protocol_version: None,
-            agent_version: None,
+            protocol_version: Some(self.protocol_version.clone()),
+            agent_version: Some(self.user_agent.clone()),
             public_key: Some(self.public.to_protobuf_encoding()),
             listen_addrs: self
                 .listen_addresses
@@ -313,13 +356,17 @@ impl Identify {
                 .collect();
             let observed_address =
                 info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten();
+            let protocol_version = info.protocol_version;
+            let user_agent = info.agent_version;
 
-            Ok((
+            Ok(IdentifyResponse {
                 peer,
-                HashSet::from_iter(info.protocols),
+                protocol_version,
+                user_agent,
+                supported_protocols: HashSet::from_iter(info.protocols),
                 observed_address,
                 listen_addresses,
-            ))
+            })
         }));
     }
 
@@ -351,13 +398,15 @@ impl Identify {
                 },
                 _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
-                    Some(Ok((peer, supported_protocols, observed_address, listen_addresses))) => {
+                    Some(Ok(response)) => {
                         let _ = self.tx
                             .send(IdentifyEvent::PeerIdentified {
-                                peer,
-                                supported_protocols: supported_protocols.into_iter().map(From::from).collect(),
-                                observed_address: observed_address.map_or(Multiaddr::empty(), |address| address),
-                                listen_addresses,
+                                peer: response.peer,
+                                protocol_version: response.protocol_version,
+                                user_agent: response.user_agent,
+                                supported_protocols: response.supported_protocols.into_iter().map(From::from).collect(),
+                                observed_address: response.observed_address.map_or(Multiaddr::empty(), |address| address),
+                                listen_addresses: response.listen_addresses,
                             })
                             .await;
                     }
