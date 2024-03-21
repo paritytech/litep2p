@@ -11,7 +11,7 @@ concurrency:
 
 # ${{ vars.CI_UNIFIED_IMAGE }} is defined in the repository variables
 env:
-  CI_IMAGE: "bullseye-1.75.0-2024-01-22-v20240222"
+  CI_IMAGE: "paritytech/bullseye-1.75.0-2024-01-22-v20240222"
 
 jobs:
   set-image:
