@@ -128,9 +128,8 @@ impl Mdns {
     ) -> crate::Result<Self> {
         let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
         socket.set_reuse_address(true)?;
-        // TODO: fix
-        // #[cfg(unix)]
-        // socket.set_reuse_port(true)?;
+        #[cfg(unix)]
+        socket.set_reuse_port(true)?;
         socket.bind(
             &SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), IPV4_MULTICAST_PORT).into(),
         )?;
