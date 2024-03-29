@@ -247,13 +247,14 @@ impl WebSocketTransport {
         socket.set_nonblocking(true)?;
 
         match dial_addresses.local_dial_address(&remote_address.ip()) {
-            Some(dial_address) => {
+            Ok(Some(dial_address)) => {
                 socket.set_reuse_address(true)?;
                 #[cfg(unix)]
                 socket.set_reuse_port(true)?;
                 socket.bind(&dial_address.into())?;
             }
-            None => {
+            Ok(None) => {}
+            Err(()) => {
                 tracing::debug!(
                     target: LOG_TARGET,
                     ?remote_address,
@@ -311,8 +312,10 @@ impl TransportBuilder for WebSocketTransport {
             listen_addresses = ?config.listen_addresses,
             "start websocket transport",
         );
-        let (listener, listen_addresses, dial_addresses) =
-            WebSocketListener::new(std::mem::replace(&mut config.listen_addresses, Vec::new()));
+        let (listener, listen_addresses, dial_addresses) = WebSocketListener::new(
+            std::mem::replace(&mut config.listen_addresses, Vec::new()),
+            config.reuse_port,
+        );
 
         Ok((
             Self {
