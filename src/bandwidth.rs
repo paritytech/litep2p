@@ -21,18 +21,18 @@
 //! Bandwidth sinks for metering inbound/outbound bytes.
 
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+	atomic::{AtomicUsize, Ordering},
+	Arc,
 };
 
 /// Inner bandwidth sink
 #[derive(Debug)]
 struct InnerBandwidthSink {
-    /// Number of inbound bytes.
-    inbound: AtomicUsize,
+	/// Number of inbound bytes.
+	inbound: AtomicUsize,
 
-    /// Number of outbound bytes.
-    outbound: AtomicUsize,
+	/// Number of outbound bytes.
+	outbound: AtomicUsize,
 }
 
 /// Bandwidth sink which provides metering for inbound/outbound byte usage.
@@ -44,47 +44,47 @@ struct InnerBandwidthSink {
 pub struct BandwidthSink(Arc<InnerBandwidthSink>);
 
 impl BandwidthSink {
-    /// Create new [`BandwidthSink`].
-    pub(crate) fn new() -> Self {
-        Self(Arc::new(InnerBandwidthSink {
-            inbound: AtomicUsize::new(0usize),
-            outbound: AtomicUsize::new(0usize),
-        }))
-    }
+	/// Create new [`BandwidthSink`].
+	pub(crate) fn new() -> Self {
+		Self(Arc::new(InnerBandwidthSink {
+			inbound: AtomicUsize::new(0usize),
+			outbound: AtomicUsize::new(0usize),
+		}))
+	}
 
-    /// Increase the amount of inbound bytes.
-    pub(crate) fn increase_inbound(&self, bytes: usize) {
-        let _ = self.0.inbound.fetch_add(bytes, Ordering::Relaxed);
-    }
+	/// Increase the amount of inbound bytes.
+	pub(crate) fn increase_inbound(&self, bytes: usize) {
+		let _ = self.0.inbound.fetch_add(bytes, Ordering::Relaxed);
+	}
 
-    /// Increse the amount of outbound bytes.
-    pub(crate) fn increase_outbound(&self, bytes: usize) {
-        let _ = self.0.outbound.fetch_add(bytes, Ordering::Relaxed);
-    }
+	/// Increse the amount of outbound bytes.
+	pub(crate) fn increase_outbound(&self, bytes: usize) {
+		let _ = self.0.outbound.fetch_add(bytes, Ordering::Relaxed);
+	}
 
-    /// Get total the number of bytes received.
-    pub fn inbound(&self) -> usize {
-        self.0.inbound.load(Ordering::Relaxed)
-    }
+	/// Get total the number of bytes received.
+	pub fn inbound(&self) -> usize {
+		self.0.inbound.load(Ordering::Relaxed)
+	}
 
-    /// Get total the nubmer of bytes sent.
-    pub fn outbound(&self) -> usize {
-        self.0.outbound.load(Ordering::Relaxed)
-    }
+	/// Get total the nubmer of bytes sent.
+	pub fn outbound(&self) -> usize {
+		self.0.outbound.load(Ordering::Relaxed)
+	}
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+	use super::*;
 
-    #[test]
-    fn verify_bandwidth() {
-        let sink = BandwidthSink::new();
+	#[test]
+	fn verify_bandwidth() {
+		let sink = BandwidthSink::new();
 
-        sink.increase_inbound(1337usize);
-        sink.increase_outbound(1338usize);
+		sink.increase_inbound(1337usize);
+		sink.increase_outbound(1338usize);
 
-        assert_eq!(sink.inbound(), 1337usize);
-        assert_eq!(sink.outbound(), 1338usize);
-    }
+		assert_eq!(sink.inbound(), 1337usize);
+		assert_eq!(sink.outbound(), 1338usize);
+	}
 }

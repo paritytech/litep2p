@@ -21,17 +21,17 @@
 use std::collections::HashSet;
 
 use crate::{
-    crypto::ed25519::Keypair,
-    executor::DefaultExecutor,
-    protocol::{
-        notification::{
-            handle::NotificationHandle, Config as NotificationConfig, NotificationProtocol,
-        },
-        InnerTransportEvent, ProtocolCommand, TransportService,
-    },
-    transport::manager::TransportManager,
-    types::protocol::ProtocolName,
-    BandwidthSink, PeerId,
+	crypto::ed25519::Keypair,
+	executor::DefaultExecutor,
+	protocol::{
+		notification::{
+			handle::NotificationHandle, Config as NotificationConfig, NotificationProtocol,
+		},
+		InnerTransportEvent, ProtocolCommand, TransportService,
+	},
+	transport::manager::TransportManager,
+	types::protocol::ProtocolName,
+	BandwidthSink, PeerId,
 };
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -42,53 +42,45 @@ mod notification;
 mod substream_validation;
 
 /// create new `NotificationProtocol`
-fn make_notification_protocol() -> (
-    NotificationProtocol,
-    NotificationHandle,
-    TransportManager,
-    Sender<InnerTransportEvent>,
-) {
-    let (manager, handle) = TransportManager::new(
-        Keypair::generate(),
-        HashSet::new(),
-        BandwidthSink::new(),
-        8usize,
-    );
+fn make_notification_protocol(
+) -> (NotificationProtocol, NotificationHandle, TransportManager, Sender<InnerTransportEvent>) {
+	let (manager, handle) =
+		TransportManager::new(Keypair::generate(), HashSet::new(), BandwidthSink::new(), 8usize);
 
-    let peer = PeerId::random();
-    let (transport_service, tx) = TransportService::new(
-        peer,
-        ProtocolName::from("/notif/1"),
-        Vec::new(),
-        std::sync::Arc::new(Default::default()),
-        handle,
-    );
-    let (config, handle) = NotificationConfig::new(
-        ProtocolName::from("/notif/1"),
-        1024usize,
-        vec![1, 2, 3, 4],
-        Vec::new(),
-        false,
-        64,
-        64,
-        true,
-    );
+	let peer = PeerId::random();
+	let (transport_service, tx) = TransportService::new(
+		peer,
+		ProtocolName::from("/notif/1"),
+		Vec::new(),
+		std::sync::Arc::new(Default::default()),
+		handle,
+	);
+	let (config, handle) = NotificationConfig::new(
+		ProtocolName::from("/notif/1"),
+		1024usize,
+		vec![1, 2, 3, 4],
+		Vec::new(),
+		false,
+		64,
+		64,
+		true,
+	);
 
-    (
-        NotificationProtocol::new(
-            transport_service,
-            config,
-            std::sync::Arc::new(DefaultExecutor {}),
-        ),
-        handle,
-        manager,
-        tx,
-    )
+	(
+		NotificationProtocol::new(
+			transport_service,
+			config,
+			std::sync::Arc::new(DefaultExecutor {}),
+		),
+		handle,
+		manager,
+		tx,
+	)
 }
 
 /// add new peer to `NotificationProtocol`
 fn add_peer() -> (PeerId, (), Receiver<ProtocolCommand>) {
-    let (_tx, rx) = channel(64);
+	let (_tx, rx) = channel(64);
 
-    (PeerId::random(), (), rx)
+	(PeerId::random(), (), rx)
 }

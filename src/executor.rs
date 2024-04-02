@@ -24,49 +24,49 @@ use std::{future::Future, pin::Pin};
 
 /// Trait which defines the interface the executor must implement.
 pub trait Executor: Send + Sync {
-    /// Start executing a future in the background.
-    fn run(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
+	/// Start executing a future in the background.
+	fn run(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
 
-    /// Start executing a future in the background and give the future a name;
-    fn run_with_name(&self, name: &'static str, future: Pin<Box<dyn Future<Output = ()> + Send>>);
+	/// Start executing a future in the background and give the future a name;
+	fn run_with_name(&self, name: &'static str, future: Pin<Box<dyn Future<Output = ()> + Send>>);
 }
 
 /// Default executor, defaults to calling `tokio::spawn()`.
 pub(crate) struct DefaultExecutor;
 
 impl Executor for DefaultExecutor {
-    fn run(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        let _ = tokio::spawn(future);
-    }
+	fn run(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+		let _ = tokio::spawn(future);
+	}
 
-    fn run_with_name(&self, _: &'static str, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        let _ = tokio::spawn(future);
-    }
+	fn run_with_name(&self, _: &'static str, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+		let _ = tokio::spawn(future);
+	}
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tokio::sync::mpsc::channel;
+	use super::*;
+	use tokio::sync::mpsc::channel;
 
-    #[tokio::test]
-    async fn run_with_name() {
-        let executor = DefaultExecutor;
-        let (tx, mut rx) = channel(1);
+	#[tokio::test]
+	async fn run_with_name() {
+		let executor = DefaultExecutor;
+		let (tx, mut rx) = channel(1);
 
-        let sender = tx.clone();
-        executor.run(Box::pin(async move {
-            sender.send(1337usize).await.unwrap();
-        }));
+		let sender = tx.clone();
+		executor.run(Box::pin(async move {
+			sender.send(1337usize).await.unwrap();
+		}));
 
-        executor.run_with_name(
-            "test",
-            Box::pin(async move {
-                tx.send(1337usize).await.unwrap();
-            }),
-        );
+		executor.run_with_name(
+			"test",
+			Box::pin(async move {
+				tx.send(1337usize).await.unwrap();
+			}),
+		);
 
-        assert_eq!(rx.recv().await.unwrap(), 1337usize);
-        assert_eq!(rx.recv().await.unwrap(), 1337usize);
-    }
+		assert_eq!(rx.recv().await.unwrap(), 1337usize);
+		assert_eq!(rx.recv().await.unwrap(), 1337usize);
+	}
 }

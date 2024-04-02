@@ -27,22 +27,22 @@ use futures::Stream;
 use multiaddr::Multiaddr;
 use rand::{distributions::Alphanumeric, Rng};
 use simple_dns::{
-    rdata::{RData, PTR, TXT},
-    Name, Packet, PacketFlag, Question, ResourceRecord, CLASS, QCLASS, QTYPE, TYPE,
+	rdata::{RData, PTR, TXT},
+	Name, Packet, PacketFlag, Question, ResourceRecord, CLASS, QCLASS, QTYPE, TYPE,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::{
-    net::UdpSocket,
-    sync::mpsc::{channel, Sender},
+	net::UdpSocket,
+	sync::mpsc::{channel, Sender},
 };
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
-    collections::HashSet,
-    net,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::Arc,
-    time::Duration,
+	collections::HashSet,
+	net,
+	net::{IpAddr, Ipv4Addr, SocketAddr},
+	sync::Arc,
+	time::Duration,
 };
 
 /// Logging target for the file.
@@ -60,387 +60,384 @@ const SERVICE_NAME: &str = "_p2p._udp.local";
 /// Events emitted by mDNS.
 // #[derive(Debug, Clone)]
 pub enum MdnsEvent {
-    /// One or more addresses discovered.
-    Discovered(Vec<Multiaddr>),
+	/// One or more addresses discovered.
+	Discovered(Vec<Multiaddr>),
 }
 
 /// mDNS configuration.
 // #[derive(Debug)]
 pub struct Config {
-    /// How often the network should be queried for new peers.
-    query_interval: Duration,
+	/// How often the network should be queried for new peers.
+	query_interval: Duration,
 
-    /// TX channel for sending mDNS events to user.
-    tx: Sender<MdnsEvent>,
+	/// TX channel for sending mDNS events to user.
+	tx: Sender<MdnsEvent>,
 }
 
 impl Config {
-    /// Create new [`Config`].
-    ///
-    /// Return the configuration and an event stream for receiving [`MdnsEvent`]s.
-    pub fn new(
-        query_interval: Duration,
-    ) -> (Self, Box<dyn Stream<Item = MdnsEvent> + Send + Unpin>) {
-        let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
-        (
-            Self { query_interval, tx },
-            Box::new(ReceiverStream::new(rx)),
-        )
-    }
+	/// Create new [`Config`].
+	///
+	/// Return the configuration and an event stream for receiving [`MdnsEvent`]s.
+	pub fn new(
+		query_interval: Duration,
+	) -> (Self, Box<dyn Stream<Item = MdnsEvent> + Send + Unpin>) {
+		let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
+		(Self { query_interval, tx }, Box::new(ReceiverStream::new(rx)))
+	}
 }
 
 /// Main mDNS object.
 pub(crate) struct Mdns {
-    /// UDP socket for multicast requests/responses.
-    socket: UdpSocket,
+	/// UDP socket for multicast requests/responses.
+	socket: UdpSocket,
 
-    /// Query interval.
-    query_interval: Duration,
+	/// Query interval.
+	query_interval: Duration,
 
-    /// TX channel for sending events to user.
-    event_tx: Sender<MdnsEvent>,
+	/// TX channel for sending events to user.
+	event_tx: Sender<MdnsEvent>,
 
-    /// Handle to `TransportManager`.
-    _transport_handle: TransportManagerHandle,
+	/// Handle to `TransportManager`.
+	_transport_handle: TransportManagerHandle,
 
-    // Username.
-    username: String,
+	// Username.
+	username: String,
 
-    /// Next query ID.
-    next_query_id: u16,
+	/// Next query ID.
+	next_query_id: u16,
 
-    /// Buffer for incoming messages.
-    receive_buffer: Vec<u8>,
+	/// Buffer for incoming messages.
+	receive_buffer: Vec<u8>,
 
-    /// Listen addresses.
-    listen_addresses: Vec<Arc<str>>,
+	/// Listen addresses.
+	listen_addresses: Vec<Arc<str>>,
 
-    /// Discovered addresses.
-    discovered: HashSet<Multiaddr>,
+	/// Discovered addresses.
+	discovered: HashSet<Multiaddr>,
 }
 
 impl Mdns {
-    /// Create new [`Mdns`].
-    pub(crate) fn new(
-        _transport_handle: TransportManagerHandle,
-        config: Config,
-        listen_addresses: Vec<Multiaddr>,
-    ) -> crate::Result<Self> {
-        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-        socket.set_reuse_address(true)?;
-        #[cfg(unix)]
-        socket.set_reuse_port(true)?;
-        socket.bind(
-            &SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), IPV4_MULTICAST_PORT).into(),
-        )?;
-        socket.set_multicast_loop_v4(true)?;
-        socket.set_multicast_ttl_v4(255)?;
-        socket.join_multicast_v4(&IPV4_MULTICAST_ADDRESS, &Ipv4Addr::UNSPECIFIED)?;
-        socket.set_nonblocking(true)?;
+	/// Create new [`Mdns`].
+	pub(crate) fn new(
+		_transport_handle: TransportManagerHandle,
+		config: Config,
+		listen_addresses: Vec<Multiaddr>,
+	) -> crate::Result<Self> {
+		let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+		socket.set_reuse_address(true)?;
+		#[cfg(unix)]
+		socket.set_reuse_port(true)?;
+		socket.bind(
+			&SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), IPV4_MULTICAST_PORT).into(),
+		)?;
+		socket.set_multicast_loop_v4(true)?;
+		socket.set_multicast_ttl_v4(255)?;
+		socket.join_multicast_v4(&IPV4_MULTICAST_ADDRESS, &Ipv4Addr::UNSPECIFIED)?;
+		socket.set_nonblocking(true)?;
 
-        Ok(Self {
-            _transport_handle,
-            event_tx: config.tx,
-            next_query_id: 1337u16,
-            discovered: HashSet::new(),
-            query_interval: config.query_interval,
-            receive_buffer: vec![0u8; 4096],
-            username: rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(32)
-                .map(char::from)
-                .collect(),
-            socket: UdpSocket::from_std(net::UdpSocket::from(socket))?,
-            listen_addresses: listen_addresses
-                .into_iter()
-                .map(|address| format!("dnsaddr={address}").into())
-                .collect(),
-        })
-    }
+		Ok(Self {
+			_transport_handle,
+			event_tx: config.tx,
+			next_query_id: 1337u16,
+			discovered: HashSet::new(),
+			query_interval: config.query_interval,
+			receive_buffer: vec![0u8; 4096],
+			username: rand::thread_rng()
+				.sample_iter(&Alphanumeric)
+				.take(32)
+				.map(char::from)
+				.collect(),
+			socket: UdpSocket::from_std(net::UdpSocket::from(socket))?,
+			listen_addresses: listen_addresses
+				.into_iter()
+				.map(|address| format!("dnsaddr={address}").into())
+				.collect(),
+		})
+	}
 
-    /// Get next query ID.
-    fn next_query_id(&mut self) -> u16 {
-        let query_id = self.next_query_id;
-        self.next_query_id += 1;
+	/// Get next query ID.
+	fn next_query_id(&mut self) -> u16 {
+		let query_id = self.next_query_id;
+		self.next_query_id += 1;
 
-        query_id
-    }
+		query_id
+	}
 
-    /// Send mDNS query on the network.
-    async fn on_outbound_request(&mut self) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, "send outbound query");
+	/// Send mDNS query on the network.
+	async fn on_outbound_request(&mut self) -> crate::Result<()> {
+		tracing::debug!(target: LOG_TARGET, "send outbound query");
 
-        let mut packet = Packet::new_query(self.next_query_id());
+		let mut packet = Packet::new_query(self.next_query_id());
 
-        packet.questions.push(Question {
-            qname: Name::new_unchecked(SERVICE_NAME),
-            qtype: QTYPE::TYPE(TYPE::PTR),
-            qclass: QCLASS::CLASS(CLASS::IN),
-            unicast_response: false,
-        });
+		packet.questions.push(Question {
+			qname: Name::new_unchecked(SERVICE_NAME),
+			qtype: QTYPE::TYPE(TYPE::PTR),
+			qclass: QCLASS::CLASS(CLASS::IN),
+			unicast_response: false,
+		});
 
-        self.socket
-            .send_to(
-                &packet.build_bytes_vec().expect("valid packet"),
-                (IPV4_MULTICAST_ADDRESS, IPV4_MULTICAST_PORT),
-            )
-            .await
-            .map(|_| ())
-            .map_err(From::from)
-    }
+		self.socket
+			.send_to(
+				&packet.build_bytes_vec().expect("valid packet"),
+				(IPV4_MULTICAST_ADDRESS, IPV4_MULTICAST_PORT),
+			)
+			.await
+			.map(|_| ())
+			.map_err(From::from)
+	}
 
-    /// Handle inbound query.
-    fn on_inbound_request(&self, packet: Packet) -> Option<Vec<u8>> {
-        tracing::debug!(target: LOG_TARGET, ?packet, "handle inbound request");
+	/// Handle inbound query.
+	fn on_inbound_request(&self, packet: Packet) -> Option<Vec<u8>> {
+		tracing::debug!(target: LOG_TARGET, ?packet, "handle inbound request");
 
-        let mut packet = Packet::new_reply(packet.id());
-        let srv_name = Name::new_unchecked(SERVICE_NAME);
+		let mut packet = Packet::new_reply(packet.id());
+		let srv_name = Name::new_unchecked(SERVICE_NAME);
 
-        packet.answers.push(ResourceRecord::new(
-            srv_name.clone(),
-            CLASS::IN,
-            360,
-            RData::PTR(PTR(Name::new_unchecked(&self.username))),
-        ));
+		packet.answers.push(ResourceRecord::new(
+			srv_name.clone(),
+			CLASS::IN,
+			360,
+			RData::PTR(PTR(Name::new_unchecked(&self.username))),
+		));
 
-        for address in &self.listen_addresses {
-            let mut record = TXT::new();
-            record.add_string(address).expect("valid string");
+		for address in &self.listen_addresses {
+			let mut record = TXT::new();
+			record.add_string(address).expect("valid string");
 
-            packet.additional_records.push(ResourceRecord {
-                name: Name::new_unchecked(&self.username),
-                class: CLASS::IN,
-                ttl: 360,
-                rdata: RData::TXT(record),
-                cache_flush: false,
-            });
-        }
+			packet.additional_records.push(ResourceRecord {
+				name: Name::new_unchecked(&self.username),
+				class: CLASS::IN,
+				ttl: 360,
+				rdata: RData::TXT(record),
+				cache_flush: false,
+			});
+		}
 
-        Some(packet.build_bytes_vec().expect("valid packet"))
-    }
+		Some(packet.build_bytes_vec().expect("valid packet"))
+	}
 
-    /// Handle inbound response.
-    fn on_inbound_response(&self, packet: Packet) -> Vec<Multiaddr> {
-        tracing::debug!(target: LOG_TARGET, "handle inbound response");
+	/// Handle inbound response.
+	fn on_inbound_response(&self, packet: Packet) -> Vec<Multiaddr> {
+		tracing::debug!(target: LOG_TARGET, "handle inbound response");
 
-        let names = packet
-            .answers
-            .iter()
-            .filter_map(|answer| {
-                if answer.name != Name::new_unchecked(SERVICE_NAME) {
-                    return None;
-                }
+		let names = packet
+			.answers
+			.iter()
+			.filter_map(|answer| {
+				if answer.name != Name::new_unchecked(SERVICE_NAME) {
+					return None;
+				}
 
-                match answer.rdata {
-                    RData::PTR(PTR(ref name)) if name != &Name::new_unchecked(&self.username) =>
-                        Some(name),
-                    _ => None,
-                }
-            })
-            .collect::<Vec<&Name>>();
+				match answer.rdata {
+					RData::PTR(PTR(ref name)) if name != &Name::new_unchecked(&self.username) =>
+						Some(name),
+					_ => None,
+				}
+			})
+			.collect::<Vec<&Name>>();
 
-        let name = match names.len() {
-            0 => return Vec::new(),
-            _ => {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?names,
-                    "response name"
-                );
+		let name = match names.len() {
+			0 => return Vec::new(),
+			_ => {
+				tracing::debug!(
+					target: LOG_TARGET,
+					?names,
+					"response name"
+				);
 
-                names[0]
-            }
-        };
+				names[0]
+			},
+		};
 
-        packet
-            .additional_records
-            .iter()
-            .flat_map(|record| {
-                if &record.name != name {
-                    return vec![];
-                }
+		packet
+			.additional_records
+			.iter()
+			.flat_map(|record| {
+				if &record.name != name {
+					return vec![];
+				}
 
-                // TODO: `filter_map` is not necessary as there's at most one entry
-                match &record.rdata {
-                    RData::TXT(text) => text
-                        .attributes()
-                        .iter()
-                        .filter_map(|(_, address)| {
-                            address.as_ref().map_or(None, |inner| inner.parse().ok())
-                        })
-                        .collect(),
-                    _ => vec![],
-                }
-            })
-            .collect()
-    }
+				// TODO: `filter_map` is not necessary as there's at most one entry
+				match &record.rdata {
+					RData::TXT(text) => text
+						.attributes()
+						.iter()
+						.filter_map(|(_, address)| {
+							address.as_ref().map_or(None, |inner| inner.parse().ok())
+						})
+						.collect(),
+					_ => vec![],
+				}
+			})
+			.collect()
+	}
 
-    /// Event loop for [`Mdns`].
-    pub(crate) async fn start(mut self) -> crate::Result<()> {
-        tracing::debug!(target: LOG_TARGET, "starting mdns event loop");
+	/// Event loop for [`Mdns`].
+	pub(crate) async fn start(mut self) -> crate::Result<()> {
+		tracing::debug!(target: LOG_TARGET, "starting mdns event loop");
 
-        // before starting the loop, make an initial query to the network
-        //
-        // bail early if the socket is not working
-        self.on_outbound_request().await?;
+		// before starting the loop, make an initial query to the network
+		//
+		// bail early if the socket is not working
+		self.on_outbound_request().await?;
 
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep(self.query_interval) => {
-                    tracing::trace!(target: LOG_TARGET, "timeout expired");
+		loop {
+			tokio::select! {
+				_ = tokio::time::sleep(self.query_interval) => {
+					tracing::trace!(target: LOG_TARGET, "timeout expired");
 
-                    if let Err(error) = self.on_outbound_request().await {
-                        tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
-                        return Err(error);
-                    }
-                }
-                result = self.socket.recv_from(&mut self.receive_buffer) => match result {
-                    Ok((nread, address)) => match Packet::parse(&self.receive_buffer[..nread]) {
-                        Ok(packet) => match packet.has_flags(PacketFlag::RESPONSE) {
-                            true => {
-                                let to_forward = self.on_inbound_response(packet).into_iter().filter_map(|address| {
-                                    self.discovered.insert(address.clone()).then_some(address)
-                                })
-                                .collect::<Vec<_>>();
+					if let Err(error) = self.on_outbound_request().await {
+						tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
+						return Err(error);
+					}
+				}
+				result = self.socket.recv_from(&mut self.receive_buffer) => match result {
+					Ok((nread, address)) => match Packet::parse(&self.receive_buffer[..nread]) {
+						Ok(packet) => match packet.has_flags(PacketFlag::RESPONSE) {
+							true => {
+								let to_forward = self.on_inbound_response(packet).into_iter().filter_map(|address| {
+									self.discovered.insert(address.clone()).then_some(address)
+								})
+								.collect::<Vec<_>>();
 
-                                if !to_forward.is_empty() {
-                                    let _ = self.event_tx.send(MdnsEvent::Discovered(to_forward)).await;
-                                }
-                            }
-                            false => if let Some(response) = self.on_inbound_request(packet) {
-                                self.socket
-                                    .send_to(&response, (IPV4_MULTICAST_ADDRESS, IPV4_MULTICAST_PORT))
-                                    .await?;
-                            }
-                        }
-                        Err(error) => tracing::debug!(
-                            target: LOG_TARGET,
-                            ?address,
-                            ?error,
-                            ?nread,
-                            "failed to parse mdns packet"
-                        ),
-                    }
-                    Err(error) => {
-                        tracing::error!(target: LOG_TARGET, ?error, "failed to read from socket");
-                        return Err(Error::from(error));
-                    }
-                },
-            }
-        }
-    }
+								if !to_forward.is_empty() {
+									let _ = self.event_tx.send(MdnsEvent::Discovered(to_forward)).await;
+								}
+							}
+							false => if let Some(response) = self.on_inbound_request(packet) {
+								self.socket
+									.send_to(&response, (IPV4_MULTICAST_ADDRESS, IPV4_MULTICAST_PORT))
+									.await?;
+							}
+						}
+						Err(error) => tracing::debug!(
+							target: LOG_TARGET,
+							?address,
+							?error,
+							?nread,
+							"failed to parse mdns packet"
+						),
+					}
+					Err(error) => {
+						tracing::error!(target: LOG_TARGET, ?error, "failed to read from socket");
+						return Err(Error::from(error));
+					}
+				},
+			}
+		}
+	}
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{crypto::ed25519::Keypair, transport::manager::TransportManager, BandwidthSink};
-    use futures::StreamExt;
-    use multiaddr::Protocol;
+	use super::*;
+	use crate::{crypto::ed25519::Keypair, transport::manager::TransportManager, BandwidthSink};
+	use futures::StreamExt;
+	use multiaddr::Protocol;
 
-    #[tokio::test]
-    async fn mdns_works() {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init();
+	#[tokio::test]
+	async fn mdns_works() {
+		let _ = tracing_subscriber::fmt()
+			.with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+			.try_init();
 
-        let (config1, mut stream1) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle1) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-        );
+		let (config1, mut stream1) = Config::new(Duration::from_secs(5));
+		let (_manager1, handle1) = TransportManager::new(
+			Keypair::generate(),
+			HashSet::new(),
+			BandwidthSink::new(),
+			8usize,
+		);
 
-        let mdns1 = Mdns::new(
-            handle1,
-            config1,
-            vec![
-                "/ip6/::1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTaaaa"
-                    .parse()
-                    .unwrap(),
-                "/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTaaaa"
-                    .parse()
-                    .unwrap(),
-            ],
-        )
-        .unwrap();
+		let mdns1 = Mdns::new(
+			handle1,
+			config1,
+			vec![
+				"/ip6/::1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTaaaa"
+					.parse()
+					.unwrap(),
+				"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTaaaa"
+					.parse()
+					.unwrap(),
+			],
+		)
+		.unwrap();
 
-        let (config2, mut stream2) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle2) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-        );
+		let (config2, mut stream2) = Config::new(Duration::from_secs(5));
+		let (_manager1, handle2) = TransportManager::new(
+			Keypair::generate(),
+			HashSet::new(),
+			BandwidthSink::new(),
+			8usize,
+		);
 
-        let mdns2 = Mdns::new(
-            handle2,
-            config2,
-            vec![
-                "/ip6/::1/tcp/9999/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTbbbb"
-                    .parse()
-                    .unwrap(),
-                "/ip4/127.0.0.1/tcp/9999/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTbbbb"
-                    .parse()
-                    .unwrap(),
-            ],
-        )
-        .unwrap();
+		let mdns2 = Mdns::new(
+			handle2,
+			config2,
+			vec![
+				"/ip6/::1/tcp/9999/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTbbbb"
+					.parse()
+					.unwrap(),
+				"/ip4/127.0.0.1/tcp/9999/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTbbbb"
+					.parse()
+					.unwrap(),
+			],
+		)
+		.unwrap();
 
-        tokio::spawn(mdns1.start());
-        tokio::spawn(mdns2.start());
+		tokio::spawn(mdns1.start());
+		tokio::spawn(mdns2.start());
 
-        let mut peer1_discovered = false;
-        let mut peer2_discovered = false;
+		let mut peer1_discovered = false;
+		let mut peer2_discovered = false;
 
-        while !peer1_discovered && !peer2_discovered {
-            tokio::select! {
-                event = stream1.next() => match event.unwrap() {
-                    MdnsEvent::Discovered(addrs) => {
-                        if addrs.len() == 2 {
-                            let mut iter = addrs[0].iter();
+		while !peer1_discovered && !peer2_discovered {
+			tokio::select! {
+				event = stream1.next() => match event.unwrap() {
+					MdnsEvent::Discovered(addrs) => {
+						if addrs.len() == 2 {
+							let mut iter = addrs[0].iter();
 
-                            if !std::matches!(iter.next(), Some(Protocol::Ip4(_) | Protocol::Ip6(_))) {
-                                continue
-                            }
+							if !std::matches!(iter.next(), Some(Protocol::Ip4(_) | Protocol::Ip6(_))) {
+								continue
+							}
 
-                            match iter.next() {
-                                Some(Protocol::Tcp(port)) => {
-                                    if port != 9999 {
-                                        continue
-                                    }
-                                }
-                                _ => continue,
-                            }
+							match iter.next() {
+								Some(Protocol::Tcp(port)) => {
+									if port != 9999 {
+										continue
+									}
+								}
+								_ => continue,
+							}
 
-                            peer1_discovered = true;
-                        }
-                    }
-                },
-                event = stream2.next() => match event.unwrap() {
-                    MdnsEvent::Discovered(addrs) => {
-                        if addrs.len() == 2 {
-                            let mut iter = addrs[0].iter();
+							peer1_discovered = true;
+						}
+					}
+				},
+				event = stream2.next() => match event.unwrap() {
+					MdnsEvent::Discovered(addrs) => {
+						if addrs.len() == 2 {
+							let mut iter = addrs[0].iter();
 
-                            if !std::matches!(iter.next(), Some(Protocol::Ip4(_) | Protocol::Ip6(_))) {
-                                continue
-                            }
+							if !std::matches!(iter.next(), Some(Protocol::Ip4(_) | Protocol::Ip6(_))) {
+								continue
+							}
 
-                            match iter.next() {
-                                Some(Protocol::Tcp(port)) => {
-                                    if port != 8888 {
-                                        continue
-                                    }
-                                }
-                                _ => continue,
-                            }
+							match iter.next() {
+								Some(Protocol::Tcp(port)) => {
+									if port != 8888 {
+										continue
+									}
+								}
+								_ => continue,
+							}
 
-                            peer2_discovered = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
+							peer2_discovered = true;
+						}
+					}
+				}
+			}
+		}
+	}
 }

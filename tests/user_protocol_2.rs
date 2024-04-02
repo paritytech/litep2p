@@ -19,13 +19,13 @@
 // DEALINGS IN THE SOFTWARE.
 
 use litep2p::{
-    codec::ProtocolCodec,
-    config::ConfigBuilder,
-    crypto::ed25519::Keypair,
-    protocol::{TransportEvent, TransportService, UserProtocol},
-    transport::tcp::config::Config as TcpConfig,
-    types::protocol::ProtocolName,
-    Litep2p, Litep2pEvent, PeerId,
+	codec::ProtocolCodec,
+	config::ConfigBuilder,
+	crypto::ed25519::Keypair,
+	protocol::{TransportEvent, TransportService, UserProtocol},
+	transport::tcp::config::Config as TcpConfig,
+	types::protocol::ProtocolName,
+	Litep2p, Litep2pEvent, PeerId,
 };
 
 use futures::StreamExt;
@@ -35,114 +35,110 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use std::collections::HashSet;
 
 struct CustomProtocol {
-    protocol: ProtocolName,
-    codec: ProtocolCodec,
-    peers: HashSet<PeerId>,
-    rx: Receiver<Multiaddr>,
+	protocol: ProtocolName,
+	codec: ProtocolCodec,
+	peers: HashSet<PeerId>,
+	rx: Receiver<Multiaddr>,
 }
 
 impl CustomProtocol {
-    pub fn new() -> (Self, Sender<Multiaddr>) {
-        let (tx, rx) = channel(64);
+	pub fn new() -> (Self, Sender<Multiaddr>) {
+		let (tx, rx) = channel(64);
 
-        (
-            Self {
-                rx,
-                peers: HashSet::new(),
-                protocol: ProtocolName::from("/custom-protocol/1"),
-                codec: ProtocolCodec::UnsignedVarint(None),
-            },
-            tx,
-        )
-    }
+		(
+			Self {
+				rx,
+				peers: HashSet::new(),
+				protocol: ProtocolName::from("/custom-protocol/1"),
+				codec: ProtocolCodec::UnsignedVarint(None),
+			},
+			tx,
+		)
+	}
 }
 
 #[async_trait::async_trait]
 impl UserProtocol for CustomProtocol {
-    fn protocol(&self) -> ProtocolName {
-        self.protocol.clone()
-    }
+	fn protocol(&self) -> ProtocolName {
+		self.protocol.clone()
+	}
 
-    fn codec(&self) -> ProtocolCodec {
-        self.codec.clone()
-    }
+	fn codec(&self) -> ProtocolCodec {
+		self.codec.clone()
+	}
 
-    async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {
-        loop {
-            tokio::select! {
-                event = service.next() => match event.unwrap() {
-                    TransportEvent::ConnectionEstablished { peer, .. } => {
-                        self.peers.insert(peer);
-                    }
-                    TransportEvent::ConnectionClosed { peer: _ } => {}
-                    TransportEvent::SubstreamOpened {
-                        peer: _,
-                        protocol: _,
-                        direction: _,
-                        substream: _,
-                        fallback: _,
-                    } => {}
-                    TransportEvent::SubstreamOpenFailure {
-                        substream: _,
-                        error: _,
-                    } => {}
-                    TransportEvent::DialFailure { .. } => {}
-                },
-                address = self.rx.recv() => {
-                    service.dial_address(address.unwrap()).unwrap();
-                }
-            }
-        }
-    }
+	async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {
+		loop {
+			tokio::select! {
+				event = service.next() => match event.unwrap() {
+					TransportEvent::ConnectionEstablished { peer, .. } => {
+						self.peers.insert(peer);
+					}
+					TransportEvent::ConnectionClosed { peer: _ } => {}
+					TransportEvent::SubstreamOpened {
+						peer: _,
+						protocol: _,
+						direction: _,
+						substream: _,
+						fallback: _,
+					} => {}
+					TransportEvent::SubstreamOpenFailure {
+						substream: _,
+						error: _,
+					} => {}
+					TransportEvent::DialFailure { .. } => {}
+				},
+				address = self.rx.recv() => {
+					service.dial_address(address.unwrap()).unwrap();
+				}
+			}
+		}
+	}
 }
 
 #[tokio::test]
 async fn user_protocol_2() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+	let _ = tracing_subscriber::fmt()
+		.with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+		.try_init();
 
-    let (custom_protocol1, sender1) = CustomProtocol::new();
-    let config1 = ConfigBuilder::new()
-        .with_keypair(Keypair::generate())
-        .with_tcp(TcpConfig {
-            ..Default::default()
-        })
-        .with_user_protocol(Box::new(custom_protocol1))
-        .build();
+	let (custom_protocol1, sender1) = CustomProtocol::new();
+	let config1 = ConfigBuilder::new()
+		.with_keypair(Keypair::generate())
+		.with_tcp(TcpConfig { ..Default::default() })
+		.with_user_protocol(Box::new(custom_protocol1))
+		.build();
 
-    let (custom_protocol2, _sender2) = CustomProtocol::new();
-    let config2 = ConfigBuilder::new()
-        .with_keypair(Keypair::generate())
-        .with_tcp(TcpConfig {
-            ..Default::default()
-        })
-        .with_user_protocol(Box::new(custom_protocol2))
-        .build();
+	let (custom_protocol2, _sender2) = CustomProtocol::new();
+	let config2 = ConfigBuilder::new()
+		.with_keypair(Keypair::generate())
+		.with_tcp(TcpConfig { ..Default::default() })
+		.with_user_protocol(Box::new(custom_protocol2))
+		.build();
 
-    let mut litep2p1 = Litep2p::new(config1).unwrap();
-    let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
+	let mut litep2p1 = Litep2p::new(config1).unwrap();
+	let mut litep2p2 = Litep2p::new(config2).unwrap();
+	let address = litep2p2.listen_addresses().next().unwrap().clone();
 
-    sender1.send(address).await.unwrap();
+	sender1.send(address).await.unwrap();
 
-    let mut litep2p1_ready = false;
-    let mut litep2p2_ready = false;
+	let mut litep2p1_ready = false;
+	let mut litep2p2_ready = false;
 
-    while !litep2p1_ready && !litep2p2_ready {
-        tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    litep2p1_ready = true;
-                }
-                _ => {}
-            },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    litep2p2_ready = true;
-                }
-                _ => {}
-            }
-        }
-    }
+	while !litep2p1_ready && !litep2p2_ready {
+		tokio::select! {
+			event = litep2p1.next_event() => match event.unwrap() {
+				Litep2pEvent::ConnectionEstablished { .. } => {
+					litep2p1_ready = true;
+				}
+				_ => {}
+			},
+			event = litep2p2.next_event() => match event.unwrap() {
+				Litep2pEvent::ConnectionEstablished { .. } => {
+					litep2p2_ready = true;
+				}
+				_ => {}
+			}
+		}
+	}
 }
