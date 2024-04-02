@@ -21,11 +21,11 @@
 use bytes::{Buf as _, BufMut as _, Bytes, BytesMut};
 use futures::{io::IoSlice, prelude::*};
 use std::{
-    convert::TryFrom as _,
-    io,
-    pin::Pin,
-    task::{Context, Poll},
-    u16,
+	convert::TryFrom as _,
+	io,
+	pin::Pin,
+	task::{Context, Poll},
+	u16,
 };
 
 const MAX_LEN_BYTES: u16 = 2;
@@ -42,251 +42,245 @@ const LOG_TARGET: &str = "litep2p::multistream-select";
 #[pin_project::pin_project]
 #[derive(Debug)]
 pub struct LengthDelimited<R> {
-    /// The inner I/O resource.
-    #[pin]
-    inner: R,
-    /// Read buffer for a single incoming unsigned-varint length-delimited frame.
-    read_buffer: BytesMut,
-    /// Write buffer for outgoing unsigned-varint length-delimited frames.
-    write_buffer: BytesMut,
-    /// The current read state, alternating between reading a frame
-    /// length and reading a frame payload.
-    read_state: ReadState,
+	/// The inner I/O resource.
+	#[pin]
+	inner: R,
+	/// Read buffer for a single incoming unsigned-varint length-delimited frame.
+	read_buffer: BytesMut,
+	/// Write buffer for outgoing unsigned-varint length-delimited frames.
+	write_buffer: BytesMut,
+	/// The current read state, alternating between reading a frame
+	/// length and reading a frame payload.
+	read_state: ReadState,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum ReadState {
-    /// We are currently reading the length of the next frame of data.
-    ReadLength {
-        buf: [u8; MAX_LEN_BYTES as usize],
-        pos: usize,
-    },
-    /// We are currently reading the frame of data itself.
-    ReadData { len: u16, pos: usize },
+	/// We are currently reading the length of the next frame of data.
+	ReadLength { buf: [u8; MAX_LEN_BYTES as usize], pos: usize },
+	/// We are currently reading the frame of data itself.
+	ReadData { len: u16, pos: usize },
 }
 
 impl Default for ReadState {
-    fn default() -> Self {
-        ReadState::ReadLength {
-            buf: [0; MAX_LEN_BYTES as usize],
-            pos: 0,
-        }
-    }
+	fn default() -> Self {
+		ReadState::ReadLength { buf: [0; MAX_LEN_BYTES as usize], pos: 0 }
+	}
 }
 
 impl<R> LengthDelimited<R> {
-    /// Creates a new I/O resource for reading and writing unsigned-varint
-    /// length delimited frames.
-    pub fn new(inner: R) -> LengthDelimited<R> {
-        LengthDelimited {
-            inner,
-            read_state: ReadState::default(),
-            read_buffer: BytesMut::with_capacity(DEFAULT_BUFFER_SIZE),
-            write_buffer: BytesMut::with_capacity(DEFAULT_BUFFER_SIZE + MAX_LEN_BYTES as usize),
-        }
-    }
+	/// Creates a new I/O resource for reading and writing unsigned-varint
+	/// length delimited frames.
+	pub fn new(inner: R) -> LengthDelimited<R> {
+		LengthDelimited {
+			inner,
+			read_state: ReadState::default(),
+			read_buffer: BytesMut::with_capacity(DEFAULT_BUFFER_SIZE),
+			write_buffer: BytesMut::with_capacity(DEFAULT_BUFFER_SIZE + MAX_LEN_BYTES as usize),
+		}
+	}
 
-    /// Drops the [`LengthDelimited`] resource, yielding the underlying I/O stream.
-    ///
-    /// # Panic
-    ///
-    /// Will panic if called while there is data in the read or write buffer.
-    /// The read buffer is guaranteed to be empty whenever `Stream::poll` yields
-    /// a new `Bytes` frame. The write buffer is guaranteed to be empty after
-    /// flushing.
-    pub fn into_inner(self) -> R {
-        assert!(self.read_buffer.is_empty());
-        assert!(self.write_buffer.is_empty());
-        self.inner
-    }
+	/// Drops the [`LengthDelimited`] resource, yielding the underlying I/O stream.
+	///
+	/// # Panic
+	///
+	/// Will panic if called while there is data in the read or write buffer.
+	/// The read buffer is guaranteed to be empty whenever `Stream::poll` yields
+	/// a new `Bytes` frame. The write buffer is guaranteed to be empty after
+	/// flushing.
+	pub fn into_inner(self) -> R {
+		assert!(self.read_buffer.is_empty());
+		assert!(self.write_buffer.is_empty());
+		self.inner
+	}
 
-    /// Converts the [`LengthDelimited`] into a [`LengthDelimitedReader`], dropping the
-    /// uvi-framed `Sink` in favour of direct `AsyncWrite` access to the underlying
-    /// I/O stream.
-    ///
-    /// This is typically done if further uvi-framed messages are expected to be
-    /// received but no more such messages are written, allowing the writing of
-    /// follow-up protocol data to commence.
-    pub fn into_reader(self) -> LengthDelimitedReader<R> {
-        LengthDelimitedReader { inner: self }
-    }
+	/// Converts the [`LengthDelimited`] into a [`LengthDelimitedReader`], dropping the
+	/// uvi-framed `Sink` in favour of direct `AsyncWrite` access to the underlying
+	/// I/O stream.
+	///
+	/// This is typically done if further uvi-framed messages are expected to be
+	/// received but no more such messages are written, allowing the writing of
+	/// follow-up protocol data to commence.
+	pub fn into_reader(self) -> LengthDelimitedReader<R> {
+		LengthDelimitedReader { inner: self }
+	}
 
-    /// Writes all buffered frame data to the underlying I/O stream,
-    /// _without flushing it_.
-    ///
-    /// After this method returns `Poll::Ready`, the write buffer of frames
-    /// submitted to the `Sink` is guaranteed to be empty.
-    pub fn poll_write_buffer(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), io::Error>>
-    where
-        R: AsyncWrite,
-    {
-        let mut this = self.project();
+	/// Writes all buffered frame data to the underlying I/O stream,
+	/// _without flushing it_.
+	///
+	/// After this method returns `Poll::Ready`, the write buffer of frames
+	/// submitted to the `Sink` is guaranteed to be empty.
+	pub fn poll_write_buffer(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+	) -> Poll<Result<(), io::Error>>
+	where
+		R: AsyncWrite,
+	{
+		let mut this = self.project();
 
-        while !this.write_buffer.is_empty() {
-            match this.inner.as_mut().poll_write(cx, this.write_buffer) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(0)) =>
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::WriteZero,
-                        "Failed to write buffered frame.",
-                    ))),
-                Poll::Ready(Ok(n)) => this.write_buffer.advance(n),
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            }
-        }
+		while !this.write_buffer.is_empty() {
+			match this.inner.as_mut().poll_write(cx, this.write_buffer) {
+				Poll::Pending => return Poll::Pending,
+				Poll::Ready(Ok(0)) =>
+					return Poll::Ready(Err(io::Error::new(
+						io::ErrorKind::WriteZero,
+						"Failed to write buffered frame.",
+					))),
+				Poll::Ready(Ok(n)) => this.write_buffer.advance(n),
+				Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+			}
+		}
 
-        Poll::Ready(Ok(()))
-    }
+		Poll::Ready(Ok(()))
+	}
 }
 
 impl<R> Stream for LengthDelimited<R>
 where
-    R: AsyncRead,
+	R: AsyncRead,
 {
-    type Item = Result<Bytes, io::Error>;
+	type Item = Result<Bytes, io::Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut this = self.project();
+	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		let mut this = self.project();
 
-        loop {
-            match this.read_state {
-                ReadState::ReadLength { buf, pos } => {
-                    match this.inner.as_mut().poll_read(cx, &mut buf[*pos..*pos + 1]) {
-                        Poll::Ready(Ok(0)) =>
-                            if *pos == 0 {
-                                return Poll::Ready(None);
-                            } else {
-                                return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())));
-                            },
-                        Poll::Ready(Ok(n)) => {
-                            debug_assert_eq!(n, 1);
-                            *pos += n;
-                        }
-                        Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
-                        Poll::Pending => return Poll::Pending,
-                    };
+		loop {
+			match this.read_state {
+				ReadState::ReadLength { buf, pos } => {
+					match this.inner.as_mut().poll_read(cx, &mut buf[*pos..*pos + 1]) {
+						Poll::Ready(Ok(0)) =>
+							if *pos == 0 {
+								return Poll::Ready(None);
+							} else {
+								return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into())));
+							},
+						Poll::Ready(Ok(n)) => {
+							debug_assert_eq!(n, 1);
+							*pos += n;
+						},
+						Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
+						Poll::Pending => return Poll::Pending,
+					};
 
-                    if (buf[*pos - 1] & 0x80) == 0 {
-                        // MSB is not set, indicating the end of the length prefix.
-                        let (len, _) = unsigned_varint::decode::u16(buf).map_err(|e| {
-                            tracing::debug!(target: LOG_TARGET, "invalid length prefix: {}", e);
-                            io::Error::new(io::ErrorKind::InvalidData, "invalid length prefix")
-                        })?;
+					if (buf[*pos - 1] & 0x80) == 0 {
+						// MSB is not set, indicating the end of the length prefix.
+						let (len, _) = unsigned_varint::decode::u16(buf).map_err(|e| {
+							tracing::debug!(target: LOG_TARGET, "invalid length prefix: {}", e);
+							io::Error::new(io::ErrorKind::InvalidData, "invalid length prefix")
+						})?;
 
-                        if len >= 1 {
-                            *this.read_state = ReadState::ReadData { len, pos: 0 };
-                            this.read_buffer.resize(len as usize, 0);
-                        } else {
-                            debug_assert_eq!(len, 0);
-                            *this.read_state = ReadState::default();
-                            return Poll::Ready(Some(Ok(Bytes::new())));
-                        }
-                    } else if *pos == MAX_LEN_BYTES as usize {
-                        // MSB signals more length bytes but we have already read the maximum.
-                        // See the module documentation about the max frame len.
-                        return Poll::Ready(Some(Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Maximum frame length exceeded",
-                        ))));
-                    }
-                }
-                ReadState::ReadData { len, pos } => {
-                    match this.inner.as_mut().poll_read(cx, &mut this.read_buffer[*pos..]) {
-                        Poll::Ready(Ok(0)) =>
-                            return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into()))),
-                        Poll::Ready(Ok(n)) => *pos += n,
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
-                    };
+						if len >= 1 {
+							*this.read_state = ReadState::ReadData { len, pos: 0 };
+							this.read_buffer.resize(len as usize, 0);
+						} else {
+							debug_assert_eq!(len, 0);
+							*this.read_state = ReadState::default();
+							return Poll::Ready(Some(Ok(Bytes::new())));
+						}
+					} else if *pos == MAX_LEN_BYTES as usize {
+						// MSB signals more length bytes but we have already read the maximum.
+						// See the module documentation about the max frame len.
+						return Poll::Ready(Some(Err(io::Error::new(
+							io::ErrorKind::InvalidData,
+							"Maximum frame length exceeded",
+						))));
+					}
+				},
+				ReadState::ReadData { len, pos } => {
+					match this.inner.as_mut().poll_read(cx, &mut this.read_buffer[*pos..]) {
+						Poll::Ready(Ok(0)) =>
+							return Poll::Ready(Some(Err(io::ErrorKind::UnexpectedEof.into()))),
+						Poll::Ready(Ok(n)) => *pos += n,
+						Poll::Pending => return Poll::Pending,
+						Poll::Ready(Err(err)) => return Poll::Ready(Some(Err(err))),
+					};
 
-                    if *pos == *len as usize {
-                        // Finished reading the frame.
-                        let frame = this.read_buffer.split_off(0).freeze();
-                        *this.read_state = ReadState::default();
-                        return Poll::Ready(Some(Ok(frame)));
-                    }
-                }
-            }
-        }
-    }
+					if *pos == *len as usize {
+						// Finished reading the frame.
+						let frame = this.read_buffer.split_off(0).freeze();
+						*this.read_state = ReadState::default();
+						return Poll::Ready(Some(Ok(frame)));
+					}
+				},
+			}
+		}
+	}
 }
 
 impl<R> Sink<Bytes> for LengthDelimited<R>
 where
-    R: AsyncWrite,
+	R: AsyncWrite,
 {
-    type Error = io::Error;
+	type Error = io::Error;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // Use the maximum frame length also as a (soft) upper limit
-        // for the entire write buffer. The actual (hard) limit is thus
-        // implied to be roughly 2 * MAX_FRAME_SIZE.
-        if self.as_mut().project().write_buffer.len() >= MAX_FRAME_SIZE as usize {
-            match self.as_mut().poll_write_buffer(cx) {
-                Poll::Ready(Ok(())) => {}
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                Poll::Pending => return Poll::Pending,
-            }
+	fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		// Use the maximum frame length also as a (soft) upper limit
+		// for the entire write buffer. The actual (hard) limit is thus
+		// implied to be roughly 2 * MAX_FRAME_SIZE.
+		if self.as_mut().project().write_buffer.len() >= MAX_FRAME_SIZE as usize {
+			match self.as_mut().poll_write_buffer(cx) {
+				Poll::Ready(Ok(())) => {},
+				Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+				Poll::Pending => return Poll::Pending,
+			}
 
-            debug_assert!(self.as_mut().project().write_buffer.is_empty());
-        }
+			debug_assert!(self.as_mut().project().write_buffer.is_empty());
+		}
 
-        Poll::Ready(Ok(()))
-    }
+		Poll::Ready(Ok(()))
+	}
 
-    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
-        let this = self.project();
+	fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+		let this = self.project();
 
-        let len = match u16::try_from(item.len()) {
-            Ok(len) if len <= MAX_FRAME_SIZE => len,
-            _ =>
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Maximum frame size exceeded.",
-                )),
-        };
+		let len = match u16::try_from(item.len()) {
+			Ok(len) if len <= MAX_FRAME_SIZE => len,
+			_ =>
+				return Err(io::Error::new(
+					io::ErrorKind::InvalidData,
+					"Maximum frame size exceeded.",
+				)),
+		};
 
-        let mut uvi_buf = unsigned_varint::encode::u16_buffer();
-        let uvi_len = unsigned_varint::encode::u16(len, &mut uvi_buf);
-        this.write_buffer.reserve(len as usize + uvi_len.len());
-        this.write_buffer.put(uvi_len);
-        this.write_buffer.put(item);
+		let mut uvi_buf = unsigned_varint::encode::u16_buffer();
+		let uvi_len = unsigned_varint::encode::u16(len, &mut uvi_buf);
+		this.write_buffer.reserve(len as usize + uvi_len.len());
+		this.write_buffer.put(uvi_len);
+		this.write_buffer.put(item);
 
-        Ok(())
-    }
+		Ok(())
+	}
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // Write all buffered frame data to the underlying I/O stream.
-        match LengthDelimited::poll_write_buffer(self.as_mut(), cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            Poll::Pending => return Poll::Pending,
-        }
+	fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		// Write all buffered frame data to the underlying I/O stream.
+		match LengthDelimited::poll_write_buffer(self.as_mut(), cx) {
+			Poll::Ready(Ok(())) => {},
+			Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+			Poll::Pending => return Poll::Pending,
+		}
 
-        let this = self.project();
-        debug_assert!(this.write_buffer.is_empty());
+		let this = self.project();
+		debug_assert!(this.write_buffer.is_empty());
 
-        // Flush the underlying I/O stream.
-        this.inner.poll_flush(cx)
-    }
+		// Flush the underlying I/O stream.
+		this.inner.poll_flush(cx)
+	}
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // Write all buffered frame data to the underlying I/O stream.
-        match LengthDelimited::poll_write_buffer(self.as_mut(), cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            Poll::Pending => return Poll::Pending,
-        }
+	fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		// Write all buffered frame data to the underlying I/O stream.
+		match LengthDelimited::poll_write_buffer(self.as_mut(), cx) {
+			Poll::Ready(Ok(())) => {},
+			Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+			Poll::Pending => return Poll::Pending,
+		}
 
-        let this = self.project();
-        debug_assert!(this.write_buffer.is_empty());
+		let this = self.project();
+		debug_assert!(this.write_buffer.is_empty());
 
-        // Close the underlying I/O stream.
-        this.inner.poll_close(cx)
-    }
+		// Close the underlying I/O stream.
+		this.inner.poll_close(cx)
+	}
 }
 
 /// A `LengthDelimitedReader` implements a `Stream` of uvi-length-delimited
@@ -294,86 +288,86 @@ where
 #[pin_project::pin_project]
 #[derive(Debug)]
 pub struct LengthDelimitedReader<R> {
-    #[pin]
-    inner: LengthDelimited<R>,
+	#[pin]
+	inner: LengthDelimited<R>,
 }
 
 impl<R> LengthDelimitedReader<R> {
-    /// Destroys the `LengthDelimitedReader` and returns the underlying I/O stream.
-    ///
-    /// This method is guaranteed not to drop any data read from or not yet
-    /// submitted to the underlying I/O stream.
-    ///
-    /// # Panic
-    ///
-    /// Will panic if called while there is data in the read or write buffer.
-    /// The read buffer is guaranteed to be empty whenever [`Stream::poll_next`]
-    /// yield a new `Message`. The write buffer is guaranteed to be empty whenever
-    /// [`LengthDelimited::poll_write_buffer`] yields [`Poll::Ready`] or after
-    /// the [`Sink`] has been completely flushed via [`Sink::poll_flush`].
-    pub fn into_inner(self) -> R {
-        self.inner.into_inner()
-    }
+	/// Destroys the `LengthDelimitedReader` and returns the underlying I/O stream.
+	///
+	/// This method is guaranteed not to drop any data read from or not yet
+	/// submitted to the underlying I/O stream.
+	///
+	/// # Panic
+	///
+	/// Will panic if called while there is data in the read or write buffer.
+	/// The read buffer is guaranteed to be empty whenever [`Stream::poll_next`]
+	/// yield a new `Message`. The write buffer is guaranteed to be empty whenever
+	/// [`LengthDelimited::poll_write_buffer`] yields [`Poll::Ready`] or after
+	/// the [`Sink`] has been completely flushed via [`Sink::poll_flush`].
+	pub fn into_inner(self) -> R {
+		self.inner.into_inner()
+	}
 }
 
 impl<R> Stream for LengthDelimitedReader<R>
 where
-    R: AsyncRead,
+	R: AsyncRead,
 {
-    type Item = Result<Bytes, io::Error>;
+	type Item = Result<Bytes, io::Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().inner.poll_next(cx)
-    }
+	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		self.project().inner.poll_next(cx)
+	}
 }
 
 impl<R> AsyncWrite for LengthDelimitedReader<R>
 where
-    R: AsyncWrite,
+	R: AsyncWrite,
 {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        // `this` here designates the `LengthDelimited`.
-        let mut this = self.project().inner;
+	fn poll_write(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		buf: &[u8],
+	) -> Poll<Result<usize, io::Error>> {
+		// `this` here designates the `LengthDelimited`.
+		let mut this = self.project().inner;
 
-        // We need to flush any data previously written with the `LengthDelimited`.
-        match LengthDelimited::poll_write_buffer(this.as_mut(), cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            Poll::Pending => return Poll::Pending,
-        }
-        debug_assert!(this.write_buffer.is_empty());
+		// We need to flush any data previously written with the `LengthDelimited`.
+		match LengthDelimited::poll_write_buffer(this.as_mut(), cx) {
+			Poll::Ready(Ok(())) => {},
+			Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+			Poll::Pending => return Poll::Pending,
+		}
+		debug_assert!(this.write_buffer.is_empty());
 
-        this.project().inner.poll_write(cx, buf)
-    }
+		this.project().inner.poll_write(cx, buf)
+	}
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        self.project().inner.poll_flush(cx)
-    }
+	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+		self.project().inner.poll_flush(cx)
+	}
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        self.project().inner.poll_close(cx)
-    }
+	fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+		self.project().inner.poll_close(cx)
+	}
 
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<Result<usize, io::Error>> {
-        // `this` here designates the `LengthDelimited`.
-        let mut this = self.project().inner;
+	fn poll_write_vectored(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		bufs: &[IoSlice<'_>],
+	) -> Poll<Result<usize, io::Error>> {
+		// `this` here designates the `LengthDelimited`.
+		let mut this = self.project().inner;
 
-        // We need to flush any data previously written with the `LengthDelimited`.
-        match LengthDelimited::poll_write_buffer(this.as_mut(), cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            Poll::Pending => return Poll::Pending,
-        }
-        debug_assert!(this.write_buffer.is_empty());
+		// We need to flush any data previously written with the `LengthDelimited`.
+		match LengthDelimited::poll_write_buffer(this.as_mut(), cx) {
+			Poll::Ready(Ok(())) => {},
+			Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+			Poll::Pending => return Poll::Pending,
+		}
+		debug_assert!(this.write_buffer.is_empty());
 
-        this.project().inner.poll_write_vectored(cx, bufs)
-    }
+		this.project().inner.poll_write_vectored(cx, bufs)
+	}
 }

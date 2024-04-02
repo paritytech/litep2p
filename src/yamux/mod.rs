@@ -32,13 +32,13 @@ pub(crate) mod connection;
 mod tagged_stream;
 
 pub use crate::yamux::{
-    connection::{Connection, Mode, Packet, Stream},
-    control::{Control, ControlledConnection},
-    error::ConnectionError,
-    frame::{
-        header::{HeaderDecodeError, StreamId},
-        FrameDecodeError,
-    },
+	connection::{Connection, Mode, Packet, Stream},
+	control::{Control, ControlledConnection},
+	error::ConnectionError,
+	frame::{
+		header::{HeaderDecodeError, StreamId},
+		FrameDecodeError,
+	},
 };
 
 pub const DEFAULT_CREDIT: u32 = 256 * 1024; // as per yamux specification
@@ -68,27 +68,27 @@ const DEFAULT_SPLIT_SEND_SIZE: usize = 16 * 1024;
 /// Specifies when window update frames are sent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowUpdateMode {
-    /// Send window updates as soon as a [`Stream`]'s receive window drops to 0.
-    ///
-    /// This ensures that the sender can resume sending more data as soon as possible
-    /// but a slow reader on the receiving side may be overwhelmed, i.e. it accumulates
-    /// data in its buffer which may reach its limit (see `set_max_buffer_size`).
-    /// In this mode, window updates merely prevent head of line blocking but do not
-    /// effectively exercise back pressure on senders.
-    OnReceive,
+	/// Send window updates as soon as a [`Stream`]'s receive window drops to 0.
+	///
+	/// This ensures that the sender can resume sending more data as soon as possible
+	/// but a slow reader on the receiving side may be overwhelmed, i.e. it accumulates
+	/// data in its buffer which may reach its limit (see `set_max_buffer_size`).
+	/// In this mode, window updates merely prevent head of line blocking but do not
+	/// effectively exercise back pressure on senders.
+	OnReceive,
 
-    /// Send window updates only when data is read on the receiving end.
-    ///
-    /// This ensures that senders do not overwhelm receivers and keeps buffer usage
-    /// low. However, depending on the protocol, there is a risk of deadlock, namely
-    /// if both endpoints want to send data larger than the receivers window and they
-    /// do not read before finishing their writes. Use this mode only if you are sure
-    /// that this will never happen, i.e. if
-    ///
-    /// - Endpoints *A* and *B* never write at the same time, *or*
-    /// - Endpoints *A* and *B* write at most *n* frames concurrently such that the sum of the
-    ///   frame lengths is less or equal to the available credit of *A* and *B* respectively.
-    OnRead,
+	/// Send window updates only when data is read on the receiving end.
+	///
+	/// This ensures that senders do not overwhelm receivers and keeps buffer usage
+	/// low. However, depending on the protocol, there is a risk of deadlock, namely
+	/// if both endpoints want to send data larger than the receivers window and they
+	/// do not read before finishing their writes. Use this mode only if you are sure
+	/// that this will never happen, i.e. if
+	///
+	/// - Endpoints *A* and *B* never write at the same time, *or*
+	/// - Endpoints *A* and *B* write at most *n* frames concurrently such that the sum of the
+	///   frame lengths is less or equal to the available credit of *A* and *B* respectively.
+	OnRead,
 }
 
 /// Yamux configuration.
@@ -103,78 +103,78 @@ pub enum WindowUpdateMode {
 /// - split send size = 16 KiB
 #[derive(Debug, Clone)]
 pub struct Config {
-    receive_window: u32,
-    max_buffer_size: usize,
-    max_num_streams: usize,
-    window_update_mode: WindowUpdateMode,
-    read_after_close: bool,
-    split_send_size: usize,
+	receive_window: u32,
+	max_buffer_size: usize,
+	max_num_streams: usize,
+	window_update_mode: WindowUpdateMode,
+	read_after_close: bool,
+	split_send_size: usize,
 }
 
 impl Default for Config {
-    fn default() -> Self {
-        Config {
-            receive_window: DEFAULT_CREDIT,
-            max_buffer_size: 1024 * 1024,
-            max_num_streams: 8192,
-            window_update_mode: WindowUpdateMode::OnRead,
-            read_after_close: true,
-            split_send_size: DEFAULT_SPLIT_SEND_SIZE,
-        }
-    }
+	fn default() -> Self {
+		Config {
+			receive_window: DEFAULT_CREDIT,
+			max_buffer_size: 1024 * 1024,
+			max_num_streams: 8192,
+			window_update_mode: WindowUpdateMode::OnRead,
+			read_after_close: true,
+			split_send_size: DEFAULT_SPLIT_SEND_SIZE,
+		}
+	}
 }
 
 impl Config {
-    /// Set the receive window per stream (must be >= 256 KiB).
-    ///
-    /// # Panics
-    ///
-    /// If the given receive window is < 256 KiB.
-    pub fn set_receive_window(&mut self, n: u32) -> &mut Self {
-        assert!(n >= DEFAULT_CREDIT);
-        self.receive_window = n;
-        self
-    }
+	/// Set the receive window per stream (must be >= 256 KiB).
+	///
+	/// # Panics
+	///
+	/// If the given receive window is < 256 KiB.
+	pub fn set_receive_window(&mut self, n: u32) -> &mut Self {
+		assert!(n >= DEFAULT_CREDIT);
+		self.receive_window = n;
+		self
+	}
 
-    /// Set the max. buffer size per stream.
-    pub fn set_max_buffer_size(&mut self, n: usize) -> &mut Self {
-        self.max_buffer_size = n;
-        self
-    }
+	/// Set the max. buffer size per stream.
+	pub fn set_max_buffer_size(&mut self, n: usize) -> &mut Self {
+		self.max_buffer_size = n;
+		self
+	}
 
-    /// Set the max. number of streams.
-    pub fn set_max_num_streams(&mut self, n: usize) -> &mut Self {
-        self.max_num_streams = n;
-        self
-    }
+	/// Set the max. number of streams.
+	pub fn set_max_num_streams(&mut self, n: usize) -> &mut Self {
+		self.max_num_streams = n;
+		self
+	}
 
-    /// Set the window update mode to use.
-    pub fn set_window_update_mode(&mut self, m: WindowUpdateMode) -> &mut Self {
-        self.window_update_mode = m;
-        self
-    }
+	/// Set the window update mode to use.
+	pub fn set_window_update_mode(&mut self, m: WindowUpdateMode) -> &mut Self {
+		self.window_update_mode = m;
+		self
+	}
 
-    /// Allow or disallow streams to read from buffered data after
-    /// the connection has been closed.
-    pub fn set_read_after_close(&mut self, b: bool) -> &mut Self {
-        self.read_after_close = b;
-        self
-    }
+	/// Allow or disallow streams to read from buffered data after
+	/// the connection has been closed.
+	pub fn set_read_after_close(&mut self, b: bool) -> &mut Self {
+		self.read_after_close = b;
+		self
+	}
 
-    /// Set the max. payload size used when sending data frames. Payloads larger
-    /// than the configured max. will be split.
-    pub fn set_split_send_size(&mut self, n: usize) -> &mut Self {
-        self.split_send_size = n;
-        self
-    }
+	/// Set the max. payload size used when sending data frames. Payloads larger
+	/// than the configured max. will be split.
+	pub fn set_split_send_size(&mut self, n: usize) -> &mut Self {
+		self.split_send_size = n;
+		self
+	}
 }
 
 // Check that we can safely cast a `usize` to a `u64`.
 static_assertions::const_assert! {
-    std::mem::size_of::<usize>() <= std::mem::size_of::<u64>()
+	std::mem::size_of::<usize>() <= std::mem::size_of::<u64>()
 }
 
 // Check that we can safely cast a `u32` to a `usize`.
 static_assertions::const_assert! {
-    std::mem::size_of::<u32>() <= std::mem::size_of::<usize>()
+	std::mem::size_of::<u32>() <= std::mem::size_of::<usize>()
 }

@@ -26,18 +26,18 @@ use zeroize::Zeroize;
 /// DH keypair.
 #[derive(Clone)]
 pub struct Keypair<T: Zeroize> {
-    pub secret: SecretKey<T>,
-    pub public: PublicKey<T>,
+	pub secret: SecretKey<T>,
+	pub public: PublicKey<T>,
 }
 
 /// The associated public identity of a DH keypair.
 #[derive(Clone)]
 pub struct KeypairIdentity {
-    /// The public identity key.
-    pub public: crypto::PublicKey,
+	/// The public identity key.
+	pub public: crypto::PublicKey,
 
-    /// The signature over the public DH key.
-    pub signature: Option<Vec<u8>>,
+	/// The signature over the public DH key.
+	pub signature: Option<Vec<u8>>,
 }
 
 /// DH secret key.
@@ -45,15 +45,15 @@ pub struct KeypairIdentity {
 pub struct SecretKey<T: Zeroize>(pub T);
 
 impl<T: Zeroize> Drop for SecretKey<T> {
-    fn drop(&mut self) {
-        self.0.zeroize()
-    }
+	fn drop(&mut self) {
+		self.0.zeroize()
+	}
 }
 
 impl<T: AsRef<[u8]> + Zeroize> AsRef<[u8]> for SecretKey<T> {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
+	fn as_ref(&self) -> &[u8] {
+		self.0.as_ref()
+	}
 }
 
 /// DH public key.
@@ -61,17 +61,17 @@ impl<T: AsRef<[u8]> + Zeroize> AsRef<[u8]> for SecretKey<T> {
 pub struct PublicKey<T>(pub T);
 
 impl<T: AsRef<[u8]>> PartialEq for PublicKey<T> {
-    fn eq(&self, other: &PublicKey<T>) -> bool {
-        self.as_ref() == other.as_ref()
-    }
+	fn eq(&self, other: &PublicKey<T>) -> bool {
+		self.as_ref() == other.as_ref()
+	}
 }
 
 impl<T: AsRef<[u8]>> Eq for PublicKey<T> {}
 
 impl<T: AsRef<[u8]>> AsRef<[u8]> for PublicKey<T> {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
+	fn as_ref(&self) -> &[u8] {
+		self.0.as_ref()
+	}
 }
 
 /// Custom `snow::CryptoResolver` which delegates to either the
@@ -81,48 +81,48 @@ impl<T: AsRef<[u8]>> AsRef<[u8]> for PublicKey<T> {
 pub struct Resolver;
 
 impl snow::resolvers::CryptoResolver for Resolver {
-    fn resolve_rng(&self) -> Option<Box<dyn snow::types::Random>> {
-        Some(Box::new(Rng(rand::rngs::StdRng::from_entropy())))
-    }
+	fn resolve_rng(&self) -> Option<Box<dyn snow::types::Random>> {
+		Some(Box::new(Rng(rand::rngs::StdRng::from_entropy())))
+	}
 
-    fn resolve_dh(&self, _: &snow::params::DHChoice) -> Option<Box<dyn snow::types::Dh>> {
-        Some(Box::new(Keypair::<x25519_spec::X25519Spec>::default()))
-    }
+	fn resolve_dh(&self, _: &snow::params::DHChoice) -> Option<Box<dyn snow::types::Dh>> {
+		Some(Box::new(Keypair::<x25519_spec::X25519Spec>::default()))
+	}
 
-    fn resolve_hash(
-        &self,
-        choice: &snow::params::HashChoice,
-    ) -> Option<Box<dyn snow::types::Hash>> {
-        snow::resolvers::RingResolver.resolve_hash(choice)
-    }
+	fn resolve_hash(
+		&self,
+		choice: &snow::params::HashChoice,
+	) -> Option<Box<dyn snow::types::Hash>> {
+		snow::resolvers::RingResolver.resolve_hash(choice)
+	}
 
-    fn resolve_cipher(
-        &self,
-        choice: &snow::params::CipherChoice,
-    ) -> Option<Box<dyn snow::types::Cipher>> {
-        snow::resolvers::RingResolver.resolve_cipher(choice)
-    }
+	fn resolve_cipher(
+		&self,
+		choice: &snow::params::CipherChoice,
+	) -> Option<Box<dyn snow::types::Cipher>> {
+		snow::resolvers::RingResolver.resolve_cipher(choice)
+	}
 }
 
 /// Wrapper around a CSPRNG to implement `snow::Random` trait for.
 struct Rng(rand::rngs::StdRng);
 
 impl rand::RngCore for Rng {
-    fn next_u32(&mut self) -> u32 {
-        self.0.next_u32()
-    }
+	fn next_u32(&mut self) -> u32 {
+		self.0.next_u32()
+	}
 
-    fn next_u64(&mut self) -> u64 {
-        self.0.next_u64()
-    }
+	fn next_u64(&mut self) -> u64 {
+		self.0.next_u64()
+	}
 
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.0.fill_bytes(dest)
-    }
+	fn fill_bytes(&mut self, dest: &mut [u8]) {
+		self.0.fill_bytes(dest)
+	}
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
-        self.0.try_fill_bytes(dest)
-    }
+	fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+		self.0.try_fill_bytes(dest)
+	}
 }
 
 impl rand::CryptoRng for Rng {}
