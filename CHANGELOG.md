@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2023-04-05
+
+### Added
+
+- Expose `reuse_port` option for TCP and WebSocket transports  ([#69](https://github.com/paritytech/litep2p/pull/69))
+- protocol/mdns: Use `SO_REUSEPORT` for the mDNS socket  ([#68](https://github.com/paritytech/litep2p/pull/68))
+- Add support for protocol/agent version  ([#64](https://github.com/paritytech/litep2p/pull/64))
+
 ## [0.2.0] - 2023-09-05
 
 This is the second release of litep2p, v0.2.0. The quality of the first release was so bad that this release is a complete rewrite of the library.
