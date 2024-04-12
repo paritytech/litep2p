@@ -20,8 +20,8 @@ hex-literal = "0.4.1"
 indexmap = { version = "2.0.0", features = ["std"] }
 libc = "0.2.142"
 mockall = "0.11.4"
-multiaddr = "0.17.0"
-multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
+multiaddr = "0.18.1"
+multihash = "0.19.1"
 network-interface = "1.1.1"
 parking_lot = "0.12.1"
 pin-project = "1.1.0"
@@ -63,7 +63,7 @@ features = ["dangerous_configuration"] # Must enable this to allow for custom ve
 
 [dev-dependencies]
 asynchronous-codec = "0.6.1"
-libp2p = { version = "0.51.3", features = [
+libp2p = { version = "0.52.3", features = [
     "tokio",
     "dns",
     "identify",

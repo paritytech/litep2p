@@ -33,7 +33,7 @@ use crate::{
 };
 
 use multiaddr::Multiaddr;
-use multihash::{Multihash, MultihashGeneric};
+use multihash::Multihash;
 
 use std::io::{self, ErrorKind};
 
@@ -132,7 +132,7 @@ pub enum AddressError {
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
 	#[error("Invalid multihash: `{0:?}`")]
-	InvalidMultihash(Multihash),
+	InvalidMultihash(Multihash<64>),
 	#[error("Failed to decode protobuf message: `{0:?}`")]
 	ProstDecodeError(prost::DecodeError),
 }
@@ -183,8 +183,8 @@ pub enum DialError {
 	NoAddressAvailable(PeerId),
 }
 
-impl From<MultihashGeneric<64>> for Error {
-	fn from(hash: MultihashGeneric<64>) -> Self {
+impl From<Multihash<64>> for Error {
+	fn from(hash: Multihash<64>) -> Self {
 		Error::ParseError(ParseError::InvalidMultihash(hash))
 	}
 }

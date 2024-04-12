@@ -67,8 +67,8 @@ impl From<Vec<u8>> for Key {
 	}
 }
 
-impl From<Multihash> for Key {
-	fn from(m: Multihash) -> Key {
+impl<const S: usize> From<Multihash<S>> for Key {
+	fn from(m: Multihash<S>) -> Key {
 		Key::from(m.to_bytes())
 	}
 }
