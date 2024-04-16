@@ -27,97 +27,100 @@ use tokio_util::codec::{Decoder, Encoder};
 
 /// Identity codec.
 pub struct Identity {
-	payload_len: usize,
+    payload_len: usize,
 }
 
 impl Identity {
-	/// Create new [`Identity`] codec.
-	pub fn new(payload_len: usize) -> Self {
-		assert!(payload_len != 0);
+    /// Create new [`Identity`] codec.
+    pub fn new(payload_len: usize) -> Self {
+        assert!(payload_len != 0);
 
-		Self { payload_len }
-	}
+        Self { payload_len }
+    }
 
-	/// Encode `payload` using identity codec.
-	pub fn encode<T: Into<Bytes>>(payload: T) -> crate::Result<Vec<u8>> {
-		let payload: Bytes = payload.into();
-		Ok(payload.into())
-	}
+    /// Encode `payload` using identity codec.
+    pub fn encode<T: Into<Bytes>>(payload: T) -> crate::Result<Vec<u8>> {
+        let payload: Bytes = payload.into();
+        Ok(payload.into())
+    }
 }
 
 impl Decoder for Identity {
-	type Item = BytesMut;
-	type Error = Error;
+    type Item = BytesMut;
+    type Error = Error;
 
-	fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-		if src.is_empty() {
-			return Ok(None);
-		}
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.is_empty() {
+            return Ok(None);
+        }
 
-		Ok(Some(src.split_to(self.payload_len)))
-	}
+        Ok(Some(src.split_to(self.payload_len)))
+    }
 }
 
 impl Encoder<Bytes> for Identity {
-	type Error = Error;
+    type Error = Error;
 
-	fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
-		if item.len() > self.payload_len || item.is_empty() {
-			return Err(Error::InvalidData);
-		}
+    fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
+        if item.len() > self.payload_len || item.is_empty() {
+            return Err(Error::InvalidData);
+        }
 
-		dst.put_slice(item.as_ref());
-		Ok(())
-	}
+        dst.put_slice(item.as_ref());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
 
-	#[test]
-	fn encoding_works() {
-		let mut codec = Identity::new(48);
-		let mut out_buf = BytesMut::with_capacity(32);
-		let bytes = Bytes::from(vec![0u8; 48]);
+    #[test]
+    fn encoding_works() {
+        let mut codec = Identity::new(48);
+        let mut out_buf = BytesMut::with_capacity(32);
+        let bytes = Bytes::from(vec![0u8; 48]);
 
-		assert!(codec.encode(bytes.clone(), &mut out_buf).is_ok());
-		assert_eq!(out_buf.freeze(), bytes);
-	}
+        assert!(codec.encode(bytes.clone(), &mut out_buf).is_ok());
+        assert_eq!(out_buf.freeze(), bytes);
+    }
 
-	#[test]
-	fn decoding_works() {
-		let mut codec = Identity::new(64);
-		let bytes = vec![3u8; 64];
-		let copy = bytes.clone();
-		let mut bytes = BytesMut::from(&bytes[..]);
+    #[test]
+    fn decoding_works() {
+        let mut codec = Identity::new(64);
+        let bytes = vec![3u8; 64];
+        let copy = bytes.clone();
+        let mut bytes = BytesMut::from(&bytes[..]);
 
-		let decoded = codec.decode(&mut bytes).unwrap().unwrap();
-		assert_eq!(decoded, copy);
-	}
+        let decoded = codec.decode(&mut bytes).unwrap().unwrap();
+        assert_eq!(decoded, copy);
+    }
 
-	#[test]
-	fn empty_encode() {
-		let mut codec = Identity::new(32);
-		let mut out_buf = BytesMut::with_capacity(32);
-		assert!(codec.encode(Bytes::new(), &mut out_buf).is_err());
-	}
+    #[test]
+    fn empty_encode() {
+        let mut codec = Identity::new(32);
+        let mut out_buf = BytesMut::with_capacity(32);
+        assert!(codec.encode(Bytes::new(), &mut out_buf).is_err());
+    }
 
-	#[test]
-	fn decode_encode() {
-		let mut codec = Identity::new(32);
-		assert!(codec.decode(&mut BytesMut::new()).unwrap().is_none());
-	}
+    #[test]
+    fn decode_encode() {
+        let mut codec = Identity::new(32);
+        assert!(codec.decode(&mut BytesMut::new()).unwrap().is_none());
+    }
 
-	#[test]
-	fn direct_encoding_works() {
-		assert_eq!(Identity::encode(vec![1, 3, 3, 7]).unwrap(), vec![1, 3, 3, 7]);
-	}
+    #[test]
+    fn direct_encoding_works() {
+        assert_eq!(
+            Identity::encode(vec![1, 3, 3, 7]).unwrap(),
+            vec![1, 3, 3, 7]
+        );
+    }
 
-	#[test]
-	#[should_panic]
-	#[cfg(debug_assertions)]
-	fn empty_identity_codec() {
-		let _codec = Identity::new(0usize);
-	}
+    #[test]
+    #[should_panic]
+    #[cfg(debug_assertions)]
+    fn empty_identity_codec() {
+        let _codec = Identity::new(0usize);
+    }
 }

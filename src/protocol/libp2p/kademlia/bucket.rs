@@ -22,163 +22,169 @@
 //! Kademlia k-bucket implementation.
 
 use crate::{
-	protocol::libp2p::kademlia::types::{ConnectionType, KademliaPeer, Key},
-	PeerId,
+    protocol::libp2p::kademlia::types::{ConnectionType, KademliaPeer, Key},
+    PeerId,
 };
 
 /// K-bucket entry.
 #[derive(Debug, PartialEq, Eq)]
 pub enum KBucketEntry<'a> {
-	/// Entry points to local node.
-	LocalNode,
+    /// Entry points to local node.
+    LocalNode,
 
-	/// Occupied entry to a connected node.
-	Occupied(&'a mut KademliaPeer),
+    /// Occupied entry to a connected node.
+    Occupied(&'a mut KademliaPeer),
 
-	/// Vacant entry.
-	Vacant(&'a mut KademliaPeer),
+    /// Vacant entry.
+    Vacant(&'a mut KademliaPeer),
 
-	/// Entry not found and any present entry cannot be replaced.
-	NoSlot,
+    /// Entry not found and any present entry cannot be replaced.
+    NoSlot,
 }
 
 impl<'a> KBucketEntry<'a> {
-	/// Insert new entry into the entry if possible.
-	pub fn insert(&'a mut self, new: KademliaPeer) {
-		if let KBucketEntry::Vacant(old) = self {
-			old.peer = new.peer;
-			old.key = Key::from(new.peer);
-			old.addresses = new.addresses;
-			old.connection = new.connection;
-		}
-	}
+    /// Insert new entry into the entry if possible.
+    pub fn insert(&'a mut self, new: KademliaPeer) {
+        if let KBucketEntry::Vacant(old) = self {
+            old.peer = new.peer;
+            old.key = Key::from(new.peer);
+            old.addresses = new.addresses;
+            old.connection = new.connection;
+        }
+    }
 }
 
 /// Kademlia k-bucket.
 pub struct KBucket {
-	// TODO: store peers in a btreemap with increasing distance from local key?
-	nodes: Vec<KademliaPeer>,
+    // TODO: store peers in a btreemap with increasing distance from local key?
+    nodes: Vec<KademliaPeer>,
 }
 
 impl KBucket {
-	/// Create new [`KBucket`].
-	pub fn new() -> Self {
-		Self { nodes: Vec::with_capacity(20) }
-	}
+    /// Create new [`KBucket`].
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::with_capacity(20),
+        }
+    }
 
-	/// Get entry into the bucket.
-	// TODO: this is horrible code
-	pub fn entry<'a, K: Clone>(&'a mut self, key: Key<K>) -> KBucketEntry<'a> {
-		for i in 0..self.nodes.len() {
-			if &self.nodes[i].key == &key {
-				return KBucketEntry::Occupied(&mut self.nodes[i]);
-			}
-		}
+    /// Get entry into the bucket.
+    // TODO: this is horrible code
+    pub fn entry<'a, K: Clone>(&'a mut self, key: Key<K>) -> KBucketEntry<'a> {
+        for i in 0..self.nodes.len() {
+            if &self.nodes[i].key == &key {
+                return KBucketEntry::Occupied(&mut self.nodes[i]);
+            }
+        }
 
-		if self.nodes.len() < 20 {
-			self.nodes.push(KademliaPeer::new(
-				PeerId::random(),
-				vec![],
-				ConnectionType::NotConnected,
-			));
-			let len = self.nodes.len() - 1;
-			return KBucketEntry::Vacant(&mut self.nodes[len]);
-		}
+        if self.nodes.len() < 20 {
+            self.nodes.push(KademliaPeer::new(
+                PeerId::random(),
+                vec![],
+                ConnectionType::NotConnected,
+            ));
+            let len = self.nodes.len() - 1;
+            return KBucketEntry::Vacant(&mut self.nodes[len]);
+        }
 
-		for i in 0..self.nodes.len() {
-			match self.nodes[i].connection {
-				ConnectionType::NotConnected | ConnectionType::CannotConnect => {
-					return KBucketEntry::Vacant(&mut self.nodes[i]);
-				},
-				_ => continue,
-			}
-		}
+        for i in 0..self.nodes.len() {
+            match self.nodes[i].connection {
+                ConnectionType::NotConnected | ConnectionType::CannotConnect => {
+                    return KBucketEntry::Vacant(&mut self.nodes[i]);
+                }
+                _ => continue,
+            }
+        }
 
-		KBucketEntry::NoSlot
-	}
+        KBucketEntry::NoSlot
+    }
 
-	/// Get iterator over the k-bucket, sorting the k-bucket entries in increasing order
-	/// by distance.
-	pub fn closest_iter<K: Clone>(&self, target: &Key<K>) -> impl Iterator<Item = KademliaPeer> {
-		let mut nodes = self.nodes.clone();
-		nodes.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
-		nodes.into_iter().filter(|peer| !peer.addresses.is_empty())
-	}
+    /// Get iterator over the k-bucket, sorting the k-bucket entries in increasing order
+    /// by distance.
+    pub fn closest_iter<K: Clone>(&self, target: &Key<K>) -> impl Iterator<Item = KademliaPeer> {
+        let mut nodes = self.nodes.clone();
+        nodes.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
+        nodes.into_iter().filter(|peer| !peer.addresses.is_empty())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
 
-	#[test]
-	fn closest_iter() {
-		let mut bucket = KBucket::new();
+    #[test]
+    fn closest_iter() {
+        let mut bucket = KBucket::new();
 
-		// add some random nodes to the bucket
-		let _ = (0..10)
-			.map(|_| {
-				let peer = PeerId::random();
-				bucket.nodes.push(KademliaPeer::new(peer, vec![], ConnectionType::Connected));
+        // add some random nodes to the bucket
+        let _ = (0..10)
+            .map(|_| {
+                let peer = PeerId::random();
+                bucket.nodes.push(KademliaPeer::new(peer, vec![], ConnectionType::Connected));
 
-				peer
-			})
-			.collect::<Vec<_>>();
+                peer
+            })
+            .collect::<Vec<_>>();
 
-		let target = Key::from(PeerId::random());
-		let mut iter = bucket.closest_iter(&target);
-		let mut prev = None;
+        let target = Key::from(PeerId::random());
+        let mut iter = bucket.closest_iter(&target);
+        let mut prev = None;
 
-		while let Some(node) = iter.next() {
-			if let Some(distance) = prev {
-				assert!(distance < target.distance(&node.key));
-			}
+        while let Some(node) = iter.next() {
+            if let Some(distance) = prev {
+                assert!(distance < target.distance(&node.key));
+            }
 
-			prev = Some(target.distance(&node.key));
-		}
-	}
+            prev = Some(target.distance(&node.key));
+        }
+    }
 
-	#[test]
-	fn ignore_peers_with_no_addresses() {
-		let mut bucket = KBucket::new();
+    #[test]
+    fn ignore_peers_with_no_addresses() {
+        let mut bucket = KBucket::new();
 
-		// add peers with no addresses to the bucket
-		let _ = (0..10)
-			.map(|_| {
-				let peer = PeerId::random();
-				bucket.nodes.push(KademliaPeer::new(peer, vec![], ConnectionType::NotConnected));
+        // add peers with no addresses to the bucket
+        let _ = (0..10)
+            .map(|_| {
+                let peer = PeerId::random();
+                bucket.nodes.push(KademliaPeer::new(
+                    peer,
+                    vec![],
+                    ConnectionType::NotConnected,
+                ));
 
-				peer
-			})
-			.collect::<Vec<_>>();
+                peer
+            })
+            .collect::<Vec<_>>();
 
-		// add three peers with an address
-		let _ = (0..3)
-			.map(|_| {
-				let peer = PeerId::random();
-				bucket.nodes.push(KademliaPeer::new(
-					peer,
-					vec!["/ip6/::/tcp/0".parse().unwrap()],
-					ConnectionType::Connected,
-				));
+        // add three peers with an address
+        let _ = (0..3)
+            .map(|_| {
+                let peer = PeerId::random();
+                bucket.nodes.push(KademliaPeer::new(
+                    peer,
+                    vec!["/ip6/::/tcp/0".parse().unwrap()],
+                    ConnectionType::Connected,
+                ));
 
-				peer
-			})
-			.collect::<Vec<_>>();
+                peer
+            })
+            .collect::<Vec<_>>();
 
-		let target = Key::from(PeerId::random());
-		let mut iter = bucket.closest_iter(&target);
-		let mut prev = None;
-		let mut num_peers = 0usize;
+        let target = Key::from(PeerId::random());
+        let mut iter = bucket.closest_iter(&target);
+        let mut prev = None;
+        let mut num_peers = 0usize;
 
-		while let Some(node) = iter.next() {
-			if let Some(distance) = prev {
-				assert!(distance < target.distance(&node.key));
-			}
+        while let Some(node) = iter.next() {
+            if let Some(distance) = prev {
+                assert!(distance < target.distance(&node.key));
+            }
 
-			num_peers += 1;
-			prev = Some(target.distance(&node.key));
-		}
+            num_peers += 1;
+            prev = Some(target.distance(&node.key));
+        }
 
-		assert_eq!(num_peers, 3usize);
-	}
+        assert_eq!(num_peers, 3usize);
+    }
 }

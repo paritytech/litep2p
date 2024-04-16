@@ -26,12 +26,12 @@ pub mod unsigned_varint;
 /// Supported protocol codecs.
 #[derive(Debug, Copy, Clone)]
 pub enum ProtocolCodec {
-	/// Identity codec where the argument denotes the payload size.
-	Identity(usize),
+    /// Identity codec where the argument denotes the payload size.
+    Identity(usize),
 
-	/// Unsigned varint where the argument denotes the maximum message size, if specified.
-	UnsignedVarint(Option<usize>),
+    /// Unsigned varint where the argument denotes the maximum message size, if specified.
+    UnsignedVarint(Option<usize>),
 
-	/// Protocol doens't need framing for its messages or is using a custom codec.
-	Unspecified,
+    /// Protocol doens't need framing for its messages or is using a custom codec.
+    Unspecified,
 }

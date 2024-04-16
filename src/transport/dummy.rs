@@ -21,133 +21,139 @@
 //! Dummy transport.
 
 use crate::{
-	transport::{Transport, TransportEvent},
-	types::ConnectionId,
+    transport::{Transport, TransportEvent},
+    types::ConnectionId,
 };
 
 use futures::Stream;
 use multiaddr::Multiaddr;
 
 use std::{
-	collections::VecDeque,
-	pin::Pin,
-	task::{Context, Poll},
+    collections::VecDeque,
+    pin::Pin,
+    task::{Context, Poll},
 };
 
 /// Dummy transport.
 pub(crate) struct DummyTransport {
-	/// Events.
-	events: VecDeque<TransportEvent>,
+    /// Events.
+    events: VecDeque<TransportEvent>,
 }
 
 impl DummyTransport {
-	/// Create new [`DummyTransport`].
-	#[cfg(test)]
-	pub(crate) fn new() -> Self {
-		Self { events: VecDeque::new() }
-	}
+    /// Create new [`DummyTransport`].
+    #[cfg(test)]
+    pub(crate) fn new() -> Self {
+        Self {
+            events: VecDeque::new(),
+        }
+    }
 
-	/// Inject event into `DummyTransport`.
-	#[cfg(test)]
-	pub(crate) fn inject_event(&mut self, event: TransportEvent) {
-		self.events.push_back(event);
-	}
+    /// Inject event into `DummyTransport`.
+    #[cfg(test)]
+    pub(crate) fn inject_event(&mut self, event: TransportEvent) {
+        self.events.push_back(event);
+    }
 }
 
 impl Stream for DummyTransport {
-	type Item = TransportEvent;
+    type Item = TransportEvent;
 
-	fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-		if self.events.is_empty() {
-			return Poll::Pending;
-		}
+    fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.events.is_empty() {
+            return Poll::Pending;
+        }
 
-		Poll::Ready(self.events.pop_front())
-	}
+        Poll::Ready(self.events.pop_front())
+    }
 }
 
 impl Transport for DummyTransport {
-	fn dial(&mut self, _: ConnectionId, _: Multiaddr) -> crate::Result<()> {
-		Ok(())
-	}
+    fn dial(&mut self, _: ConnectionId, _: Multiaddr) -> crate::Result<()> {
+        Ok(())
+    }
 
-	fn accept(&mut self, _: ConnectionId) -> crate::Result<()> {
-		Ok(())
-	}
+    fn accept(&mut self, _: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
 
-	fn reject(&mut self, _: ConnectionId) -> crate::Result<()> {
-		Ok(())
-	}
+    fn reject(&mut self, _: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
 
-	fn open(&mut self, _: ConnectionId, _: Vec<Multiaddr>) -> crate::Result<()> {
-		Ok(())
-	}
+    fn open(&mut self, _: ConnectionId, _: Vec<Multiaddr>) -> crate::Result<()> {
+        Ok(())
+    }
 
-	fn negotiate(&mut self, _: ConnectionId) -> crate::Result<()> {
-		Ok(())
-	}
+    fn negotiate(&mut self, _: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
 
-	/// Cancel opening connections.
-	fn cancel(&mut self, _: ConnectionId) {}
+    /// Cancel opening connections.
+    fn cancel(&mut self, _: ConnectionId) {}
 }
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-	use crate::{transport::Endpoint, Error, PeerId};
-	use futures::StreamExt;
+    use super::*;
+    use crate::{transport::Endpoint, Error, PeerId};
+    use futures::StreamExt;
 
-	#[tokio::test]
-	async fn pending_event() {
-		let mut transport = DummyTransport::new();
+    #[tokio::test]
+    async fn pending_event() {
+        let mut transport = DummyTransport::new();
 
-		transport.inject_event(TransportEvent::DialFailure {
-			connection_id: ConnectionId::from(1338usize),
-			address: Multiaddr::empty(),
-			error: Error::Unknown,
-		});
+        transport.inject_event(TransportEvent::DialFailure {
+            connection_id: ConnectionId::from(1338usize),
+            address: Multiaddr::empty(),
+            error: Error::Unknown,
+        });
 
-		let peer = PeerId::random();
-		let endpoint = Endpoint::listener(Multiaddr::empty(), ConnectionId::from(1337usize));
+        let peer = PeerId::random();
+        let endpoint = Endpoint::listener(Multiaddr::empty(), ConnectionId::from(1337usize));
 
-		transport.inject_event(TransportEvent::ConnectionEstablished {
-			peer,
-			endpoint: endpoint.clone(),
-		});
+        transport.inject_event(TransportEvent::ConnectionEstablished {
+            peer,
+            endpoint: endpoint.clone(),
+        });
 
-		match transport.next().await.unwrap() {
-			TransportEvent::DialFailure { connection_id, address, .. } => {
-				assert_eq!(connection_id, ConnectionId::from(1338usize));
-				assert_eq!(address, Multiaddr::empty());
-			},
-			_ => panic!("invalid event"),
-		}
+        match transport.next().await.unwrap() {
+            TransportEvent::DialFailure {
+                connection_id,
+                address,
+                ..
+            } => {
+                assert_eq!(connection_id, ConnectionId::from(1338usize));
+                assert_eq!(address, Multiaddr::empty());
+            }
+            _ => panic!("invalid event"),
+        }
 
-		match transport.next().await.unwrap() {
-			TransportEvent::ConnectionEstablished {
-				peer: event_peer,
-				endpoint: event_endpoint,
-			} => {
-				assert_eq!(peer, event_peer);
-				assert_eq!(endpoint, event_endpoint);
-			},
-			_ => panic!("invalid event"),
-		}
+        match transport.next().await.unwrap() {
+            TransportEvent::ConnectionEstablished {
+                peer: event_peer,
+                endpoint: event_endpoint,
+            } => {
+                assert_eq!(peer, event_peer);
+                assert_eq!(endpoint, event_endpoint);
+            }
+            _ => panic!("invalid event"),
+        }
 
-		futures::future::poll_fn(|cx| match transport.poll_next_unpin(cx) {
-			Poll::Pending => Poll::Ready(()),
-			_ => panic!("invalid event"),
-		})
-		.await;
-	}
+        futures::future::poll_fn(|cx| match transport.poll_next_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            _ => panic!("invalid event"),
+        })
+        .await;
+    }
 
-	#[test]
-	fn dummy_handle_connection_states() {
-		let mut transport = DummyTransport::new();
+    #[test]
+    fn dummy_handle_connection_states() {
+        let mut transport = DummyTransport::new();
 
-		assert!(transport.reject(ConnectionId::new()).is_ok());
-		assert!(transport.open(ConnectionId::new(), Vec::new()).is_ok());
-		assert!(transport.negotiate(ConnectionId::new()).is_ok());
-		transport.cancel(ConnectionId::new());
-	}
+        assert!(transport.reject(ConnectionId::new()).is_ok());
+        assert!(transport.open(ConnectionId::new(), Vec::new()).is_ok());
+        assert!(transport.negotiate(ConnectionId::new()).is_ok());
+        transport.cancel(ConnectionId::new());
+    }
 }

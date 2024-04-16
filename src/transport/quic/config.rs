@@ -29,30 +29,30 @@ use std::time::Duration;
 /// QUIC transport configuration.
 #[derive(Debug)]
 pub struct Config {
-	/// Listen address for the transport.
-	///
-	/// Default listen addres is `/ip4/127.0.0.1/udp/0/quic-v1`.
-	pub listen_addresses: Vec<Multiaddr>,
+    /// Listen address for the transport.
+    ///
+    /// Default listen addres is `/ip4/127.0.0.1/udp/0/quic-v1`.
+    pub listen_addresses: Vec<Multiaddr>,
 
-	/// Connection open timeout.
-	///
-	/// How long should litep2p wait for a connection to be opend before the host
-	/// is deemed unreachable.
-	pub connection_open_timeout: Duration,
+    /// Connection open timeout.
+    ///
+    /// How long should litep2p wait for a connection to be opend before the host
+    /// is deemed unreachable.
+    pub connection_open_timeout: Duration,
 
-	/// Substream open timeout.
-	///
-	/// How long should litep2p wait for a substream to be opened before considering
-	/// the substream rejected.
-	pub substream_open_timeout: Duration,
+    /// Substream open timeout.
+    ///
+    /// How long should litep2p wait for a substream to be opened before considering
+    /// the substream rejected.
+    pub substream_open_timeout: Duration,
 }
 
 impl Default for Config {
-	fn default() -> Self {
-		Self {
-			listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().expect("valid address")],
-			connection_open_timeout: CONNECTION_OPEN_TIMEOUT,
-			substream_open_timeout: SUBSTREAM_OPEN_TIMEOUT,
-		}
-	}
+    fn default() -> Self {
+        Self {
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().expect("valid address")],
+            connection_open_timeout: CONNECTION_OPEN_TIMEOUT,
+            substream_open_timeout: SUBSTREAM_OPEN_TIMEOUT,
+        }
+    }
 }

@@ -20,93 +20,101 @@
 
 use futures::StreamExt;
 use litep2p::{
-	config::ConfigBuilder,
-	protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
-	transport::{
-		quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
-		websocket::config::Config as WebSocketConfig,
-	},
-	Litep2p,
+    config::ConfigBuilder,
+    protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
+    transport::{
+        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
+        websocket::config::Config as WebSocketConfig,
+    },
+    Litep2p,
 };
 
 enum Transport {
-	Tcp(TcpConfig),
-	Quic(QuicConfig),
-	WebSocket(WebSocketConfig),
+    Tcp(TcpConfig),
+    Quic(QuicConfig),
+    WebSocket(WebSocketConfig),
 }
 
 #[tokio::test]
 async fn ping_supported_tcp() {
-	ping_supported(Transport::Tcp(Default::default()), Transport::Tcp(Default::default())).await;
+    ping_supported(
+        Transport::Tcp(Default::default()),
+        Transport::Tcp(Default::default()),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn ping_supported_websocket() {
-	ping_supported(
-		Transport::WebSocket(Default::default()),
-		Transport::WebSocket(Default::default()),
-	)
-	.await;
+    ping_supported(
+        Transport::WebSocket(Default::default()),
+        Transport::WebSocket(Default::default()),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn ping_supported_quic() {
-	ping_supported(Transport::Quic(Default::default()), Transport::Quic(Default::default())).await;
+    ping_supported(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await;
 }
 
 async fn ping_supported(transport1: Transport, transport2: Transport) {
-	let _ = tracing_subscriber::fmt()
-		.with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-		.try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
-	let (ping_config1, mut ping_event_stream1) =
-		PingConfigBuilder::new().with_max_failure(3usize).build();
-	let config1 = match transport1 {
-		Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
-		Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
-		Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
-	}
-	.with_libp2p_ping(ping_config1)
-	.build();
+    let (ping_config1, mut ping_event_stream1) =
+        PingConfigBuilder::new().with_max_failure(3usize).build();
+    let config1 = match transport1 {
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
+    }
+    .with_libp2p_ping(ping_config1)
+    .build();
 
-	let (ping_config2, mut ping_event_stream2) = PingConfigBuilder::new().build();
-	let config2 = match transport2 {
-		Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
-		Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
-		Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
-	}
-	.with_libp2p_ping(ping_config2)
-	.build();
+    let (ping_config2, mut ping_event_stream2) = PingConfigBuilder::new().build();
+    let config2 = match transport2 {
+        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
+    }
+    .with_libp2p_ping(ping_config2)
+    .build();
 
-	let mut litep2p1 = Litep2p::new(config1).unwrap();
-	let mut litep2p2 = Litep2p::new(config2).unwrap();
-	let address = litep2p2.listen_addresses().next().unwrap().clone();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
 
-	litep2p1.dial_address(address).await.unwrap();
+    litep2p1.dial_address(address).await.unwrap();
 
-	let mut litep2p1_done = false;
-	let mut litep2p2_done = false;
+    let mut litep2p1_done = false;
+    let mut litep2p2_done = false;
 
-	loop {
-		tokio::select! {
-			_event = litep2p1.next_event() => {}
-			_event = litep2p2.next_event() => {}
-			event = ping_event_stream1.next() => {
-				tracing::trace!("ping event for litep2p1: {event:?}");
+    loop {
+        tokio::select! {
+            _event = litep2p1.next_event() => {}
+            _event = litep2p2.next_event() => {}
+            event = ping_event_stream1.next() => {
+                tracing::trace!("ping event for litep2p1: {event:?}");
 
-				litep2p1_done = true;
-				if litep2p1_done && litep2p2_done {
-					break
-				}
-			}
-			event = ping_event_stream2.next() => {
-				tracing::trace!("ping event for litep2p2: {event:?}");
+                litep2p1_done = true;
+                if litep2p1_done && litep2p2_done {
+                    break
+                }
+            }
+            event = ping_event_stream2.next() => {
+                tracing::trace!("ping event for litep2p2: {event:?}");
 
-				litep2p2_done = true;
-				if litep2p1_done && litep2p2_done {
-					break
-				}
-			}
-		}
-	}
+                litep2p2_done = true;
+                if litep2p1_done && litep2p2_done {
+                    break
+                }
+            }
+        }
+    }
 }

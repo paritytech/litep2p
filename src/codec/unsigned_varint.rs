@@ -28,114 +28,114 @@ use unsigned_varint::codec::UviBytes;
 
 /// Unsigned varint codec.
 pub struct UnsignedVarint {
-	codec: UviBytes<bytes::Bytes>,
+    codec: UviBytes<bytes::Bytes>,
 }
 
 impl UnsignedVarint {
-	/// Create new [`UnsignedVarint`] codec.
-	pub fn new(max_size: Option<usize>) -> Self {
-		let mut codec = UviBytes::<Bytes>::default();
+    /// Create new [`UnsignedVarint`] codec.
+    pub fn new(max_size: Option<usize>) -> Self {
+        let mut codec = UviBytes::<Bytes>::default();
 
-		if let Some(max_size) = max_size {
-			codec.set_max_len(max_size);
-		}
+        if let Some(max_size) = max_size {
+            codec.set_max_len(max_size);
+        }
 
-		Self { codec }
-	}
+        Self { codec }
+    }
 
-	/// Set maximum size for encoded/decodes values.
-	pub fn with_max_size(max_size: usize) -> Self {
-		let mut codec = UviBytes::<Bytes>::default();
-		codec.set_max_len(max_size);
+    /// Set maximum size for encoded/decodes values.
+    pub fn with_max_size(max_size: usize) -> Self {
+        let mut codec = UviBytes::<Bytes>::default();
+        codec.set_max_len(max_size);
 
-		Self { codec }
-	}
+        Self { codec }
+    }
 
-	/// Encode `payload` using `unsigned-varint`.
-	pub fn encode<T: Into<Bytes>>(payload: T) -> crate::Result<Vec<u8>> {
-		let payload: Bytes = payload.into();
+    /// Encode `payload` using `unsigned-varint`.
+    pub fn encode<T: Into<Bytes>>(payload: T) -> crate::Result<Vec<u8>> {
+        let payload: Bytes = payload.into();
 
-		assert!(payload.len() <= u32::MAX as usize);
+        assert!(payload.len() <= u32::MAX as usize);
 
-		let mut bytes = BytesMut::with_capacity(payload.len() + 4);
-		let mut codec = Self::new(None);
-		codec.encode(payload.into(), &mut bytes)?;
+        let mut bytes = BytesMut::with_capacity(payload.len() + 4);
+        let mut codec = Self::new(None);
+        codec.encode(payload.into(), &mut bytes)?;
 
-		Ok(bytes.into())
-	}
+        Ok(bytes.into())
+    }
 
-	/// Decode `payload` into `BytesMut`.
-	pub fn decode(payload: &mut BytesMut) -> crate::Result<BytesMut> {
-		Ok(UviBytes::<Bytes>::default().decode(payload)?.ok_or(Error::InvalidData)?)
-	}
+    /// Decode `payload` into `BytesMut`.
+    pub fn decode(payload: &mut BytesMut) -> crate::Result<BytesMut> {
+        Ok(UviBytes::<Bytes>::default().decode(payload)?.ok_or(Error::InvalidData)?)
+    }
 }
 
 impl Decoder for UnsignedVarint {
-	type Item = BytesMut;
-	type Error = Error;
+    type Item = BytesMut;
+    type Error = Error;
 
-	fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-		self.codec.decode(src).map_err(From::from)
-	}
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.codec.decode(src).map_err(From::from)
+    }
 }
 
 impl Encoder<Bytes> for UnsignedVarint {
-	type Error = Error;
+    type Error = Error;
 
-	fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
-		self.codec.encode(item, dst).map_err(From::from)
-	}
+    fn encode(&mut self, item: Bytes, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
+        self.codec.encode(item, dst).map_err(From::from)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::{Bytes, BytesMut, UnsignedVarint};
+    use super::{Bytes, BytesMut, UnsignedVarint};
 
-	#[test]
-	fn max_size_respected() {
-		let mut codec = UnsignedVarint::with_max_size(1024);
+    #[test]
+    fn max_size_respected() {
+        let mut codec = UnsignedVarint::with_max_size(1024);
 
-		{
-			use tokio_util::codec::Encoder;
+        {
+            use tokio_util::codec::Encoder;
 
-			let bytes_to_encode: Bytes = vec![0u8; 1024].into();
-			let mut out_bytes = BytesMut::with_capacity(2048);
-			assert!(codec.encode(bytes_to_encode, &mut out_bytes).is_ok());
-		}
+            let bytes_to_encode: Bytes = vec![0u8; 1024].into();
+            let mut out_bytes = BytesMut::with_capacity(2048);
+            assert!(codec.encode(bytes_to_encode, &mut out_bytes).is_ok());
+        }
 
-		{
-			use tokio_util::codec::Encoder;
+        {
+            use tokio_util::codec::Encoder;
 
-			let bytes_to_encode: Bytes = vec![1u8; 1025].into();
-			let mut out_bytes = BytesMut::with_capacity(2048);
-			assert!(codec.encode(bytes_to_encode, &mut out_bytes).is_err());
-		}
-	}
+            let bytes_to_encode: Bytes = vec![1u8; 1025].into();
+            let mut out_bytes = BytesMut::with_capacity(2048);
+            assert!(codec.encode(bytes_to_encode, &mut out_bytes).is_err());
+        }
+    }
 
-	#[test]
-	fn encode_decode_works() {
-		let encoded1 = UnsignedVarint::encode(vec![0u8; 512]).unwrap();
-		let mut encoded2 = {
-			use tokio_util::codec::Encoder;
+    #[test]
+    fn encode_decode_works() {
+        let encoded1 = UnsignedVarint::encode(vec![0u8; 512]).unwrap();
+        let mut encoded2 = {
+            use tokio_util::codec::Encoder;
 
-			let mut codec = UnsignedVarint::with_max_size(512);
-			let bytes_to_encode: Bytes = vec![0u8; 512].into();
-			let mut out_bytes = BytesMut::with_capacity(2048);
-			codec.encode(bytes_to_encode, &mut out_bytes).unwrap();
-			out_bytes
-		};
+            let mut codec = UnsignedVarint::with_max_size(512);
+            let bytes_to_encode: Bytes = vec![0u8; 512].into();
+            let mut out_bytes = BytesMut::with_capacity(2048);
+            codec.encode(bytes_to_encode, &mut out_bytes).unwrap();
+            out_bytes
+        };
 
-		assert_eq!(encoded1, encoded2);
+        assert_eq!(encoded1, encoded2);
 
-		let decoded1 = UnsignedVarint::decode(&mut encoded2).unwrap();
-		let decoded2 = {
-			use tokio_util::codec::Decoder;
+        let decoded1 = UnsignedVarint::decode(&mut encoded2).unwrap();
+        let decoded2 = {
+            use tokio_util::codec::Decoder;
 
-			let mut codec = UnsignedVarint::with_max_size(512);
-			let mut encoded1 = BytesMut::from(&encoded1[..]);
-			codec.decode(&mut encoded1).unwrap().unwrap()
-		};
+            let mut codec = UnsignedVarint::with_max_size(512);
+            let mut encoded1 = BytesMut::from(&encoded1[..]);
+            codec.decode(&mut encoded1).unwrap().unwrap()
+        };
 
-		assert_eq!(decoded1, decoded2);
-	}
+        assert_eq!(decoded1, decoded2);
+    }
 }

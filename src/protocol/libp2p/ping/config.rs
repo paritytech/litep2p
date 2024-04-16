@@ -19,8 +19,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-	codec::ProtocolCodec, protocol::libp2p::ping::PingEvent, types::protocol::ProtocolName,
-	DEFAULT_CHANNEL_SIZE,
+    codec::ProtocolCodec, protocol::libp2p::ping::PingEvent, types::protocol::ProtocolName,
+    DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::Stream;
@@ -38,78 +38,78 @@ const MAX_FAILURES: usize = 3;
 
 /// Ping configuration.
 pub struct Config {
-	/// Protocol name.
-	pub(crate) protocol: ProtocolName,
+    /// Protocol name.
+    pub(crate) protocol: ProtocolName,
 
-	/// Codec used by the protocol.
-	pub(crate) codec: ProtocolCodec,
+    /// Codec used by the protocol.
+    pub(crate) codec: ProtocolCodec,
 
-	/// Maximum failures before the peer is considered unreachable.
-	pub(crate) max_failures: usize,
+    /// Maximum failures before the peer is considered unreachable.
+    pub(crate) max_failures: usize,
 
-	/// TX channel for sending events to the user protocol.
-	pub(crate) tx_event: Sender<PingEvent>,
+    /// TX channel for sending events to the user protocol.
+    pub(crate) tx_event: Sender<PingEvent>,
 }
 
 impl Config {
-	/// Create new [`Config`] with default values.
-	///
-	/// Returns a config that is given to `Litep2pConfig` and an event stream for [`PingEvent`]s.
-	pub fn default() -> (Self, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
-		let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
+    /// Create new [`Config`] with default values.
+    ///
+    /// Returns a config that is given to `Litep2pConfig` and an event stream for [`PingEvent`]s.
+    pub fn default() -> (Self, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
+        let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
-		(
-			Self {
-				tx_event,
-				max_failures: MAX_FAILURES,
-				protocol: ProtocolName::from(PROTOCOL_NAME),
-				codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
-			},
-			Box::new(ReceiverStream::new(rx_event)),
-		)
-	}
+        (
+            Self {
+                tx_event,
+                max_failures: MAX_FAILURES,
+                protocol: ProtocolName::from(PROTOCOL_NAME),
+                codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
+            },
+            Box::new(ReceiverStream::new(rx_event)),
+        )
+    }
 }
 
 /// Ping configuration builder.
 pub struct ConfigBuilder {
-	/// Protocol name.
-	protocol: ProtocolName,
+    /// Protocol name.
+    protocol: ProtocolName,
 
-	/// Codec used by the protocol.
-	codec: ProtocolCodec,
+    /// Codec used by the protocol.
+    codec: ProtocolCodec,
 
-	/// Maximum failures before the peer is considered unreachable.
-	max_failures: usize,
+    /// Maximum failures before the peer is considered unreachable.
+    max_failures: usize,
 }
 
 impl ConfigBuilder {
-	/// Create new default [`Config`] which can be modified by the user.
-	pub fn new() -> Self {
-		Self {
-			max_failures: MAX_FAILURES,
-			protocol: ProtocolName::from(PROTOCOL_NAME),
-			codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
-		}
-	}
+    /// Create new default [`Config`] which can be modified by the user.
+    pub fn new() -> Self {
+        Self {
+            max_failures: MAX_FAILURES,
+            protocol: ProtocolName::from(PROTOCOL_NAME),
+            codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
+        }
+    }
 
-	/// Set maximum failures the protocol.
-	pub fn with_max_failure(mut self, max_failures: usize) -> Self {
-		self.max_failures = max_failures;
-		self
-	}
+    /// Set maximum failures the protocol.
+    pub fn with_max_failure(mut self, max_failures: usize) -> Self {
+        self.max_failures = max_failures;
+        self
+    }
 
-	/// Build [`Config`].
-	pub fn build(self) -> (Config, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
-		let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
+    /// Build [`Config`].
+    pub fn build(self) -> (Config, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
+        let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
-		(
-			Config {
-				tx_event,
-				max_failures: self.max_failures,
-				protocol: self.protocol,
-				codec: self.codec,
-			},
-			Box::new(ReceiverStream::new(rx_event)),
-		)
-	}
+        (
+            Config {
+                tx_event,
+                max_failures: self.max_failures,
+                protocol: self.protocol,
+                codec: self.codec,
+            },
+            Box::new(ReceiverStream::new(rx_event)),
+        )
+    }
 }

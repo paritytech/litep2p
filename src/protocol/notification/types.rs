@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-	protocol::notification::handle::NotificationSink, types::protocol::ProtocolName, PeerId,
+    protocol::notification::handle::NotificationSink, types::protocol::ProtocolName, PeerId,
 };
 
 use bytes::BytesMut;
@@ -36,185 +36,185 @@ pub(super) const ASYNC_CHANNEL_SIZE: usize = 8;
 /// Direction of the connection.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Direction {
-	/// Connection is considered inbound, i.e., it was initiated by the remote node.
-	Inbound,
+    /// Connection is considered inbound, i.e., it was initiated by the remote node.
+    Inbound,
 
-	/// Connection is considered outbound, i.e., it was initiated by the local node.
-	Outbound,
+    /// Connection is considered outbound, i.e., it was initiated by the local node.
+    Outbound,
 }
 
 /// Validation result.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ValidationResult {
-	/// Accept the inbound substream.
-	Accept,
+    /// Accept the inbound substream.
+    Accept,
 
-	/// Reject the inbound substream.
-	Reject,
+    /// Reject the inbound substream.
+    Reject,
 }
 
 /// Notification error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotificationError {
-	/// Remote rejected the substream.
-	Rejected,
+    /// Remote rejected the substream.
+    Rejected,
 
-	/// Connection to peer doesn't exist.
-	NoConnection,
+    /// Connection to peer doesn't exist.
+    NoConnection,
 
-	/// Synchronous notification channel is clogged.
-	ChannelClogged,
+    /// Synchronous notification channel is clogged.
+    ChannelClogged,
 
-	/// Validation for a previous substream still pending.
-	ValidationPending,
+    /// Validation for a previous substream still pending.
+    ValidationPending,
 
-	/// Failed to dial peer.
-	DialFailure,
+    /// Failed to dial peer.
+    DialFailure,
 
-	/// Notification protocol has been closed.
-	EssentialTaskClosed,
+    /// Notification protocol has been closed.
+    EssentialTaskClosed,
 }
 
 /// Notification events.
 pub(crate) enum InnerNotificationEvent {
-	/// Validate substream.
-	ValidateSubstream {
-		/// Protocol name.
-		protocol: ProtocolName,
+    /// Validate substream.
+    ValidateSubstream {
+        /// Protocol name.
+        protocol: ProtocolName,
 
-		/// Fallback, if the substream was negotiated using a fallback protocol.
-		fallback: Option<ProtocolName>,
+        /// Fallback, if the substream was negotiated using a fallback protocol.
+        fallback: Option<ProtocolName>,
 
-		/// Peer ID.
-		peer: PeerId,
+        /// Peer ID.
+        peer: PeerId,
 
-		/// Handshake.
-		handshake: Vec<u8>,
+        /// Handshake.
+        handshake: Vec<u8>,
 
-		/// `oneshot::Sender` for sending the validation result back to the protocol.
-		tx: oneshot::Sender<ValidationResult>,
-	},
+        /// `oneshot::Sender` for sending the validation result back to the protocol.
+        tx: oneshot::Sender<ValidationResult>,
+    },
 
-	/// Notification stream opened.
-	NotificationStreamOpened {
-		/// Protocol name.
-		protocol: ProtocolName,
+    /// Notification stream opened.
+    NotificationStreamOpened {
+        /// Protocol name.
+        protocol: ProtocolName,
 
-		/// Fallback, if the substream was negotiated using a fallback protocol.
-		fallback: Option<ProtocolName>,
+        /// Fallback, if the substream was negotiated using a fallback protocol.
+        fallback: Option<ProtocolName>,
 
-		/// Direction of the substream.
-		direction: Direction,
+        /// Direction of the substream.
+        direction: Direction,
 
-		/// Peer ID.
-		peer: PeerId,
+        /// Peer ID.
+        peer: PeerId,
 
-		/// Handshake.
-		handshake: Vec<u8>,
+        /// Handshake.
+        handshake: Vec<u8>,
 
-		/// Notification sink.
-		sink: NotificationSink,
-	},
+        /// Notification sink.
+        sink: NotificationSink,
+    },
 
-	/// Notification stream closed.
-	NotificationStreamClosed {
-		/// Peer ID.
-		peer: PeerId,
-	},
+    /// Notification stream closed.
+    NotificationStreamClosed {
+        /// Peer ID.
+        peer: PeerId,
+    },
 
-	/// Failed to open notification stream.
-	NotificationStreamOpenFailure {
-		/// Peer ID.
-		peer: PeerId,
+    /// Failed to open notification stream.
+    NotificationStreamOpenFailure {
+        /// Peer ID.
+        peer: PeerId,
 
-		/// Error.
-		error: NotificationError,
-	},
+        /// Error.
+        error: NotificationError,
+    },
 }
 
 /// Notification events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotificationEvent {
-	/// Validate substream.
-	ValidateSubstream {
-		/// Protocol name.
-		protocol: ProtocolName,
+    /// Validate substream.
+    ValidateSubstream {
+        /// Protocol name.
+        protocol: ProtocolName,
 
-		/// Fallback, if the substream was negotiated using a fallback protocol.
-		fallback: Option<ProtocolName>,
+        /// Fallback, if the substream was negotiated using a fallback protocol.
+        fallback: Option<ProtocolName>,
 
-		/// Peer ID.
-		peer: PeerId,
+        /// Peer ID.
+        peer: PeerId,
 
-		/// Handshake.
-		handshake: Vec<u8>,
-	},
+        /// Handshake.
+        handshake: Vec<u8>,
+    },
 
-	/// Notification stream opened.
-	NotificationStreamOpened {
-		/// Protocol name.
-		protocol: ProtocolName,
+    /// Notification stream opened.
+    NotificationStreamOpened {
+        /// Protocol name.
+        protocol: ProtocolName,
 
-		/// Fallback, if the substream was negotiated using a fallback protocol.
-		fallback: Option<ProtocolName>,
+        /// Fallback, if the substream was negotiated using a fallback protocol.
+        fallback: Option<ProtocolName>,
 
-		/// Direction of the substream.
-		///
-		/// [`Direction::Inbound`](crate::protocol::Direction::Outbound) indicates that the
-		/// substream was opened by the remote peer and
-		/// [`Direction::Outbound`](crate::protocol::Direction::Outbound) that it was
-		/// opened by the local node.
-		direction: Direction,
+        /// Direction of the substream.
+        ///
+        /// [`Direction::Inbound`](crate::protocol::Direction::Outbound) indicates that the
+        /// substream was opened by the remote peer and
+        /// [`Direction::Outbound`](crate::protocol::Direction::Outbound) that it was
+        /// opened by the local node.
+        direction: Direction,
 
-		/// Peer ID.
-		peer: PeerId,
+        /// Peer ID.
+        peer: PeerId,
 
-		/// Handshake.
-		handshake: Vec<u8>,
-	},
+        /// Handshake.
+        handshake: Vec<u8>,
+    },
 
-	/// Notification stream closed.
-	NotificationStreamClosed {
-		/// Peer ID.
-		peer: PeerId,
-	},
+    /// Notification stream closed.
+    NotificationStreamClosed {
+        /// Peer ID.
+        peer: PeerId,
+    },
 
-	/// Failed to open notification stream.
-	NotificationStreamOpenFailure {
-		/// Peer ID.
-		peer: PeerId,
+    /// Failed to open notification stream.
+    NotificationStreamOpenFailure {
+        /// Peer ID.
+        peer: PeerId,
 
-		/// Error.
-		error: NotificationError,
-	},
+        /// Error.
+        error: NotificationError,
+    },
 
-	/// Notification received.
-	NotificationReceived {
-		/// Peer ID.
-		peer: PeerId,
+    /// Notification received.
+    NotificationReceived {
+        /// Peer ID.
+        peer: PeerId,
 
-		/// Notification.
-		notification: BytesMut,
-	},
+        /// Notification.
+        notification: BytesMut,
+    },
 }
 
 /// Notification commands sent to the protocol.
 pub(crate) enum NotificationCommand {
-	/// Open substreams to one or more peers.
-	OpenSubstream {
-		/// Peer IDs.
-		peers: HashSet<PeerId>,
-	},
+    /// Open substreams to one or more peers.
+    OpenSubstream {
+        /// Peer IDs.
+        peers: HashSet<PeerId>,
+    },
 
-	/// Close substreams to one or more peers.
-	CloseSubstream {
-		/// Peer IDs.
-		peers: HashSet<PeerId>,
-	},
+    /// Close substreams to one or more peers.
+    CloseSubstream {
+        /// Peer IDs.
+        peers: HashSet<PeerId>,
+    },
 
-	/// Force close the connection because notification channel is clogged.
-	ForceClose {
-		/// Peer to disconnect.
-		peer: PeerId,
-	},
+    /// Force close the connection because notification channel is clogged.
+    ForceClose {
+        /// Peer to disconnect.
+        peer: PeerId,
+    },
 }
