@@ -30,11 +30,19 @@ use crate::{
 pub struct Config {
     /// Listen address for the transport.
     ///
-    /// Default listen addres is `/ip6/::1/tcp`.
+    /// Default listen addresses are ["/ip4/0.0.0.0/tcp/0", "/ip6/::/tcp/0"].
     pub listen_addresses: Vec<multiaddr::Multiaddr>,
 
+    /// Whether to set `SO_REUSEPORT` and bind a socket to the listen address port for outbound
+    /// connections.
+    ///
+    /// Note that `SO_REUSEADDR` is always set on listening sockets.
+    ///
+    /// Defaults to `true`.
+    pub reuse_port: bool,
+
     /// Yamux configuration.
-    pub yamux_config: yamux::Config,
+    pub yamux_config: crate::yamux::Config,
 
     /// Noise read-ahead frame count.
     ///
@@ -76,6 +84,7 @@ impl Default for Config {
                 "/ip4/0.0.0.0/tcp/0".parse().expect("valid address"),
                 "/ip6/::/tcp/0".parse().expect("valid address"),
             ],
+            reuse_port: true,
             yamux_config: Default::default(),
             noise_read_ahead_frame_count: MAX_READ_AHEAD_FACTOR,
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,

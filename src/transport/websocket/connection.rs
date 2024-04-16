@@ -66,7 +66,7 @@ pub struct NegotiatedSubstream {
     protocol: ProtocolName,
 
     /// Yamux substream.
-    io: yamux::Stream,
+    io: crate::yamux::Stream,
 
     /// Permit.
     permit: Permit,
@@ -106,10 +106,11 @@ pub(super) struct NegotiatedConnection {
     endpoint: Endpoint,
 
     /// Yamux connection.
-    connection: yamux::ControlledConnection<NoiseSocket<BufferedStream<MaybeTlsStream<TcpStream>>>>,
+    connection:
+        crate::yamux::ControlledConnection<NoiseSocket<BufferedStream<MaybeTlsStream<TcpStream>>>>,
 
     /// Yamux control.
-    control: yamux::Control,
+    control: crate::yamux::Control,
 }
 
 impl NegotiatedConnection {
@@ -135,10 +136,11 @@ pub(crate) struct WebSocketConnection {
     protocol_set: ProtocolSet,
 
     /// Yamux connection.
-    connection: yamux::ControlledConnection<NoiseSocket<BufferedStream<MaybeTlsStream<TcpStream>>>>,
+    connection:
+        crate::yamux::ControlledConnection<NoiseSocket<BufferedStream<MaybeTlsStream<TcpStream>>>>,
 
     /// Yamux control.
-    control: yamux::Control,
+    control: crate::yamux::Control,
 
     /// Remote peer ID.
     peer: PeerId,
@@ -214,7 +216,7 @@ impl WebSocketConnection {
         address: Multiaddr,
         dialed_peer: PeerId,
         ws_address: Url,
-        yamux_config: yamux::Config,
+        yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
     ) -> crate::Result<NegotiatedConnection> {
@@ -246,7 +248,7 @@ impl WebSocketConnection {
         connection_id: ConnectionId,
         keypair: Keypair,
         address: Multiaddr,
-        yamux_config: yamux::Config,
+        yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
     ) -> crate::Result<NegotiatedConnection> {
@@ -274,7 +276,7 @@ impl WebSocketConnection {
         address: Multiaddr,
         connection_id: ConnectionId,
         keypair: Keypair,
-        yamux_config: yamux::Config,
+        yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
     ) -> crate::Result<NegotiatedConnection> {
@@ -320,8 +322,8 @@ impl WebSocketConnection {
         let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"]).await?;
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-        let connection = yamux::Connection::new(stream.inner(), yamux_config, role.into());
-        let (control, connection) = yamux::Control::new(connection);
+        let connection = crate::yamux::Connection::new(stream.inner(), yamux_config, role.into());
+        let (control, connection) = crate::yamux::Control::new(connection);
 
         let address = match role {
             Role::Dialer => address,
@@ -341,7 +343,7 @@ impl WebSocketConnection {
 
     /// Accept substream.
     pub async fn accept_substream(
-        stream: yamux::Stream,
+        stream: crate::yamux::Stream,
         permit: Permit,
         substream_id: SubstreamId,
         protocols: Vec<ProtocolName>,
@@ -372,7 +374,7 @@ impl WebSocketConnection {
 
     /// Open substream for `protocol`.
     pub async fn open_substream(
-        mut control: yamux::Control,
+        mut control: crate::yamux::Control,
         permit: Permit,
         substream_id: SubstreamId,
         protocol: ProtocolName,

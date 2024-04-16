@@ -73,7 +73,7 @@ pub struct NegotiatedSubstream {
     protocol: ProtocolName,
 
     /// Yamux substream.
-    io: yamux::Stream,
+    io: crate::yamux::Stream,
 
     /// Permit.
     permit: Permit,
@@ -107,10 +107,10 @@ enum ConnectionError {
 /// Connection context for an opened connection that hasn't yet started its event loop.
 pub struct NegotiatedConnection {
     /// Yamux connection.
-    connection: yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
+    connection: crate::yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
 
     /// Yamux control.
-    control: yamux::Control,
+    control: crate::yamux::Control,
 
     /// Remote peer ID.
     peer: PeerId,
@@ -145,10 +145,10 @@ pub struct TcpConnection {
     protocol_set: ProtocolSet,
 
     /// Yamux connection.
-    connection: yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
+    connection: crate::yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
 
     /// Yamux control.
-    control: yamux::Control,
+    control: crate::yamux::Control,
 
     /// Remote peer ID.
     peer: PeerId,
@@ -216,7 +216,7 @@ impl TcpConnection {
         stream: TcpStream,
         address: AddressType,
         peer: Option<PeerId>,
-        yamux_config: yamux::Config,
+        yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
         connection_open_timeout: Duration,
@@ -253,7 +253,7 @@ impl TcpConnection {
 
     /// Open substream for `protocol`.
     pub(super) async fn open_substream(
-        mut control: yamux::Control,
+        mut control: crate::yamux::Control,
         substream_id: SubstreamId,
         permit: Permit,
         protocol: ProtocolName,
@@ -302,7 +302,7 @@ impl TcpConnection {
         connection_id: ConnectionId,
         keypair: Keypair,
         address: SocketAddr,
-        yamux_config: yamux::Config,
+        yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
         connection_open_timeout: Duration,
@@ -334,7 +334,7 @@ impl TcpConnection {
 
     /// Accept substream.
     pub(super) async fn accept_substream(
-        stream: yamux::Stream,
+        stream: crate::yamux::Stream,
         permit: Permit,
         substream_id: SubstreamId,
         protocols: Vec<ProtocolName>,
@@ -402,7 +402,7 @@ impl TcpConnection {
         keypair: Keypair,
         role: Role,
         address: AddressType,
-        yamux_config: yamux::Config,
+        yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
         substream_open_timeout: Duration,
@@ -451,8 +451,8 @@ impl TcpConnection {
                 .await?;
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
-        let connection = yamux::Connection::new(stream.inner(), yamux_config, role.into());
-        let (control, connection) = yamux::Control::new(connection);
+        let connection = crate::yamux::Connection::new(stream.inner(), yamux_config, role.into());
+        let (control, connection) = crate::yamux::Control::new(connection);
 
         let address = match address {
             AddressType::Socket(address) => Multiaddr::empty()

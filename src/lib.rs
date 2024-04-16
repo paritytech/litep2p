@@ -39,6 +39,7 @@ use crate::{
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use transport::Endpoint;
+use types::ConnectionId;
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -47,7 +48,7 @@ pub use error::Error;
 pub use peer_id::PeerId;
 pub use types::protocol::ProtocolName;
 
-pub use yamux;
+// pub use yamux;
 
 pub(crate) mod peer_id;
 
@@ -60,6 +61,7 @@ pub mod protocol;
 pub mod substream;
 pub mod transport;
 pub mod types;
+pub mod yamux;
 
 mod bandwidth;
 mod mock;
@@ -90,6 +92,9 @@ pub enum Litep2pEvent {
     ConnectionClosed {
         /// Peer ID.
         peer: PeerId,
+
+        /// Connection ID.
+        connection_id: ConnectionId,
     },
 
     /// Failed to dial peer.
@@ -443,8 +448,14 @@ impl Litep2p {
             match self.transport_manager.next().await? {
                 TransportEvent::ConnectionEstablished { peer, endpoint, .. } =>
                     return Some(Litep2pEvent::ConnectionEstablished { peer, endpoint }),
-                TransportEvent::ConnectionClosed { peer, .. } =>
-                    return Some(Litep2pEvent::ConnectionClosed { peer }),
+                TransportEvent::ConnectionClosed {
+                    peer,
+                    connection_id,
+                } =>
+                    return Some(Litep2pEvent::ConnectionClosed {
+                        peer,
+                        connection_id,
+                    }),
                 TransportEvent::DialFailure { address, error, .. } =>
                     return Some(Litep2pEvent::DialFailure { address, error }),
                 _ => {}

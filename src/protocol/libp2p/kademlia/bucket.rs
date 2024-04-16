@@ -101,12 +101,10 @@ impl KBucket {
 
     /// Get iterator over the k-bucket, sorting the k-bucket entries in increasing order
     /// by distance.
-    pub fn closest_iter<'a, K: Clone>(
-        &'a mut self,
-        target: Key<K>,
-    ) -> impl Iterator<Item = &'a KademliaPeer> {
-        self.nodes.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
-        self.nodes.iter().filter(|peer| !peer.addresses.is_empty())
+    pub fn closest_iter<K: Clone>(&self, target: &Key<K>) -> impl Iterator<Item = KademliaPeer> {
+        let mut nodes = self.nodes.clone();
+        nodes.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
+        nodes.into_iter().filter(|peer| !peer.addresses.is_empty())
     }
 }
 
@@ -129,7 +127,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let target = Key::from(PeerId::random());
-        let mut iter = bucket.closest_iter(target.clone());
+        let mut iter = bucket.closest_iter(&target);
         let mut prev = None;
 
         while let Some(node) = iter.next() {
@@ -174,7 +172,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let target = Key::from(PeerId::random());
-        let mut iter = bucket.closest_iter(target.clone());
+        let mut iter = bucket.closest_iter(&target);
         let mut prev = None;
         let mut num_peers = 0usize;
 

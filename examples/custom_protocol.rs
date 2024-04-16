@@ -28,13 +28,52 @@ use litep2p::{
     Litep2p, PeerId,
 };
 
-use futures::StreamExt;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::mpsc::{channel, Receiver, Sender},
-};
+use bytes::{Buf, BufMut, BytesMut};
+use futures::{future::BoxFuture, stream::FuturesUnordered, SinkExt, StreamExt};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
+
+#[derive(Debug)]
+struct CustomCodec;
+
+impl Decoder for CustomCodec {
+    type Item = BytesMut;
+    type Error = litep2p::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.is_empty() {
+            return Ok(None);
+        }
+
+        let len = src.get_u8() as usize;
+        if src.len() >= len {
+            let mut out = BytesMut::with_capacity(len);
+            out.put_slice(&src[..len]);
+            src.advance(len);
+
+            return Ok(Some(out));
+        }
+
+        Ok(None)
+    }
+}
+
+impl Encoder<BytesMut> for CustomCodec {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, item: BytesMut, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        if item.len() > u8::MAX as usize {
+            return Err(std::io::ErrorKind::PermissionDenied.into());
+        }
+
+        dst.put_u8(item.len() as u8);
+        dst.extend(&item);
+
+        Ok(())
+    }
+}
 
 /// Events received from the protocol.
 #[derive(Debug)]
@@ -71,9 +110,20 @@ struct CustomProtocolHandle {
 
 #[derive(Debug)]
 struct CustomProtocol {
+    /// Channel for receiving commands from user.
     cmd_rx: Receiver<CustomProtocolCommand>,
+
+    /// Channel for sending events to user.
     event_tx: Sender<CustomProtocolEvent>,
+
+    /// Connected peers.
     peers: HashMap<PeerId, Option<Vec<u8>>>,
+
+    /// Active inbound substreams.
+    inbound: FuturesUnordered<BoxFuture<'static, (PeerId, Option<litep2p::Result<BytesMut>>)>>,
+
+    /// Active outbound substreams.
+    outbound: FuturesUnordered<BoxFuture<'static, litep2p::Result<()>>>,
 }
 
 impl CustomProtocol {
@@ -87,6 +137,8 @@ impl CustomProtocol {
                 cmd_rx,
                 event_tx,
                 peers: HashMap::new(),
+                inbound: FuturesUnordered::new(),
+                outbound: FuturesUnordered::new(),
             },
             CustomProtocolHandle { cmd_tx, event_rx },
         )
@@ -113,20 +165,23 @@ impl UserProtocol for CustomProtocol {
             tokio::select! {
                 cmd = self.cmd_rx.recv() => match cmd {
                     Some(CustomProtocolCommand::SendMessage { peer, message }) => {
-                        // protocol only allows sending messages of exactly 10 bytes
-                        if message.len() != 10 {
-                            println!("message to {peer:?} has invalid length, got {}, expected 10", message.len());
-                        }
-
-                        // if the peer doesn't exist in the protocol, we don't have a connection
-                        // open so dial them and save the message.
-                        if !self.peers.contains_key(&peer) {
-                            match service.dial(&peer) {
-                                Ok(_) => {
-                                    self.peers.insert(peer, Some(message));
+                        match self.peers.entry(peer) {
+                            // peer doens't exist so dial them and save the message
+                            Entry::Vacant(entry) => match service.dial(&peer) {
+                                Ok(()) => {
+                                    entry.insert(Some(message));
                                 }
                                 Err(error) => {
-                                    println!("failed to dial {peer:?}: {error:?}");
+                                    eprintln!("failed to dial {peer:?}: {error:?}");
+                                }
+                            }
+                            // peer exists so open a new substream
+                            Entry::Occupied(mut entry) => match service.open_substream(peer) {
+                                Ok(_) => {
+                                    entry.insert(Some(message));
+                                }
+                                Err(error) => {
+                                    eprintln!("failed to open substream to {peer:?}: {error:?}");
                                 }
                             }
                         }
@@ -134,11 +189,11 @@ impl UserProtocol for CustomProtocol {
                     None => return Err(litep2p::Error::EssentialTaskClosed),
                 },
                 event = service.next() => match event {
+                    // connection established to peer
+                    //
+                    // check if the peer already exist in the protocol with a pending message
+                    // and if yes, open substream to the peer.
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        // connection established to peer
-                        //
-                        // check if the peer already exist in the protocol with a pending message
-                        // and if yes, open substream to the peer.
                         match self.peers.get(&peer) {
                             Some(Some(_)) => {
                                 if let Err(error) = service.open_substream(peer) {
@@ -151,41 +206,47 @@ impl UserProtocol for CustomProtocol {
                             }
                         }
                     }
-                    Some(TransportEvent::SubstreamOpened { peer, mut substream, direction, .. }) => {
+                    // substream opened
+                    //
+                    // for inbound substreams, move the substream to `self.inbound` and poll them for messages
+                    //
+                    // for outbound substreams, move the substream to `self.outbound` and send the saved message to remote peer
+                    Some(TransportEvent::SubstreamOpened { peer, substream, direction, .. }) => {
                         match direction {
-                            // inbound substream, attempt to read exactly 10 bytes and send the received message to user
                             Direction::Inbound => {
-                                let mut buffer = vec![0u8; 10];
-
-                                // NOTE: it's not good idea to block the protocol like this and reading/writing from
-                                // the substream should be done in a non-blocking way, e.g., with `FuturesUnordered`.
-                                match substream.read_exact(&mut buffer).await {
-                                    Ok(_) => {
-                                        self.event_tx.send(CustomProtocolEvent::MessageReceived {
-                                            peer,
-                                            message: buffer,
-                                        }).await.unwrap();
-                                    }
-                                    Err(error) => {
-                                        println!("failed to read data from {peer:?}: {error:?}");
-                                    }
-                                }
+                                self.inbound.push(Box::pin(async move {
+                                    (peer, Framed::new(substream, CustomCodec).next().await)
+                                }));
                             }
                             Direction::Outbound(_) => {
-                                // outbound substream was opened so message must exist
-                                let mut message = self.peers.get_mut(&peer).expect("peer to exist").take().unwrap();
+                                let message = self.peers.get_mut(&peer).expect("peer to exist").take().unwrap();
 
-                                // NOTE: it's not good idea to block the protocol like this and reading/writing from
-                                // the substream should be done in a non-blocking way, e.g., with `FuturesUnordered`.
-                                if let Err(error) = substream.write_all(&mut message).await {
-                                    println!("failed to send message to {peer:?}: {error:?}");
-                                }
+                                self.outbound.push(Box::pin(async move {
+                                    let mut framed = Framed::new(substream, CustomCodec);
+                                    framed.send(BytesMut::from(&message[..])).await.map_err(From::from)
+                                }));
                             }
                         }
                     }
+                    // connection closed, remove all peer context
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
+                        self.peers.remove(&peer);
+                    }
                     None => return Err(litep2p::Error::EssentialTaskClosed),
                     _ => {},
-                }
+                },
+                // poll inbound substreams for messages
+                event = self.inbound.next(), if !self.inbound.is_empty() => match event {
+                    Some((peer, Some(Ok(message)))) => {
+                        self.event_tx.send(CustomProtocolEvent::MessageReceived {
+                            peer,
+                            message: message.into(),
+                        }).await.unwrap();
+                    }
+                    event => eprintln!("failed to read message from an inbound substream: {event:?}"),
+                },
+                // poll outbound substreams so that they can make progress
+                _ = self.outbound.next(), if !self.outbound.is_empty() => {}
             }
         }
     }
@@ -228,18 +289,26 @@ async fn main() {
         }
     });
 
-    // send message to peer2
-    handle1
-        .cmd_tx
-        .send(CustomProtocolCommand::SendMessage {
-            peer: peer2,
-            message: vec![1u8; 10],
-        })
-        .await
-        .unwrap();
+    for message in vec![
+        b"hello, world".to_vec(),
+        b"testing 123".to_vec(),
+        b"goodbye, world".to_vec(),
+    ] {
+        handle1
+            .cmd_tx
+            .send(CustomProtocolCommand::SendMessage {
+                peer: peer2,
+                message,
+            })
+            .await
+            .unwrap();
 
-    let CustomProtocolEvent::MessageReceived { peer, message } =
-        handle2.event_rx.recv().await.unwrap();
+        let CustomProtocolEvent::MessageReceived { peer, message } =
+            handle2.event_rx.recv().await.unwrap();
 
-    println!("received message from {peer:?}: {message:?}");
+        println!(
+            "received message from {peer:?}: {:?}",
+            std::str::from_utf8(&message)
+        );
+    }
 }

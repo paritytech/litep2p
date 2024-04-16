@@ -20,9 +20,13 @@
 
 use futures::StreamExt;
 use litep2p::{
-    config::ConfigBuilder, protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
-    transport::quic::config::Config as QuicConfig, transport::tcp::config::Config as TcpConfig,
-    transport::websocket::config::Config as WebSocketConfig, Litep2p,
+    config::ConfigBuilder,
+    protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
+    transport::{
+        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
+        websocket::config::Config as WebSocketConfig,
+    },
+    Litep2p,
 };
 
 enum Transport {

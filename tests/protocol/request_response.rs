@@ -36,7 +36,8 @@ use litep2p::{
 use futures::{channel, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand_xorshift::XorShiftRng;
 use tokio::time::sleep;
 
 use std::{
@@ -1088,7 +1089,7 @@ async fn too_many_pending_requests() {
         Duration::from_secs(5),
         None,
     );
-    let mut yamux_config = yamux::Config::default();
+    let mut yamux_config = litep2p::yamux::Config::default();
     yamux_config.set_max_num_streams(4);
 
     let config1 = Litep2pConfigBuilder::new()
@@ -1107,7 +1108,7 @@ async fn too_many_pending_requests() {
         Duration::from_secs(5),
         None,
     );
-    let mut yamux_config = yamux::Config::default();
+    let mut yamux_config = litep2p::yamux::Config::default();
     yamux_config.set_max_num_streams(4);
 
     let config2 = Litep2pConfigBuilder::new()
@@ -1907,7 +1908,7 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
 
     loop {
         match litep2p1.next_event().await {
-            Some(Litep2pEvent::ConnectionClosed { peer }) => {
+            Some(Litep2pEvent::ConnectionClosed { peer, .. }) => {
                 assert_eq!(peer, peer2);
                 break;
             }
@@ -2583,11 +2584,13 @@ async fn large_response(transport1: Transport, transport2: Transport) {
         }
     });
 
+    // Generate the response first and use a fast insecure RNG to make the test not timeout on
+    // GitHub CI when generating 15 MB of data.
+    let mut rng = XorShiftRng::from_rng(rand::thread_rng()).expect("`thread_rng` to seed");
+    let response = (0..15 * 1024 * 1024).map(|_| rng.gen::<u8>()).collect::<Vec<_>>();
+
     let request_id =
         handle1.try_send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).unwrap();
-
-    let mut rng = rand::thread_rng();
-    let response = (0..15 * 1024 * 1024).map(|_| rng.gen::<u8>()).collect::<Vec<_>>();
 
     assert_eq!(
         handle2.next().await.unwrap(),

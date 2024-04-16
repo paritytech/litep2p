@@ -28,7 +28,7 @@ use tokio::sync::oneshot;
 use std::collections::HashSet;
 
 /// Default channel size for synchronous notifications.
-pub(super) const SYNC_CHANNEL_SIZE: usize = 10_000;
+pub(super) const SYNC_CHANNEL_SIZE: usize = 2048;
 
 /// Default channel size for asynchronous notifications.
 pub(super) const ASYNC_CHANNEL_SIZE: usize = 8;
@@ -198,7 +198,7 @@ pub enum NotificationEvent {
     },
 }
 
-/// Notification commands sent by the [`NotificationService`] to the protocol.
+/// Notification commands sent to the protocol.
 pub(crate) enum NotificationCommand {
     /// Open substreams to one or more peers.
     OpenSubstream {
@@ -210,5 +210,11 @@ pub(crate) enum NotificationCommand {
     CloseSubstream {
         /// Peer IDs.
         peers: HashSet<PeerId>,
+    },
+
+    /// Force close the connection because notification channel is clogged.
+    ForceClose {
+        /// Peer to disconnect.
+        peer: PeerId,
     },
 }
