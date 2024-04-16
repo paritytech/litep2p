@@ -21,14 +21,14 @@
 //! [`/ipfs/identify/1.0.0`](https://github.com/libp2p/specs/blob/master/identify/README.md) implementation.
 
 use crate::{
-	codec::ProtocolCodec,
-	crypto::PublicKey,
-	error::{Error, SubstreamError},
-	protocol::{Direction, TransportEvent, TransportService},
-	substream::Substream,
-	transport::Endpoint,
-	types::{protocol::ProtocolName, SubstreamId},
-	PeerId, DEFAULT_CHANNEL_SIZE,
+    codec::ProtocolCodec,
+    crypto::PublicKey,
+    error::{Error, SubstreamError},
+    protocol::{Direction, TransportEvent, TransportService},
+    substream::Substream,
+    transport::Endpoint,
+    types::{protocol::ProtocolName, SubstreamId},
+    PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
@@ -38,8 +38,8 @@ use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
-	collections::{HashMap, HashSet},
-	time::Duration,
+    collections::{HashMap, HashSet},
+    time::Duration,
 };
 
 /// Log target for the file.
@@ -59,361 +59,361 @@ const DEFAULT_AGENT: &str = "litep2p/1.0.0";
 const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
 
 mod identify_schema {
-	include!(concat!(env!("OUT_DIR"), "/identify.rs"));
+    include!(concat!(env!("OUT_DIR"), "/identify.rs"));
 }
 
 /// Identify configuration.
 pub struct Config {
-	/// Protocol name.
-	pub(crate) protocol: ProtocolName,
+    /// Protocol name.
+    pub(crate) protocol: ProtocolName,
 
-	/// Codec used by the protocol.
-	pub(crate) codec: ProtocolCodec,
+    /// Codec used by the protocol.
+    pub(crate) codec: ProtocolCodec,
 
-	/// TX channel for sending events to the user protocol.
-	tx_event: Sender<IdentifyEvent>,
+    /// TX channel for sending events to the user protocol.
+    tx_event: Sender<IdentifyEvent>,
 
-	// Public key of the local node, filled by `Litep2p`.
-	pub(crate) public: Option<PublicKey>,
+    // Public key of the local node, filled by `Litep2p`.
+    pub(crate) public: Option<PublicKey>,
 
-	/// Protocols supported by the local node, filled by `Litep2p`.
-	pub(crate) protocols: Vec<ProtocolName>,
+    /// Protocols supported by the local node, filled by `Litep2p`.
+    pub(crate) protocols: Vec<ProtocolName>,
 
-	/// Public addresses.
-	pub(crate) public_addresses: Vec<Multiaddr>,
+    /// Public addresses.
+    pub(crate) public_addresses: Vec<Multiaddr>,
 
-	/// Protocol version.
-	pub(crate) protocol_version: String,
+    /// Protocol version.
+    pub(crate) protocol_version: String,
 
-	/// User agent.
-	pub(crate) user_agent: Option<String>,
+    /// User agent.
+    pub(crate) user_agent: Option<String>,
 }
 
 impl Config {
-	/// Create new [`Config`].
-	///
-	/// Returns a config that is given to `Litep2pConfig` and an event stream for
-	/// [`IdentifyEvent`]s.
-	pub fn new(
-		protocol_version: String,
-		user_agent: Option<String>,
-		public_addresses: Vec<Multiaddr>,
-	) -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
-		let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
+    /// Create new [`Config`].
+    ///
+    /// Returns a config that is given to `Litep2pConfig` and an event stream for
+    /// [`IdentifyEvent`]s.
+    pub fn new(
+        protocol_version: String,
+        user_agent: Option<String>,
+        public_addresses: Vec<Multiaddr>,
+    ) -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
+        let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
-		(
-			Self {
-				tx_event,
-				public: None,
-				public_addresses,
-				protocol_version,
-				user_agent,
-				codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
-				protocols: Vec::new(),
-				protocol: ProtocolName::from(PROTOCOL_NAME),
-			},
-			Box::new(ReceiverStream::new(rx_event)),
-		)
-	}
+        (
+            Self {
+                tx_event,
+                public: None,
+                public_addresses,
+                protocol_version,
+                user_agent,
+                codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
+                protocols: Vec::new(),
+                protocol: ProtocolName::from(PROTOCOL_NAME),
+            },
+            Box::new(ReceiverStream::new(rx_event)),
+        )
+    }
 }
 
 /// Events emitted by Identify protocol.
 #[derive(Debug)]
 pub enum IdentifyEvent {
-	/// Peer identified.
-	PeerIdentified {
-		/// Peer ID.
-		peer: PeerId,
+    /// Peer identified.
+    PeerIdentified {
+        /// Peer ID.
+        peer: PeerId,
 
-		/// Protocol version.
-		protocol_version: Option<String>,
+        /// Protocol version.
+        protocol_version: Option<String>,
 
-		/// User agent.
-		user_agent: Option<String>,
+        /// User agent.
+        user_agent: Option<String>,
 
-		/// Supported protocols.
-		supported_protocols: HashSet<ProtocolName>,
+        /// Supported protocols.
+        supported_protocols: HashSet<ProtocolName>,
 
-		/// Observed address.
-		observed_address: Multiaddr,
+        /// Observed address.
+        observed_address: Multiaddr,
 
-		/// Listen addresses.
-		listen_addresses: Vec<Multiaddr>,
-	},
+        /// Listen addresses.
+        listen_addresses: Vec<Multiaddr>,
+    },
 }
 
 /// Identify response received from remote.
 struct IdentifyResponse {
-	/// Remote peer ID.
-	peer: PeerId,
+    /// Remote peer ID.
+    peer: PeerId,
 
-	/// Protocol version.
-	protocol_version: Option<String>,
+    /// Protocol version.
+    protocol_version: Option<String>,
 
-	/// User agent.
-	user_agent: Option<String>,
+    /// User agent.
+    user_agent: Option<String>,
 
-	/// Protocols supported by remote.
-	supported_protocols: HashSet<String>,
+    /// Protocols supported by remote.
+    supported_protocols: HashSet<String>,
 
-	/// Remote's listen addresses.
-	listen_addresses: Vec<Multiaddr>,
+    /// Remote's listen addresses.
+    listen_addresses: Vec<Multiaddr>,
 
-	/// Observed address.
-	observed_address: Option<Multiaddr>,
+    /// Observed address.
+    observed_address: Option<Multiaddr>,
 }
 
 pub(crate) struct Identify {
-	// Connection service.
-	service: TransportService,
+    // Connection service.
+    service: TransportService,
 
-	/// TX channel for sending events to the user protocol.
-	tx: Sender<IdentifyEvent>,
+    /// TX channel for sending events to the user protocol.
+    tx: Sender<IdentifyEvent>,
 
-	/// Connected peers and their observed addresses.
-	peers: HashMap<PeerId, Endpoint>,
+    /// Connected peers and their observed addresses.
+    peers: HashMap<PeerId, Endpoint>,
 
-	// Public key of the local node, filled by `Litep2p`.
-	public: PublicKey,
+    // Public key of the local node, filled by `Litep2p`.
+    public: PublicKey,
 
-	/// Protocol version.
-	protocol_version: String,
+    /// Protocol version.
+    protocol_version: String,
 
-	/// User agent.
-	user_agent: String,
+    /// User agent.
+    user_agent: String,
 
-	/// Public addresses.
-	listen_addresses: HashSet<Multiaddr>,
+    /// Public addresses.
+    listen_addresses: HashSet<Multiaddr>,
 
-	/// Protocols supported by the local node, filled by `Litep2p`.
-	protocols: Vec<String>,
+    /// Protocols supported by the local node, filled by `Litep2p`.
+    protocols: Vec<String>,
 
-	/// Pending outbound substreams.
-	pending_opens: HashMap<SubstreamId, PeerId>,
+    /// Pending outbound substreams.
+    pending_opens: HashMap<SubstreamId, PeerId>,
 
-	/// Pending outbound substreams.
-	pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
+    /// Pending outbound substreams.
+    pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
 
-	/// Pending inbound substreams.
-	pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
+    /// Pending inbound substreams.
+    pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
 }
 
 impl Identify {
-	/// Create new [`Identify`] protocol.
-	pub(crate) fn new(
-		service: TransportService,
-		config: Config,
-		listen_addresses: Vec<Multiaddr>,
-	) -> Self {
-		Self {
-			service,
-			tx: config.tx_event,
-			peers: HashMap::new(),
-			listen_addresses: config
-				.public_addresses
-				.into_iter()
-				.chain(listen_addresses.into_iter())
-				.collect(),
-			public: config.public.expect("public key to be supplied"),
-			protocol_version: config.protocol_version,
-			user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
-			pending_opens: HashMap::new(),
-			pending_inbound: FuturesUnordered::new(),
-			pending_outbound: FuturesUnordered::new(),
-			protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
-		}
-	}
+    /// Create new [`Identify`] protocol.
+    pub(crate) fn new(
+        service: TransportService,
+        config: Config,
+        listen_addresses: Vec<Multiaddr>,
+    ) -> Self {
+        Self {
+            service,
+            tx: config.tx_event,
+            peers: HashMap::new(),
+            listen_addresses: config
+                .public_addresses
+                .into_iter()
+                .chain(listen_addresses.into_iter())
+                .collect(),
+            public: config.public.expect("public key to be supplied"),
+            protocol_version: config.protocol_version,
+            user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
+            pending_opens: HashMap::new(),
+            pending_inbound: FuturesUnordered::new(),
+            pending_outbound: FuturesUnordered::new(),
+            protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
+        }
+    }
 
-	/// Connection established to remote peer.
-	fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
-		tracing::trace!(target: LOG_TARGET, ?peer, ?endpoint, "connection established");
+    /// Connection established to remote peer.
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?endpoint, "connection established");
 
-		let substream_id = self.service.open_substream(peer)?;
-		self.pending_opens.insert(substream_id, peer);
-		self.peers.insert(peer, endpoint);
+        let substream_id = self.service.open_substream(peer)?;
+        self.pending_opens.insert(substream_id, peer);
+        self.peers.insert(peer, endpoint);
 
-		Ok(())
-	}
+        Ok(())
+    }
 
-	/// Connection closed to remote peer.
-	fn on_connection_closed(&mut self, peer: PeerId) {
-		tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
+    /// Connection closed to remote peer.
+    fn on_connection_closed(&mut self, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
 
-		self.peers.remove(&peer);
-	}
+        self.peers.remove(&peer);
+    }
 
-	/// Inbound substream opened.
-	fn on_inbound_substream(
-		&mut self,
-		peer: PeerId,
-		protocol: ProtocolName,
-		mut substream: Substream,
-	) {
-		tracing::trace!(
-			target: LOG_TARGET,
-			?peer,
-			?protocol,
-			"inbound substream opened"
-		);
+    /// Inbound substream opened.
+    fn on_inbound_substream(
+        &mut self,
+        peer: PeerId,
+        protocol: ProtocolName,
+        mut substream: Substream,
+    ) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?protocol,
+            "inbound substream opened"
+        );
 
-		let observed_addr = match self.peers.get(&peer) {
-			Some(endpoint) => Some(endpoint.address().to_vec()),
-			None => {
-				tracing::warn!(
-					target: LOG_TARGET,
-					?peer,
-					%protocol,
-					"inbound identify substream opened for peer who doesn't exist",
-				);
-				None
-			},
-		};
+        let observed_addr = match self.peers.get(&peer) {
+            Some(endpoint) => Some(endpoint.address().to_vec()),
+            None => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    %protocol,
+                    "inbound identify substream opened for peer who doesn't exist",
+                );
+                None
+            }
+        };
 
-		let identify = identify_schema::Identify {
-			protocol_version: Some(self.protocol_version.clone()),
-			agent_version: Some(self.user_agent.clone()),
-			public_key: Some(self.public.to_protobuf_encoding()),
-			listen_addrs: self
-				.listen_addresses
-				.iter()
-				.map(|address| address.to_vec())
-				.collect::<Vec<_>>(),
-			observed_addr,
-			protocols: self.protocols.clone(),
-		};
+        let identify = identify_schema::Identify {
+            protocol_version: Some(self.protocol_version.clone()),
+            agent_version: Some(self.user_agent.clone()),
+            public_key: Some(self.public.to_protobuf_encoding()),
+            listen_addrs: self
+                .listen_addresses
+                .iter()
+                .map(|address| address.to_vec())
+                .collect::<Vec<_>>(),
+            observed_addr,
+            protocols: self.protocols.clone(),
+        };
 
-		tracing::trace!(
-			target: LOG_TARGET,
-			?peer,
-			?identify,
-			"sending identify response",
-		);
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?identify,
+            "sending identify response",
+        );
 
-		let mut msg = Vec::with_capacity(identify.encoded_len());
-		identify.encode(&mut msg).expect("`msg` to have enough capacity");
+        let mut msg = Vec::with_capacity(identify.encoded_len());
+        identify.encode(&mut msg).expect("`msg` to have enough capacity");
 
-		self.pending_inbound.push(Box::pin(async move {
-			match tokio::time::timeout(Duration::from_secs(10), substream.send_framed(msg.into()))
-				.await
-			{
-				Err(error) => {
-					tracing::debug!(
-						target: LOG_TARGET,
-						?peer,
-						?error,
-						"timed out while sending ipfs identify response",
-					);
-				},
-				Ok(Err(error)) => {
-					tracing::debug!(
-						target: LOG_TARGET,
-						?peer,
-						?error,
-						"failed to send ipfs identify response",
-					);
-				},
-				Ok(_) => {},
-			}
-		}))
-	}
+        self.pending_inbound.push(Box::pin(async move {
+            match tokio::time::timeout(Duration::from_secs(10), substream.send_framed(msg.into()))
+                .await
+            {
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?error,
+                        "timed out while sending ipfs identify response",
+                    );
+                }
+                Ok(Err(error)) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?error,
+                        "failed to send ipfs identify response",
+                    );
+                }
+                Ok(_) => {}
+            }
+        }))
+    }
 
-	/// Outbound substream opened.
-	fn on_outbound_substream(
-		&mut self,
-		peer: PeerId,
-		protocol: ProtocolName,
-		substream_id: SubstreamId,
-		mut substream: Substream,
-	) {
-		tracing::trace!(
-			target: LOG_TARGET,
-			?peer,
-			?protocol,
-			?substream_id,
-			"outbound substream opened"
-		);
+    /// Outbound substream opened.
+    fn on_outbound_substream(
+        &mut self,
+        peer: PeerId,
+        protocol: ProtocolName,
+        substream_id: SubstreamId,
+        mut substream: Substream,
+    ) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?protocol,
+            ?substream_id,
+            "outbound substream opened"
+        );
 
-		self.pending_outbound.push(Box::pin(async move {
-			let payload =
-				match tokio::time::timeout(Duration::from_secs(10), substream.next()).await {
-					Err(_) => return Err(Error::Timeout),
-					Ok(None) =>
-						return Err(Error::SubstreamError(SubstreamError::ReadFailure(Some(
-							substream_id,
-						)))),
-					Ok(Some(Err(error))) => return Err(error),
-					Ok(Some(Ok(payload))) => payload,
-				};
+        self.pending_outbound.push(Box::pin(async move {
+            let payload =
+                match tokio::time::timeout(Duration::from_secs(10), substream.next()).await {
+                    Err(_) => return Err(Error::Timeout),
+                    Ok(None) =>
+                        return Err(Error::SubstreamError(SubstreamError::ReadFailure(Some(
+                            substream_id,
+                        )))),
+                    Ok(Some(Err(error))) => return Err(error),
+                    Ok(Some(Ok(payload))) => payload,
+                };
 
-			let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
+            let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
 
-			tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
+            tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
 
-			let listen_addresses = info
-				.listen_addrs
-				.iter()
-				.filter_map(|address| Multiaddr::try_from(address.clone()).ok())
-				.collect();
-			let observed_address =
-				info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten();
-			let protocol_version = info.protocol_version;
-			let user_agent = info.agent_version;
+            let listen_addresses = info
+                .listen_addrs
+                .iter()
+                .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
+                .collect();
+            let observed_address =
+                info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten();
+            let protocol_version = info.protocol_version;
+            let user_agent = info.agent_version;
 
-			Ok(IdentifyResponse {
-				peer,
-				protocol_version,
-				user_agent,
-				supported_protocols: HashSet::from_iter(info.protocols),
-				observed_address,
-				listen_addresses,
-			})
-		}));
-	}
+            Ok(IdentifyResponse {
+                peer,
+                protocol_version,
+                user_agent,
+                supported_protocols: HashSet::from_iter(info.protocols),
+                observed_address,
+                listen_addresses,
+            })
+        }));
+    }
 
-	/// Start [`Identify`] event loop.
-	pub async fn run(mut self) {
-		tracing::debug!(target: LOG_TARGET, "starting identify event loop");
+    /// Start [`Identify`] event loop.
+    pub async fn run(mut self) {
+        tracing::debug!(target: LOG_TARGET, "starting identify event loop");
 
-		loop {
-			tokio::select! {
-				event = self.service.next() => match event {
-					None => return,
-					Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
-						let _ = self.on_connection_established(peer, endpoint);
-					}
-					Some(TransportEvent::ConnectionClosed { peer }) => {
-						self.on_connection_closed(peer);
-					}
-					Some(TransportEvent::SubstreamOpened {
-						peer,
-						protocol,
-						direction,
-						substream,
-						..
-					}) => match direction {
-						Direction::Inbound => self.on_inbound_substream(peer, protocol, substream),
-						Direction::Outbound(substream_id) => self.on_outbound_substream(peer, protocol, substream_id, substream),
-					},
-					_ => {}
-				},
-				_ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
-				event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
-					Some(Ok(response)) => {
-						let _ = self.tx
-							.send(IdentifyEvent::PeerIdentified {
-								peer: response.peer,
-								protocol_version: response.protocol_version,
-								user_agent: response.user_agent,
-								supported_protocols: response.supported_protocols.into_iter().map(From::from).collect(),
-								observed_address: response.observed_address.map_or(Multiaddr::empty(), |address| address),
-								listen_addresses: response.listen_addresses,
-							})
-							.await;
-					}
-					Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
-					None => return,
-				}
-			}
-		}
-	}
+        loop {
+            tokio::select! {
+                event = self.service.next() => match event {
+                    None => return,
+                    Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
+                        let _ = self.on_connection_established(peer, endpoint);
+                    }
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
+                        self.on_connection_closed(peer);
+                    }
+                    Some(TransportEvent::SubstreamOpened {
+                        peer,
+                        protocol,
+                        direction,
+                        substream,
+                        ..
+                    }) => match direction {
+                        Direction::Inbound => self.on_inbound_substream(peer, protocol, substream),
+                        Direction::Outbound(substream_id) => self.on_outbound_substream(peer, protocol, substream_id, substream),
+                    },
+                    _ => {}
+                },
+                _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
+                event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
+                    Some(Ok(response)) => {
+                        let _ = self.tx
+                            .send(IdentifyEvent::PeerIdentified {
+                                peer: response.peer,
+                                protocol_version: response.protocol_version,
+                                user_agent: response.user_agent,
+                                supported_protocols: response.supported_protocols.into_iter().map(From::from).collect(),
+                                observed_address: response.observed_address.map_or(Multiaddr::empty(), |address| address),
+                                listen_addresses: response.listen_addresses,
+                            })
+                            .await;
+                    }
+                    Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
+                    None => return,
+                }
+            }
+        }
+    }
 }

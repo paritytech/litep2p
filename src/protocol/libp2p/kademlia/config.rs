@@ -19,12 +19,12 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-	codec::ProtocolCodec,
-	protocol::libp2p::kademlia::handle::{
-		KademliaCommand, KademliaEvent, KademliaHandle, RoutingTableUpdateMode,
-	},
-	types::protocol::ProtocolName,
-	PeerId, DEFAULT_CHANNEL_SIZE,
+    codec::ProtocolCodec,
+    protocol::libp2p::kademlia::handle::{
+        KademliaCommand, KademliaEvent, KademliaHandle, RoutingTableUpdateMode,
+    },
+    types::protocol::ProtocolName,
+    PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
 use multiaddr::Multiaddr;
@@ -41,132 +41,137 @@ const REPLICATION_FACTOR: usize = 20usize;
 /// Kademlia configuration.
 #[derive(Debug)]
 pub struct Config {
-	// Protocol name.
-	// pub(crate) protocol: ProtocolName,
-	/// Protocol names.
-	pub(crate) protocol_names: Vec<ProtocolName>,
+    // Protocol name.
+    // pub(crate) protocol: ProtocolName,
+    /// Protocol names.
+    pub(crate) protocol_names: Vec<ProtocolName>,
 
-	/// Protocol codec.
-	pub(crate) codec: ProtocolCodec,
+    /// Protocol codec.
+    pub(crate) codec: ProtocolCodec,
 
-	/// Replication factor.
-	#[allow(unused)]
-	pub(super) replication_factor: usize,
+    /// Replication factor.
+    #[allow(unused)]
+    pub(super) replication_factor: usize,
 
-	/// Known peers.
-	pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+    /// Known peers.
+    pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
 
-	/// Routing table update mode.
-	pub(super) update_mode: RoutingTableUpdateMode,
+    /// Routing table update mode.
+    pub(super) update_mode: RoutingTableUpdateMode,
 
-	/// TX channel for sending events to `KademliaHandle`.
-	pub(super) event_tx: Sender<KademliaEvent>,
+    /// TX channel for sending events to `KademliaHandle`.
+    pub(super) event_tx: Sender<KademliaEvent>,
 
-	/// RX channel for receiving commands from `KademliaHandle`.
-	pub(super) cmd_rx: Receiver<KademliaCommand>,
+    /// RX channel for receiving commands from `KademliaHandle`.
+    pub(super) cmd_rx: Receiver<KademliaCommand>,
 }
 
 impl Config {
-	fn new(
-		replication_factor: usize,
-		known_peers: HashMap<PeerId, Vec<Multiaddr>>,
-		mut protocol_names: Vec<ProtocolName>,
-		update_mode: RoutingTableUpdateMode,
-	) -> (Self, KademliaHandle) {
-		let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
-		let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+    fn new(
+        replication_factor: usize,
+        known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+        mut protocol_names: Vec<ProtocolName>,
+        update_mode: RoutingTableUpdateMode,
+    ) -> (Self, KademliaHandle) {
+        let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
-		// if no protocol names were provided, use the default protocol
-		if protocol_names.is_empty() {
-			protocol_names.push(ProtocolName::from(PROTOCOL_NAME));
-		}
+        // if no protocol names were provided, use the default protocol
+        if protocol_names.is_empty() {
+            protocol_names.push(ProtocolName::from(PROTOCOL_NAME));
+        }
 
-		(
-			Config {
-				protocol_names,
-				update_mode,
-				codec: ProtocolCodec::UnsignedVarint(None),
-				replication_factor,
-				known_peers,
-				cmd_rx,
-				event_tx,
-			},
-			KademliaHandle::new(cmd_tx, event_rx),
-		)
-	}
+        (
+            Config {
+                protocol_names,
+                update_mode,
+                codec: ProtocolCodec::UnsignedVarint(None),
+                replication_factor,
+                known_peers,
+                cmd_rx,
+                event_tx,
+            },
+            KademliaHandle::new(cmd_tx, event_rx),
+        )
+    }
 
-	/// Build default Kademlia configuration.
-	pub fn default() -> (Self, KademliaHandle) {
-		Self::new(REPLICATION_FACTOR, HashMap::new(), Vec::new(), RoutingTableUpdateMode::Automatic)
-	}
+    /// Build default Kademlia configuration.
+    pub fn default() -> (Self, KademliaHandle) {
+        Self::new(
+            REPLICATION_FACTOR,
+            HashMap::new(),
+            Vec::new(),
+            RoutingTableUpdateMode::Automatic,
+        )
+    }
 }
 
 /// Configuration builder for Kademlia.
 #[derive(Debug)]
 pub struct ConfigBuilder {
-	/// Replication factor.
-	pub(super) replication_factor: usize,
+    /// Replication factor.
+    pub(super) replication_factor: usize,
 
-	/// Routing table update mode.
-	pub(super) update_mode: RoutingTableUpdateMode,
+    /// Routing table update mode.
+    pub(super) update_mode: RoutingTableUpdateMode,
 
-	/// Known peers.
-	pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
+    /// Known peers.
+    pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
 
-	/// Protocol names.
-	pub(super) protocol_names: Vec<ProtocolName>,
+    /// Protocol names.
+    pub(super) protocol_names: Vec<ProtocolName>,
 }
 
 impl ConfigBuilder {
-	/// Create new [`ConfigBuilder`].
-	pub fn new() -> Self {
-		Self {
-			replication_factor: REPLICATION_FACTOR,
-			known_peers: HashMap::new(),
-			protocol_names: Vec::new(),
-			update_mode: RoutingTableUpdateMode::Automatic,
-		}
-	}
+    /// Create new [`ConfigBuilder`].
+    pub fn new() -> Self {
+        Self {
+            replication_factor: REPLICATION_FACTOR,
+            known_peers: HashMap::new(),
+            protocol_names: Vec::new(),
+            update_mode: RoutingTableUpdateMode::Automatic,
+        }
+    }
 
-	/// Set replication factor.
-	pub fn with_replication_factor(mut self, replication_factor: usize) -> Self {
-		self.replication_factor = replication_factor;
-		self
-	}
+    /// Set replication factor.
+    pub fn with_replication_factor(mut self, replication_factor: usize) -> Self {
+        self.replication_factor = replication_factor;
+        self
+    }
 
-	/// Seed Kademlia with one or more known peers.
-	pub fn with_known_peers(mut self, peers: HashMap<PeerId, Vec<Multiaddr>>) -> Self {
-		self.known_peers = peers;
-		self
-	}
+    /// Seed Kademlia with one or more known peers.
+    pub fn with_known_peers(mut self, peers: HashMap<PeerId, Vec<Multiaddr>>) -> Self {
+        self.known_peers = peers;
+        self
+    }
 
-	/// Set routing table update mode.
-	pub fn with_routing_table_update_mode(mut self, mode: RoutingTableUpdateMode) -> Self {
-		self.update_mode = mode;
-		self
-	}
+    /// Set routing table update mode.
+    pub fn with_routing_table_update_mode(mut self, mode: RoutingTableUpdateMode) -> Self {
+        self.update_mode = mode;
+        self
+    }
 
-	/// Set Kademlia protocol names, overriding the default protocol name.
-	///
-	/// The order of the protocol names signifies preference so if, for example, there are two
-	/// protocols:
-	///  * `/kad/2.0.0`
-	///  * `/kad/1.0.0`
-	///
-	/// Where `/kad/2.0.0` is the preferred version, then that should be in `protocol_names` before
-	/// `/kad/1.0.0`.
-	pub fn with_protocol_names(mut self, protocol_names: Vec<ProtocolName>) -> Self {
-		self.protocol_names = protocol_names;
-		self
-	}
+    /// Set Kademlia protocol names, overriding the default protocol name.
+    ///
+    /// The order of the protocol names signifies preference so if, for example, there are two
+    /// protocols:
+    ///  * `/kad/2.0.0`
+    ///  * `/kad/1.0.0`
+    ///
+    /// Where `/kad/2.0.0` is the preferred version, then that should be in `protocol_names` before
+    /// `/kad/1.0.0`.
+    pub fn with_protocol_names(mut self, protocol_names: Vec<ProtocolName>) -> Self {
+        self.protocol_names = protocol_names;
+        self
+    }
 
-	/// Build Kademlia [`Config`].
-	pub fn build(self) -> (Config, KademliaHandle) {
-		Config::new(
-			self.replication_factor,
-			self.known_peers,
-			self.protocol_names,
-			self.update_mode,
-		)
-	}
+    /// Build Kademlia [`Config`].
+    pub fn build(self) -> (Config, KademliaHandle) {
+        Config::new(
+            self.replication_factor,
+            self.known_peers,
+            self.protocol_names,
+            self.update_mode,
+        )
+    }
 }

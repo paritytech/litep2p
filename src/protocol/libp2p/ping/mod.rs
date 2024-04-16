@@ -21,19 +21,19 @@
 //! [`/ipfs/ping/1.0.0`](https://github.com/libp2p/specs/blob/master/ping/ping.md) implementation.
 
 use crate::{
-	error::{Error, SubstreamError},
-	protocol::{Direction, TransportEvent, TransportService},
-	substream::Substream,
-	types::SubstreamId,
-	PeerId,
+    error::{Error, SubstreamError},
+    protocol::{Direction, TransportEvent, TransportService},
+    substream::Substream,
+    types::SubstreamId,
+    PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use tokio::sync::mpsc::Sender;
 
 use std::{
-	collections::{HashMap, HashSet},
-	time::{Duration, Instant},
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
 };
 
 pub use config::{Config, ConfigBuilder};
@@ -48,179 +48,179 @@ const LOG_TARGET: &str = "litep2p::ipfs::ping";
 /// Events emitted by the ping protocol.
 #[derive(Debug)]
 pub enum PingEvent {
-	/// Ping time with remote peer.
-	Ping {
-		/// Peer ID.
-		peer: PeerId,
+    /// Ping time with remote peer.
+    Ping {
+        /// Peer ID.
+        peer: PeerId,
 
-		/// Measured ping time with the peer.
-		ping: Duration,
-	},
+        /// Measured ping time with the peer.
+        ping: Duration,
+    },
 }
 
 /// Ping protocol.
 pub(crate) struct Ping {
-	/// Maximum failures before the peer is considered unreachable.
-	_max_failures: usize,
+    /// Maximum failures before the peer is considered unreachable.
+    _max_failures: usize,
 
-	// Connection service.
-	service: TransportService,
+    // Connection service.
+    service: TransportService,
 
-	/// TX channel for sending events to the user protocol.
-	tx: Sender<PingEvent>,
+    /// TX channel for sending events to the user protocol.
+    tx: Sender<PingEvent>,
 
-	/// Connected peers.
-	peers: HashSet<PeerId>,
+    /// Connected peers.
+    peers: HashSet<PeerId>,
 
-	/// Pending outbound substreams.
-	pending_opens: HashMap<SubstreamId, PeerId>,
+    /// Pending outbound substreams.
+    pending_opens: HashMap<SubstreamId, PeerId>,
 
-	/// Pending outbound substreams.
-	pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Duration)>>>,
+    /// Pending outbound substreams.
+    pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Duration)>>>,
 
-	/// Pending inbound substreams.
-	pending_inbound: FuturesUnordered<BoxFuture<'static, crate::Result<()>>>,
+    /// Pending inbound substreams.
+    pending_inbound: FuturesUnordered<BoxFuture<'static, crate::Result<()>>>,
 }
 
 impl Ping {
-	/// Create new [`Ping`] protocol.
-	pub fn new(service: TransportService, config: Config) -> Self {
-		Self {
-			service,
-			tx: config.tx_event,
-			peers: HashSet::new(),
-			pending_opens: HashMap::new(),
-			pending_outbound: FuturesUnordered::new(),
-			pending_inbound: FuturesUnordered::new(),
-			_max_failures: config.max_failures,
-		}
-	}
+    /// Create new [`Ping`] protocol.
+    pub fn new(service: TransportService, config: Config) -> Self {
+        Self {
+            service,
+            tx: config.tx_event,
+            peers: HashSet::new(),
+            pending_opens: HashMap::new(),
+            pending_outbound: FuturesUnordered::new(),
+            pending_inbound: FuturesUnordered::new(),
+            _max_failures: config.max_failures,
+        }
+    }
 
-	/// Connection established to remote peer.
-	fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
-		tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
+    /// Connection established to remote peer.
+    fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-		let substream_id = self.service.open_substream(peer)?;
-		self.pending_opens.insert(substream_id, peer);
-		self.peers.insert(peer);
+        let substream_id = self.service.open_substream(peer)?;
+        self.pending_opens.insert(substream_id, peer);
+        self.peers.insert(peer);
 
-		Ok(())
-	}
+        Ok(())
+    }
 
-	/// Connection closed to remote peer.
-	fn on_connection_closed(&mut self, peer: PeerId) {
-		tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
+    /// Connection closed to remote peer.
+    fn on_connection_closed(&mut self, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
 
-		self.peers.remove(&peer);
-	}
+        self.peers.remove(&peer);
+    }
 
-	/// Handle outbound substream.
-	fn on_outbound_substream(
-		&mut self,
-		peer: PeerId,
-		substream_id: SubstreamId,
-		mut substream: Substream,
-	) {
-		tracing::trace!(target: LOG_TARGET, ?peer, "handle outbound substream");
+    /// Handle outbound substream.
+    fn on_outbound_substream(
+        &mut self,
+        peer: PeerId,
+        substream_id: SubstreamId,
+        mut substream: Substream,
+    ) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "handle outbound substream");
 
-		self.pending_outbound.push(Box::pin(async move {
-			let future = async move {
-				// TODO: generate random payload and verify it
-				let _ = substream.send_framed(vec![0u8; 32].into()).await?;
-				let now = Instant::now();
-				let _ = substream.next().await.ok_or(Error::SubstreamError(
-					SubstreamError::ReadFailure(Some(substream_id)),
-				))?;
-				let _ = substream.close().await;
+        self.pending_outbound.push(Box::pin(async move {
+            let future = async move {
+                // TODO: generate random payload and verify it
+                let _ = substream.send_framed(vec![0u8; 32].into()).await?;
+                let now = Instant::now();
+                let _ = substream.next().await.ok_or(Error::SubstreamError(
+                    SubstreamError::ReadFailure(Some(substream_id)),
+                ))?;
+                let _ = substream.close().await;
 
-				Ok(now.elapsed())
-			};
+                Ok(now.elapsed())
+            };
 
-			match tokio::time::timeout(Duration::from_secs(10), future).await {
-				Err(_) => return Err(Error::Timeout),
-				Ok(Err(error)) => return Err(error),
-				Ok(Ok(elapsed)) => Ok((peer, elapsed)),
-			}
-		}));
-	}
+            match tokio::time::timeout(Duration::from_secs(10), future).await {
+                Err(_) => return Err(Error::Timeout),
+                Ok(Err(error)) => return Err(error),
+                Ok(Ok(elapsed)) => Ok((peer, elapsed)),
+            }
+        }));
+    }
 
-	/// Substream opened to remote peer.
-	fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Substream) {
-		tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
+    /// Substream opened to remote peer.
+    fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Substream) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
-		self.pending_inbound.push(Box::pin(async move {
-			let future = async move {
-				let payload = substream
-					.next()
-					.await
-					.ok_or(Error::SubstreamError(SubstreamError::ReadFailure(None)))??;
-				substream.send_framed(payload.freeze()).await?;
-				let _ = substream.next().await.map(|_| ());
+        self.pending_inbound.push(Box::pin(async move {
+            let future = async move {
+                let payload = substream
+                    .next()
+                    .await
+                    .ok_or(Error::SubstreamError(SubstreamError::ReadFailure(None)))??;
+                substream.send_framed(payload.freeze()).await?;
+                let _ = substream.next().await.map(|_| ());
 
-				Ok(())
-			};
+                Ok(())
+            };
 
-			match tokio::time::timeout(Duration::from_secs(10), future).await {
-				Err(_) => return Err(Error::Timeout),
-				Ok(Err(error)) => return Err(error),
-				Ok(Ok(())) => Ok(()),
-			}
-		}));
-	}
+            match tokio::time::timeout(Duration::from_secs(10), future).await {
+                Err(_) => return Err(Error::Timeout),
+                Ok(Err(error)) => return Err(error),
+                Ok(Ok(())) => Ok(()),
+            }
+        }));
+    }
 
-	/// Start [`Ping`] event loop.
-	pub async fn run(mut self) {
-		tracing::debug!(target: LOG_TARGET, "starting ping event loop");
+    /// Start [`Ping`] event loop.
+    pub async fn run(mut self) {
+        tracing::debug!(target: LOG_TARGET, "starting ping event loop");
 
-		loop {
-			tokio::select! {
-				event = self.service.next() => match event {
-					Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-						let _ = self.on_connection_established(peer);
-					}
-					Some(TransportEvent::ConnectionClosed { peer }) => {
-						self.on_connection_closed(peer);
-					}
-					Some(TransportEvent::SubstreamOpened {
-						peer,
-						substream,
-						direction,
-						..
-					}) => match direction {
-						Direction::Inbound => {
-							self.on_inbound_substream(peer, substream);
-						}
-						Direction::Outbound(substream_id) => {
-							match self.pending_opens.remove(&substream_id) {
-								Some(stored_peer) => {
-									debug_assert!(peer == stored_peer);
-									self.on_outbound_substream(peer, substream_id, substream);
-								}
-								None => {
-									todo!("substream {substream_id:?} does not exist");
-								}
-							}
-						}
-					},
-					Some(_) => {}
-					None => return,
-				},
-				_event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
-				event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => {
-					match event {
-						Some(Ok((peer, elapsed))) => {
-							let _ = self
-								.tx
-								.send(PingEvent::Ping {
-									peer,
-									ping: elapsed,
-								})
-								.await;
-						}
-						event => tracing::debug!(target: LOG_TARGET, "failed to handle ping for an outbound peer: {event:?}"),
-					}
-				}
-			}
-		}
-	}
+        loop {
+            tokio::select! {
+                event = self.service.next() => match event {
+                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
+                        let _ = self.on_connection_established(peer);
+                    }
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
+                        self.on_connection_closed(peer);
+                    }
+                    Some(TransportEvent::SubstreamOpened {
+                        peer,
+                        substream,
+                        direction,
+                        ..
+                    }) => match direction {
+                        Direction::Inbound => {
+                            self.on_inbound_substream(peer, substream);
+                        }
+                        Direction::Outbound(substream_id) => {
+                            match self.pending_opens.remove(&substream_id) {
+                                Some(stored_peer) => {
+                                    debug_assert!(peer == stored_peer);
+                                    self.on_outbound_substream(peer, substream_id, substream);
+                                }
+                                None => {
+                                    todo!("substream {substream_id:?} does not exist");
+                                }
+                            }
+                        }
+                    },
+                    Some(_) => {}
+                    None => return,
+                },
+                _event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
+                event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => {
+                    match event {
+                        Some(Ok((peer, elapsed))) => {
+                            let _ = self
+                                .tx
+                                .send(PingEvent::Ping {
+                                    peer,
+                                    ping: elapsed,
+                                })
+                                .await;
+                        }
+                        event => tracing::debug!(target: LOG_TARGET, "failed to handle ping for an outbound peer: {event:?}"),
+                    }
+                }
+            }
+        }
+    }
 }

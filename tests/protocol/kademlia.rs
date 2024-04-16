@@ -22,100 +22,103 @@
 use bytes::Bytes;
 use futures::StreamExt;
 use litep2p::{
-	config::ConfigBuilder,
-	crypto::ed25519::Keypair,
-	protocol::libp2p::kademlia::{ConfigBuilder as KademliaConfigBuilder, RecordKey},
-	transport::tcp::config::Config as TcpConfig,
-	Litep2p, PeerId,
+    config::ConfigBuilder,
+    crypto::ed25519::Keypair,
+    protocol::libp2p::kademlia::{ConfigBuilder as KademliaConfigBuilder, RecordKey},
+    transport::tcp::config::Config as TcpConfig,
+    Litep2p, PeerId,
 };
 
 fn spawn_litep2p(port: u16) {
-	let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
-	let config1 = ConfigBuilder::new()
-		.with_keypair(Keypair::generate())
-		.with_tcp(TcpConfig {
-			listen_addresses: vec![format!("/ip6/::1/tcp/{port}").parse().unwrap()],
-			..Default::default()
-		})
-		.with_libp2p_kademlia(kad_config1)
-		.build();
+    let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
+    let config1 = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpConfig {
+            listen_addresses: vec![format!("/ip6/::1/tcp/{port}").parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .build();
 
-	let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
-	tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
+    tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
 }
 
 #[tokio::test]
 #[ignore]
 async fn kademlia_supported() {
-	let _ = tracing_subscriber::fmt()
-		.with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-		.try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
-	let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
-	let config1 = ConfigBuilder::new()
-		.with_keypair(Keypair::generate())
-		.with_tcp(TcpConfig {
-			listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-			..Default::default()
-		})
-		.with_libp2p_kademlia(kad_config1)
-		.build();
+    let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
+    let config1 = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .build();
 
-	let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
-	for port in 9000..9003 {
-		spawn_litep2p(port);
-	}
+    for port in 9000..9003 {
+        spawn_litep2p(port);
+    }
 
-	loop {
-		tokio::select! {
-			event = litep2p1.next_event() => {
-				tracing::info!("litep2p event received: {event:?}");
-			}
-			// event = kad_handle1.next() => {
-			//     tracing::info!("kademlia event received: {event:?}");
-			// }
-		}
-	}
+    loop {
+        tokio::select! {
+            event = litep2p1.next_event() => {
+                tracing::info!("litep2p event received: {event:?}");
+            }
+            // event = kad_handle1.next() => {
+            //     tracing::info!("kademlia event received: {event:?}");
+            // }
+        }
+    }
 }
 
 #[tokio::test]
 #[ignore]
 async fn put_value() {
-	let _ = tracing_subscriber::fmt()
-		.with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-		.try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 
-	let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
-	let config1 = ConfigBuilder::new()
-		.with_keypair(Keypair::generate())
-		.with_tcp(TcpConfig {
-			listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-			..Default::default()
-		})
-		.with_libp2p_kademlia(kad_config1)
-		.build();
+    let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
+    let config1 = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .build();
 
-	let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
 
-	for i in 0..10 {
-		kad_handle1
-			.add_known_peer(PeerId::random(), vec![format!("/ip6/::/tcp/{i}").parse().unwrap()])
-			.await;
-	}
+    for i in 0..10 {
+        kad_handle1
+            .add_known_peer(
+                PeerId::random(),
+                vec![format!("/ip6/::/tcp/{i}").parse().unwrap()],
+            )
+            .await;
+    }
 
-	// let key = RecordKey::new(&Bytes::from(vec![1, 3, 3, 7]));
-	// kad_handle1.put_value(key, vec![1, 2, 3, 4]).await;
+    // let key = RecordKey::new(&Bytes::from(vec![1, 3, 3, 7]));
+    // kad_handle1.put_value(key, vec![1, 2, 3, 4]).await;
 
-	// loop {
-	//     tokio::select! {
-	//         event = litep2p1.next_event() => {
-	//             tracing::info!("litep2p event received: {event:?}");
-	//         }
-	//         event = kad_handle1.next() => {
-	//             tracing::info!("kademlia event received: {event:?}");
-	//         }
-	//     }
-	// }
+    // loop {
+    //     tokio::select! {
+    //         event = litep2p1.next_event() => {
+    //             tracing::info!("litep2p event received: {event:?}");
+    //         }
+    //         event = kad_handle1.next() => {
+    //             tracing::info!("kademlia event received: {event:?}");
+    //         }
+    //     }
+    // }
 }

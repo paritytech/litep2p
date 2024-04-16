@@ -29,15 +29,15 @@ pub mod protocol;
 pub struct SubstreamId(usize);
 
 impl SubstreamId {
-	/// Create new [`SubstreamId`].
-	pub fn new() -> Self {
-		SubstreamId(0usize)
-	}
+    /// Create new [`SubstreamId`].
+    pub fn new() -> Self {
+        SubstreamId(0usize)
+    }
 
-	/// Get [`SubstreamId`] from a number that can be converted into a `usize`.
-	pub fn from<T: Into<usize>>(value: T) -> Self {
-		SubstreamId(value.into())
-	}
+    /// Get [`SubstreamId`] from a number that can be converted into a `usize`.
+    pub fn from<T: Into<usize>>(value: T) -> Self {
+        SubstreamId(value.into())
+    }
 }
 
 /// Request ID.
@@ -45,10 +45,10 @@ impl SubstreamId {
 pub struct RequestId(usize);
 
 impl RequestId {
-	/// Get [`RequestId`] from a number that can be converted into a `usize`.
-	pub fn from<T: Into<usize>>(value: T) -> Self {
-		RequestId(value.into())
-	}
+    /// Get [`RequestId`] from a number that can be converted into a `usize`.
+    pub fn from<T: Into<usize>>(value: T) -> Self {
+        RequestId(value.into())
+    }
 }
 
 /// Connection ID.
@@ -56,19 +56,19 @@ impl RequestId {
 pub struct ConnectionId(usize);
 
 impl ConnectionId {
-	/// Create new [`ConnectionId`].
-	pub fn new() -> Self {
-		ConnectionId(0usize)
-	}
+    /// Create new [`ConnectionId`].
+    pub fn new() -> Self {
+        ConnectionId(0usize)
+    }
 
-	/// Generate random `ConnectionId`.
-	pub fn random() -> Self {
-		ConnectionId(rand::thread_rng().gen::<usize>())
-	}
+    /// Generate random `ConnectionId`.
+    pub fn random() -> Self {
+        ConnectionId(rand::thread_rng().gen::<usize>())
+    }
 }
 
 impl From<usize> for ConnectionId {
-	fn from(value: usize) -> Self {
-		ConnectionId(value)
-	}
+    fn from(value: usize) -> Self {
+        ConnectionId(value)
+    }
 }

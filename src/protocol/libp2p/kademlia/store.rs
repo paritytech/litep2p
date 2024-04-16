@@ -30,28 +30,30 @@ pub enum MemoryStoreEvent {}
 
 /// Memory store.
 pub struct MemoryStore {
-	/// Records.
-	records: HashMap<Key, Record>,
+    /// Records.
+    records: HashMap<Key, Record>,
 }
 
 impl MemoryStore {
-	/// Create new [`MemoryStore`].
-	pub fn new() -> Self {
-		Self { records: HashMap::new() }
-	}
+    /// Create new [`MemoryStore`].
+    pub fn new() -> Self {
+        Self {
+            records: HashMap::new(),
+        }
+    }
 
-	/// Try to get record from local store for `key`.
-	pub fn get(&self, key: &Key) -> Option<&Record> {
-		self.records.get(key)
-	}
+    /// Try to get record from local store for `key`.
+    pub fn get(&self, key: &Key) -> Option<&Record> {
+        self.records.get(key)
+    }
 
-	/// Store record.
-	pub fn put(&mut self, record: Record) {
-		self.records.insert(record.key.clone(), record);
-	}
+    /// Store record.
+    pub fn put(&mut self, record: Record) {
+        self.records.insert(record.key.clone(), record);
+    }
 
-	/// Poll next event from the store.
-	async fn next_event() -> Option<MemoryStoreEvent> {
-		None
-	}
+    /// Poll next event from the store.
+    async fn next_event() -> Option<MemoryStoreEvent> {
+        None
+    }
 }

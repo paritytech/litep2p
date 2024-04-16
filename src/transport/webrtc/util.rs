@@ -28,90 +28,95 @@ use tokio_util::codec::{Decoder, Encoder};
 /// Substream context.
 #[derive(Debug)]
 pub struct SubstreamContext {
-	/// `str0m` channel id.
-	pub channel_id: ChannelId,
+    /// `str0m` channel id.
+    pub channel_id: ChannelId,
 
-	/// TX channel for sending messages to the protocol.
-	pub tx: Sender<Vec<u8>>,
+    /// TX channel for sending messages to the protocol.
+    pub tx: Sender<Vec<u8>>,
 }
 
 impl SubstreamContext {
-	/// Create new [`SubstreamContext`].
-	pub fn new(channel_id: ChannelId, tx: Sender<Vec<u8>>) -> Self {
-		Self { channel_id, tx }
-	}
+    /// Create new [`SubstreamContext`].
+    pub fn new(channel_id: ChannelId, tx: Sender<Vec<u8>>) -> Self {
+        Self { channel_id, tx }
+    }
 }
 
 /// WebRTC mesage.
 #[derive(Debug)]
 pub struct WebRtcMessage {
-	/// Payload.
-	pub payload: Option<Vec<u8>>,
+    /// Payload.
+    pub payload: Option<Vec<u8>>,
 
-	// Flags.
-	pub flags: Option<i32>,
+    // Flags.
+    pub flags: Option<i32>,
 }
 
 impl WebRtcMessage {
-	/// Encode WebRTC message.
-	pub fn encode(payload: Vec<u8>, flag: Option<i32>) -> Vec<u8> {
-		let protobuf_payload =
-			schema::webrtc::Message { message: (!payload.is_empty()).then_some(payload), flag };
-		let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
-		protobuf_payload
-			.encode(&mut payload)
-			.expect("Vec<u8> to provide needed capacity");
+    /// Encode WebRTC message.
+    pub fn encode(payload: Vec<u8>, flag: Option<i32>) -> Vec<u8> {
+        let protobuf_payload = schema::webrtc::Message {
+            message: (!payload.is_empty()).then_some(payload),
+            flag,
+        };
+        let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
+        protobuf_payload
+            .encode(&mut payload)
+            .expect("Vec<u8> to provide needed capacity");
 
-		let mut out_buf = bytes::BytesMut::with_capacity(payload.len() + 4);
-		// TODO: set correct size
-		let mut codec = UnsignedVarint::new(None);
-		let _result = codec.encode(payload.into(), &mut out_buf);
+        let mut out_buf = bytes::BytesMut::with_capacity(payload.len() + 4);
+        // TODO: set correct size
+        let mut codec = UnsignedVarint::new(None);
+        let _result = codec.encode(payload.into(), &mut out_buf);
 
-		out_buf.into()
-	}
+        out_buf.into()
+    }
 
-	/// Decode payload into [`WebRtcMessage`].
-	pub fn decode(payload: &[u8]) -> crate::Result<Self> {
-		// TODO: set correct size
-		let mut codec = UnsignedVarint::new(None);
-		let mut data = bytes::BytesMut::from(payload);
-		let result = codec.decode(&mut data)?.ok_or(Error::InvalidData)?;
+    /// Decode payload into [`WebRtcMessage`].
+    pub fn decode(payload: &[u8]) -> crate::Result<Self> {
+        // TODO: set correct size
+        let mut codec = UnsignedVarint::new(None);
+        let mut data = bytes::BytesMut::from(payload);
+        let result = codec.decode(&mut data)?.ok_or(Error::InvalidData)?;
 
-		match schema::webrtc::Message::decode(result) {
-			Ok(message) => Ok(Self { payload: message.message, flags: message.flag }),
-			Err(_) => return Err(Error::InvalidData),
-		}
-	}
+        match schema::webrtc::Message::decode(result) {
+            Ok(message) => Ok(Self {
+                payload: message.message,
+                flags: message.flag,
+            }),
+            Err(_) => return Err(Error::InvalidData),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
 
-	#[test]
-	fn with_payload_no_flags() {
-		let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), None);
-		let decoded = WebRtcMessage::decode(&message).unwrap();
+    #[test]
+    fn with_payload_no_flags() {
+        let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), None);
+        let decoded = WebRtcMessage::decode(&message).unwrap();
 
-		assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
-		assert_eq!(decoded.flags, None);
-	}
+        assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
+        assert_eq!(decoded.flags, None);
+    }
 
-	#[test]
-	fn with_payload_and_flags() {
-		let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), Some(1i32));
-		let decoded = WebRtcMessage::decode(&message).unwrap();
+    #[test]
+    fn with_payload_and_flags() {
+        let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), Some(1i32));
+        let decoded = WebRtcMessage::decode(&message).unwrap();
 
-		assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
-		assert_eq!(decoded.flags, Some(1i32));
-	}
+        assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
+        assert_eq!(decoded.flags, Some(1i32));
+    }
 
-	#[test]
-	fn no_payload_with_flags() {
-		let message = WebRtcMessage::encode(vec![], Some(2i32));
-		let decoded = WebRtcMessage::decode(&message).unwrap();
+    #[test]
+    fn no_payload_with_flags() {
+        let message = WebRtcMessage::encode(vec![], Some(2i32));
+        let decoded = WebRtcMessage::decode(&message).unwrap();
 
-		assert_eq!(decoded.payload, None);
-		assert_eq!(decoded.flags, Some(2i32));
-	}
+        assert_eq!(decoded.payload, None);
+        assert_eq!(decoded.flags, Some(2i32));
+    }
 }
