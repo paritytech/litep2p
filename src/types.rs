@@ -22,6 +22,8 @@
 
 use rand::Rng;
 
+pub mod multiaddr;
+pub mod multihash;
 pub mod protocol;
 
 /// Substream ID.
