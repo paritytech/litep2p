@@ -37,6 +37,7 @@ async fn webrtc_test() {
 
     let (ping_config, mut ping_event_stream) = ping::Config::default();
     let (notif_config, mut notif_event_stream) = ConfigBuilder::new(ProtocolName::from(
+        // Westend block-announces protocol name.
         "/e143f23803ac50e8f6f8e62695d1ce9e4e1d68aa36c1cd2cfd15340213f3423e/block-announces/1",
     ))
     .with_max_size(5 * 1024 * 1024)
