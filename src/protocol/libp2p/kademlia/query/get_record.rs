@@ -24,7 +24,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{QueryAction, QueryId},
-        record::{Key as RecordKey, Record},
+        record::{Key as RecordKey, PeerRecord, Record},
         types::{Distance, KademliaPeer, Key},
         Quorum,
     },
@@ -66,7 +66,7 @@ pub struct GetRecordContext {
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
     /// Found records.
-    pub found_records: Vec<Record>,
+    pub found_records: Vec<PeerRecord>,
 
     /// Replication factor.
     pub replication_factor: usize,
@@ -110,7 +110,7 @@ impl GetRecordContext {
     }
 
     /// Get the found record.
-    pub fn found_record(mut self) -> Record {
+    pub fn found_record(mut self) -> PeerRecord {
         self.found_records.pop().expect("record to exist since query succeeded")
     }
 
@@ -138,7 +138,10 @@ impl GetRecordContext {
 
         // TODO: validate record
         if let Some(record) = record {
-            self.found_records.push(record);
+            self.found_records.push(PeerRecord {
+                record,
+                peer: Some(peer.peer),
+            });
         }
 
         // add the queried peer to `queried` and all new peers which haven't been

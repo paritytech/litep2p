@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{QueryId, Record, RecordKey},
+    protocol::libp2p::kademlia::{PeerRecord, QueryId, Record, RecordKey},
     PeerId,
 };
 
@@ -137,7 +137,7 @@ pub enum KademliaEvent {
         query_id: QueryId,
 
         /// Found record.
-        record: Record,
+        record: PeerRecord,
     },
 
     /// `PUT_VALUE` query succeeded.

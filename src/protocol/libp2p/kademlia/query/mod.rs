@@ -22,7 +22,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{find_node::FindNodeContext, get_record::GetRecordContext},
-        record::{Key as RecordKey, Record},
+        record::{Key as RecordKey, PeerRecord, Record},
         types::{KademliaPeer, Key},
         Quorum,
     },
@@ -97,7 +97,7 @@ pub enum QueryAction {
         peers: Vec<KademliaPeer>,
     },
 
-    /// Store the record to nodest closest to target key.
+    /// Store the record to nodes closest to target key.
     // TODO: horrible name
     PutRecordToFoundNodes {
         /// Target peer.
@@ -113,7 +113,7 @@ pub enum QueryAction {
         query_id: QueryId,
 
         /// Found record.
-        record: Record,
+        record: PeerRecord,
     },
 
     // TODO: remove

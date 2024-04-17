@@ -50,7 +50,7 @@ use std::collections::{hash_map::Entry, HashMap};
 pub use config::{Config, ConfigBuilder};
 pub use handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode};
 pub use query::QueryId;
-pub use record::{Key as RecordKey, Record};
+pub use record::{Key as RecordKey, PeerRecord, Record};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
@@ -639,7 +639,7 @@ impl Kademlia {
                 Ok(())
             }
             QueryAction::GetRecordQueryDone { query_id, record } => {
-                self.store.put(record.clone());
+                self.store.put(record.record.clone());
 
                 let _ =
                     self.event_tx.send(KademliaEvent::GetRecordSuccess { query_id, record }).await;
@@ -757,7 +757,7 @@ impl Kademlia {
                                 (Some(record), Quorum::One) => {
                                     let _ = self
                                         .event_tx
-                                        .send(KademliaEvent::GetRecordSuccess { query_id, record: record.clone() })
+                                        .send(KademliaEvent::GetRecordSuccess { query_id, record: PeerRecord { record: record.clone(), peer: None } })
                                         .await;
                                 }
                                 (record, _) => {
