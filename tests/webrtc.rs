@@ -37,7 +37,6 @@ async fn webrtc_test() {
 
     let (ping_config, mut ping_event_stream) = ping::Config::default();
     let (notif_config, mut notif_event_stream) = ConfigBuilder::new(ProtocolName::from(
-        // "/c0c89622f83f6f3c6b94bc307fec1652a3aa58ac88a564c34706633f44cbb3d1/block-announces/1",
         "/e143f23803ac50e8f6f8e62695d1ce9e4e1d68aa36c1cd2cfd15340213f3423e/block-announces/1",
     ))
     .with_max_size(5 * 1024 * 1024)
@@ -67,7 +66,7 @@ async fn webrtc_test() {
             }
             event = ping_event_stream.next() => {
                 if std::matches!(event, None) {
-                    tracing::error!("ping event stream termintated");
+                    tracing::error!("ping event stream terminated");
                     break
                 }
                 tracing::error!("ping event received: {event:?}");
