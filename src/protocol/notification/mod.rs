@@ -1652,6 +1652,29 @@ impl NotificationProtocol {
                                     .report_notification_stream_open_failure(peer, NotificationError::Rejected)
                                     .await;
 
+                                // NOTE: this is used to work around an issue in Substrate where the protocol
+                                // is not notified if an inbound substream is closed. That indicates that remote
+                                // wishes the close the connection but `Notifications` still keeps the substream state
+                                // as `Open` until the outbound substream is closed (even though the outbound substream
+                                // is also closed at that point). This causes a further issue: inbound substreams
+                                // are automatically opened when state is `Open`, even if the inbound substream belongs
+                                // to a new "connection" (pair of substreams).
+                                //
+                                // basically what happens (from Substrate's PoV) is there are pair of substreams (`inbound1`, `outbound1`),
+                                // litep2p closes both substreams so both `inbound1` and outbound1 become non-readable/writable.
+                                // Substrate doesn't detect this an instead only marks `inbound1` is closed while still keeping
+                                // the (now-closed) `outbound1` active and it will be detected closed only when Substrate tries to
+                                // write something into that substream. If now litep2p tries to open a new connection to Substrate,
+                                // the outbound substream from litep2p's PoV will be automatically accepted (https://github.com/paritytech/polkadot-sdk/blob/59b2661444de2a25f2125a831bd786035a9fac4b/substrate/client/network/src/protocol/notifications/handler.rs#L544-L556)
+                                // but since Substrate thinks `outbound1` is still active, it won't open a new outbound substream
+                                // and it ends up having (`inbound2`, `outbound1`) as its pair of substreams which doens't make sense.
+                                //
+                                // since litep2p is expecting to receive an inbound substream from Substrate and never receives it,
+                                // it basically can't make progress with the substream open request because litep2p can't force Substrate
+                                // to detect that `outbound1` is closed. Easiest (and very hacky at the same time) way to reset the substream
+                                // state is to close the connection. This is not an appropriate way to fix the issue and causes issues with,
+                                // e.g., smoldot which at the time of writing this doesn't support the transaction protocol. The only way to fix
+                                // this cleanly is to make Substrate detect closed substreams correctly.
                                 if let Err(error) = self.service.force_close(peer) {
                                     tracing::debug!(
                                         target: LOG_TARGET,

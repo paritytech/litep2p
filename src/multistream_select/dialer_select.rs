@@ -24,7 +24,9 @@ use crate::{
     codec::unsigned_varint::UnsignedVarint,
     error::{self, Error},
     multistream_select::{
-        protocol::{HeaderLine, Message, MessageIO, Protocol, ProtocolError},
+        protocol::{
+            encode_multistream_message, HeaderLine, Message, MessageIO, Protocol, ProtocolError,
+        },
         Negotiated, NegotiationError, Version,
     },
     types::protocol::ProtocolName,
@@ -224,7 +226,7 @@ where
 }
 
 /// `multistream-select` handshake result for dialer.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum HandshakeResult {
     /// Handshake is not complete, data missing.
     NotReady,
@@ -259,7 +261,6 @@ pub struct DialerState {
     state: HandshakeState,
 }
 
-// TODO: tests
 impl DialerState {
     /// Propose protocol to remote peer.
     ///
@@ -269,21 +270,14 @@ impl DialerState {
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<(Self, Vec<u8>)> {
-        // encode `/multistream-select/1.0.0` header
-        let mut bytes = BytesMut::with_capacity(64);
-        let message = Message::Header(HeaderLine::V1);
-        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
-        let mut header = UnsignedVarint::encode(bytes)?;
-
-        // encode proposed protocol
-        let mut proto_bytes = BytesMut::with_capacity(512);
-        let message = Message::Protocol(Protocol::try_from(protocol.as_bytes()).unwrap());
-        let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
-        let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
-
-        // TODO: add fallback names
-
-        header.append(&mut proto_bytes.into());
+        let message = encode_multistream_message(
+            std::iter::once(protocol.clone())
+                .chain(fallback_names.clone())
+                .filter_map(|protocol| Protocol::try_from(protocol.as_ref()).ok())
+                .map(|protocol| Message::Protocol(protocol)),
+        )?
+        .freeze()
+        .to_vec();
 
         Ok((
             Self {
@@ -291,7 +285,7 @@ impl DialerState {
                 fallback_names,
                 state: HandshakeState::WaitingResponse,
             },
-            header,
+            message,
         ))
     }
 
@@ -328,10 +322,9 @@ impl DialerState {
                         return Ok(HandshakeResult::Succeeded(self.protocol.clone()));
                     }
 
-                    // TODO: zzz
                     for fallback in &self.fallback_names {
                         if fallback.as_bytes() == protocol.as_ref() {
-                            return Ok(HandshakeResult::Succeeded(self.protocol.clone()));
+                            return Ok(HandshakeResult::Succeeded(fallback.clone()));
                         }
                     }
 
@@ -343,6 +336,151 @@ impl DialerState {
                     return Ok(HandshakeResult::NotReady);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn propose() {
+        let (mut dialer_state, message) =
+            DialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
+        let message = bytes::BytesMut::from(&message[..]).freeze();
+
+        let Message::Protocols(protocols) = Message::decode(message).unwrap() else {
+            panic!("invalid message type");
+        };
+
+        assert_eq!(protocols.len(), 2);
+        assert_eq!(
+            protocols[0],
+            Protocol::try_from(&b"/multistream/1.0.0"[..])
+                .expect("valid multitstream-select header")
+        );
+        assert_eq!(
+            protocols[1],
+            Protocol::try_from(&b"/13371338/proto/1"[..])
+                .expect("valid multitstream-select header")
+        );
+    }
+
+    #[test]
+    fn propose_with_fallback() {
+        let (mut dialer_state, message) = DialerState::propose(
+            ProtocolName::from("/13371338/proto/1"),
+            vec![ProtocolName::from("/sup/proto/1")],
+        )
+        .unwrap();
+        let message = bytes::BytesMut::from(&message[..]).freeze();
+
+        let Message::Protocols(protocols) = Message::decode(message).unwrap() else {
+            panic!("invalid message type");
+        };
+
+        assert_eq!(protocols.len(), 3);
+        assert_eq!(
+            protocols[0],
+            Protocol::try_from(&b"/multistream/1.0.0"[..])
+                .expect("valid multitstream-select header")
+        );
+        assert_eq!(
+            protocols[1],
+            Protocol::try_from(&b"/13371338/proto/1"[..])
+                .expect("valid multitstream-select header")
+        );
+        assert_eq!(
+            protocols[2],
+            Protocol::try_from(&b"/sup/proto/1"[..]).expect("valid multitstream-select header")
+        );
+    }
+
+    #[test]
+    fn register_response_invalid_message() {
+        // send only header line
+        let mut bytes = BytesMut::with_capacity(32);
+        let message = Message::Header(HeaderLine::V1);
+        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+
+        let (mut dialer_state, _message) =
+            DialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
+
+        match dialer_state.register_response(bytes.freeze().to_vec()) {
+            Err(Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
+                NegotiationError::Failed,
+            ))) => {}
+            event => panic!("invalid event: {event:?}"),
+        }
+    }
+
+    #[test]
+    fn header_line_missing() {
+        // header line missing
+        let mut bytes = BytesMut::with_capacity(256);
+        let message = Message::Protocols(vec![
+            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
+            Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
+        ]);
+        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+
+        let (mut dialer_state, _message) =
+            DialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
+
+        match dialer_state.register_response(bytes.freeze().to_vec()) {
+            Err(Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
+                NegotiationError::Failed,
+            ))) => {}
+            event => panic!("invalid event: {event:?}"),
+        }
+    }
+
+    #[test]
+    fn negotiate_main_protocol() {
+        let message = encode_multistream_message(
+            vec![Message::Protocol(
+                Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
+            )]
+            .into_iter(),
+        )
+        .unwrap()
+        .freeze();
+
+        let (mut dialer_state, _message) = DialerState::propose(
+            ProtocolName::from("/13371338/proto/1"),
+            vec![ProtocolName::from("/sup/proto/1")],
+        )
+        .unwrap();
+
+        match dialer_state.register_response(message.to_vec()) {
+            Ok(HandshakeResult::Succeeded(negotiated)) =>
+                assert_eq!(negotiated, ProtocolName::from("/13371338/proto/1")),
+            _ => panic!("invalid event"),
+        }
+    }
+
+    #[test]
+    fn negotiate_fallback_protocol() {
+        let message = encode_multistream_message(
+            vec![Message::Protocol(
+                Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
+            )]
+            .into_iter(),
+        )
+        .unwrap()
+        .freeze();
+
+        let (mut dialer_state, _message) = DialerState::propose(
+            ProtocolName::from("/13371338/proto/1"),
+            vec![ProtocolName::from("/sup/proto/1")],
+        )
+        .unwrap();
+
+        match dialer_state.register_response(message.to_vec()) {
+            Ok(HandshakeResult::Succeeded(negotiated)) =>
+                assert_eq!(negotiated, ProtocolName::from("/sup/proto/1")),
+            _ => panic!("invalid event"),
         }
     }
 }

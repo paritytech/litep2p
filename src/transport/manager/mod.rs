@@ -1576,7 +1576,7 @@ impl TransportManager {
                                 Ok(None) => {}
                             }
                         }
-                        _ => panic!("event not supported"),
+                        event => panic!("event not supported: {event:?}"),
                     }
                 },
             }

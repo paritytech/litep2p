@@ -25,7 +25,9 @@ use crate::{
     codec::unsigned_varint::UnsignedVarint,
     error::{self, Error},
     multistream_select::{
-        protocol::{HeaderLine, Message, MessageIO, Protocol, ProtocolError},
+        protocol::{
+            encode_multistream_message, HeaderLine, Message, MessageIO, Protocol, ProtocolError,
+        },
         Negotiated, NegotiationError,
     },
     types::protocol::ProtocolName,
@@ -322,6 +324,25 @@ where
     }
 }
 
+/// Result of [`listener_negotiate()`].
+#[derive(Debug)]
+pub enum ListenerSelectResult {
+    /// Requested protocol is available and substream can be accepted.
+    Accepted {
+        /// Protocol that is confirmed.
+        protocol: ProtocolName,
+
+        /// `multistream-select` message.
+        message: BytesMut,
+    },
+
+    /// Requested protocol is not available.
+    Rejected {
+        /// `multistream-select` message.
+        message: BytesMut,
+    },
+}
+
 /// Negotiate protocols for listener.
 ///
 /// Parse protocols offered by the remote peer and check if any of the offered protocols match
@@ -330,7 +351,7 @@ where
 pub fn listener_negotiate<'a>(
     supported_protocols: &'a mut impl Iterator<Item = &'a ProtocolName>,
     payload: Bytes,
-) -> crate::Result<(ProtocolName, BytesMut)> {
+) -> crate::Result<ListenerSelectResult> {
     let Message::Protocols(protocols) = Message::decode(payload).map_err(|_| Error::InvalidData)?
     else {
         return Err(Error::NegotiationError(
@@ -344,37 +365,39 @@ pub fn listener_negotiate<'a>(
     let header =
         Protocol::try_from(&b"/multistream/1.0.0"[..]).expect("valid multitstream-select header");
 
-    if !std::matches!(protocol_iter.next(), Some(header)) {
+    if protocol_iter.next() != Some(header) {
         return Err(Error::NegotiationError(
             error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
         ));
     }
 
     for protocol in protocol_iter {
+        tracing::trace!(
+            target: LOG_TARGET,
+            protocol = ?std::str::from_utf8(protocol.as_ref()),
+            "listener: checking protocol",
+        );
+
         for supported in &mut *supported_protocols {
             if protocol.as_ref() == supported.as_bytes() {
-                // encode `/multistream-select/1.0.0` header
-                let mut bytes = BytesMut::with_capacity(64);
-                let message = Message::Header(HeaderLine::V1);
-                let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData)?;
-                let mut header = UnsignedVarint::encode(bytes)?;
-
-                // encode negotiated protocol
-                let mut proto_bytes = BytesMut::with_capacity(512);
-                let message = Message::Protocol(protocol);
-                let _ = message.encode(&mut proto_bytes).map_err(|_| Error::InvalidData)?;
-                let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
-
-                header.append(&mut proto_bytes.into());
-
-                return Ok((supported.clone(), BytesMut::from(&header[..])));
+                return Ok(ListenerSelectResult::Accepted {
+                    protocol: supported.clone(),
+                    message: encode_multistream_message(std::iter::once(Message::Protocol(
+                        protocol,
+                    )))?,
+                });
             }
         }
     }
 
-    Err(Error::NegotiationError(
-        error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
-    ))
+    tracing::trace!(
+        target: LOG_TARGET,
+        "listener: handshake rejected, no supported protocol found",
+    );
+
+    Ok(ListenerSelectResult::Rejected {
+        message: encode_multistream_message(std::iter::once(Message::NotAvailable))?,
+    })
 }
 
 #[cfg(test)]
@@ -382,14 +405,137 @@ mod tests {
     use super::*;
 
     #[test]
-    fn listener_negotiate_works() {}
+    fn listener_negotiate_works() {
+        let mut local_protocols = vec![
+            ProtocolName::from("/13371338/proto/1"),
+            ProtocolName::from("/sup/proto/1"),
+            ProtocolName::from("/13371338/proto/2"),
+            ProtocolName::from("/13371338/proto/3"),
+            ProtocolName::from("/13371338/proto/4"),
+        ];
+        let message = encode_multistream_message(
+            vec![
+                Message::Protocol(Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap()),
+                Message::Protocol(Protocol::try_from(&b"/sup/proto/1"[..]).unwrap()),
+            ]
+            .into_iter(),
+        )
+        .unwrap()
+        .freeze();
+
+        match listener_negotiate(&mut local_protocols.iter(), message) {
+            Err(error) => panic!("error received: {error:?}"),
+            Ok(ListenerSelectResult::Rejected { .. }) => panic!("message rejected"),
+            Ok(ListenerSelectResult::Accepted { protocol, message }) => {
+                assert_eq!(protocol, ProtocolName::from("/13371338/proto/1"));
+            }
+        }
+    }
 
     #[test]
-    fn invalid_message_offered() {}
+    fn invalid_message() {
+        let mut local_protocols = vec![
+            ProtocolName::from("/13371338/proto/1"),
+            ProtocolName::from("/sup/proto/1"),
+            ProtocolName::from("/13371338/proto/2"),
+            ProtocolName::from("/13371338/proto/3"),
+            ProtocolName::from("/13371338/proto/4"),
+        ];
+        let message = encode_multistream_message(std::iter::once(Message::Protocols(vec![
+            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
+            Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
+        ])))
+        .unwrap()
+        .freeze();
+
+        match listener_negotiate(&mut local_protocols.iter(), message) {
+            Err(error) => assert!(std::matches!(error, Error::InvalidData)),
+            _ => panic!("invalid event"),
+        }
+    }
 
     #[test]
-    fn no_supported_protocol() {}
+    fn only_header_line_received() {
+        let mut local_protocols = vec![
+            ProtocolName::from("/13371338/proto/1"),
+            ProtocolName::from("/sup/proto/1"),
+            ProtocolName::from("/13371338/proto/2"),
+            ProtocolName::from("/13371338/proto/3"),
+            ProtocolName::from("/13371338/proto/4"),
+        ];
+
+        // send only header line
+        let mut bytes = BytesMut::with_capacity(32);
+        let message = Message::Header(HeaderLine::V1);
+        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+
+        match listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
+            Err(error) => assert!(std::matches!(
+                error,
+                Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
+                    NegotiationError::Failed
+                ))
+            )),
+            event => panic!("invalid event: {event:?}"),
+        }
+    }
 
     #[test]
-    fn multistream_select_header_missing() {}
+    fn header_line_missing() {
+        let mut local_protocols = vec![
+            ProtocolName::from("/13371338/proto/1"),
+            ProtocolName::from("/sup/proto/1"),
+            ProtocolName::from("/13371338/proto/2"),
+            ProtocolName::from("/13371338/proto/3"),
+            ProtocolName::from("/13371338/proto/4"),
+        ];
+
+        // header line missing
+        let mut bytes = BytesMut::with_capacity(256);
+        let message = Message::Protocols(vec![
+            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
+            Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
+        ]);
+        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+
+        match listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
+            Err(error) => assert!(std::matches!(
+                error,
+                Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
+                    NegotiationError::Failed
+                ))
+            )),
+            event => panic!("invalid event: {event:?}"),
+        }
+    }
+
+    #[test]
+    fn protocol_not_supported() {
+        let mut local_protocols = vec![
+            ProtocolName::from("/13371338/proto/1"),
+            ProtocolName::from("/sup/proto/1"),
+            ProtocolName::from("/13371338/proto/2"),
+            ProtocolName::from("/13371338/proto/3"),
+            ProtocolName::from("/13371338/proto/4"),
+        ];
+        let message = encode_multistream_message(
+            vec![Message::Protocol(
+                Protocol::try_from(&b"/13371339/proto/1"[..]).unwrap(),
+            )]
+            .into_iter(),
+        )
+        .unwrap()
+        .freeze();
+
+        match listener_negotiate(&mut local_protocols.iter(), message) {
+            Err(error) => panic!("error received: {error:?}"),
+            Ok(ListenerSelectResult::Rejected { message }) => {
+                assert_eq!(
+                    message,
+                    encode_multistream_message(std::iter::once(Message::NotAvailable)).unwrap()
+                );
+            }
+            Ok(ListenerSelectResult::Accepted { protocol, message }) => panic!("message accepted"),
+        }
+    }
 }

@@ -24,7 +24,7 @@
 use crate::{
     codec::ProtocolCodec,
     error::{Error, SubstreamError},
-    transport::{quic, tcp, websocket},
+    transport::{quic, tcp, webrtc, websocket},
     types::SubstreamId,
     PeerId,
 };
@@ -44,7 +44,7 @@ use std::{
 };
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "substream";
+const LOG_TARGET: &str = "litep2p::substream";
 
 macro_rules! poll_flush {
     ($substream:expr, $cx:ident) => {{
@@ -52,6 +52,7 @@ macro_rules! poll_flush {
             SubstreamType::Tcp(substream) => Pin::new(substream).poll_flush($cx),
             SubstreamType::WebSocket(substream) => Pin::new(substream).poll_flush($cx),
             SubstreamType::Quic(substream) => Pin::new(substream).poll_flush($cx),
+            SubstreamType::WebRtc(substream) => Pin::new(substream).poll_flush($cx),
             #[cfg(test)]
             SubstreamType::Mock(_) => unreachable!(),
         }
@@ -64,6 +65,7 @@ macro_rules! poll_write {
             SubstreamType::Tcp(substream) => Pin::new(substream).poll_write($cx, $frame),
             SubstreamType::WebSocket(substream) => Pin::new(substream).poll_write($cx, $frame),
             SubstreamType::Quic(substream) => Pin::new(substream).poll_write($cx, $frame),
+            SubstreamType::WebRtc(substream) => Pin::new(substream).poll_write($cx, $frame),
             #[cfg(test)]
             SubstreamType::Mock(_) => unreachable!(),
         }
@@ -76,6 +78,7 @@ macro_rules! poll_read {
             SubstreamType::Tcp(substream) => Pin::new(substream).poll_read($cx, $buffer),
             SubstreamType::WebSocket(substream) => Pin::new(substream).poll_read($cx, $buffer),
             SubstreamType::Quic(substream) => Pin::new(substream).poll_read($cx, $buffer),
+            SubstreamType::WebRtc(substream) => Pin::new(substream).poll_read($cx, $buffer),
             #[cfg(test)]
             SubstreamType::Mock(_) => unreachable!(),
         }
@@ -88,6 +91,7 @@ macro_rules! poll_shutdown {
             SubstreamType::Tcp(substream) => Pin::new(substream).poll_shutdown($cx),
             SubstreamType::WebSocket(substream) => Pin::new(substream).poll_shutdown($cx),
             SubstreamType::Quic(substream) => Pin::new(substream).poll_shutdown($cx),
+            SubstreamType::WebRtc(substream) => Pin::new(substream).poll_shutdown($cx),
             #[cfg(test)]
             SubstreamType::Mock(substream) => {
                 let _ = Pin::new(substream).poll_close($cx);
@@ -148,6 +152,7 @@ enum SubstreamType {
     Tcp(tcp::Substream),
     WebSocket(websocket::Substream),
     Quic(quic::Substream),
+    WebRtc(webrtc::Substream),
     #[cfg(test)]
     Mock(Box<dyn crate::mock::substream::Substream>),
 }
@@ -158,6 +163,7 @@ impl fmt::Debug for SubstreamType {
             Self::Tcp(_) => write!(f, "Tcp"),
             Self::WebSocket(_) => write!(f, "WebSocket"),
             Self::Quic(_) => write!(f, "Quic"),
+            Self::WebRtc(_) => write!(f, "WebRtc"),
             #[cfg(test)]
             Self::Mock(_) => write!(f, "Mock"),
         }
@@ -276,6 +282,18 @@ impl Substream {
         Self::new(peer, substream_id, SubstreamType::Quic(substream), codec)
     }
 
+    /// Create new [`Substream`] for WebRTC.
+    pub(crate) fn new_webrtc(
+        peer: PeerId,
+        substream_id: SubstreamId,
+        substream: webrtc::Substream,
+        codec: ProtocolCodec,
+    ) -> Self {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?codec, "create new substream for webrtc");
+
+        Self::new(peer, substream_id, SubstreamType::WebRtc(substream), codec)
+    }
+
     /// Create new [`Substream`] for mocking.
     #[cfg(test)]
     pub(crate) fn new_mock(
@@ -299,6 +317,7 @@ impl Substream {
             SubstreamType::Tcp(mut substream) => substream.shutdown().await,
             SubstreamType::WebSocket(mut substream) => substream.shutdown().await,
             SubstreamType::Quic(mut substream) => substream.shutdown().await,
+            SubstreamType::WebRtc(mut substream) => substream.shutdown().await,
             #[cfg(test)]
             SubstreamType::Mock(mut substream) => {
                 let _ = futures::SinkExt::close(&mut substream).await;
@@ -407,6 +426,29 @@ impl Substream {
                     let len = BytesMut::from(len);
 
                     substream.write_all_chunks(&mut [len.freeze(), bytes]).await
+                }
+            },
+            SubstreamType::WebRtc(ref mut substream) => match self.codec {
+                ProtocolCodec::Unspecified => panic!("codec is unspecified"),
+                ProtocolCodec::Identity(payload_size) =>
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
+                ProtocolCodec::UnsignedVarint(max_size) => {
+                    check_size!(max_size, bytes.len());
+
+                    let mut buffer = [0u8; 10];
+                    let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
+                    let mut offset = 0;
+
+                    while offset < len.len() {
+                        offset += substream.write(&len[offset..]).await?;
+                    }
+
+                    while bytes.has_remaining() {
+                        let nwritten = substream.write(&bytes).await?;
+                        bytes.advance(nwritten);
+                    }
+
+                    substream.flush().await.map_err(From::from)
                 }
             },
         }
@@ -624,6 +666,14 @@ impl Sink<Bytes> for Substream {
     fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
         // `MockSubstream` implements `Sink` so calls to `start_send()` must be delegated
         delegate_start_send!(&mut self.substream, item);
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            peer = ?self.peer,
+            substream_id = ?self.substream_id,
+            data_len = item.len(),
+            "Substream::start_send()",
+        );
 
         match self.codec {
             ProtocolCodec::Identity(payload_size) => {
