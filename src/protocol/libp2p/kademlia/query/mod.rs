@@ -571,7 +571,7 @@ mod tests {
         let mut engine = QueryEngine::new(PeerId::random(), 20usize, 3usize);
         let record_key = RecordKey::new(&vec![1, 2, 3, 4]);
         let target_key = Key::new(record_key.clone());
-        let original_record = Record::new(record_key, vec![1, 3, 3, 7, 1, 3, 3, 8]);
+        let original_record = Record::new(record_key.clone(), vec![1, 3, 3, 7, 1, 3, 3, 8]);
 
         let distances = {
             let mut distances = std::collections::BTreeMap::new();
@@ -651,15 +651,58 @@ mod tests {
             }
         }
 
-        match engine.next_action() {
+        let peers = match engine.next_action() {
             Some(QueryAction::PutRecordToFoundNodes { peers, record }) => {
                 assert_eq!(peers.len(), 4);
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);
+                peers
+            }
+            _ => panic!("invalid event received"),
+        };
+
+        assert!(engine.next_action().is_none());
+
+        // get records from those peers.
+        let _query = engine.start_get_record(
+            QueryId(1341),
+            record_key.clone(),
+            vec![
+                KademliaPeer::new(peers[0].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[1].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[2].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[3].peer, vec![], ConnectionType::NotConnected),
+            ]
+            .into(),
+            Quorum::All,
+            3,
+        );
+
+        for _ in 0..4 {
+            match engine.next_action() {
+                Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    engine.register_response(
+                        query,
+                        peer,
+                        KademliaMessage::GetRecord {
+                            record: Some(original_record.clone()),
+                            peers: vec![],
+                            key: Some(record_key.clone()),
+                        },
+                    );
+                }
+                _ => panic!("invalid event received"),
+            }
+        }
+
+        let peers: std::collections::HashSet<_> = peers.into_iter().map(|p| p.peer).collect();
+        match engine.next_action() {
+            Some(QueryAction::GetRecordQueryDone { record, .. }) => {
+                assert!(peers.contains(&record.peer.expect("Peer Id must be provided")));
+                assert_eq!(record.record.key, original_record.key);
+                assert_eq!(record.record.value, original_record.value);
             }
             _ => panic!("invalid event received"),
         }
-
-        assert!(engine.next_action().is_none());
     }
 }
