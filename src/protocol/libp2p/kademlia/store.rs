@@ -23,7 +23,7 @@
 #![allow(unused)]
 use crate::protocol::libp2p::kademlia::record::{Key, Record};
 
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 /// Memory store events.
 pub enum MemoryStoreEvent {}
@@ -60,7 +60,24 @@ impl MemoryStore {
 
     /// Store record.
     pub fn put(&mut self, record: Record) {
-        self.records.insert(record.key.clone(), record);
+        if record.value.len() >= self.config.max_record_size_bytes {
+            return;
+        }
+
+        let len = self.records.len();
+        match self.records.entry(record.key.clone()) {
+            Entry::Occupied(mut entry) => {
+                entry.insert(record);
+            }
+
+            Entry::Vacant(entry) => {
+                if len >= self.config.max_records {
+                    return;
+                }
+
+                entry.insert(record);
+            }
+        }
     }
 
     /// Poll next event from the store.
