@@ -741,7 +741,6 @@ impl Kademlia {
                         Some(KademliaCommand::PutRecord { record, query_id, peers }) => {
                             tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT");
 
-                            self.store.put(record.clone());
                             let key = Key::new(record.key.clone());
 
 
@@ -761,6 +760,8 @@ impl Kademlia {
                                     peers
                                 );
                             } else {
+                                self.store.put(record.clone());
+
                                 self.engine.start_put_record(
                                     query_id,
                                     record,
