@@ -54,8 +54,18 @@ impl MemoryStore {
     }
 
     /// Try to get record from local store for `key`.
-    pub fn get(&self, key: &Key) -> Option<&Record> {
-        self.records.get(key)
+    pub fn get(&mut self, key: &Key) -> Option<&Record> {
+        let is_expired = self
+            .records
+            .get(key)
+            .map_or(false, |record| record.is_expired(std::time::Instant::now()));
+
+        if is_expired {
+            self.records.remove(key);
+            None
+        } else {
+            self.records.get(key)
+        }
     }
 
     /// Store record.
