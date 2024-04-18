@@ -45,7 +45,7 @@ use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode};
@@ -738,17 +738,35 @@ impl Kademlia {
                                 self.routing_table.closest(Key::from(peer), self.replication_factor).into()
                             );
                         }
-                        Some(KademliaCommand::PutRecord { record, query_id }) => {
+                        Some(KademliaCommand::PutRecord { record, query_id, peers }) => {
                             tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT");
 
                             self.store.put(record.clone());
                             let key = Key::new(record.key.clone());
 
-                            self.engine.start_put_record(
-                                query_id,
-                                record,
-                                self.routing_table.closest(key, self.replication_factor).into(),
-                            );
+
+                            if let Some(peers) = peers {
+                                // Put the record to the specified peers.
+                                let peers: VecDeque<_> = peers.into_iter().filter_map(|peer| {
+                                    if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
+                                        Some(entry.clone())
+                                    } else {
+                                        None
+                                    }
+                                }).collect();
+
+                                self.engine.start_put_record(
+                                    query_id,
+                                    record,
+                                    peers
+                                );
+                            } else {
+                                self.engine.start_put_record(
+                                    query_id,
+                                    record,
+                                    self.routing_table.closest(key, self.replication_factor).into(),
+                                );
+                            }
                         }
                         Some(KademliaCommand::GetRecord { key, quorum, query_id }) => {
                             tracing::debug!(target: LOG_TARGET, ?key, "get record from DHT");
