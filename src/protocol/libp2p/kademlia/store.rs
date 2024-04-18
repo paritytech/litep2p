@@ -32,6 +32,8 @@ pub enum MemoryStoreEvent {}
 pub struct MemoryStore {
     /// Records.
     records: HashMap<Key, Record>,
+    /// Configuration.
+    config: MemoryStoreConfig,
 }
 
 impl MemoryStore {
@@ -39,6 +41,15 @@ impl MemoryStore {
     pub fn new() -> Self {
         Self {
             records: HashMap::new(),
+            config: MemoryStoreConfig::default(),
+        }
+    }
+
+    /// Create new [`MemoryStore`] with the provided configuration.
+    pub fn with_config(config: MemoryStoreConfig) -> Self {
+        Self {
+            records: HashMap::new(),
+            config,
         }
     }
 
@@ -55,5 +66,22 @@ impl MemoryStore {
     /// Poll next event from the store.
     async fn next_event() -> Option<MemoryStoreEvent> {
         None
+    }
+}
+
+pub struct MemoryStoreConfig {
+    /// Maximum number of records to store.
+    pub max_records: usize,
+
+    /// Maximum size of a record in bytes.
+    pub max_record_size_bytes: usize,
+}
+
+impl Default for MemoryStoreConfig {
+    fn default() -> Self {
+        Self {
+            max_records: 1024,
+            max_record_size_bytes: 1024,
+        }
     }
 }
