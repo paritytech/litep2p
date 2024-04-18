@@ -19,4 +19,4 @@
 // DEALINGS IN THE SOFTWARE.
 
 // Re-export the types used in public interfaces.
-pub use multiaddr::{Error, Multiaddr, Onion3Addr, Protocol, Iter};
+pub use multiaddr::{Error, Iter, Multiaddr, Onion3Addr, Protocol};
