@@ -117,7 +117,7 @@ impl Default for MemoryStoreConfig {
     fn default() -> Self {
         Self {
             max_records: 1024,
-            max_record_size_bytes: 1024,
+            max_record_size_bytes: 65 * 1024,
         }
     }
 }
