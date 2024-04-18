@@ -67,6 +67,15 @@ impl MemoryStore {
         let len = self.records.len();
         match self.records.entry(record.key.clone()) {
             Entry::Occupied(mut entry) => {
+                // Lean towards the new record.
+                if let (Some(stored_record_ttl), Some(new_record_ttl)) =
+                    (entry.get().expires, record.expires)
+                {
+                    if stored_record_ttl > new_record_ttl {
+                        return;
+                    }
+                }
+
                 entry.insert(record);
             }
 
