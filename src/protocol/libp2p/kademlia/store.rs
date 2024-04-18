@@ -121,3 +121,95 @@ impl Default for MemoryStoreConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_store() {
+        let mut store = MemoryStore::new();
+        let key = Key::from(vec![1, 2, 3]);
+        let record = Record::new(key.clone(), vec![4, 5, 6]);
+
+        store.put(record.clone());
+        assert_eq!(store.get(&key), Some(&record));
+    }
+
+    #[test]
+    fn test_memory_store_length() {
+        let mut store = MemoryStore::with_config(MemoryStoreConfig {
+            max_records: 1,
+            max_record_size_bytes: 1024,
+        });
+
+        let key1 = Key::from(vec![1, 2, 3]);
+        let key2 = Key::from(vec![4, 5, 6]);
+        let record1 = Record::new(key1.clone(), vec![4, 5, 6]);
+        let record2 = Record::new(key2.clone(), vec![7, 8, 9]);
+
+        store.put(record1.clone());
+        store.put(record2.clone());
+
+        assert_eq!(store.get(&key1), Some(&record1));
+        assert_eq!(store.get(&key2), None);
+    }
+
+    #[test]
+    fn test_memory_store_remove_old_records() {
+        let mut store = MemoryStore::new();
+        let key = Key::from(vec![1, 2, 3]);
+        let record = Record {
+            key: key.clone(),
+            value: vec![4, 5, 6],
+            publisher: None,
+            expires: Some(std::time::Instant::now() - std::time::Duration::from_secs(5)),
+        };
+        // Record is already expired.
+        assert!(record.is_expired(std::time::Instant::now()));
+
+        store.put(record.clone());
+        assert_eq!(store.get(&key), None);
+    }
+
+    #[test]
+    fn test_memory_store_replace_new_records() {
+        let mut store = MemoryStore::new();
+        let key = Key::from(vec![1, 2, 3]);
+        let record1 = Record {
+            key: key.clone(),
+            value: vec![4, 5, 6],
+            publisher: None,
+            expires: Some(std::time::Instant::now() + std::time::Duration::from_secs(100)),
+        };
+        let record2 = Record {
+            key: key.clone(),
+            value: vec![4, 5, 6],
+            publisher: None,
+            expires: Some(std::time::Instant::now() + std::time::Duration::from_secs(1000)),
+        };
+
+        store.put(record1.clone());
+        assert_eq!(store.get(&key), Some(&record1));
+
+        store.put(record2.clone());
+        assert_eq!(store.get(&key), Some(&record2));
+    }
+
+    #[test]
+    fn test_memory_store_max_record_size() {
+        let mut store = MemoryStore::with_config(MemoryStoreConfig {
+            max_records: 1024,
+            max_record_size_bytes: 2,
+        });
+
+        let key = Key::from(vec![1, 2, 3]);
+        let record = Record::new(key.clone(), vec![4, 5]);
+        store.put(record.clone());
+        assert_eq!(store.get(&key), None);
+
+        let record = Record::new(key.clone(), vec![4]);
+        store.put(record.clone());
+        assert_eq!(store.get(&key), Some(&record));
+    }
+}
