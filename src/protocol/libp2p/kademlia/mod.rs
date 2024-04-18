@@ -745,7 +745,7 @@ impl Kademlia {
 
                             if let Some(peers) = peers {
                                 // Put the record to the specified peers.
-                                let peers: VecDeque<_> = peers.into_iter().filter_map(|peer| {
+                                let peers = peers.into_iter().filter_map(|peer| {
                                     match self.routing_table.entry(Key::from(peer)) {
                                         // The routing table contains information about the peer address when:
                                         // - Occupied: Established connection
@@ -755,11 +755,9 @@ impl Kademlia {
                                     }
                                 }).collect();
 
-                                self.engine.start_put_record(
-                                    query_id,
-                                    record,
-                                    peers
-                                );
+                                if let Err(error) = self.on_query_action(QueryAction::PutRecordToFoundNodes { record, peers }).await {
+                                    tracing::debug!(target: LOG_TARGET, ?error, "failed to put record to predefined peers");
+                                }
                             } else {
                                 self.store.put(record.clone());
 
