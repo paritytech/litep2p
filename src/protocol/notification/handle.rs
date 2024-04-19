@@ -403,7 +403,7 @@ impl NotificationHandle {
             Some(sink) => match sink.send_sync_notification(notification) {
                 Ok(()) => Ok(()),
                 Err(error) => match error {
-                    NotificationError::NoConnection => return Err(NotificationError::NoConnection),
+                    NotificationError::NoConnection => Err(NotificationError::NoConnection),
                     NotificationError::ChannelClogged => {
                         let _ = self.clogged.insert(peer).then(|| {
                             self.command_tx.try_send(NotificationCommand::ForceClose { peer })

@@ -327,7 +327,7 @@ impl TcpConnection {
         })
         .await
         {
-            Err(_) => return Err(Error::Timeout),
+            Err(_) => Err(Error::Timeout),
             Ok(result) => result,
         }
     }

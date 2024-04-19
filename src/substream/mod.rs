@@ -700,7 +700,7 @@ impl Sink<Bytes> for Substream {
             ProtocolCodec::Unspecified => panic!("codec is unspecified"),
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

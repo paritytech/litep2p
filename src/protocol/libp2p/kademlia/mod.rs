@@ -222,7 +222,7 @@ impl Kademlia {
                 entry.insert(context);
                 Ok(())
             }
-            Entry::Occupied(_) => return Err(Error::PeerAlreadyExists(peer)),
+            Entry::Occupied(_) => Err(Error::PeerAlreadyExists(peer)),
         }
     }
 

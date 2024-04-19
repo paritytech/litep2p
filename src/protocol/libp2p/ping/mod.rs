@@ -137,8 +137,8 @@ impl Ping {
             };
 
             match tokio::time::timeout(Duration::from_secs(10), future).await {
-                Err(_) => return Err(Error::Timeout),
-                Ok(Err(error)) => return Err(error),
+                Err(_) => Err(Error::Timeout),
+                Ok(Err(error)) => Err(error),
                 Ok(Ok(elapsed)) => Ok((peer, elapsed)),
             }
         }));
@@ -161,8 +161,8 @@ impl Ping {
             };
 
             match tokio::time::timeout(Duration::from_secs(10), future).await {
-                Err(_) => return Err(Error::Timeout),
-                Ok(Err(error)) => return Err(error),
+                Err(_) => Err(Error::Timeout),
+                Ok(Err(error)) => Err(error),
                 Ok(Ok(())) => Ok(()),
             }
         }));

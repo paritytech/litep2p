@@ -341,7 +341,7 @@ impl OpeningWebRtcConnection {
                     peer = ?self.peer_address,
                     "input rejected",
                 );
-                return Err(Error::InputRejected);
+                Err(Error::InputRejected)
             }
         }
     }

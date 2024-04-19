@@ -701,7 +701,7 @@ impl Stream for WebRtcTransport {
                     }
                 }
 
-                return pending_event;
+                pending_event
             })
             .collect::<VecDeque<_>>();
 

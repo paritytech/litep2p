@@ -101,7 +101,7 @@ impl Endpoint {
 
     /// Is this a listener endpoint?
     pub fn is_listener(&self) -> bool {
-        return std::matches!(self, Self::Listener { .. });
+        std::matches!(self, Self::Listener { .. })
     }
 }
 
