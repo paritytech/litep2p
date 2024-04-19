@@ -35,6 +35,7 @@ use std::collections::{HashMap, VecDeque};
 
 mod find_node;
 mod get_record;
+mod find_many_nodes;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
@@ -56,6 +57,15 @@ enum QueryType {
 
     /// `PUT_VALUE` query.
     PutRecord {
+        /// Record that needs to be stored.
+        record: Record,
+
+        /// Context for the `FIND_NODE` query
+        context: FindNodeContext<RecordKey>,
+    },
+
+    /// `PUT_VALUE` query to specified peers.
+    PutRecordToPeers {
         /// Record that needs to be stored.
         record: Record,
 

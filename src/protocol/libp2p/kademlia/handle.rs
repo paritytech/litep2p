@@ -88,9 +88,20 @@ pub(crate) enum KademliaCommand {
 
         /// Query ID for the query.
         query_id: QueryId,
+    },
+
+    /// Store record to DHT to the given peers.
+    ///
+    /// Similar to [`KademliaCommand::PutRecord`] but allows user to specify the peers.
+    PutRecordToPeers {
+        /// Record.
+        record: Record,
+
+        /// Query ID for the query.
+        query_id: QueryId,
 
         /// Use the following peers for the put request.
-        peers: Option<Vec<PeerId>>,
+        peers: Vec<PeerId>,
     },
 
     /// Get record from DHT.
@@ -205,27 +216,20 @@ impl KademliaHandle {
     /// Store record to DHT.
     pub async fn put_record(&mut self, record: Record) -> QueryId {
         let query_id = self.next_query_id();
-        let _ = self
-            .cmd_tx
-            .send(KademliaCommand::PutRecord {
-                record,
-                query_id,
-                peers: None,
-            })
-            .await;
+        let _ = self.cmd_tx.send(KademliaCommand::PutRecord { record, query_id }).await;
 
         query_id
     }
 
     /// Store record to DHT to the given peers.
-    pub async fn put_record_to(&mut self, record: Record, peers: Vec<PeerId>) -> QueryId {
+    pub async fn put_record_to_peers(&mut self, record: Record, peers: Vec<PeerId>) -> QueryId {
         let query_id = self.next_query_id();
         let _ = self
             .cmd_tx
-            .send(KademliaCommand::PutRecord {
+            .send(KademliaCommand::PutRecordToPeers {
                 record,
                 query_id,
-                peers: Some(peers),
+                peers,
             })
             .await;
 
@@ -267,24 +271,24 @@ impl KademliaHandle {
     pub fn try_put_record(&mut self, record: Record) -> Result<QueryId, ()> {
         let query_id = self.next_query_id();
         self.cmd_tx
-            .try_send(KademliaCommand::PutRecord {
-                record,
-                query_id,
-                peers: None,
-            })
+            .try_send(KademliaCommand::PutRecord { record, query_id })
             .map(|_| query_id)
             .map_err(|_| ())
     }
 
     /// Try to initiate `PUT_VALUE` query to the given peers and if the channel is clogged,
     /// return an error.
-    pub fn try_put_record_to(&mut self, record: Record, peers: Vec<PeerId>) -> Result<QueryId, ()> {
+    pub fn try_put_record_to_peers(
+        &mut self,
+        record: Record,
+        peers: Vec<PeerId>,
+    ) -> Result<QueryId, ()> {
         let query_id = self.next_query_id();
         self.cmd_tx
-            .try_send(KademliaCommand::PutRecord {
+            .try_send(KademliaCommand::PutRecordToPeers {
                 record,
                 query_id,
-                peers: Some(peers),
+                peers,
             })
             .map(|_| query_id)
             .map_err(|_| ())
