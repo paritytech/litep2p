@@ -90,6 +90,20 @@ pub(crate) enum KademliaCommand {
         query_id: QueryId,
     },
 
+    /// Store record to DHT to the given peers.
+    ///
+    /// Similar to [`KademliaCommand::PutRecord`] but allows user to specify the peers.
+    PutRecordToPeers {
+        /// Record.
+        record: Record,
+
+        /// Query ID for the query.
+        query_id: QueryId,
+
+        /// Use the following peers for the put request.
+        peers: Vec<PeerId>,
+    },
+
     /// Get record from DHT.
     GetRecord {
         /// Record key.
@@ -207,6 +221,21 @@ impl KademliaHandle {
         query_id
     }
 
+    /// Store record to DHT to the given peers.
+    pub async fn put_record_to_peers(&mut self, record: Record, peers: Vec<PeerId>) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::PutRecordToPeers {
+                record,
+                query_id,
+                peers,
+            })
+            .await;
+
+        query_id
+    }
+
     /// Get record from DHT.
     pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) -> QueryId {
         let query_id = self.next_query_id();
@@ -243,6 +272,24 @@ impl KademliaHandle {
         let query_id = self.next_query_id();
         self.cmd_tx
             .try_send(KademliaCommand::PutRecord { record, query_id })
+            .map(|_| query_id)
+            .map_err(|_| ())
+    }
+
+    /// Try to initiate `PUT_VALUE` query to the given peers and if the channel is clogged,
+    /// return an error.
+    pub fn try_put_record_to_peers(
+        &mut self,
+        record: Record,
+        peers: Vec<PeerId>,
+    ) -> Result<QueryId, ()> {
+        let query_id = self.next_query_id();
+        self.cmd_tx
+            .try_send(KademliaCommand::PutRecordToPeers {
+                record,
+                query_id,
+                peers,
+            })
             .map(|_| query_id)
             .map_err(|_| ())
     }
