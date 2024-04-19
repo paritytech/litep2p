@@ -1493,7 +1493,7 @@ impl TransportManager {
 
                                     return Some(TransportEvent::ConnectionEstablished {
                                         peer,
-                                        endpoint: endpoint,
+                                        endpoint,
                                     });
                                 }
                                 Ok(ConnectionEstablishedResult::Reject) => {

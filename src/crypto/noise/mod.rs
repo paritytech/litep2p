@@ -171,7 +171,7 @@ impl NoiseContext {
 
     /// Get remote public key from the received Noise payload.
     // TODO: refactor
-    pub fn get_remote_public_key(&mut self, reply: &Vec<u8>) -> crate::Result<PublicKey> {
+    pub fn get_remote_public_key(&mut self, reply: &[u8]) -> crate::Result<PublicKey> {
         if reply.len() <= 2 {
             return Err(error::Error::InvalidData);
         }

@@ -122,6 +122,12 @@ pub struct ConfigBuilder {
     pub(super) protocol_names: Vec<ProtocolName>,
 }
 
+impl Default for ConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigBuilder {
     /// Create new [`ConfigBuilder`].
     pub fn new() -> Self {
