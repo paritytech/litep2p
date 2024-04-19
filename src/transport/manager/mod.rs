@@ -1176,7 +1176,7 @@ impl TransportManager {
                 for transport in transports.iter() {
                     let _ = self
                         .transports
-                        .get_mut(&transport)
+                        .get_mut(transport)
                         .expect("transport to exist")
                         .cancel(connection_id);
                 }

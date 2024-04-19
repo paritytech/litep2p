@@ -70,8 +70,8 @@ impl Endpoint {
     /// Get `Multiaddr` of the [`Endpoint`].
     pub fn address(&self) -> &Multiaddr {
         match self {
-            Self::Dialer { address, .. } => &address,
-            Self::Listener { address, .. } => &address,
+            Self::Dialer { address, .. } => address,
+            Self::Listener { address, .. } => address,
         }
     }
 

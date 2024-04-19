@@ -302,7 +302,7 @@ impl ProtocolSet {
         // NOTE: `protocol` must exist in `self.protocol` as it was negotiated
         // using the protocols from this set
         self.protocols
-            .get(self.fallback_names.get(&protocol).map_or(protocol, |protocol| protocol))
+            .get(self.fallback_names.get(protocol).map_or(protocol, |protocol| protocol))
             .expect("protocol to exist")
             .codec
     }

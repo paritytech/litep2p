@@ -189,7 +189,7 @@ impl TransportManagerHandle {
             "add known addresses",
         );
 
-        match peers.get_mut(&peer) {
+        match peers.get_mut(peer) {
             Some(context) =>
                 for record in addresses {
                     if !context.addresses.contains(record.address()) {
@@ -220,7 +220,7 @@ impl TransportManagerHandle {
         }
 
         {
-            match self.peers.read().get(&peer) {
+            match self.peers.read().get(peer) {
                 Some(PeerContext {
                     state: PeerState::Connected { .. },
                     ..
