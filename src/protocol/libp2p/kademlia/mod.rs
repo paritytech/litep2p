@@ -756,10 +756,10 @@ impl Kademlia {
 
                             // Put the record to the specified peers.
                             let peers = peers.into_iter().filter_map(|peer| {
-                                if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
-                                    Some(entry.clone())
-                                } else {
-                                    None
+                                match self.routing_table.entry(Key::from(peer)) {
+                                    KBucketEntry::Occupied(entry) => Some(entry.clone()),
+                                    KBucketEntry::Vacant(entry) if !entry.addresses.is_empty() => Some(entry.clone()),
+                                    _ => None,
                                 }
                             }).collect();
 
