@@ -192,10 +192,8 @@ impl NoiseContext {
 
         let payload = handshake_schema::NoiseHandshakePayload::decode(inner.as_slice())?;
 
-        Ok(PublicKey::from_protobuf_encoding(
-            &payload.identity_key.ok_or(error::Error::NegotiationError(
-                error::NegotiationError::PeerIdMissing,
-            ))?,
+        PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
+            error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
         )?)
     }
 
