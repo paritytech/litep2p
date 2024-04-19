@@ -747,10 +747,7 @@ impl Kademlia {
                                 // Put the record to the specified peers.
                                 let peers = peers.into_iter().filter_map(|peer| {
                                     match self.routing_table.entry(Key::from(peer)) {
-                                        // The routing table contains information about the peer address when:
-                                        // - Occupied: Established connection
-                                        // - Vacant: We'll try to establish the connection later, but the address is known.
-                                        KBucketEntry::Occupied(entry) | KBucketEntry::Vacant(entry) => Some(entry.clone()),
+                                        KBucketEntry::Occupied(entry) => Some(entry.clone()),
                                         _ => None,
                                     }
                                 }).collect();
