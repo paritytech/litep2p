@@ -112,7 +112,7 @@ impl RoutingTable {
     }
 
     /// Get an entry for `peer` into a k-bucket.
-    pub fn entry<'a>(&'a mut self, key: Key<PeerId>) -> KBucketEntry<'a> {
+    pub fn entry(&mut self, key: Key<PeerId>) -> KBucketEntry<'_> {
         let Some(index) = BucketIndex::new(&self.local_key.distance(&key)) else {
             return KBucketEntry::LocalNode;
         };
