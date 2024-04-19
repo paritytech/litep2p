@@ -26,27 +26,20 @@ use crate::{
     PeerId,
 };
 
-/// Logging target for the file.
-const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_many_nodes";
-
 /// Context for multiple `FIND_NODE` queries.
 #[derive(Debug)]
 pub struct FindManyNodesContext {
-    /// Local peer ID.
-    local_peer_id: PeerId,
-
     /// Query ID.
     pub query: QueryId,
 
     /// The peers we are looking for.
-    pub peers_to_report: Vec<PeerId>,
+    pub peers_to_report: Vec<KademliaPeer>,
 }
 
 impl FindManyNodesContext {
     /// Creates a new [`FindManyNodesContext`].
-    pub fn new(local_peer_id: PeerId, query: QueryId, peers_to_report: Vec<PeerId>) -> Self {
+    pub fn new(query: QueryId, peers_to_report: Vec<KademliaPeer>) -> Self {
         Self {
-            local_peer_id,
             query,
             peers_to_report,
         }

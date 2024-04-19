@@ -754,14 +754,19 @@ impl Kademlia {
                         Some(KademliaCommand::PutRecordToPeers { record, query_id, peers }) => {
                             tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT to specified peers");
 
-                            let key = Key::new(record.key.clone());
+                            // Put the record to the specified peers.
+                            let peers = peers.into_iter().filter_map(|peer| {
+                                if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
+                                    Some(entry.clone())
+                                } else {
+                                    None
+                                }
+                            }).collect();
 
-                            self.store.put(record.clone());
-
-                            self.engine.start_put_record(
+                            self.engine.start_put_record_to_peers(
                                 query_id,
                                 record,
-                                self.routing_table.closest(key, self.replication_factor).into(),
+                                peers,
                             );
                         }
                         Some(KademliaCommand::GetRecord { key, quorum, query_id }) => {
