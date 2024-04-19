@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(clippy::single_match)]
+
 use crate::{
     config::Litep2pConfig,
     protocol::{
@@ -47,8 +49,6 @@ pub use bandwidth::BandwidthSink;
 pub use error::Error;
 pub use peer_id::PeerId;
 pub use types::protocol::ProtocolName;
-
-// pub use yamux;
 
 pub(crate) mod peer_id;
 
