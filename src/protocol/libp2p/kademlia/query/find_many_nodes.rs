@@ -27,8 +27,7 @@ use crate::{
 };
 
 /// Context for multiple `FIND_NODE` queries.
-///
-/// TODO: implement https://github.com/paritytech/litep2p/issues/80.
+// TODO: implement https://github.com/paritytech/litep2p/issues/80.
 #[derive(Debug)]
 pub struct FindManyNodesContext {
     /// Query ID.
