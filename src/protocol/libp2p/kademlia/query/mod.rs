@@ -33,9 +33,6 @@ use bytes::Bytes;
 
 use std::collections::{HashMap, VecDeque};
 
-use self::find_many_nodes::FindManyNodesContext;
-
-mod find_many_nodes;
 mod find_node;
 mod get_record;
 
@@ -64,15 +61,6 @@ enum QueryType {
 
         /// Context for the `FIND_NODE` query
         context: FindNodeContext<RecordKey>,
-    },
-
-    /// `PUT_VALUE` query to specified peers.
-    PutRecordToPeers {
-        /// Record that needs to be stored.
-        record: Record,
-
-        /// Context for finding peers.
-        context: FindManyNodesContext,
     },
 
     /// `GET_VALUE` query.
@@ -239,32 +227,6 @@ impl QueryEngine {
         query_id
     }
 
-    /// Start `PUT_VALUE` query to specified peers.
-    pub fn start_put_record_to_peers(
-        &mut self,
-        query_id: QueryId,
-        record: Record,
-        peers_to_report: Vec<KademliaPeer>,
-    ) -> QueryId {
-        tracing::debug!(
-            target: LOG_TARGET,
-            ?query_id,
-            target = ?record.key,
-            num_peers = ?peers_to_report.len(),
-            "start `PUT_VALUE` query to peers"
-        );
-
-        self.queries.insert(
-            query_id,
-            QueryType::PutRecordToPeers {
-                record,
-                context: FindManyNodesContext::new(query_id, peers_to_report),
-            },
-        );
-
-        query_id
-    }
-
     /// Start `GET_VALUE` query.
     pub fn start_get_record(
         &mut self,
@@ -318,9 +280,6 @@ impl QueryEngine {
             Some(QueryType::PutRecord { context, .. }) => {
                 context.register_response_failure(peer);
             }
-            Some(QueryType::PutRecordToPeers { context, .. }) => {
-                context.register_response_failure(peer);
-            }
             Some(QueryType::GetRecord { context }) => {
                 context.register_response_failure(peer);
             }
@@ -348,12 +307,6 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
-            Some(QueryType::PutRecordToPeers { context, .. }) => match message {
-                KademliaMessage::FindNode { peers, .. } => {
-                    context.register_response(peer, peers);
-                }
-                _ => unreachable!(),
-            },
             Some(QueryType::GetRecord { context }) => match message {
                 KademliaMessage::GetRecord { record, peers, .. } => {
                     context.register_response(peer, record, peers);
@@ -370,12 +323,11 @@ impl QueryEngine {
         match self.queries.get_mut(query) {
             None => {
                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                None
+                return None;
             }
-            Some(QueryType::FindNode { context }) => context.next_peer_action(peer),
-            Some(QueryType::PutRecord { context, .. }) => context.next_peer_action(peer),
-            Some(QueryType::PutRecordToPeers { context, .. }) => context.next_peer_action(peer),
-            Some(QueryType::GetRecord { context }) => context.next_peer_action(peer),
+            Some(QueryType::FindNode { context }) => return context.next_peer_action(peer),
+            Some(QueryType::PutRecord { context, .. }) => return context.next_peer_action(peer),
+            Some(QueryType::GetRecord { context }) => return context.next_peer_action(peer),
         }
     }
 
@@ -391,10 +343,6 @@ impl QueryEngine {
             QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
                 record,
                 peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
-            },
-            QueryType::PutRecordToPeers { record, context } => QueryAction::PutRecordToFoundNodes {
-                record,
-                peers: context.peers_to_report,
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.query,
@@ -417,7 +365,6 @@ impl QueryEngine {
             let action = match state {
                 QueryType::FindNode { context } => context.next_action(),
                 QueryType::PutRecord { context, .. } => context.next_action(),
-                QueryType::PutRecordToPeers { context, .. } => context.next_action(),
                 QueryType::GetRecord { context } => context.next_action(),
             };
 
