@@ -104,7 +104,7 @@ impl Record {
     }
 
     /// Checks whether the record is expired w.r.t. the given `Instant`.
-    pub fn _is_expired(&self, now: Instant) -> bool {
+    pub fn is_expired(&self, now: Instant) -> bool {
         self.expires.map_or(false, |t| now >= t)
     }
 }
