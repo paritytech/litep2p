@@ -117,10 +117,7 @@ jobs:
           cache-on-failure: true
           cache-all-crates: true
 
-      # TODO: Allow clippy to fail and do not cancel other tasks.
-      # Clippy is fixed by: https://github.com/paritytech/litep2p/pull/57.
       - name: Run clippy
-        continue-on-error: true
         run: cargo clippy
 
   test:
