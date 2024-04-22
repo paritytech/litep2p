@@ -213,7 +213,7 @@ impl OpeningWebRtcConnection {
             .channel(self.noise_channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, payload.as_slice())
-            .map_err(|error| Error::WebRtc(error))?;
+            .map_err(Error::WebRtc)?;
 
         self.state = State::HandshakeSent { context };
         Ok(())
@@ -306,7 +306,7 @@ impl OpeningWebRtcConnection {
         let mut channel =
             self.rtc.channel(self.noise_channel_id).ok_or(Error::ChannelDoesntExist)?;
 
-        channel.write(true, payload.as_slice()).map_err(|error| Error::WebRtc(error))?;
+        channel.write(true, payload.as_slice()).map_err(Error::WebRtc)?;
         self.rtc.direct_api().close_data_channel(self.noise_channel_id);
 
         Ok(self.rtc)

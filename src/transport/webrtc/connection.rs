@@ -267,7 +267,7 @@ impl WebRtcConnection {
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, message.as_ref())
-            .map_err(|error| Error::WebRtc(error))?;
+            .map_err(Error::WebRtc)?;
 
         self.channels.insert(
             channel_id,
@@ -327,7 +327,7 @@ impl WebRtcConnection {
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, WebRtcMessage::encode(response.to_vec()).as_ref())
-            .map_err(|error| Error::WebRtc(error))?;
+            .map_err(Error::WebRtc)?;
 
         let protocol = negotiated.ok_or(Error::SubstreamDoesntExist)?;
         let substream_id = self.protocol_set.next_substream_id();
@@ -600,7 +600,7 @@ impl WebRtcConnection {
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, WebRtcMessage::encode(data).as_ref())
-            .map_err(|error| Error::WebRtc(error))
+            .map_err(Error::WebRtc)
             .map(|_| ())
     }
 

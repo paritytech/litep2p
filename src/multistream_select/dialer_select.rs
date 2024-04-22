@@ -274,7 +274,7 @@ impl DialerState {
             std::iter::once(protocol.clone())
                 .chain(fallback_names.clone())
                 .filter_map(|protocol| Protocol::try_from(protocol.as_ref()).ok())
-                .map(|protocol| Message::Protocol(protocol)),
+                .map(Message::Protocol),
         )?
         .freeze()
         .to_vec();
