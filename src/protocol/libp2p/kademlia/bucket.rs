@@ -72,7 +72,7 @@ impl KBucket {
     // TODO: this is horrible code
     pub fn entry<K: Clone>(&mut self, key: Key<K>) -> KBucketEntry<'_> {
         for i in 0..self.nodes.len() {
-            if &self.nodes[i].key == &key {
+            if self.nodes[i].key == key {
                 return KBucketEntry::Occupied(&mut self.nodes[i]);
             }
         }
