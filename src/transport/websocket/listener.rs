@@ -160,7 +160,7 @@ impl WebSocketListener {
                                             local_address.port(),
                                         )),
                                         (Addr::V6(inner), false) =>
-                                            match inner.ip.segments().get(0) {
+                                            match inner.ip.segments().first() {
                                                 Some(0xfe80) => None,
                                                 _ => Some(SocketAddr::new(
                                                     IpAddr::V6(inner.ip),

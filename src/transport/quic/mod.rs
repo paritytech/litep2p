@@ -104,7 +104,7 @@ impl QuicTransport {
     fn extract_peer_id(connection: &Connection) -> Option<PeerId> {
         let certificates: Box<Vec<rustls::Certificate>> =
             connection.peer_identity()?.downcast().ok()?;
-        let p2p_cert = crate::crypto::tls::certificate::parse(certificates.get(0)?)
+        let p2p_cert = crate::crypto::tls::certificate::parse(certificates.first()?)
             .expect("the certificate was validated during TLS handshake; qed");
 
         Some(p2p_cert.peer_id())
