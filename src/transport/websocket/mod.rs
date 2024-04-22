@@ -141,7 +141,7 @@ impl WebSocketTransport {
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Ip4(address) => address.to_string(),
-            Protocol::Ip6(address) => format!("[{}]", address.to_string()),
+            Protocol::Ip6(address) => format!("[{address}]"),
             Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) =>
                 address.to_string(),
 
