@@ -111,6 +111,12 @@ pub struct ConfigBuilder {
     max_parallel_dials: usize,
 }
 
+impl Default for ConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigBuilder {
     /// Create empty [`ConfigBuilder`].
     pub fn new() -> Self {
