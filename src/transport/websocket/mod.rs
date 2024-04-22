@@ -348,32 +348,32 @@ impl Transport for WebSocketTransport {
 
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
-        self.pending_connections.push(Box::pin(async move {
-            match tokio::time::timeout(connection_open_timeout, async move {
-                let (_, stream) = WebSocketTransport::dial_peer(
-                    address.clone(),
-                    dial_addresses,
-                    connection_open_timeout,
-                )
-                .await
-                .map_err(|error| WebSocketError::new(error, Some(connection_id)))?;
-
-                WebSocketConnection::open_connection(
-                    connection_id,
-                    keypair,
-                    stream,
-                    address,
-                    peer,
-                    ws_address,
-                    yamux_config,
-                    max_read_ahead_factor,
-                    max_write_buffer_size,
-                )
-                .await
-                .map_err(|error| WebSocketError::new(error, Some(connection_id)))
-            })
+        let future = async move {
+            let (_, stream) = WebSocketTransport::dial_peer(
+                address.clone(),
+                dial_addresses,
+                connection_open_timeout,
+            )
             .await
-            {
+            .map_err(|error| WebSocketError::new(error, Some(connection_id)))?;
+
+            WebSocketConnection::open_connection(
+                connection_id,
+                keypair,
+                stream,
+                address,
+                peer,
+                ws_address,
+                yamux_config,
+                max_read_ahead_factor,
+                max_write_buffer_size,
+            )
+            .await
+            .map_err(|error| WebSocketError::new(error, Some(connection_id)))
+        };
+
+        self.pending_connections.push(Box::pin(async move {
+            match tokio::time::timeout(connection_open_timeout, future).await {
                 Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection_id))),
                 Ok(Err(error)) => Err(error),
                 Ok(Ok(result)) => Ok(result),
