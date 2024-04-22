@@ -228,14 +228,13 @@ impl ProtocolSet {
 
         let fallback_names = protocols
             .iter()
-            .map(|(protocol, context)| {
+            .flat_map(|(protocol, context)| {
                 context
                     .fallback_names
                     .iter()
                     .map(|fallback| (fallback.clone(), protocol.clone()))
                     .collect::<HashMap<_, _>>()
             })
-            .flatten()
             .collect();
 
         ProtocolSet {

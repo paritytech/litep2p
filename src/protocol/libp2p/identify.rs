@@ -351,7 +351,7 @@ impl Identify {
                 .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
                 .collect();
             let observed_address =
-                info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten();
+                info.observed_addr.and_then(|address| Multiaddr::try_from(address).ok());
             let protocol_version = info.protocol_version;
             let user_agent = info.agent_version;
 
