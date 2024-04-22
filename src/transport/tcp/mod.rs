@@ -259,7 +259,7 @@ impl TransportBuilder for TcpTransport {
 
         // start tcp listeners for all listen addresses
         let (listener, listen_addresses, dial_addresses) = TcpListener::new(
-            std::mem::replace(&mut config.listen_addresses, Vec::new()),
+            std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
         );
 

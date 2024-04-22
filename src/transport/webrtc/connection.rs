@@ -258,7 +258,7 @@ impl WebRtcConnection {
             return Ok(());
         };
 
-        let fallback_names = std::mem::replace(&mut context.fallback_names, Vec::new());
+        let fallback_names = std::mem::take(&mut context.fallback_names);
         let (dialer_state, message) =
             DialerState::propose(context.protocol.clone(), fallback_names)?;
         let message = WebRtcMessage::encode(message);

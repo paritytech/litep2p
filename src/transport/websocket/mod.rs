@@ -313,7 +313,7 @@ impl TransportBuilder for WebSocketTransport {
             "start websocket transport",
         );
         let (listener, listen_addresses, dial_addresses) = WebSocketListener::new(
-            std::mem::replace(&mut config.listen_addresses, Vec::new()),
+            std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
         );
 

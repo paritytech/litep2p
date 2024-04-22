@@ -181,7 +181,7 @@ impl TransportBuilder for QuicTransport {
 
         let (listener, listen_addresses) = QuicListener::new(
             &context.keypair,
-            std::mem::replace(&mut config.listen_addresses, Vec::new()),
+            std::mem::take(&mut config.listen_addresses),
         )?;
 
         Ok((
