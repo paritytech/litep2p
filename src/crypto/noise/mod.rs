@@ -599,7 +599,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
                             return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                         }
                         Ok(nwritten) => {
-                            this.encrypt_buffer[offset + 0] = (nwritten >> 8) as u8;
+                            this.encrypt_buffer[offset] = (nwritten >> 8) as u8;
                             this.encrypt_buffer[offset + 1] = (nwritten & 0xff) as u8;
 
                             if let Some(next_chunk) = chunks.peek() {
