@@ -339,8 +339,8 @@ impl ProtocolSet {
         let connection_handle = self.connection.downgrade();
         let mut futures = self
             .protocols
-            .iter()
-            .map(|(_, sender)| {
+            .values()
+            .map(|sender| {
                 let endpoint = endpoint.clone();
                 let connection_handle = connection_handle.clone();
 
@@ -375,8 +375,8 @@ impl ProtocolSet {
     ) -> crate::Result<()> {
         let mut futures = self
             .protocols
-            .iter()
-            .map(|(_, sender)| async move {
+            .values()
+            .map(|sender| async move {
                 sender
                     .tx
                     .send(InnerTransportEvent::ConnectionClosed {

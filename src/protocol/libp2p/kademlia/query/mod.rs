@@ -384,11 +384,11 @@ impl QueryEngine {
             QueryType::FindNode { context } => QueryAction::FindNodeQuerySucceeded {
                 query,
                 target: context.target.into_preimage(),
-                peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
+                peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
                 record,
-                peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
+                peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::PutRecordToPeers { record, context } => QueryAction::PutRecordToFoundNodes {
                 record,
