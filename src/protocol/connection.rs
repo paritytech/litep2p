@@ -69,7 +69,7 @@ impl ConnectionHandle {
     /// This function is only called once when the connection is established to remote peer and that
     /// one time the connection type must be `Active`, unless there is a logic bug in `litep2p`.
     pub fn downgrade(&mut self) -> Self {
-        let connection = match &self.connection {
+        match &self.connection {
             ConnectionType::Active(connection) => {
                 let handle = Self::new(self.connection_id, connection.clone());
                 self.connection = ConnectionType::Inactive(connection.downgrade());
@@ -79,9 +79,7 @@ impl ConnectionHandle {
             ConnectionType::Inactive(_) => {
                 panic!("state mismatch: tried to downgrade an inactive connection")
             }
-        };
-
-        connection
+        }
     }
 
     /// Get reference to connection ID.

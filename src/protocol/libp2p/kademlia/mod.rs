@@ -276,7 +276,7 @@ impl Kademlia {
             .pending_actions
             .remove(&substream_id);
 
-        match std::mem::replace(pending_action, None) {
+        match pending_action.take() {
             None => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -336,11 +336,9 @@ impl Kademlia {
     ///
     /// Inform user about the potential routing table, allowing them to update it manually if
     /// the mode was set to manual.
-    async fn update_routing_table(&mut self, peers: &Vec<KademliaPeer>) {
-        let peers: Vec<_> = peers
-            .iter()
-            .filter_map(|peer| (peer.peer != self.service.local_peer_id).then_some(peer))
-            .collect();
+    async fn update_routing_table(&mut self, peers: &[KademliaPeer]) {
+        let peers: Vec<_> =
+            peers.iter().filter(|peer| peer.peer != self.service.local_peer_id).collect();
 
         // inform user about the routing table update, regardless of what the routing table update
         // mode is
@@ -449,7 +447,7 @@ impl Kademlia {
                             "handle `GET_VALUE` request",
                         );
 
-                        let value = self.store.get(key).map(|value| value.clone());
+                        let value = self.store.get(key).cloned();
                         let closest_peers = self
                             .routing_table
                             .closest(Key::from(key.to_vec()), self.replication_factor);

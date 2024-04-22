@@ -795,6 +795,11 @@ where
     pub fn len(&self) -> usize {
         self.substreams.len()
     }
+
+    /// Check if [`SubstreamSet`] is empty.
+    pub fn is_empty(&self) -> bool {
+        self.substreams.is_empty()
+    }
 }
 
 impl<K, S> Stream for SubstreamSet<K, S>

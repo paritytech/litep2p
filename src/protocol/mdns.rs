@@ -266,7 +266,7 @@ impl Mdns {
                         .attributes()
                         .iter()
                         .filter_map(|(_, address)| {
-                            address.as_ref().map_or(None, |inner| inner.parse().ok())
+                            address.as_ref().and_then(|inner| inner.parse().ok())
                         })
                         .collect(),
                     _ => vec![],

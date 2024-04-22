@@ -24,6 +24,9 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::result_unit_err)]
 #![allow(clippy::should_implement_trait)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::assign_op_pattern)]
+#![allow(clippy::match_like_matches_macro)]
 
 use crate::{
     config::Litep2pConfig,

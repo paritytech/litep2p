@@ -55,7 +55,7 @@ impl AddressRecord {
     ) -> Self {
         let address = if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
             address.with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).ok().expect("valid peer id"),
+                Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
             ))
         } else {
             address

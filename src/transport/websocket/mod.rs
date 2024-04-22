@@ -200,8 +200,8 @@ impl WebSocketTransport {
                     {
                         // TODO: ugly
                         Ok(lookup) => {
-                            let mut iter = lookup.iter();
-                            while let Some(ip) = iter.next() {
+                            let iter = lookup.iter();
+                            for ip in iter {
                                 match (
                                     address.iter().next().expect("protocol to exist"),
                                     ip.is_ipv4(),
