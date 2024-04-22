@@ -104,7 +104,18 @@ impl Record {
     }
 
     /// Checks whether the record is expired w.r.t. the given `Instant`.
-    pub fn _is_expired(&self, now: Instant) -> bool {
+    pub fn is_expired(&self, now: Instant) -> bool {
         self.expires.map_or(false, |t| now >= t)
     }
+}
+
+/// A record either received by the given peer or retrieved from the local
+/// record store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerRecord {
+    /// The peer from whom the record was received. `None` if the record was
+    /// retrieved from local storage.
+    pub peer: Option<PeerId>,
+
+    pub record: Record,
 }

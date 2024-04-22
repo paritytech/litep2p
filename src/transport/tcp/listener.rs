@@ -56,40 +56,62 @@ pub struct TcpListener {
     listeners: Vec<TokioTcpListener>,
 }
 
-#[derive(Clone, Default)]
-pub struct DialAddresses {
-    /// Listen addresses.
-    listen_addresses: Arc<Vec<SocketAddr>>,
+/// Local addresses to use for outbound connections.
+#[derive(Clone)]
+pub enum DialAddresses {
+    /// Reuse port from listen addresses.
+    Reuse {
+        listen_addresses: Arc<Vec<SocketAddr>>,
+    },
+    /// Do not reuse port.
+    NoReuse,
+}
+
+impl Default for DialAddresses {
+    fn default() -> Self {
+        DialAddresses::NoReuse
+    }
 }
 
 impl DialAddresses {
     /// Get local dial address for an outbound connection.
-    pub(super) fn local_dial_address(&self, remote_address: &IpAddr) -> Option<SocketAddr> {
-        for address in self.listen_addresses.iter() {
-            if remote_address.is_ipv4() == address.is_ipv4()
-                && remote_address.is_loopback() == address.ip().is_loopback()
-            {
-                if remote_address.is_ipv4() {
-                    return Some(SocketAddr::new(
-                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                        address.port(),
-                    ));
-                } else {
-                    return Some(SocketAddr::new(
-                        IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-                        address.port(),
-                    ));
+    pub(super) fn local_dial_address(
+        &self,
+        remote_address: &IpAddr,
+    ) -> Result<Option<SocketAddr>, ()> {
+        match self {
+            DialAddresses::Reuse { listen_addresses } => {
+                for address in listen_addresses.iter() {
+                    if remote_address.is_ipv4() == address.is_ipv4()
+                        && remote_address.is_loopback() == address.ip().is_loopback()
+                    {
+                        if remote_address.is_ipv4() {
+                            return Ok(Some(SocketAddr::new(
+                                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                                address.port(),
+                            )));
+                        } else {
+                            return Ok(Some(SocketAddr::new(
+                                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                                address.port(),
+                            )));
+                        }
+                    }
                 }
-            }
-        }
 
-        None
+                Err(())
+            }
+            DialAddresses::NoReuse => Ok(None),
+        }
     }
 }
 
 impl TcpListener {
     /// Create new [`TcpListener`]
-    pub fn new(addresses: Vec<Multiaddr>) -> (Self, Vec<Multiaddr>, DialAddresses) {
+    pub fn new(
+        addresses: Vec<Multiaddr>,
+        reuse_port: bool,
+    ) -> (Self, Vec<Multiaddr>, DialAddresses) {
         let (listeners, listen_addresses): (_, Vec<Vec<_>>) = addresses
             .into_iter()
             .filter_map(|address| {
@@ -117,7 +139,9 @@ impl TcpListener {
                 socket.set_nonblocking(true).ok()?;
                 socket.set_reuse_address(true).ok()?;
                 #[cfg(unix)]
-                socket.set_reuse_port(true).ok()?;
+                if reuse_port {
+                    socket.set_reuse_port(true).ok()?;
+                }
                 socket.bind(&address.into()).ok()?;
                 socket.listen(1024).ok()?;
 
@@ -176,14 +200,15 @@ impl TcpListener {
                     .with(Protocol::Tcp(address.port()))
             })
             .collect();
-
-        (
-            Self { listeners },
-            listen_multi_addresses,
-            DialAddresses {
+        let dial_addresses = if reuse_port {
+            DialAddresses::Reuse {
                 listen_addresses: Arc::new(listen_addresses),
-            },
-        )
+            }
+        } else {
+            DialAddresses::NoReuse
+        };
+
+        (Self { listeners }, listen_multi_addresses, dial_addresses)
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
@@ -319,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_listeners() {
-        let (mut listener, _, _) = TcpListener::new(Vec::new());
+        let (mut listener, _, _) = TcpListener::new(Vec::new(), true);
 
         futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -331,7 +356,7 @@ mod tests {
     #[tokio::test]
     async fn one_listener() {
         let address: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
-        let (mut listener, listen_addresses, _) = TcpListener::new(vec![address.clone()]);
+        let (mut listener, listen_addresses, _) = TcpListener::new(vec![address.clone()], true);
         let Some(Protocol::Tcp(port)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
@@ -348,7 +373,7 @@ mod tests {
     async fn two_listeners() {
         let address1: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
         let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
-        let (mut listener, listen_addresses, _) = TcpListener::new(vec![address1, address2]);
+        let (mut listener, listen_addresses, _) = TcpListener::new(vec![address1, address2], true);
         let Some(Protocol::Tcp(port1)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
@@ -373,7 +398,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_dial_address() {
-        let dial_addresses = DialAddresses {
+        let dial_addresses = DialAddresses::Reuse {
             listen_addresses: Arc::new(vec![
                 "[2001:7d0:84aa:3900:2a5d:9e85::]:8888".parse().unwrap(),
                 "92.168.127.1:9999".parse().unwrap(),
@@ -382,12 +407,18 @@ mod tests {
 
         assert_eq!(
             dial_addresses.local_dial_address(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))),
-            Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 9999))
+            Ok(Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                9999
+            ))),
         );
 
         assert_eq!(
             dial_addresses.local_dial_address(&IpAddr::V6(Ipv6Addr::new(0, 1, 2, 3, 4, 5, 6, 7))),
-            Some(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888))
+            Ok(Some(SocketAddr::new(
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                8888
+            ))),
         );
     }
 
@@ -395,7 +426,7 @@ mod tests {
     async fn show_all_addresses() {
         let address1: Multiaddr = "/ip6/::/tcp/0".parse().unwrap();
         let address2: Multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
-        let (_, listen_addresses, _) = TcpListener::new(vec![address1, address2]);
+        let (_, listen_addresses, _) = TcpListener::new(vec![address1, address2], true);
 
         println!("{listen_addresses:#?}");
     }

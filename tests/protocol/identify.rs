@@ -26,9 +26,10 @@ use litep2p::{
         identify::{Config, IdentifyEvent},
         ping::Config as PingConfig,
     },
-    transport::quic::config::Config as QuicConfig,
-    transport::tcp::config::Config as TcpConfig,
-    transport::websocket::config::Config as WebSocketConfig,
+    transport::{
+        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
+        websocket::config::Config as WebSocketConfig,
+    },
     Litep2p, Litep2pEvent,
 };
 
@@ -70,7 +71,11 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (identify_config1, mut identify_event_stream1) = Config::new(Vec::new());
+    let (identify_config1, mut identify_event_stream1) = Config::new(
+        "/proto/1".to_string(),
+        Some("agent v1".to_string()),
+        Vec::new(),
+    );
     let config_builder = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config1);
@@ -82,7 +87,11 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
     }
     .build();
 
-    let (identify_config2, mut identify_event_stream2) = Config::new(Vec::new());
+    let (identify_config2, mut identify_event_stream2) = Config::new(
+        "/proto/2".to_string(),
+        Some("agent v2".to_string()),
+        Vec::new(),
+    );
     let config_builder = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config2);
@@ -113,8 +122,11 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
             _event = litep2p1.next_event() => {}
             _event = litep2p2.next_event() => {}
             event = identify_event_stream1.next() => {
-                let IdentifyEvent::PeerIdentified { observed_address, .. } = event.unwrap();
+                let IdentifyEvent::PeerIdentified { observed_address, protocol_version, user_agent, .. } = event.unwrap();
                 tracing::info!("peer2 observed: {observed_address:?}");
+
+                assert_eq!(protocol_version, Some("/proto/2".to_string()));
+                assert_eq!(user_agent, Some("agent v2".to_string()));
 
                 litep2p1_done = true;
 
@@ -123,8 +135,11 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
                 }
             }
             event = identify_event_stream2.next() => {
-                let IdentifyEvent::PeerIdentified { observed_address, .. } = event.unwrap();
+                let IdentifyEvent::PeerIdentified { observed_address, protocol_version, user_agent, .. } = event.unwrap();
                 tracing::info!("peer1 observed: {observed_address:?}");
+
+                assert_eq!(protocol_version, Some("/proto/1".to_string()));
+                assert_eq!(user_agent, Some("agent v1".to_string()));
 
                 litep2p2_done = true;
 
@@ -198,7 +213,8 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
     .with_libp2p_ping(ping_config)
     .build();
 
-    let (identify_config2, mut identify_event_stream2) = Config::new(Vec::new());
+    let (identify_config2, mut identify_event_stream2) =
+        Config::new("litep2p".to_string(), None, Vec::new());
     let config_builder = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config2);

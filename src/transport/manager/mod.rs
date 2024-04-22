@@ -84,7 +84,7 @@ enum ConnectionEstablishedResult {
     Reject,
 }
 
-/// [`TransportManager`] events.
+/// [`crate::transport::manager::TransportManager`] events.
 pub enum TransportManagerEvent {
     /// Connection closed to remote peer.
     ConnectionClosed {
@@ -228,7 +228,7 @@ pub struct TransportManager {
     /// Peers
     peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
 
-    /// Handle to [`TransportManager`].
+    /// Handle to [`crate::transport::manager::TransportManager`].
     transport_manager_handle: TransportManagerHandle,
 
     /// RX channel for receiving events from installed transports.
@@ -245,7 +245,7 @@ pub struct TransportManager {
 }
 
 impl TransportManager {
-    /// Create new [`TransportManager`].
+    /// Create new [`crate::transport::manager::TransportManager`].
     // TODO: don't return handle here
     pub fn new(
         keypair: Keypair,
@@ -306,7 +306,7 @@ impl TransportManager {
         ConnectionId::from(connection_id)
     }
 
-    /// Register protocol to the [`TransportManager`].
+    /// Register protocol to the [`crate::transport::manager::TransportManager`].
     ///
     /// This allocates new context for the protocol and returns a handle
     /// which the protocol can use the interact with the transport subsystem.
@@ -1338,7 +1338,7 @@ impl TransportManager {
         }
     }
 
-    /// Poll next event from [`TransportManager`].
+    /// Poll next event from [`crate::transport::manager::TransportManager`].
     pub async fn next(&mut self) -> Option<TransportEvent> {
         loop {
             tokio::select! {
@@ -1576,7 +1576,7 @@ impl TransportManager {
                                 Ok(None) => {}
                             }
                         }
-                        _ => panic!("event not supported"),
+                        event => panic!("event not supported: {event:?}"),
                     }
                 },
             }

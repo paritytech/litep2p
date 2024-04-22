@@ -25,8 +25,14 @@
 //! `Stream` and `Sink` implementations of `MessageIO` and
 //! `MessageReader`.
 
-use crate::multistream_select::length_delimited::{LengthDelimited, LengthDelimitedReader};
-use crate::multistream_select::Version;
+use crate::{
+    codec::unsigned_varint::UnsignedVarint,
+    error::Error as Litep2pError,
+    multistream_select::{
+        length_delimited::{LengthDelimited, LengthDelimitedReader},
+        Version,
+    },
+};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{io::IoSlice, prelude::*, ready};
@@ -219,6 +225,28 @@ impl Message {
 
         Ok(Message::Protocols(protocols))
     }
+}
+
+/// Create `multistream-select` message from an iterator of `Message`s.
+pub fn encode_multistream_message(
+    messages: impl IntoIterator<Item = Message>,
+) -> crate::Result<BytesMut> {
+    // encode `/multistream-select/1.0.0` header
+    let mut bytes = BytesMut::with_capacity(32);
+    let message = Message::Header(HeaderLine::V1);
+    let _ = message.encode(&mut bytes).map_err(|_| Litep2pError::InvalidData)?;
+    let mut header = UnsignedVarint::encode(bytes)?;
+
+    // encode each message
+    for message in messages {
+        let mut proto_bytes = BytesMut::with_capacity(256);
+        let _ = message.encode(&mut proto_bytes).map_err(|_| Litep2pError::InvalidData)?;
+        let proto_bytes = UnsignedVarint::encode(proto_bytes)?;
+
+        header.append(&mut proto_bytes.into());
+    }
+
+    Ok(BytesMut::from(&header[..]))
 }
 
 /// A `MessageIO` implements a [`Stream`] and [`Sink`] of [`Message`]s.

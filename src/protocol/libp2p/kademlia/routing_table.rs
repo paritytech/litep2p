@@ -176,7 +176,7 @@ impl RoutingTable {
         }
     }
 
-    /// Get `limit` closests peers to `target` from the k-buckets.
+    /// Get `limit` closest peers to `target` from the k-buckets.
     pub fn closest<K: Clone>(&mut self, target: Key<K>, limit: usize) -> Vec<KademliaPeer> {
         ClosestBucketsIter::new(self.local_key.distance(&target))
             .map(|index| self.buckets[index.get()].closest_iter(&target))
@@ -189,8 +189,9 @@ impl RoutingTable {
 /// An iterator over the bucket indices, in the order determined by the `Distance` of a target from
 /// the `local_key`, such that the entries in the buckets are incrementally further away from the
 /// target, starting with the bucket covering the target.
-/// The original implementation is taken from `rust-libp2p`, see [1] for the explanation of the
-/// algorithm used.
+/// The original implementation is taken from `rust-libp2p`, see [issue#1117][1] for the explanation
+/// of the algorithm used.
+///
 ///  [1]: https://github.com/libp2p/rust-libp2p/pull/1117#issuecomment-494694635
 struct ClosestBucketsIter {
     /// The distance to the `local_key`.

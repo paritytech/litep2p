@@ -31,12 +31,14 @@ mod frame;
 pub(crate) mod connection;
 mod tagged_stream;
 
-pub use crate::yamux::connection::{Connection, Mode, Packet, Stream};
-pub use crate::yamux::control::{Control, ControlledConnection};
-pub use crate::yamux::error::ConnectionError;
-pub use crate::yamux::frame::{
-    header::{HeaderDecodeError, StreamId},
-    FrameDecodeError,
+pub use crate::yamux::{
+    connection::{Connection, Mode, Packet, Stream},
+    control::{Control, ControlledConnection},
+    error::ConnectionError,
+    frame::{
+        header::{HeaderDecodeError, StreamId},
+        FrameDecodeError,
+    },
 };
 
 pub const DEFAULT_CREDIT: u32 = 256 * 1024; // as per yamux specification
@@ -60,7 +62,7 @@ const MAX_ACK_BACKLOG: usize = 256;
 ///    instead of concurrently with its respective counterpart.
 ///
 /// For details on why this concrete value was chosen, see
-/// https://github.com/paritytech/yamux/issues/100.
+/// <https://github.com/paritytech/yamux/issues/100>.
 const DEFAULT_SPLIT_SEND_SIZE: usize = 16 * 1024;
 
 /// Specifies when window update frames are sent.

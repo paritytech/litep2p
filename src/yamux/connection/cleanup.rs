@@ -1,12 +1,12 @@
-use crate::yamux::connection::StreamCommand;
-use crate::yamux::tagged_stream::TaggedStream;
-use crate::yamux::{ConnectionError, StreamId};
-use futures::channel::mpsc;
-use futures::stream::SelectAll;
-use futures::StreamExt;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use crate::yamux::{
+    connection::StreamCommand, tagged_stream::TaggedStream, ConnectionError, StreamId,
+};
+use futures::{channel::mpsc, stream::SelectAll, StreamExt};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// A [`Future`] that cleans up resources in case of an error.
 #[must_use]

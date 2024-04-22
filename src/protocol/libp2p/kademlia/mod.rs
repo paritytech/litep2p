@@ -47,12 +47,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap};
 
-pub use {
-    config::{Config, ConfigBuilder},
-    handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode},
-    query::QueryId,
-    record::{Key as RecordKey, Record},
-};
+pub use config::{Config, ConfigBuilder};
+pub use handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode};
+pub use query::QueryId;
+pub use record::{Key as RecordKey, PeerRecord, Record};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
@@ -641,7 +639,7 @@ impl Kademlia {
                 Ok(())
             }
             QueryAction::GetRecordQueryDone { query_id, record } => {
-                self.store.put(record.clone());
+                self.store.put(record.record.clone());
 
                 let _ =
                     self.event_tx.send(KademliaEvent::GetRecordSuccess { query_id, record }).await;
@@ -743,13 +741,32 @@ impl Kademlia {
                         Some(KademliaCommand::PutRecord { record, query_id }) => {
                             tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT");
 
-                            self.store.put(record.clone());
                             let key = Key::new(record.key.clone());
+
+                            self.store.put(record.clone());
 
                             self.engine.start_put_record(
                                 query_id,
                                 record,
                                 self.routing_table.closest(key, self.replication_factor).into(),
+                            );
+                        }
+                        Some(KademliaCommand::PutRecordToPeers { record, query_id, peers }) => {
+                            tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT to specified peers");
+
+                            // Put the record to the specified peers.
+                            let peers = peers.into_iter().filter_map(|peer| {
+                                match self.routing_table.entry(Key::from(peer)) {
+                                    KBucketEntry::Occupied(entry) => Some(entry.clone()),
+                                    KBucketEntry::Vacant(entry) if !entry.addresses.is_empty() => Some(entry.clone()),
+                                    _ => None,
+                                }
+                            }).collect();
+
+                            self.engine.start_put_record_to_peers(
+                                query_id,
+                                record,
+                                peers,
                             );
                         }
                         Some(KademliaCommand::GetRecord { key, quorum, query_id }) => {
@@ -759,7 +776,7 @@ impl Kademlia {
                                 (Some(record), Quorum::One) => {
                                     let _ = self
                                         .event_tx
-                                        .send(KademliaEvent::GetRecordSuccess { query_id, record: record.clone() })
+                                        .send(KademliaEvent::GetRecordSuccess { query_id, record: PeerRecord { record: record.clone(), peer: None } })
                                         .await;
                                 }
                                 (record, _) => {

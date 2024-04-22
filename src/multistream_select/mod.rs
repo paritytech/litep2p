@@ -43,13 +43,12 @@
 //! echoing the same protocol) or reject (by responding with a message stating
 //! "not available"). If a suggested protocol is not available, the dialer may
 //! suggest another protocol. This process continues until a protocol is agreed upon,
-//! yielding a [`Negotiated`](self::Negotiated) stream, or the dialer has run out of
+//! yielding a [`Negotiated`] stream, or the dialer has run out of
 //! alternatives.
 //!
-//! See [`dialer_select_proto`](self::dialer_select_proto) and
-//! [`listener_select_proto`](self::listener_select_proto).
+//! See [`dialer_select_proto`] and [`listener_select_proto`].
 //!
-//! ## [`Negotiated`](self::Negotiated)
+//! ## [`Negotiated`]
 //!
 //! A `Negotiated` represents an I/O stream that has settled on a protocol
 //! to use. By default, with [`Version::V1`], protocol negotiation is always
@@ -58,7 +57,7 @@
 //! a variant [`Version::V1Lazy`] that permits 0-RTT negotiation if the
 //! dialer only supports a single protocol. In that case, when a dialer
 //! settles on a protocol to use, the [`DialerSelectFuture`] yields a
-//! [`Negotiated`](self::Negotiated) I/O stream before the negotiation
+//! [`Negotiated`] I/O stream before the negotiation
 //! data has been flushed. It is then expecting confirmation for that protocol
 //! as the first messages read from the stream. This behaviour allows the dialer
 //! to immediately send data relating to the negotiated protocol together with the
@@ -66,8 +65,7 @@
 //! multiple 0-RTT negotiations in sequence for different protocols layered on
 //! top of each other may trigger undesirable behaviour for a listener not
 //! supporting one of the intermediate protocols. See
-//! [`dialer_select_proto`](self::dialer_select_proto) and the documentation
-//! of [`Version::V1Lazy`] for further details.
+//! [`dialer_select_proto`] and the documentation of [`Version::V1Lazy`] for further details.
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
@@ -77,14 +75,14 @@ mod listener_select;
 mod negotiated;
 mod protocol;
 
-pub use crate::multistream_select::dialer_select::{
-    dialer_select_proto, DialerSelectFuture, DialerState, HandshakeResult,
+pub use crate::multistream_select::{
+    dialer_select::{dialer_select_proto, DialerSelectFuture, DialerState, HandshakeResult},
+    listener_select::{
+        listener_negotiate, listener_select_proto, ListenerSelectFuture, ListenerSelectResult,
+    },
+    negotiated::{Negotiated, NegotiatedComplete, NegotiationError},
+    protocol::{HeaderLine, Message, Protocol, ProtocolError},
 };
-pub use crate::multistream_select::listener_select::{
-    listener_negotiate, listener_select_proto, ListenerSelectFuture,
-};
-pub use crate::multistream_select::negotiated::{Negotiated, NegotiatedComplete, NegotiationError};
-pub use crate::multistream_select::protocol::{HeaderLine, Message, Protocol, ProtocolError};
 
 /// Supported multistream-select versions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

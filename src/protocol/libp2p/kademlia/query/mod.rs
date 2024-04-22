@@ -22,7 +22,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{find_node::FindNodeContext, get_record::GetRecordContext},
-        record::{Key as RecordKey, Record},
+        record::{Key as RecordKey, PeerRecord, Record},
         types::{KademliaPeer, Key},
         Quorum,
     },
@@ -33,6 +33,9 @@ use bytes::Bytes;
 
 use std::collections::{HashMap, VecDeque};
 
+use self::find_many_nodes::FindManyNodesContext;
+
+mod find_many_nodes;
 mod find_node;
 mod get_record;
 
@@ -61,6 +64,15 @@ enum QueryType {
 
         /// Context for the `FIND_NODE` query
         context: FindNodeContext<RecordKey>,
+    },
+
+    /// `PUT_VALUE` query to specified peers.
+    PutRecordToPeers {
+        /// Record that needs to be stored.
+        record: Record,
+
+        /// Context for finding peers.
+        context: FindManyNodesContext,
     },
 
     /// `GET_VALUE` query.
@@ -97,7 +109,7 @@ pub enum QueryAction {
         peers: Vec<KademliaPeer>,
     },
 
-    /// Store the record to nodest closest to target key.
+    /// Store the record to nodes closest to target key.
     // TODO: horrible name
     PutRecordToFoundNodes {
         /// Target peer.
@@ -113,7 +125,7 @@ pub enum QueryAction {
         query_id: QueryId,
 
         /// Found record.
-        record: Record,
+        record: PeerRecord,
     },
 
     // TODO: remove
@@ -227,6 +239,32 @@ impl QueryEngine {
         query_id
     }
 
+    /// Start `PUT_VALUE` query to specified peers.
+    pub fn start_put_record_to_peers(
+        &mut self,
+        query_id: QueryId,
+        record: Record,
+        peers_to_report: Vec<KademliaPeer>,
+    ) -> QueryId {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            target = ?record.key,
+            num_peers = ?peers_to_report.len(),
+            "start `PUT_VALUE` query to peers"
+        );
+
+        self.queries.insert(
+            query_id,
+            QueryType::PutRecordToPeers {
+                record,
+                context: FindManyNodesContext::new(query_id, peers_to_report),
+            },
+        );
+
+        query_id
+    }
+
     /// Start `GET_VALUE` query.
     pub fn start_get_record(
         &mut self,
@@ -280,6 +318,9 @@ impl QueryEngine {
             Some(QueryType::PutRecord { context, .. }) => {
                 context.register_response_failure(peer);
             }
+            Some(QueryType::PutRecordToPeers { context, .. }) => {
+                context.register_response_failure(peer);
+            }
             Some(QueryType::GetRecord { context }) => {
                 context.register_response_failure(peer);
             }
@@ -307,6 +348,12 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
+            Some(QueryType::PutRecordToPeers { context, .. }) => match message {
+                KademliaMessage::FindNode { peers, .. } => {
+                    context.register_response(peer, peers);
+                }
+                _ => unreachable!(),
+            },
             Some(QueryType::GetRecord { context }) => match message {
                 KademliaMessage::GetRecord { record, peers, .. } => {
                     context.register_response(peer, record, peers);
@@ -323,11 +370,12 @@ impl QueryEngine {
         match self.queries.get_mut(query) {
             None => {
                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                return None;
+                None
             }
-            Some(QueryType::FindNode { context }) => return context.next_peer_action(peer),
-            Some(QueryType::PutRecord { context, .. }) => return context.next_peer_action(peer),
-            Some(QueryType::GetRecord { context }) => return context.next_peer_action(peer),
+            Some(QueryType::FindNode { context }) => context.next_peer_action(peer),
+            Some(QueryType::PutRecord { context, .. }) => context.next_peer_action(peer),
+            Some(QueryType::PutRecordToPeers { context, .. }) => context.next_peer_action(peer),
+            Some(QueryType::GetRecord { context }) => context.next_peer_action(peer),
         }
     }
 
@@ -343,6 +391,10 @@ impl QueryEngine {
             QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
                 record,
                 peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
+            },
+            QueryType::PutRecordToPeers { record, context } => QueryAction::PutRecordToFoundNodes {
+                record,
+                peers: context.peers_to_report,
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.query,
@@ -365,6 +417,7 @@ impl QueryEngine {
             let action = match state {
                 QueryType::FindNode { context } => context.next_action(),
                 QueryType::PutRecord { context, .. } => context.next_action(),
+                QueryType::PutRecordToPeers { context, .. } => context.next_action(),
                 QueryType::GetRecord { context } => context.next_action(),
             };
 
@@ -571,7 +624,7 @@ mod tests {
         let mut engine = QueryEngine::new(PeerId::random(), 20usize, 3usize);
         let record_key = RecordKey::new(&vec![1, 2, 3, 4]);
         let target_key = Key::new(record_key.clone());
-        let original_record = Record::new(record_key, vec![1, 3, 3, 7, 1, 3, 3, 8]);
+        let original_record = Record::new(record_key.clone(), vec![1, 3, 3, 7, 1, 3, 3, 8]);
 
         let distances = {
             let mut distances = std::collections::BTreeMap::new();
@@ -651,15 +704,58 @@ mod tests {
             }
         }
 
-        match engine.next_action() {
+        let peers = match engine.next_action() {
             Some(QueryAction::PutRecordToFoundNodes { peers, record }) => {
                 assert_eq!(peers.len(), 4);
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);
+                peers
+            }
+            _ => panic!("invalid event received"),
+        };
+
+        assert!(engine.next_action().is_none());
+
+        // get records from those peers.
+        let _query = engine.start_get_record(
+            QueryId(1341),
+            record_key.clone(),
+            vec![
+                KademliaPeer::new(peers[0].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[1].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[2].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[3].peer, vec![], ConnectionType::NotConnected),
+            ]
+            .into(),
+            Quorum::All,
+            3,
+        );
+
+        for _ in 0..4 {
+            match engine.next_action() {
+                Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    engine.register_response(
+                        query,
+                        peer,
+                        KademliaMessage::GetRecord {
+                            record: Some(original_record.clone()),
+                            peers: vec![],
+                            key: Some(record_key.clone()),
+                        },
+                    );
+                }
+                _ => panic!("invalid event received"),
+            }
+        }
+
+        let peers: std::collections::HashSet<_> = peers.into_iter().map(|p| p.peer).collect();
+        match engine.next_action() {
+            Some(QueryAction::GetRecordQueryDone { record, .. }) => {
+                assert!(peers.contains(&record.peer.expect("Peer Id must be provided")));
+                assert_eq!(record.record.key, original_record.key);
+                assert_eq!(record.record.value, original_record.value);
             }
             _ => panic!("invalid event received"),
         }
-
-        assert!(engine.next_action().is_none());
     }
 }

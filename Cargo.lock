@@ -2881,7 +2881,7 @@ checksum = "57bcfdad1b858c2db7c38303a6d2ad4dfaf5eb53dfeb0910128b2c26d6158503"
 
 [[package]]
 name = "litep2p"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "asynchronous-codec",
@@ -2890,7 +2890,6 @@ dependencies = [
  "cid",
  "ed25519-dalek",
  "futures",
- "futures-rustls",
  "futures-timer",
  "futures_ringbuf",
  "hex-literal",
@@ -2909,6 +2908,7 @@ dependencies = [
  "quickcheck",
  "quinn",
  "rand 0.8.5",
+ "rand_xorshift",
  "rcgen 0.10.0",
  "ring 0.16.20",
  "rustls 0.20.8",
@@ -4191,6 +4191,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca3129af7b92a17112d59ad498c6f81eaf463253766b90396d39ea7a39d6613c"
 dependencies = [
  "rand_core 0.5.1",
+]
+
+[[package]]
+name = "rand_xorshift"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d25bf25ec5ae4a3f1b92f929810509a2f53d7dca2f50b794ff57e3face536c8f"
+dependencies = [
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -5806,9 +5815,9 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "str0m"
-version = "0.2.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee48572247f422dcbe68630c973f8296fbd5157119cd36a3223e48bf83d47727"
+checksum = "d3f10d3f68e60168d81110410428a435dbde28cc5525f5f7c6fdec92dbdc2800"
 dependencies = [
  "combine",
  "crc",

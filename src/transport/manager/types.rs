@@ -84,8 +84,9 @@ pub enum PeerState {
         ///
         /// While the local node was dialing a remote peer, the remote peer might've dialed
         /// the local node and connection was established successfully. The connection might've
-        /// been closed before the dial concluded which means that [`TransportManager`] must be
-        /// prepared to handle the dial failure even after the connection has been closed.
+        /// been closed before the dial concluded which means that
+        /// [`crate::transport::manager::TransportManager`] must be prepared to handle the dial
+        /// failure even after the connection has been closed.
         dial_record: Option<AddressRecord>,
     },
 }
