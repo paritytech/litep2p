@@ -73,6 +73,7 @@ pub const MAX_FRAME_LEN: usize = MAX_NOISE_MSG_LEN - NOISE_EXTRA_ENCRYPT_SPACE;
 const LOG_TARGET: &str = "litep2p::crypto::noise";
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum NoiseState {
     Handshake(HandshakeState),
     Transport(TransportState),

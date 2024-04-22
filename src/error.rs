@@ -37,6 +37,7 @@ use multihash::{Multihash, MultihashGeneric};
 
 use std::io::{self, ErrorKind};
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Peer `{0}` does not exist")]

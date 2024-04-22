@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 #![allow(clippy::single_match)]
+#![allow(clippy::result_large_err)]
 
 use crate::{
     config::Litep2pConfig,
