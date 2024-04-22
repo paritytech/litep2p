@@ -22,6 +22,7 @@
 #![allow(clippy::result_large_err)]
 #![allow(clippy::redundant_pattern_matching)]
 #![allow(clippy::type_complexity)]
+#![allow(clippy::result_unit_err)]
 
 use crate::{
     config::Litep2pConfig,
