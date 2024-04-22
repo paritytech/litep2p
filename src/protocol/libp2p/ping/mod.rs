@@ -126,7 +126,7 @@ impl Ping {
         self.pending_outbound.push(Box::pin(async move {
             let future = async move {
                 // TODO: generate random payload and verify it
-                let _ = substream.send_framed(vec![0u8; 32].into()).await?;
+                substream.send_framed(vec![0u8; 32].into()).await?;
                 let now = Instant::now();
                 let _ = substream.next().await.ok_or(Error::SubstreamError(
                     SubstreamError::ReadFailure(Some(substream_id)),

@@ -1174,8 +1174,7 @@ impl TransportManager {
 
                 // cancel open attempts for other transports as connection already exists
                 for transport in transports.iter() {
-                    let _ = self
-                        .transports
+                    self.transports
                         .get_mut(transport)
                         .expect("transport to exist")
                         .cancel(connection_id);

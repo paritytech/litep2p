@@ -118,7 +118,7 @@ impl SubstreamHandle {
     pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
         if let Some(flags) = message.flags {
             if flags == Flag::Fin as i32 {
-                let _ = self.tx.send(Event::RecvClosed).await?;
+                self.tx.send(Event::RecvClosed).await?;
             }
 
             if flags & 1 == Flag::StopSending as i32 {
