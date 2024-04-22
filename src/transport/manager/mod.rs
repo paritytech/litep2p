@@ -460,7 +460,7 @@ impl TransportManager {
             return Err(Error::NoAddressAvailable(peer));
         }
 
-        for (_, record) in &records {
+        for record in records.values() {
             if self.listen_addresses.read().contains(record.as_ref()) {
                 tracing::warn!(
                     target: LOG_TARGET,
