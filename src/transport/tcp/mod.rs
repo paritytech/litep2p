@@ -221,7 +221,7 @@ impl TcpTransport {
                 Ok(()) => {}
                 Err(err) if err.raw_os_error() == Some(libc::EINPROGRESS) => {}
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(err) => return Err(err.into()),
+                Err(err) => return Err(err),
             }
 
             let stream = TcpStream::try_from(Into::<std::net::TcpStream>::into(socket))?;

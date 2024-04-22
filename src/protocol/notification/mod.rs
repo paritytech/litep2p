@@ -1400,13 +1400,7 @@ impl NotificationProtocol {
                             }));
 
                             self.event_handle
-                                .report_inbound_substream(
-                                    protocol,
-                                    fallback,
-                                    peer,
-                                    handshake.into(),
-                                    tx,
-                                )
+                                .report_inbound_substream(protocol, fallback, peer, handshake, tx)
                                 .await;
                         }
                         PeerState::Validating {
@@ -1529,12 +1523,7 @@ impl NotificationProtocol {
                 context.state = PeerState::Open { shutdown };
                 self.event_handle
                     .report_notification_stream_opened(
-                        protocol,
-                        fallback,
-                        direction,
-                        peer,
-                        handshake.into(),
-                        sink,
+                        protocol, fallback, direction, peer, handshake, sink,
                     )
                     .await;
 

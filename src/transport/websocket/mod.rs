@@ -289,7 +289,7 @@ impl WebSocketTransport {
 
         match tokio::time::timeout(connection_open_timeout, future).await {
             Err(_) => Err(Error::Timeout),
-            Ok(Err(error)) => Err(error.into()),
+            Ok(Err(error)) => Err(error),
             Ok(Ok((address, stream))) => Ok((address, stream)),
         }
     }

@@ -145,7 +145,7 @@ impl FromIterator<Multiaddr> for AddressStore {
         let mut store = AddressStore::new();
         for address in iter {
             if let Some(address) = AddressRecord::from_multiaddr(address) {
-                store.insert(address.into());
+                store.insert(address);
             }
         }
 

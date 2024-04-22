@@ -209,11 +209,7 @@ impl Identify {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            listen_addresses: config
-                .public_addresses
-                .into_iter()
-                .chain(listen_addresses.into_iter())
-                .collect(),
+            listen_addresses: config.public_addresses.into_iter().chain(listen_addresses).collect(),
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),

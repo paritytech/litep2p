@@ -201,7 +201,7 @@ impl TransportManagerHandle {
                     *peer,
                     PeerContext {
                         state: PeerState::Disconnected { dial_record: None },
-                        addresses: AddressStore::from_iter(addresses.into_iter()),
+                        addresses: AddressStore::from_iter(addresses),
                         secondary_connection: None,
                     },
                 );

@@ -175,7 +175,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncRead for BufferedStream<S>
 
             // TODO: this can't be correct
             if !buffer.is_empty() || bytes_read != 0 {
-                return Poll::Ready(Ok(bytes_read.into()));
+                return Poll::Ready(Ok(bytes_read));
             } else {
                 self.read_buffer.take();
             }
