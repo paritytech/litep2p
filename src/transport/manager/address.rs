@@ -25,6 +25,7 @@ use multihash::Multihash;
 
 use std::collections::{BinaryHeap, HashSet};
 
+#[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
 pub struct AddressRecord {
     /// Address score.
