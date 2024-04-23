@@ -22,8 +22,14 @@
 
 use rand::Rng;
 
-pub mod multiaddr;
-pub mod multihash;
+// Re-export the types used in public interfaces.
+pub mod multiaddr {
+    pub use multiaddr::{Error, Iter, Multiaddr, Onion3Addr, Protocol};
+}
+pub mod multihash {
+    pub use multihash::{Code, Error, Multihash, MultihashDigest};
+}
+
 pub mod protocol;
 
 /// Substream ID.
