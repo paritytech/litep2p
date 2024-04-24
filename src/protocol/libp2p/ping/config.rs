@@ -82,6 +82,12 @@ pub struct ConfigBuilder {
     max_failures: usize,
 }
 
+impl Default for ConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigBuilder {
     /// Create new default [`Config`] which can be modified by the user.
     pub fn new() -> Self {

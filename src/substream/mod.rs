@@ -700,7 +700,7 @@ impl Sink<Bytes> for Substream {
             ProtocolCodec::Unspecified => panic!("codec is unspecified"),
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -794,6 +794,11 @@ where
     /// Get size of [`SubstreamSet`].
     pub fn len(&self) -> usize {
         self.substreams.len()
+    }
+
+    /// Check if [`SubstreamSet`] is empty.
+    pub fn is_empty(&self) -> bool {
+        self.substreams.is_empty()
     }
 }
 

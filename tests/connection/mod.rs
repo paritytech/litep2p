@@ -272,7 +272,7 @@ async fn connect_over_dns() {
     let peer2 = *litep2p2.local_peer_id();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
-    let tcp = address.iter().skip(1).next().unwrap();
+    let tcp = address.iter().nth(1).unwrap();
 
     let mut new_address = Multiaddr::empty();
     new_address.push(Protocol::Dns("localhost".into()));
@@ -839,7 +839,7 @@ async fn tcp_dns_resolution() {
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
-    let tcp = address.iter().skip(1).next().unwrap();
+    let tcp = address.iter().nth(1).unwrap();
     let peer2 = *litep2p2.local_peer_id();
 
     let mut new_address = Multiaddr::empty();
@@ -900,7 +900,7 @@ async fn websocket_dns_resolution() {
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address = litep2p2.listen_addresses().next().unwrap().clone();
-    let tcp = address.iter().skip(1).next().unwrap();
+    let tcp = address.iter().nth(1).unwrap();
     let peer2 = *litep2p2.local_peer_id();
 
     let mut new_address = Multiaddr::empty();

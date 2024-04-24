@@ -258,7 +258,7 @@ impl WebRtcConnection {
             return Ok(());
         };
 
-        let fallback_names = std::mem::replace(&mut context.fallback_names, Vec::new());
+        let fallback_names = std::mem::take(&mut context.fallback_names);
         let (dialer_state, message) =
             DialerState::propose(context.protocol.clone(), fallback_names)?;
         let message = WebRtcMessage::encode(message);
@@ -267,7 +267,7 @@ impl WebRtcConnection {
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, message.as_ref())
-            .map_err(|error| Error::WebRtc(error))?;
+            .map_err(Error::WebRtc)?;
 
         self.channels.insert(
             channel_id,
@@ -327,7 +327,7 @@ impl WebRtcConnection {
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, WebRtcMessage::encode(response.to_vec()).as_ref())
-            .map_err(|error| Error::WebRtc(error))?;
+            .map_err(Error::WebRtc)?;
 
         let protocol = negotiated.ok_or(Error::SubstreamDoesntExist)?;
         let substream_id = self.protocol_set.next_substream_id();
@@ -600,7 +600,7 @@ impl WebRtcConnection {
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, WebRtcMessage::encode(data).as_ref())
-            .map_err(|error| Error::WebRtc(error))
+            .map_err(Error::WebRtc)
             .map(|_| ())
     }
 

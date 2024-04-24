@@ -228,14 +228,13 @@ impl ProtocolSet {
 
         let fallback_names = protocols
             .iter()
-            .map(|(protocol, context)| {
+            .flat_map(|(protocol, context)| {
                 context
                     .fallback_names
                     .iter()
                     .map(|fallback| (fallback.clone(), protocol.clone()))
                     .collect::<HashMap<_, _>>()
             })
-            .flatten()
             .collect();
 
         ProtocolSet {
@@ -302,7 +301,7 @@ impl ProtocolSet {
         // NOTE: `protocol` must exist in `self.protocol` as it was negotiated
         // using the protocols from this set
         self.protocols
-            .get(self.fallback_names.get(&protocol).map_or(protocol, |protocol| protocol))
+            .get(self.fallback_names.get(protocol).map_or(protocol, |protocol| protocol))
             .expect("protocol to exist")
             .codec
     }
@@ -340,8 +339,8 @@ impl ProtocolSet {
         let connection_handle = self.connection.downgrade();
         let mut futures = self
             .protocols
-            .iter()
-            .map(|(_, sender)| {
+            .values()
+            .map(|sender| {
                 let endpoint = endpoint.clone();
                 let connection_handle = connection_handle.clone();
 
@@ -376,8 +375,8 @@ impl ProtocolSet {
     ) -> crate::Result<()> {
         let mut futures = self
             .protocols
-            .iter()
-            .map(|(_, sender)| async move {
+            .values()
+            .map(|sender| async move {
                 sender
                     .tx
                     .send(InnerTransportEvent::ConnectionClosed {

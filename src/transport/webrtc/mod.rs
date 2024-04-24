@@ -480,7 +480,7 @@ impl Transport for WebRtcTransport {
             "webrtc cannot dial",
         );
 
-        Err(Error::NotSupported(format!("webrtc cannot dial peers")))
+        Err(Error::NotSupported("webrtc cannot dial peers".to_string()))
     }
 
     fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
@@ -701,7 +701,7 @@ impl Stream for WebRtcTransport {
                     }
                 }
 
-                return pending_event;
+                pending_event
             })
             .collect::<VecDeque<_>>();
 

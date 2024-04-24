@@ -118,7 +118,7 @@ impl SubstreamHandle {
     pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
         if let Some(flags) = message.flags {
             if flags == Flag::Fin as i32 {
-                let _ = self.tx.send(Event::RecvClosed).await?;
+                self.tx.send(Event::RecvClosed).await?;
             }
 
             if flags & 1 == Flag::StopSending as i32 {
@@ -165,27 +165,24 @@ impl tokio::io::AsyncRead for Substream {
             return Poll::Ready(Ok(()));
         }
 
-        loop {
-            match futures::ready!(self.rx.poll_recv(cx)) {
-                None | Some(Event::Close) | Some(Event::RecvClosed) => {
-                    return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+        match futures::ready!(self.rx.poll_recv(cx)) {
+            None | Some(Event::Close) | Some(Event::RecvClosed) =>
+                Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
+            Some(Event::Message(message)) => {
+                if message.len() > MAX_FRAME_SIZE {
+                    return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into()));
                 }
-                Some(Event::Message(message)) => {
-                    if message.len() > MAX_FRAME_SIZE {
-                        return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into()));
-                    }
 
-                    match buf.remaining() >= message.len() {
-                        true => buf.put_slice(&message),
-                        false => {
-                            let remaining = buf.remaining();
-                            buf.put_slice(&message[..remaining]);
-                            self.read_buffer.put_slice(&message[remaining..]);
-                        }
+                match buf.remaining() >= message.len() {
+                    true => buf.put_slice(&message),
+                    false => {
+                        let remaining = buf.remaining();
+                        buf.put_slice(&message[..remaining]);
+                        self.read_buffer.put_slice(&message[remaining..]);
                     }
-
-                    return Poll::Ready(Ok(()));
                 }
+
+                Poll::Ready(Ok(()))
             }
         }
     }

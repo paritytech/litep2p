@@ -206,7 +206,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
                 .target
                 .distance(&self.candidates.first_key_value().expect("candidate to exist").1.key);
             let worst_response_candidate =
-                self.responses.last_entry().expect("response to exist").key().clone();
+                *self.responses.last_entry().expect("response to exist").key();
 
             if first_candidate_distance < worst_response_candidate
                 && self.pending.len() < self.parallelism_factor

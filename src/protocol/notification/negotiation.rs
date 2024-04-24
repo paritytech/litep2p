@@ -196,7 +196,7 @@ impl HandshakeService {
             }
         }
 
-        return None;
+        None
     }
 }
 

@@ -56,20 +56,15 @@ pub struct WebSocketListener {
 }
 
 /// Local addresses to use for outbound connections.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum DialAddresses {
     /// Reuse port from listen addresses.
     Reuse {
         listen_addresses: Arc<Vec<SocketAddr>>,
     },
     /// Do not reuse port.
+    #[default]
     NoReuse,
-}
-
-impl Default for DialAddresses {
-    fn default() -> Self {
-        DialAddresses::NoReuse
-    }
 }
 
 impl DialAddresses {
@@ -165,7 +160,7 @@ impl WebSocketListener {
                                             local_address.port(),
                                         )),
                                         (Addr::V6(inner), false) =>
-                                            match inner.ip.segments().get(0) {
+                                            match inner.ip.segments().first() {
                                                 Some(0xfe80) => None,
                                                 _ => Some(SocketAddr::new(
                                                     IpAddr::V6(inner.ip),

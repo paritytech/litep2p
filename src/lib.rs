@@ -18,6 +18,16 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![allow(clippy::single_match)]
+#![allow(clippy::result_large_err)]
+#![allow(clippy::redundant_pattern_matching)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::result_unit_err)]
+#![allow(clippy::should_implement_trait)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::assign_op_pattern)]
+#![allow(clippy::match_like_matches_macro)]
+
 use crate::{
     config::Litep2pConfig,
     protocol::{
@@ -47,8 +57,6 @@ pub use bandwidth::BandwidthSink;
 pub use error::Error;
 pub use peer_id::PeerId;
 pub use types::protocol::ProtocolName;
-
-// pub use yamux;
 
 pub(crate) mod peer_id;
 
@@ -219,7 +227,7 @@ impl Litep2p {
             );
 
             let main_protocol =
-                kademlia_config.protocol_names.get(0).expect("protocol name to exist");
+                kademlia_config.protocol_names.first().expect("protocol name to exist");
             let fallback_names = kademlia_config.protocol_names.iter().skip(1).cloned().collect();
 
             let service = transport_manager.register_protocol(
@@ -245,7 +253,7 @@ impl Litep2p {
                 let service = transport_manager.register_protocol(
                     identify_config.protocol.clone(),
                     Vec::new(),
-                    identify_config.codec.clone(),
+                    identify_config.codec,
                 );
                 identify_config.public = Some(litep2p_config.keypair.public().into());
 

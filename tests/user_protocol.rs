@@ -57,7 +57,7 @@ impl UserProtocol for CustomProtocol {
     }
 
     fn codec(&self) -> ProtocolCodec {
-        self.codec.clone()
+        self.codec
     }
 
     async fn run(mut self: Box<Self>, mut service: TransportService) -> litep2p::Result<()> {

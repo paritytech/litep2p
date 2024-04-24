@@ -36,6 +36,12 @@ pub mod protocol;
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct SubstreamId(usize);
 
+impl Default for SubstreamId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubstreamId {
     /// Create new [`SubstreamId`].
     pub fn new() -> Self {
@@ -72,6 +78,12 @@ impl ConnectionId {
     /// Generate random `ConnectionId`.
     pub fn random() -> Self {
         ConnectionId(rand::thread_rng().gen::<usize>())
+    }
+}
+
+impl Default for ConnectionId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

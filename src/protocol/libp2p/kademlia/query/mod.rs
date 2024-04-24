@@ -310,7 +310,6 @@ impl QueryEngine {
         match self.queries.get_mut(&query) {
             None => {
                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                return;
             }
             Some(QueryType::FindNode { context }) => {
                 context.register_response_failure(peer);
@@ -334,7 +333,6 @@ impl QueryEngine {
         match self.queries.get_mut(&query) {
             None => {
                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
-                return;
             }
             Some(QueryType::FindNode { context }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
@@ -386,11 +384,11 @@ impl QueryEngine {
             QueryType::FindNode { context } => QueryAction::FindNodeQuerySucceeded {
                 query,
                 target: context.target.into_preimage(),
-                peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
+                peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
                 record,
-                peers: context.responses.into_iter().map(|(_, peer)| peer).collect::<Vec<_>>(),
+                peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::PutRecordToPeers { record, context } => QueryAction::PutRecordToFoundNodes {
                 record,
