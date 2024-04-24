@@ -752,6 +752,8 @@ impl Kademlia {
                         Some(KademliaCommand::PutRecordToPeers { record, query_id, peers }) => {
                             tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT to specified peers");
 
+                            self.store.put(record.clone());
+
                             // Put the record to the specified peers.
                             let peers = peers.into_iter().filter_map(|peer| {
                                 if peer == self.service.local_peer_id {
