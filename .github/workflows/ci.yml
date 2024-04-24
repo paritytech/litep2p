@@ -1,8 +1,16 @@
 name: CI
 
 on:
+  push:
+    # Run jobs when commits are pushed to
+    # master or release-like branches:
+    branches:
+      - master
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # Run jobs for any external PR that wants
+    # to merge to master, too:
+    branches:
+      - master
 
 # Disable previous runs
 concurrency:
