@@ -102,6 +102,9 @@ pub(crate) enum KademliaCommand {
 
         /// Use the following peers for the put request.
         peers: Vec<PeerId>,
+
+        /// Update local store.
+        update_local_store: bool,
     },
 
     /// Get record from DHT.
@@ -222,7 +225,12 @@ impl KademliaHandle {
     }
 
     /// Store record to DHT to the given peers.
-    pub async fn put_record_to_peers(&mut self, record: Record, peers: Vec<PeerId>) -> QueryId {
+    pub async fn put_record_to_peers(
+        &mut self,
+        record: Record,
+        peers: Vec<PeerId>,
+        update_local_store: bool,
+    ) -> QueryId {
         let query_id = self.next_query_id();
         let _ = self
             .cmd_tx
@@ -230,6 +238,7 @@ impl KademliaHandle {
                 record,
                 query_id,
                 peers,
+                update_local_store,
             })
             .await;
 
@@ -282,6 +291,7 @@ impl KademliaHandle {
         &mut self,
         record: Record,
         peers: Vec<PeerId>,
+        update_local_store: bool,
     ) -> Result<QueryId, ()> {
         let query_id = self.next_query_id();
         self.cmd_tx
@@ -289,6 +299,7 @@ impl KademliaHandle {
                 record,
                 query_id,
                 peers,
+                update_local_store,
             })
             .map(|_| query_id)
             .map_err(|_| ())

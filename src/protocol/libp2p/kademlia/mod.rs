@@ -749,11 +749,19 @@ impl Kademlia {
                                 self.routing_table.closest(key, self.replication_factor).into(),
                             );
                         }
-                        Some(KademliaCommand::PutRecordToPeers { record, query_id, peers }) => {
+                        Some(KademliaCommand::PutRecordToPeers { record, query_id, peers, update_local_store }) => {
                             tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT to specified peers");
+
+                            if update_local_store {
+                                self.store.put(record.clone());
+                            }
 
                             // Put the record to the specified peers.
                             let peers = peers.into_iter().filter_map(|peer| {
+                                if peer == self.service.local_peer_id {
+                                    return None;
+                                }
+
                                 match self.routing_table.entry(Key::from(peer)) {
                                     KBucketEntry::Occupied(entry) => Some(entry.clone()),
                                     KBucketEntry::Vacant(entry) if !entry.addresses.is_empty() => Some(entry.clone()),
