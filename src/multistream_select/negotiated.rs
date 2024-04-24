@@ -176,6 +176,10 @@ impl<TInner> Negotiated<TInner> {
                                 header: None,
                             };
                             continue;
+                        } else {
+                            // If we received a header message but it doesn't match the expected
+                            // one, or we have already received the message return an error.
+                            return Poll::Ready(Err(ProtocolError::InvalidMessage.into()));
                         }
                     }
 
