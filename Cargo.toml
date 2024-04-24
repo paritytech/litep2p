@@ -31,7 +31,7 @@ rand = { version = "0.8.0", features = ["getrandom"] }
 rcgen = "0.10.0"
 ring = "0.16.20"
 serde = "1.0.158"
-sha2 = "0.10.7"
+sha2 = "0.10.8"
 simple-dns = "0.5.3"
 smallvec = "1.10.0"
 snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
