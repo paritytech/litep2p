@@ -36,11 +36,11 @@ pub(crate) struct DefaultExecutor;
 
 impl Executor for DefaultExecutor {
     fn run(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        let _ = tokio::spawn(future);
+        tokio::spawn(future);
     }
 
     fn run_with_name(&self, _: &'static str, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        let _ = tokio::spawn(future);
+        tokio::spawn(future);
     }
 }
 

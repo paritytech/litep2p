@@ -202,6 +202,11 @@ impl SecretKey {
         sk_bytes.zeroize();
         Ok(SecretKey(secret))
     }
+
+    /// Convert this secret key to a byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
+    }
 }
 
 #[cfg(test)]

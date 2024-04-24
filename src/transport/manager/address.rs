@@ -25,6 +25,7 @@ use multihash::Multihash;
 
 use std::collections::{BinaryHeap, HashSet};
 
+#[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
 pub struct AddressRecord {
     /// Address score.
@@ -54,7 +55,7 @@ impl AddressRecord {
     ) -> Self {
         let address = if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
             address.with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).ok().expect("valid peer id"),
+                Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
             ))
         } else {
             address
@@ -145,7 +146,7 @@ impl FromIterator<Multiaddr> for AddressStore {
         let mut store = AddressStore::new();
         for address in iter {
             if let Some(address) = AddressRecord::from_multiaddr(address) {
-                store.insert(address.into());
+                store.insert(address);
             }
         }
 

@@ -209,11 +209,7 @@ impl Identify {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            listen_addresses: config
-                .public_addresses
-                .into_iter()
-                .chain(listen_addresses.into_iter())
-                .collect(),
+            listen_addresses: config.public_addresses.into_iter().chain(listen_addresses).collect(),
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
@@ -355,7 +351,7 @@ impl Identify {
                 .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
                 .collect();
             let observed_address =
-                info.observed_addr.map(|address| Multiaddr::try_from(address).ok()).flatten();
+                info.observed_addr.and_then(|address| Multiaddr::try_from(address).ok());
             let protocol_version = info.protocol_version;
             let user_agent = info.agent_version;
 

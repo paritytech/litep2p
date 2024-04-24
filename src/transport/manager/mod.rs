@@ -460,7 +460,7 @@ impl TransportManager {
             return Err(Error::NoAddressAvailable(peer));
         }
 
-        for (_, record) in &records {
+        for record in records.values() {
             if self.listen_addresses.read().contains(record.as_ref()) {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -798,10 +798,10 @@ impl TransportManager {
                             dial_record: actual_dial_record,
                         };
 
-                        return Ok(Some(TransportEvent::ConnectionClosed {
+                        Ok(Some(TransportEvent::ConnectionClosed {
                             peer,
                             connection_id,
-                        }));
+                        }))
                     }
                     Some(secondary_connection) => {
                         context.addresses.insert(record);
@@ -810,7 +810,7 @@ impl TransportManager {
                             dial_record: actual_dial_record,
                         };
 
-                        return Ok(None);
+                        Ok(None)
                     }
                 },
                 // secondary connection was closed
@@ -845,7 +845,7 @@ impl TransportManager {
                             record,
                             dial_record: actual_dial_record,
                         };
-                        return Ok(None);
+                        Ok(None)
                     }
                     None => {
                         tracing::warn!(
@@ -856,7 +856,7 @@ impl TransportManager {
                         );
 
                         debug_assert!(false);
-                        return Err(Error::InvalidState);
+                        Err(Error::InvalidState)
                     }
                 },
             },
@@ -873,7 +873,7 @@ impl TransportManager {
 
                     debug_assert!(false);
                     context.state = PeerState::Disconnected { dial_record };
-                    return Err(Error::InvalidState);
+                    Err(Error::InvalidState)
                 }
                 None => {
                     context.state = PeerState::Disconnected { dial_record };
@@ -887,7 +887,7 @@ impl TransportManager {
             state => {
                 tracing::warn!(target: LOG_TARGET, ?peer, ?connection_id, ?state, "invalid state for a closed connection");
                 debug_assert!(false);
-                return Err(Error::InvalidState);
+                Err(Error::InvalidState)
             }
         }
     }
@@ -1174,9 +1174,8 @@ impl TransportManager {
 
                 // cancel open attempts for other transports as connection already exists
                 for transport in transports.iter() {
-                    let _ = self
-                        .transports
-                        .get_mut(&transport)
+                    self.transports
+                        .get_mut(transport)
                         .expect("transport to exist")
                         .cancel(connection_id);
                 }
@@ -1493,7 +1492,7 @@ impl TransportManager {
 
                                     return Some(TransportEvent::ConnectionEstablished {
                                         peer,
-                                        endpoint: endpoint,
+                                        endpoint,
                                     });
                                 }
                                 Ok(ConnectionEstablishedResult::Reject) => {

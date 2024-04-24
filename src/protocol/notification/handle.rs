@@ -325,9 +325,7 @@ impl NotificationHandle {
     /// Similar to [`NotificationHandle::close_substream()`] but multiple substreams are closed
     /// using a single call to `NotificationProtocol`.
     pub async fn close_substream_batch(&self, peers: impl Iterator<Item = PeerId>) {
-        let peers = peers
-            .filter_map(|peer| self.peers.contains_key(&peer).then_some(peer))
-            .collect::<HashSet<_>>();
+        let peers = peers.filter(|peer| self.peers.contains_key(peer)).collect::<HashSet<_>>();
 
         if peers.is_empty() {
             return;
@@ -355,9 +353,7 @@ impl NotificationHandle {
         &self,
         peers: impl Iterator<Item = PeerId>,
     ) -> Result<(), HashSet<PeerId>> {
-        let peers = peers
-            .filter_map(|peer| self.peers.contains_key(&peer).then_some(peer))
-            .collect::<HashSet<_>>();
+        let peers = peers.filter(|peer| self.peers.contains_key(peer)).collect::<HashSet<_>>();
 
         if peers.is_empty() {
             return Err(HashSet::new());
@@ -403,7 +399,7 @@ impl NotificationHandle {
             Some(sink) => match sink.send_sync_notification(notification) {
                 Ok(()) => Ok(()),
                 Err(error) => match error {
-                    NotificationError::NoConnection => return Err(NotificationError::NoConnection),
+                    NotificationError::NoConnection => Err(NotificationError::NoConnection),
                     NotificationError::ChannelClogged => {
                         let _ = self.clogged.insert(peer).then(|| {
                             self.command_tx.try_send(NotificationCommand::ForceClose { peer })
@@ -439,7 +435,7 @@ impl NotificationHandle {
     ///
     /// `None` is returned if `peer` doesn't exist.
     pub fn notification_sink(&self, peer: PeerId) -> Option<NotificationSink> {
-        self.peers.get(&peer).and_then(|sink| Some(sink.clone()))
+        self.peers.get(&peer).cloned()
     }
 }
 

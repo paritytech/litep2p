@@ -22,11 +22,25 @@
 
 use rand::Rng;
 
+// Re-export the types used in public interfaces.
+pub mod multiaddr {
+    pub use multiaddr::{Error, Iter, Multiaddr, Onion3Addr, Protocol};
+}
+pub mod multihash {
+    pub use multihash::{Code, Error, Multihash, MultihashDigest};
+}
+
 pub mod protocol;
 
 /// Substream ID.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct SubstreamId(usize);
+
+impl Default for SubstreamId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SubstreamId {
     /// Create new [`SubstreamId`].
@@ -64,6 +78,12 @@ impl ConnectionId {
     /// Generate random `ConnectionId`.
     pub fn random() -> Self {
         ConnectionId(rand::thread_rng().gen::<usize>())
+    }
+}
+
+impl Default for ConnectionId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -60,6 +60,6 @@ impl FindManyNodesContext {
 
     /// Get next action for a `FIND_NODE` query.
     pub fn next_action(&mut self) -> Option<QueryAction> {
-        return Some(QueryAction::QuerySucceeded { query: self.query });
+        Some(QueryAction::QuerySucceeded { query: self.query })
     }
 }

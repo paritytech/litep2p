@@ -141,7 +141,7 @@ impl WebSocketTransport {
             .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
         {
             Protocol::Ip4(address) => address.to_string(),
-            Protocol::Ip6(address) => format!("[{}]", address.to_string()),
+            Protocol::Ip6(address) => format!("[{address}]"),
             Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) =>
                 address.to_string(),
 
@@ -200,8 +200,8 @@ impl WebSocketTransport {
                     {
                         // TODO: ugly
                         Ok(lookup) => {
-                            let mut iter = lookup.iter();
-                            while let Some(ip) = iter.next() {
+                            let iter = lookup.iter();
+                            for ip in iter {
                                 match (
                                     address.iter().next().expect("protocol to exist"),
                                     ip.is_ipv4(),
@@ -289,7 +289,7 @@ impl WebSocketTransport {
 
         match tokio::time::timeout(connection_open_timeout, future).await {
             Err(_) => Err(Error::Timeout),
-            Ok(Err(error)) => Err(error.into()),
+            Ok(Err(error)) => Err(error),
             Ok(Ok((address, stream))) => Ok((address, stream)),
         }
     }
@@ -313,7 +313,7 @@ impl TransportBuilder for WebSocketTransport {
             "start websocket transport",
         );
         let (listener, listen_addresses, dial_addresses) = WebSocketListener::new(
-            std::mem::replace(&mut config.listen_addresses, Vec::new()),
+            std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
         );
 
@@ -348,32 +348,32 @@ impl Transport for WebSocketTransport {
 
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
-        self.pending_connections.push(Box::pin(async move {
-            match tokio::time::timeout(connection_open_timeout, async move {
-                let (_, stream) = WebSocketTransport::dial_peer(
-                    address.clone(),
-                    dial_addresses,
-                    connection_open_timeout,
-                )
-                .await
-                .map_err(|error| WebSocketError::new(error, Some(connection_id)))?;
-
-                WebSocketConnection::open_connection(
-                    connection_id,
-                    keypair,
-                    stream,
-                    address,
-                    peer,
-                    ws_address,
-                    yamux_config,
-                    max_read_ahead_factor,
-                    max_write_buffer_size,
-                )
-                .await
-                .map_err(|error| WebSocketError::new(error, Some(connection_id)))
-            })
+        let future = async move {
+            let (_, stream) = WebSocketTransport::dial_peer(
+                address.clone(),
+                dial_addresses,
+                connection_open_timeout,
+            )
             .await
-            {
+            .map_err(|error| WebSocketError::new(error, Some(connection_id)))?;
+
+            WebSocketConnection::open_connection(
+                connection_id,
+                keypair,
+                stream,
+                address,
+                peer,
+                ws_address,
+                yamux_config,
+                max_read_ahead_factor,
+                max_write_buffer_size,
+            )
+            .await
+            .map_err(|error| WebSocketError::new(error, Some(connection_id)))
+        };
+
+        self.pending_connections.push(Box::pin(async move {
+            match tokio::time::timeout(connection_open_timeout, future).await {
                 Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection_id))),
                 Ok(Err(error)) => Err(error),
                 Ok(Ok(result)) => Ok(result),

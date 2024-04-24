@@ -59,14 +59,14 @@ impl UnsignedVarint {
 
         let mut bytes = BytesMut::with_capacity(payload.len() + 4);
         let mut codec = Self::new(None);
-        codec.encode(payload.into(), &mut bytes)?;
+        codec.encode(payload, &mut bytes)?;
 
         Ok(bytes.into())
     }
 
     /// Decode `payload` into `BytesMut`.
     pub fn decode(payload: &mut BytesMut) -> crate::Result<BytesMut> {
-        Ok(UviBytes::<Bytes>::default().decode(payload)?.ok_or(Error::InvalidData)?)
+        UviBytes::<Bytes>::default().decode(payload)?.ok_or(Error::InvalidData)
     }
 }
 

@@ -112,7 +112,7 @@ impl RoutingTable {
     }
 
     /// Get an entry for `peer` into a k-bucket.
-    pub fn entry<'a>(&'a mut self, key: Key<PeerId>) -> KBucketEntry<'a> {
+    pub fn entry(&mut self, key: Key<PeerId>) -> KBucketEntry<'_> {
         let Some(index) = BucketIndex::new(&self.local_key.distance(&key)) else {
             return KBucketEntry::LocalNode;
         };
@@ -179,8 +179,7 @@ impl RoutingTable {
     /// Get `limit` closest peers to `target` from the k-buckets.
     pub fn closest<K: Clone>(&mut self, target: Key<K>, limit: usize) -> Vec<KademliaPeer> {
         ClosestBucketsIter::new(self.local_key.distance(&target))
-            .map(|index| self.buckets[index.get()].closest_iter(&target))
-            .flatten()
+            .flat_map(|index| self.buckets[index.get()].closest_iter(&target))
             .take(limit)
             .collect()
     }

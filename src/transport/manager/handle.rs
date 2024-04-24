@@ -120,7 +120,7 @@ impl TransportManagerHandle {
         }
 
         match iter.next() {
-            None => return false,
+            None => false,
             Some(Protocol::Tcp(_)) => match (
                 iter.next(),
                 self.supported_transport.contains(&SupportedTransport::WebSocket),
@@ -129,7 +129,7 @@ impl TransportManagerHandle {
                 (Some(Protocol::Wss(_)), true) => true,
                 (Some(Protocol::P2p(_)), _) =>
                     self.supported_transport.contains(&SupportedTransport::Tcp),
-                _ => return false,
+                _ => false,
             },
             Some(Protocol::Udp(_)) => match (
                 iter.next(),
@@ -189,7 +189,7 @@ impl TransportManagerHandle {
             "add known addresses",
         );
 
-        match peers.get_mut(&peer) {
+        match peers.get_mut(peer) {
             Some(context) =>
                 for record in addresses {
                     if !context.addresses.contains(record.address()) {
@@ -201,7 +201,7 @@ impl TransportManagerHandle {
                     *peer,
                     PeerContext {
                         state: PeerState::Disconnected { dial_record: None },
-                        addresses: AddressStore::from_iter(addresses.into_iter()),
+                        addresses: AddressStore::from_iter(addresses),
                         secondary_connection: None,
                     },
                 );
@@ -220,7 +220,7 @@ impl TransportManagerHandle {
         }
 
         {
-            match self.peers.read().get(&peer) {
+            match self.peers.read().get(peer) {
                 Some(PeerContext {
                     state: PeerState::Connected { .. },
                     ..

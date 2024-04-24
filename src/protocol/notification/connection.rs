@@ -261,12 +261,11 @@ impl Stream for Connection {
         }
 
         match futures::ready!(this.inbound.poll_next_unpin(cx)) {
-            None | Some(Err(_)) =>
-                return Poll::Ready(Some(ConnectionEvent::CloseConnection {
-                    notify: NotifyProtocol::Yes,
-                })),
+            None | Some(Err(_)) => Poll::Ready(Some(ConnectionEvent::CloseConnection {
+                notify: NotifyProtocol::Yes,
+            })),
             Some(Ok(notification)) =>
-                return Poll::Ready(Some(ConnectionEvent::NotificationReceived { notification })),
+                Poll::Ready(Some(ConnectionEvent::NotificationReceived { notification })),
         }
     }
 }
