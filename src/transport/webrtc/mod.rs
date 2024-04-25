@@ -789,7 +789,7 @@ fn decode_username_password(bytes: &[u8]) -> Option<(&str, &str)> {
             break;
         }
 
-        let Ok(usr) = core::str::from_utf8(&attributes[4..len]) else {
+        let Ok(usr) = core::str::from_utf8(&attributes[4..4 + len]) else {
             // Malformed username attribute.
             break;
         };
@@ -799,6 +799,7 @@ fn decode_username_password(bytes: &[u8]) -> Option<(&str, &str)> {
         // where <local> is the local sdp ice username
         // and <remote> is the remote sdp ice username.
         let index = usr.find(':')?;
+
         if index + 1 >= usr.len() {
             break;
         }
@@ -809,4 +810,47 @@ fn decode_username_password(bytes: &[u8]) -> Option<(&str, &str)> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_username_password() {
+        let mut buffer = vec![0; 512];
+        let mut offset = 20;
+
+        // Add a username attribute.
+        buffer[offset] = 0;
+        buffer[offset + 1] = 6;
+
+        buffer[offset + 2] = 0;
+        buffer[offset + 3] = 16;
+        offset += 4;
+
+        // Add the username.
+        let username = "local:remote";
+        buffer[offset..(offset + username.len())].copy_from_slice(username.as_bytes());
+
+        let (local, remote) = decode_username_password(&buffer).unwrap();
+        assert_eq!(local, "local");
+        assert_eq!(remote, "remote");
+    }
+
+    #[test]
+    fn test_decode_username_password_packet() {
+        // Constructed with str0m.
+        const PACKET: &[u8] = &[
+            0, 1, 0, 48, 33, 18, 164, 66, 106, 117, 99, 49, 53, 117, 120, 85, 110, 103, 71, 99, 0,
+            6, 0, 11, 102, 111, 111, 58, 108, 105, 116, 101, 112, 50, 112, 0, 0, 8, 0, 20, 173, 69,
+            236, 10, 125, 42, 70, 141, 32, 116, 54, 106, 5, 169, 198, 221, 47, 195, 3, 113, 128,
+            40, 0, 4, 209, 72, 16, 229, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+
+        assert!(is_stun_packet(PACKET));
+        let (local, remote) = decode_username_password(PACKET).unwrap();
+        assert_eq!(local, "foo");
+        assert_eq!(remote, "litep2p");
+    }
 }
