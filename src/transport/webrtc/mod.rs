@@ -36,8 +36,9 @@ use futures_timer::Delay;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
 use str0m::{
-    change::{DtlsCert, IceCreds},
+    change::DtlsCert,
     channel::{ChannelConfig, ChannelId},
+    ice::IceCreds,
     net::{DatagramRecv, Protocol as Str0mProtocol, Receive},
     Candidate, Input, Rtc,
 };
