@@ -338,6 +338,12 @@ impl WebRtcTransport {
             }
         }
 
+        if buffer.is_empty() {
+            // str0m crate panics if the buffer doesn't contain at least one byte:
+            // https://github.com/algesten/str0m/blob/2c5dc8ee8ddead08699dd6852a27476af6992a5c/src/io/mod.rs#L222
+            return Err(Error::InvalidData);
+        }
+
         // if the peer doesn't exist, decode the message and expect to receive `Stun`
         // so that a new connection can be initialized
         let contents: DatagramRecv =
@@ -368,7 +374,7 @@ impl WebRtcTransport {
                             source,
                             proto: Str0mProtocol::Udp,
                             destination: self.socket.local_addr().unwrap(),
-                            contents: DatagramRecv::Stun(message.clone()),
+                            contents,
                         },
                     ))
                     .expect("client to handle input successfully");
@@ -400,6 +406,8 @@ impl WebRtcTransport {
         Ok(true)
     }
 }
+
+fn decode_username_password(bytes: &[u8]) {}
 
 impl TransportBuilder for WebRtcTransport {
     type Config = Config;
