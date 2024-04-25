@@ -349,7 +349,7 @@ impl WebRtcTransport {
         let contents: DatagramRecv =
             buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
 
-        // Handle non Stun packets.
+        // Handle non stun packets.
         if !is_stun_packet(&buffer) {
             tracing::debug!(
                 target: LOG_TARGET,
@@ -368,6 +368,21 @@ impl WebRtcTransport {
             }
             return Ok(true);
         }
+
+        // TODO: needs split_username to be public from str0m. Then we can remove
+        // `decode_username_password`.
+        // Depends on: https://github.com/algesten/str0m/pull/505.
+        //
+        // let stun_message =
+        //     str0m::ice::StunMessage::parse(&buffer).map_err(|_| Error::InvalidData)?;
+        // let Some((ufrag, pass)) = stun_message.split_username() else {
+        //     tracing::warn!(
+        //         target: LOG_TARGET,
+        //         ?source,
+        //         "failed to split username/password",
+        //     );
+        //     return Err(Error::InvalidData);
+        // };
 
         let Some((ufrag, pass)) = decode_username_password(&buffer) else {
             tracing::warn!(
