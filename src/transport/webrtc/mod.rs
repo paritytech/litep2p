@@ -369,26 +369,13 @@ impl WebRtcTransport {
             return Ok(true);
         }
 
-        // TODO: needs split_username to be public from str0m. Then we can remove
-        // `decode_username_password`.
-        // Depends on: https://github.com/algesten/str0m/pull/505.
-        //
-        // let stun_message =
-        //     str0m::ice::StunMessage::parse(&buffer).map_err(|_| Error::InvalidData)?;
-        // let Some((ufrag, pass)) = stun_message.split_username() else {
-        //     tracing::warn!(
-        //         target: LOG_TARGET,
-        //         ?source,
-        //         "failed to split username/password",
-        //     );
-        //     return Err(Error::InvalidData);
-        // };
-
-        let Some((ufrag, pass)) = decode_username_password(&buffer) else {
+        let stun_message =
+            str0m::ice::StunMessage::parse(&buffer).map_err(|_| Error::InvalidData)?;
+        let Some((ufrag, pass)) = stun_message.split_username() else {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?source,
-                "failed to decode username/password",
+                "failed to split username/password",
             );
             return Err(Error::InvalidData);
         };
@@ -746,111 +733,4 @@ impl Stream for WebRtcTransport {
 fn is_stun_packet(bytes: &[u8]) -> bool {
     // 20 bytes for the header, then follows attributes.
     bytes.len() >= 20 && bytes[0] < 2
-}
-
-/// Decode the ice username and password from the STUN packet.
-///
-/// Returns none if the values cannot be extracted from the packet.
-fn decode_username_password(bytes: &[u8]) -> Option<(&str, &str)> {
-    if !is_stun_packet(bytes) {
-        return None;
-    }
-
-    // Attributes start from byte 20.
-    const ATTRIBUTE_OFFSET: usize = 20;
-    // Username attribute type.
-    const USERNAME_TY: u16 = 0x0006;
-
-    // Attributes are padded on 32 bit boundaries.
-    let mut attributes = &bytes[ATTRIBUTE_OFFSET..];
-
-    while attributes.len() >= 4 {
-        // Type of the attribute.
-        let ty = u16::from_le_bytes([attributes[1], attributes[0]]);
-        // Length of the attribute.
-        let len = u16::from_le_bytes([attributes[3], attributes[2]]) as usize;
-
-        // Not enough bytes for the attribute, malformed packet.
-        if len > attributes.len() - 4 {
-            break;
-        }
-
-        // Not the type we are looking for, advance the attributes.
-        if ty != USERNAME_TY {
-            // Attributes are on even 32 bit boundaries
-            let pad = (4 - (len % 4)) % 4;
-            let pad_len = len + pad;
-            attributes = &attributes[(4 + pad_len)..];
-            continue;
-        }
-
-        // Username must not exceed 128 bytes.
-        if len > 128 {
-            break;
-        }
-
-        let Ok(usr) = core::str::from_utf8(&attributes[4..4 + len]) else {
-            // Malformed username attribute.
-            break;
-        };
-
-        // Usernames are of the following form:
-        // <local>:<remote>
-        // where <local> is the local sdp ice username
-        // and <remote> is the remote sdp ice username.
-        let index = usr.find(':')?;
-
-        if index + 1 >= usr.len() {
-            break;
-        }
-
-        let local = &usr[..index];
-        let remote = &usr[(index + 1)..];
-        return Some((local, remote));
-    }
-
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_decode_username_password() {
-        let mut buffer = vec![0; 512];
-        let mut offset = 20;
-
-        // Add a username attribute.
-        buffer[offset] = 0;
-        buffer[offset + 1] = 6;
-
-        buffer[offset + 2] = 0;
-        buffer[offset + 3] = 16;
-        offset += 4;
-
-        // Add the username.
-        let username = "local:remote";
-        buffer[offset..(offset + username.len())].copy_from_slice(username.as_bytes());
-
-        let (local, remote) = decode_username_password(&buffer).unwrap();
-        assert_eq!(local, "local");
-        assert_eq!(remote, "remote");
-    }
-
-    #[test]
-    fn test_decode_username_password_packet() {
-        // Constructed with str0m.
-        const PACKET: &[u8] = &[
-            0, 1, 0, 48, 33, 18, 164, 66, 106, 117, 99, 49, 53, 117, 120, 85, 110, 103, 71, 99, 0,
-            6, 0, 11, 102, 111, 111, 58, 108, 105, 116, 101, 112, 50, 112, 0, 0, 8, 0, 20, 173, 69,
-            236, 10, 125, 42, 70, 141, 32, 116, 54, 106, 5, 169, 198, 221, 47, 195, 3, 113, 128,
-            40, 0, 4, 209, 72, 16, 229, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-
-        assert!(is_stun_packet(PACKET));
-        let (local, remote) = decode_username_password(PACKET).unwrap();
-        assert_eq!(local, "foo");
-        assert_eq!(remote, "litep2p");
-    }
 }
