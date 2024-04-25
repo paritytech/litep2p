@@ -349,65 +349,72 @@ impl WebRtcTransport {
         let contents: DatagramRecv =
             buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
 
-        match contents {
-            DatagramRecv::Stun(message) if !self.opening.contains_key(&source) => {
-                if let Some((ufrag, pass)) = message.split_username() {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?source,
-                        ?ufrag,
-                        ?pass,
-                        "received stun message"
-                    );
+        // Handle non Stun packets.
+        if !is_stun_packet(&buffer) {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?source,
+                "received non-stun message"
+            );
 
-                    // create new `Rtc` object for the peer and give it the received STUN message
-                    let (mut rtc, noise_channel_id) = self.make_rtc_client(
-                        ufrag,
-                        pass,
-                        source,
-                        self.socket.local_addr().unwrap(),
-                    );
-
-                    rtc.handle_input(Input::Receive(
-                        Instant::now(),
-                        Receive {
-                            source,
-                            proto: Str0mProtocol::Udp,
-                            destination: self.socket.local_addr().unwrap(),
-                            contents,
-                        },
-                    ))
-                    .expect("client to handle input successfully");
-
-                    let connection_id = self.context.next_connection_id();
-                    let connection = OpeningWebRtcConnection::new(
-                        rtc,
-                        connection_id,
-                        noise_channel_id,
-                        self.context.keypair.clone(),
-                        source,
-                        self.listen_address,
-                    );
-                    self.opening.insert(source, connection);
-                }
+            if let Err(error) = self.opening.get_mut(&source).expect("to exist").on_input(contents)
+            {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?error,
+                    ?source,
+                    "failed to handle inbound datagram"
+                );
             }
-            msg => {
-                if let Err(error) = self.opening.get_mut(&source).expect("to exist").on_input(msg) {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?error,
-                        ?source,
-                        "failed to handle inbound datagram"
-                    );
-                }
-            }
+            return Ok(true);
         }
+
+        let Some((ufrag, pass)) = decode_username_password(&buffer) else {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?source,
+                "failed to decode username/password",
+            );
+            return Err(Error::InvalidData);
+        };
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?source,
+            ?ufrag,
+            ?pass,
+            "received stun message"
+        );
+
+        // create new `Rtc` object for the peer and give it the received STUN message
+        let (mut rtc, noise_channel_id) =
+            self.make_rtc_client(ufrag, pass, source, self.socket.local_addr().unwrap());
+
+        rtc.handle_input(Input::Receive(
+            Instant::now(),
+            Receive {
+                source,
+                proto: Str0mProtocol::Udp,
+                destination: self.socket.local_addr().unwrap(),
+                contents,
+            },
+        ))
+        .expect("client to handle input successfully");
+
+        let connection_id = self.context.next_connection_id();
+        let connection = OpeningWebRtcConnection::new(
+            rtc,
+            connection_id,
+            noise_channel_id,
+            self.context.keypair.clone(),
+            source,
+            self.listen_address,
+        );
+        self.opening.insert(source, connection);
 
         Ok(true)
     }
 }
-
-fn decode_username_password(bytes: &[u8]) {}
 
 impl TransportBuilder for WebRtcTransport {
     type Config = Config;
@@ -718,4 +725,73 @@ impl Stream for WebRtcTransport {
             .pop_front()
             .map_or(Poll::Pending, |event| Poll::Ready(Some(event)))
     }
+}
+
+// Check if the packet received is STUN.
+fn is_stun_packet(bytes: &[u8]) -> bool {
+    // 20 bytes for the header, then follows attributes.
+    bytes.len() >= 20 && bytes[0] < 2
+}
+
+/// Decode the ice username and password from the STUN packet.
+///
+/// Returns none if the values cannot be extracted from the packet.
+fn decode_username_password(bytes: &[u8]) -> Option<(&str, &str)> {
+    if !is_stun_packet(bytes) {
+        return None;
+    }
+
+    // Attributes start from byte 20.
+    const ATTRIBUTE_OFFSET: usize = 20;
+    // Username attribute type.
+    const USERNAME_TY: u16 = 0x0006;
+
+    // Attributes are padded on 32 bit boundaries.
+    let mut attributes = &bytes[ATTRIBUTE_OFFSET..];
+
+    while attributes.len() >= 4 {
+        // Type of the attribute.
+        let ty = u16::from_le_bytes([attributes[1], attributes[0]]);
+        // Length of the attribute.
+        let len = u16::from_le_bytes([attributes[3], attributes[2]]) as usize;
+
+        // Not enough bytes for the attribute, malformed packet.
+        if len > attributes.len() - 4 {
+            break;
+        }
+
+        // Not the type we are looking for, advance the attributes.
+        if ty != USERNAME_TY {
+            // Attributes are on even 32 bit boundaries
+            let pad = (4 - (len % 4)) % 4;
+            let pad_len = len + pad;
+            attributes = &attributes[(4 + pad_len)..];
+            continue;
+        }
+
+        // Username must not exceed 128 bytes.
+        if len > 128 {
+            break;
+        }
+
+        let Ok(usr) = core::str::from_utf8(&attributes[4..len]) else {
+            // Malformed username attribute.
+            break;
+        };
+
+        // Usernames are of the following form:
+        // <local>:<remote>
+        // where <local> is the local sdp ice username
+        // and <remote> is the remote sdp ice username.
+        let index = usr.find(':')?;
+        if index + 1 >= usr.len() {
+            break;
+        }
+
+        let local = &usr[..index];
+        let remote = &usr[(index + 1)..];
+        return Some((local, remote));
+    }
+
+    None
 }
