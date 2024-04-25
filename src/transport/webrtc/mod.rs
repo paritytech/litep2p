@@ -438,7 +438,7 @@ impl TransportBuilder for WebRtcTransport {
 
         let socket = UdpSocket::from_std(socket.into())?;
         let listen_address = socket.local_addr()?;
-        let dtls_cert = DtlsCert::new();
+        let dtls_cert = DtlsCert::new_openssl();
 
         let listen_multi_addresses = {
             let fingerprint = dtls_cert.fingerprint().bytes;
