@@ -109,13 +109,12 @@ impl Record {
     }
 }
 
-/// A record either received by the given peer or retrieved from the local
-/// record store.
+/// A record received by the given peer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerRecord {
-    /// The peer from whom the record was received. `None` if the record was
-    /// retrieved from local storage.
-    pub peer: Option<PeerId>,
+    /// The peer from whom the record was received
+    pub peer: PeerId,
 
+    /// The provided record.
     pub record: Record,
 }

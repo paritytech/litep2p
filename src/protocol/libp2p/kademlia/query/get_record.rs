@@ -66,7 +66,7 @@ pub struct GetRecordContext {
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
     /// Found records.
-    pub found_records: HashMap<Record, Vec<PeerId>>,
+    pub found_records: Vec<PeerRecord>,
 
     /// Replication factor.
     pub replication_factor: usize,
@@ -105,12 +105,12 @@ impl GetRecordContext {
             parallelism_factor,
             pending: HashMap::new(),
             queried: HashSet::new(),
-            found_records: HashMap::new(),
+            found_records: Vec::new(),
         }
     }
 
     /// Get the found records.
-    pub fn found_records(mut self) -> HashMap<Record, Vec<PeerId>> {
+    pub fn found_records(mut self) -> Vec<PeerRecord> {
         self.found_records
     }
 
@@ -138,7 +138,10 @@ impl GetRecordContext {
 
         if let Some(record) = record {
             if !record.is_expired(std::time::Instant::now()) {
-                self.found_records.entry(record).or_default().push(peer.peer);
+                self.found_records.push(PeerRecord {
+                    peer: peer.peer,
+                    record,
+                });
             }
         }
 

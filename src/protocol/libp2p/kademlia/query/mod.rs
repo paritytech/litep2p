@@ -24,7 +24,7 @@ use crate::{
         query::{find_node::FindNodeContext, get_record::GetRecordContext},
         record::{Key as RecordKey, Record},
         types::{KademliaPeer, Key},
-        Quorum,
+        PeerRecord, Quorum,
     },
     PeerId,
 };
@@ -125,11 +125,7 @@ pub enum QueryAction {
         query_id: QueryId,
 
         /// Found records.
-        ///
-        /// Note: records that do not have any peers associated with them are received from the
-        /// local store. For those cases, the records will contain only the record from the local
-        /// store.
-        records: HashMap<Record, Vec<PeerId>>,
+        records: Vec<PeerRecord>,
     },
 
     // TODO: remove
@@ -755,15 +751,15 @@ mod tests {
             Some(QueryAction::GetRecordQueryDone { records, .. }) => {
                 let query_peers = records
                     .iter()
-                    .flat_map(|(_, peers)| peers)
-                    .cloned()
+                    .map(|peer_record| peer_record.peer)
                     .collect::<std::collections::HashSet<_>>();
                 assert_eq!(peers, query_peers);
 
-                let records = records.keys().collect::<Vec<_>>();
+                let records: std::collections::HashSet<_> =
+                    records.into_iter().map(|peer_record| peer_record.record).collect();
                 // One single record found across peers.
                 assert_eq!(records.len(), 1);
-                let record = records[0];
+                let record = records.into_iter().next().unwrap();
 
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);

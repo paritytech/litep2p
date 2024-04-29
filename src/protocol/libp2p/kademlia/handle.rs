@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{QueryId, Record, RecordKey},
+    protocol::libp2p::kademlia::{PeerRecord, QueryId, Record, RecordKey},
     PeerId,
 };
 
@@ -28,7 +28,6 @@ use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
-    collections::HashMap,
     num::NonZeroUsize,
     pin::Pin,
     task::{Context, Poll},
@@ -183,7 +182,7 @@ pub enum RecordsType {
     LocalStore(Record),
 
     /// Records found in the network.
-    Network(HashMap<Record, Vec<PeerId>>),
+    Network(Vec<PeerRecord>),
 }
 
 /// Handle for communicating with the Kademlia protocol.

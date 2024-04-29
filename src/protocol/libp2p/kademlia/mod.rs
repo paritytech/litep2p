@@ -642,10 +642,19 @@ impl Kademlia {
                 // Considering this gives a view of all peers and their records, some peers may have
                 // outdated records. Store only the record which is backed by most
                 // peers.
-                let rec =
-                    records.iter().max_by_key(|(_, peers)| peers.len()).map(|(key, _)| key.clone());
+                let rec = records
+                    .iter()
+                    .map(|peer_record| &peer_record.record)
+                    .fold(HashMap::new(), |mut acc, rec| {
+                        *acc.entry(rec).or_insert(0) += 1;
+                        acc
+                    })
+                    .into_iter()
+                    .max_by_key(|(_, v)| *v)
+                    .map(|(k, _)| k);
+
                 if let Some(record) = rec {
-                    self.store.put(record);
+                    self.store.put(record.clone());
                 }
 
                 let _ = self
