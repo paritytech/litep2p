@@ -752,10 +752,21 @@ mod tests {
 
         let peers: std::collections::HashSet<_> = peers.into_iter().map(|p| p.peer).collect();
         match engine.next_action() {
-            Some(QueryAction::GetRecordQueryDone { record, .. }) => {
-                assert!(peers.contains(&record.peer.expect("Peer Id must be provided")));
-                assert_eq!(record.record.key, original_record.key);
-                assert_eq!(record.record.value, original_record.value);
+            Some(QueryAction::GetRecordQueryDone { records, .. }) => {
+                let query_peers = records
+                    .iter()
+                    .flat_map(|(_, peers)| peers)
+                    .cloned()
+                    .collect::<std::collections::HashSet<_>>();
+                assert_eq!(peers, query_peers);
+
+                let records = records.keys().collect::<Vec<_>>();
+                // One single record found across peers.
+                assert_eq!(records.len(), 1);
+                let record = records[0];
+
+                assert_eq!(record.key, original_record.key);
+                assert_eq!(record.value, original_record.value);
             }
             _ => panic!("invalid event received"),
         }
