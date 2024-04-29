@@ -21,7 +21,10 @@
 use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
-        query::{find_node::FindNodeContext, get_record::GetRecordContext},
+        query::{
+            find_node::FindNodeContext,
+            get_record::{GetRecordConfig, GetRecordContext},
+        },
         record::{Key as RecordKey, Record},
         types::{KademliaPeer, Key},
         PeerRecord, Quorum,
@@ -283,20 +286,20 @@ impl QueryEngine {
         );
 
         let target = Key::new(target);
+        let config = GetRecordConfig {
+            local_peer_id: self.local_peer_id,
+            record_count: count,
+            quorum,
+            replication_factor: self.replication_factor,
+            parallelism_factor: self.parallelism_factor,
+            query: query_id,
+            target,
+        };
 
         self.queries.insert(
             query_id,
             QueryType::GetRecord {
-                context: GetRecordContext::new(
-                    self.local_peer_id,
-                    query_id,
-                    target,
-                    candidates,
-                    self.replication_factor,
-                    self.parallelism_factor,
-                    quorum,
-                    count,
-                ),
+                context: GetRecordContext::new(config, candidates),
             },
         );
 
@@ -395,7 +398,7 @@ impl QueryEngine {
                 peers: context.peers_to_report,
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
-                query_id: context.query,
+                query_id: context.config.query,
                 records: context.found_records(),
             },
         }

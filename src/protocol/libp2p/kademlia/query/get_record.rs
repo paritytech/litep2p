@@ -36,22 +36,35 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_record";
 
+/// The configuration needed to instantiate a new [`GetRecordContext`].
 #[derive(Debug)]
-pub struct GetRecordContext {
+pub struct GetRecordConfig {
     /// Local peer ID.
-    local_peer_id: PeerId,
+    pub local_peer_id: PeerId,
 
-    /// How many records have been successfully found.
+    /// How many records we already know about (ie extracted from storage).
     pub record_count: usize,
 
     /// Quorum for the query.
     pub quorum: Quorum,
+
+    /// Replication factor.
+    pub replication_factor: usize,
+
+    /// Parallelism factor.
+    pub parallelism_factor: usize,
 
     /// Query ID.
     pub query: QueryId,
 
     /// Target key.
     pub target: Key<RecordKey>,
+}
+
+#[derive(Debug)]
+pub struct GetRecordContext {
+    /// Query immutable config.
+    pub config: GetRecordConfig,
 
     /// Peers from whom the `QueryEngine` is waiting to hear a response.
     pub pending: HashMap<PeerId, KademliaPeer>,
@@ -67,42 +80,21 @@ pub struct GetRecordContext {
 
     /// Found records.
     pub found_records: Vec<PeerRecord>,
-
-    /// Replication factor.
-    pub replication_factor: usize,
-
-    /// Parallelism factor.
-    pub parallelism_factor: usize,
 }
 
 impl GetRecordContext {
     /// Create new [`GetRecordContext`].
-    pub fn new(
-        local_peer_id: PeerId,
-        query: QueryId,
-        target: Key<RecordKey>,
-        in_peers: VecDeque<KademliaPeer>,
-        replication_factor: usize,
-        parallelism_factor: usize,
-        quorum: Quorum,
-        record_count: usize,
-    ) -> Self {
+    pub fn new(config: GetRecordConfig, in_peers: VecDeque<KademliaPeer>) -> Self {
         let mut candidates = BTreeMap::new();
 
         for candidate in &in_peers {
-            let distance = target.distance(&candidate.key);
+            let distance = config.target.distance(&candidate.key);
             candidates.insert(distance, candidate.clone());
         }
 
         Self {
-            query,
-            target,
-            quorum,
+            config,
             candidates,
-            record_count,
-            local_peer_id,
-            replication_factor,
-            parallelism_factor,
             pending: HashMap::new(),
             queried: HashSet::new(),
             found_records: Vec::new(),
@@ -153,11 +145,11 @@ impl GetRecordContext {
             if !self.queried.contains(&candidate.peer)
                 && !self.pending.contains_key(&candidate.peer)
             {
-                if self.local_peer_id == candidate.peer {
+                if self.config.local_peer_id == candidate.peer {
                     continue;
                 }
 
-                let distance = self.target.distance(&candidate.key);
+                let distance = self.config.target.distance(&candidate.key);
                 self.candidates.insert(distance, candidate);
             }
         }
@@ -167,15 +159,15 @@ impl GetRecordContext {
     // TODO: remove this and store the next action to `PeerAction`
     pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
         self.pending.contains_key(peer).then_some(QueryAction::SendMessage {
-            query: self.query,
+            query: self.config.query,
             peer: *peer,
-            message: KademliaMessage::get_record(self.target.clone().into_preimage()),
+            message: KademliaMessage::get_record(self.config.target.clone().into_preimage()),
         })
     }
 
     /// Schedule next peer for outbound `GET_VALUE` query.
     pub fn schedule_next_peer(&mut self) -> QueryAction {
-        tracing::trace!(target: LOG_TARGET, query = ?self.query, "get next peer");
+        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, "get next peer");
 
         let (_, candidate) = self.candidates.pop_first().expect("entry to exist");
         let peer = candidate.peer;
@@ -184,9 +176,9 @@ impl GetRecordContext {
         self.pending.insert(candidate.peer, candidate);
 
         QueryAction::SendMessage {
-            query: self.query,
+            query: self.config.query,
             peer,
-            message: KademliaMessage::get_record(self.target.clone().into_preimage()),
+            message: KademliaMessage::get_record(self.config.target.clone().into_preimage()),
         }
     }
 
@@ -195,29 +187,39 @@ impl GetRecordContext {
         // if there are no more peers to query, check if the query succeeded or failed
         // the status is determined by whether a record was found
         if self.pending.is_empty() && self.candidates.is_empty() {
-            match self.record_count + self.found_records.len() {
-                0 => return Some(QueryAction::QueryFailed { query: self.query }),
-                _ => return Some(QueryAction::QuerySucceeded { query: self.query }),
+            match self.config.record_count + self.found_records.len() {
+                0 =>
+                    return Some(QueryAction::QueryFailed {
+                        query: self.config.query,
+                    }),
+                _ =>
+                    return Some(QueryAction::QuerySucceeded {
+                        query: self.config.query,
+                    }),
             }
         }
 
         // check if enough records have been found
-        let continue_search = match self.quorum {
-            Quorum::All => (self.record_count + self.found_records.len() < self.replication_factor),
-            Quorum::One => (self.record_count + self.found_records.len() < 1),
+        let continue_search = match self.config.quorum {
+            Quorum::All =>
+                (self.config.record_count + self.found_records.len()
+                    < self.config.replication_factor),
+            Quorum::One => (self.config.record_count + self.found_records.len() < 1),
             Quorum::N(num_responses) =>
-                (self.record_count + self.found_records.len() < num_responses.into()),
+                (self.config.record_count + self.found_records.len() < num_responses.into()),
         };
 
         // if enough replicas for the record have been received (defined by the quorum size),
         /// mark the query as succeeded
         if !continue_search {
-            return Some(QueryAction::QuerySucceeded { query: self.query });
+            return Some(QueryAction::QuerySucceeded {
+                query: self.config.query,
+            });
         }
 
         // if the search must continue, try to schedule next outbound message if possible
         if !self.pending.is_empty() || !self.candidates.is_empty() {
-            if self.pending.len() == self.parallelism_factor || self.candidates.is_empty() {
+            if self.pending.len() == self.config.parallelism_factor || self.candidates.is_empty() {
                 return None;
             }
 
@@ -229,8 +231,8 @@ impl GetRecordContext {
             target: LOG_TARGET,
             num_pending = ?self.pending.len(),
             num_candidates = ?self.candidates.len(),
-            num_records = ?(self.record_count + self.found_records.len()),
-            quorum = ?self.quorum,
+            num_records = ?(self.config.record_count + self.found_records.len()),
+            quorum = ?self.config.quorum,
             ?continue_search,
             "unreachable condition for `GET_VALUE` search"
         );
