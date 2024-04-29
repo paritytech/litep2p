@@ -66,7 +66,7 @@ pub struct GetRecordContext {
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
     /// Found records.
-    pub found_records: Vec<PeerRecord>,
+    pub found_records: HashMap<Record, Vec<PeerId>>,
 
     /// Replication factor.
     pub replication_factor: usize,
@@ -105,13 +105,13 @@ impl GetRecordContext {
             parallelism_factor,
             pending: HashMap::new(),
             queried: HashSet::new(),
-            found_records: Vec::new(),
+            found_records: HashMap::new(),
         }
     }
 
-    /// Get the found record.
-    pub fn found_record(mut self) -> PeerRecord {
-        self.found_records.pop().expect("record to exist since query succeeded")
+    /// Get the found records.
+    pub fn found_records(mut self) -> HashMap<Record, Vec<PeerId>> {
+        self.found_records
     }
 
     /// Register response failure for `peer`.
@@ -138,10 +138,7 @@ impl GetRecordContext {
 
         // TODO: validate record
         if let Some(record) = record {
-            self.found_records.push(PeerRecord {
-                record,
-                peer: Some(peer.peer),
-            });
+            self.found_records.entry(record).or_default().push(peer.peer);
         }
 
         // add the queried peer to `queried` and all new peers which haven't been

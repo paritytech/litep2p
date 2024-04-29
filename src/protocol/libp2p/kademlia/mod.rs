@@ -52,6 +52,8 @@ pub use handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode};
 pub use query::QueryId;
 pub use record::{Key as RecordKey, PeerRecord, Record};
 
+use self::handle::RecordsType;
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
 
@@ -636,11 +638,23 @@ impl Kademlia {
 
                 Ok(())
             }
-            QueryAction::GetRecordQueryDone { query_id, record } => {
-                self.store.put(record.record.clone());
+            QueryAction::GetRecordQueryDone { query_id, records } => {
+                // Considering this gives a view of all peers and their records, some peers may have
+                // outdated records. Store only the record which is backed by most
+                // peers.
+                let rec =
+                    records.iter().max_by_key(|(_, peers)| peers.len()).map(|(key, _)| key.clone());
+                if let Some(record) = rec {
+                    self.store.put(record);
+                }
 
-                let _ =
-                    self.event_tx.send(KademliaEvent::GetRecordSuccess { query_id, record }).await;
+                let _ = self
+                    .event_tx
+                    .send(KademliaEvent::GetRecordSuccess {
+                        query_id,
+                        records: RecordsType::Network(records),
+                    })
+                    .await;
                 Ok(())
             }
             QueryAction::QueryFailed { query } => {
@@ -782,7 +796,7 @@ impl Kademlia {
                                 (Some(record), Quorum::One) => {
                                     let _ = self
                                         .event_tx
-                                        .send(KademliaEvent::GetRecordSuccess { query_id, record: PeerRecord { record: record.clone(), peer: None } })
+                                        .send(KademliaEvent::GetRecordSuccess { query_id, records: RecordsType::LocalStore(record.clone()) })
                                         .await;
                                 }
                                 (record, _) => {

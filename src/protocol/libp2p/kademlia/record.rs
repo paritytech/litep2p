@@ -74,7 +74,7 @@ impl From<Multihash> for Key {
 }
 
 /// A record stored in the DHT.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Record {
     /// Key of the record.
     pub key: Key,

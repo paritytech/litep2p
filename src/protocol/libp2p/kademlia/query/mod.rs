@@ -22,7 +22,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{find_node::FindNodeContext, get_record::GetRecordContext},
-        record::{Key as RecordKey, PeerRecord, Record},
+        record::{Key as RecordKey, Record},
         types::{KademliaPeer, Key},
         Quorum,
     },
@@ -400,7 +400,7 @@ impl QueryEngine {
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.query,
-                record: context.found_record(),
+                records: context.found_records(),
             },
         }
     }

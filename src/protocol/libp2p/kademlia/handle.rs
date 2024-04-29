@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{PeerRecord, QueryId, Record, RecordKey},
+    protocol::libp2p::kademlia::{QueryId, Record, RecordKey},
     PeerId,
 };
 
@@ -28,6 +28,7 @@ use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
+    collections::HashMap,
     num::NonZeroUsize,
     pin::Pin,
     task::{Context, Poll},
@@ -153,8 +154,8 @@ pub enum KademliaEvent {
         /// Query ID.
         query_id: QueryId,
 
-        /// Found record.
-        record: PeerRecord,
+        /// Found records.
+        records: RecordsType,
     },
 
     /// `PUT_VALUE` query succeeded.
@@ -171,6 +172,18 @@ pub enum KademliaEvent {
         /// Query ID.
         query_id: QueryId,
     },
+}
+
+/// The type of the DHT records.
+#[derive(Debug, Clone)]
+pub enum RecordsType {
+    /// Record was found in the local store.
+    ///
+    /// This contains only a single result.
+    LocalStore(Record),
+
+    /// Records found in the network.
+    Network(HashMap<Record, Vec<PeerId>>),
 }
 
 /// Handle for communicating with the Kademlia protocol.
