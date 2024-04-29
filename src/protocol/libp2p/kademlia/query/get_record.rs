@@ -20,6 +20,8 @@
 
 #![allow(unused)]
 
+use bytes::Bytes;
+
 use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
@@ -83,6 +85,9 @@ pub struct GetRecordContext {
     /// Query immutable config.
     pub config: GetRecordConfig,
 
+    /// Cached Kadmelia message to send.
+    kad_message: Bytes,
+
     /// Peers from whom the `QueryEngine` is waiting to hear a response.
     pub pending: HashMap<PeerId, KademliaPeer>,
 
@@ -109,8 +114,12 @@ impl GetRecordContext {
             candidates.insert(distance, candidate.clone());
         }
 
+        let kad_message = KademliaMessage::get_record(config.target.clone().into_preimage());
+
         Self {
             config,
+            kad_message,
+
             candidates,
             pending: HashMap::new(),
             queried: HashSet::new(),
@@ -189,7 +198,7 @@ impl GetRecordContext {
         self.pending.contains_key(peer).then_some(QueryAction::SendMessage {
             query: self.config.query,
             peer: *peer,
-            message: KademliaMessage::get_record(self.config.target.clone().into_preimage()),
+            message: self.kad_message.clone(),
         })
     }
 
@@ -209,7 +218,7 @@ impl GetRecordContext {
         Some(QueryAction::SendMessage {
             query: self.config.query,
             peer,
-            message: KademliaMessage::get_record(self.config.target.clone().into_preimage()),
+            message: self.kad_message.clone(),
         })
     }
 
