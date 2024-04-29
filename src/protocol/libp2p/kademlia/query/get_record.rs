@@ -136,9 +136,10 @@ impl GetRecordContext {
             return;
         };
 
-        // TODO: validate record
         if let Some(record) = record {
-            self.found_records.entry(record).or_default().push(peer.peer);
+            if !record.is_expired(std::time::Instant::now()) {
+                self.found_records.entry(record).or_default().push(peer.peer);
+            }
         }
 
         // add the queried peer to `queried` and all new peers which haven't been
