@@ -166,20 +166,23 @@ impl GetRecordContext {
     }
 
     /// Schedule next peer for outbound `GET_VALUE` query.
-    pub fn schedule_next_peer(&mut self) -> QueryAction {
+    fn schedule_next_peer(&mut self) -> Option<QueryAction> {
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, "get next peer");
 
-        let (_, candidate) = self.candidates.pop_first().expect("entry to exist");
+        let Some((_, candidate)) = self.candidates.pop_first() else {
+            return None;
+        };
+
         let peer = candidate.peer;
 
         tracing::trace!(target: LOG_TARGET, ?peer, "current candidate");
         self.pending.insert(candidate.peer, candidate);
 
-        QueryAction::SendMessage {
+        Some(QueryAction::SendMessage {
             query: self.config.query,
             peer,
             message: KademliaMessage::get_record(self.config.target.clone().into_preimage()),
-        }
+        })
     }
 
     /// Get next action for a `GET_VALUE` query.
@@ -223,7 +226,7 @@ impl GetRecordContext {
                 return None;
             }
 
-            return Some(self.schedule_next_peer());
+            return self.schedule_next_peer();
         }
 
         // TODO: probably not correct
