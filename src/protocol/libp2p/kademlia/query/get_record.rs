@@ -141,17 +141,28 @@ impl GetRecordContext {
         // queried to `candidates`
         self.queried.insert(peer.peer);
 
-        for candidate in peers {
-            if !self.queried.contains(&candidate.peer)
-                && !self.pending.contains_key(&candidate.peer)
-            {
-                if self.config.local_peer_id == candidate.peer {
-                    continue;
-                }
-
-                let distance = self.config.target.distance(&candidate.key);
-                self.candidates.insert(distance, candidate);
+        let to_query_candidate = peers.into_iter().filter_map(|peer| {
+            // Peer already produced a response.
+            if self.queried.contains(&peer.peer) {
+                return None;
             }
+
+            // Peer was queried, awaiting response.
+            if self.pending.contains_key(&peer.peer) {
+                return None;
+            }
+
+            // Local node.
+            if self.config.local_peer_id == peer.peer {
+                return None;
+            }
+
+            Some(peer)
+        });
+
+        for candidate in to_query_candidate {
+            let distance = self.config.target.distance(&candidate.key);
+            self.candidates.insert(distance, candidate);
         }
     }
 
