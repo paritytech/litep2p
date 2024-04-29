@@ -124,8 +124,12 @@ pub enum QueryAction {
         /// Query ID.
         query_id: QueryId,
 
-        /// Found record.
-        record: PeerRecord,
+        /// Found records.
+        ///
+        /// Note: records that do not have any peers associated with them are received from the
+        /// local store. For those cases, the records will contain only the record from the local
+        /// store.
+        records: HashMap<Record, Vec<PeerId>>,
     },
 
     // TODO: remove
