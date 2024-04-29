@@ -18,8 +18,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)]
-
 use bytes::Bytes;
 
 use crate::{
@@ -128,7 +126,7 @@ impl GetRecordContext {
     }
 
     /// Get the found records.
-    pub fn found_records(mut self) -> Vec<PeerRecord> {
+    pub fn found_records(self) -> Vec<PeerRecord> {
         self.found_records
     }
 
@@ -206,9 +204,7 @@ impl GetRecordContext {
     fn schedule_next_peer(&mut self) -> Option<QueryAction> {
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, "get next peer");
 
-        let Some((_, candidate)) = self.candidates.pop_first() else {
-            return None;
-        };
+        let (_, candidate) = self.candidates.pop_first()?;
 
         let peer = candidate.peer;
 
