@@ -61,6 +61,23 @@ pub struct GetRecordConfig {
     pub target: Key<RecordKey>,
 }
 
+impl GetRecordConfig {
+    /// Checks if the found number of records meets the specified quorum.
+    ///
+    /// Used to determine if the query found enough records to stop.
+    fn sufficient_records(&self, records: usize) -> bool {
+        // The total number of known records is the sum of the records we knew about before starting
+        // the query and the records we found along the way.
+        let total_known = self.record_count + records;
+
+        match self.quorum {
+            Quorum::All => total_known >= self.replication_factor,
+            Quorum::One => total_known >= 1,
+            Quorum::N(needed_responses) => total_known >= needed_responses.get(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct GetRecordContext {
     /// Query immutable config.
@@ -128,6 +145,10 @@ impl GetRecordContext {
             return;
         };
 
+        // Add the queried peer to `queried` and all new peers which haven't been
+        // queried to `candidates`
+        self.queried.insert(peer.peer);
+
         if let Some(record) = record {
             if !record.is_expired(std::time::Instant::now()) {
                 self.found_records.push(PeerRecord {
@@ -136,10 +157,6 @@ impl GetRecordContext {
                 });
             }
         }
-
-        // add the queried peer to `queried` and all new peers which haven't been
-        // queried to `candidates`
-        self.queried.insert(peer.peer);
 
         let to_query_candidate = peers.into_iter().filter_map(|peer| {
             // Peer already produced a response.
@@ -196,61 +213,47 @@ impl GetRecordContext {
         })
     }
 
+    /// Check if the query cannot make any progress.
+    ///
+    /// Returns true when there are no pending responses and no candidates to query.
+    fn is_done(&self) -> bool {
+        self.pending.is_empty() && self.candidates.is_empty()
+    }
+
     /// Get next action for a `GET_VALUE` query.
     pub fn next_action(&mut self) -> Option<QueryAction> {
-        // if there are no more peers to query, check if the query succeeded or failed
-        // the status is determined by whether a record was found
-        if self.pending.is_empty() && self.candidates.is_empty() {
-            match self.config.record_count + self.found_records.len() {
-                0 =>
-                    return Some(QueryAction::QueryFailed {
-                        query: self.config.query,
-                    }),
-                _ =>
-                    return Some(QueryAction::QuerySucceeded {
-                        query: self.config.query,
-                    }),
-            }
+        // These are the records we knew about before starting the query and
+        // the records we found along the way.
+        let known_records = self.config.record_count + self.found_records.len();
+
+        // If we cannot make progress, return the final result.
+        // A query failed when we are not able to identify one single record.
+        if self.is_done() {
+            return if known_records == 0 {
+                Some(QueryAction::QueryFailed {
+                    query: self.config.query,
+                })
+            } else {
+                Some(QueryAction::QuerySucceeded {
+                    query: self.config.query,
+                })
+            };
         }
 
-        // check if enough records have been found
-        let continue_search = match self.config.quorum {
-            Quorum::All =>
-                (self.config.record_count + self.found_records.len()
-                    < self.config.replication_factor),
-            Quorum::One => (self.config.record_count + self.found_records.len() < 1),
-            Quorum::N(num_responses) =>
-                (self.config.record_count + self.found_records.len() < num_responses.into()),
-        };
-
-        // if enough replicas for the record have been received (defined by the quorum size),
-        /// mark the query as succeeded
-        if !continue_search {
+        // Check if enough records have been found
+        let sufficient_records = self.config.sufficient_records(self.found_records.len());
+        if sufficient_records {
             return Some(QueryAction::QuerySucceeded {
                 query: self.config.query,
             });
         }
 
-        // if the search must continue, try to schedule next outbound message if possible
-        if !self.pending.is_empty() || !self.candidates.is_empty() {
-            if self.pending.len() == self.config.parallelism_factor || self.candidates.is_empty() {
-                return None;
-            }
-
-            return self.schedule_next_peer();
+        // At this point, we either have pending responses or candidates to query; and we need more
+        // records. Ensure we do not exceed the parallelism factor.
+        if self.pending.len() == self.config.parallelism_factor {
+            return None;
         }
 
-        // TODO: probably not correct
-        tracing::warn!(
-            target: LOG_TARGET,
-            num_pending = ?self.pending.len(),
-            num_candidates = ?self.candidates.len(),
-            num_records = ?(self.config.record_count + self.found_records.len()),
-            quorum = ?self.config.quorum,
-            ?continue_search,
-            "unreachable condition for `GET_VALUE` search"
-        );
-
-        unreachable!();
+        self.schedule_next_peer()
     }
 }
