@@ -262,3 +262,79 @@ impl GetRecordContext {
         self.schedule_next_peer()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> GetRecordConfig {
+        GetRecordConfig {
+            local_peer_id: PeerId::random(),
+            quorum: Quorum::All,
+            record_count: 0,
+            replication_factor: 20,
+            parallelism_factor: 10,
+            query: QueryId(0),
+            target: Key::new(vec![1, 2, 3].into()),
+        }
+    }
+
+    #[test]
+    fn config_check() {
+        // Quorum::All with no known records.
+        let config = GetRecordConfig {
+            quorum: Quorum::All,
+            record_count: 0,
+            replication_factor: 20,
+            ..default_config()
+        };
+        assert!(config.sufficient_records(20));
+        assert!(!config.sufficient_records(19));
+
+        // Quorum::All with 10 known records.
+        let config = GetRecordConfig {
+            quorum: Quorum::All,
+            record_count: 10,
+            replication_factor: 20,
+            ..default_config()
+        };
+        assert!(config.sufficient_records(10));
+        assert!(!config.sufficient_records(9));
+
+        // Quorum::One with no known records.
+        let config = GetRecordConfig {
+            quorum: Quorum::One,
+            record_count: 0,
+            ..default_config()
+        };
+        assert!(config.sufficient_records(1));
+        assert!(!config.sufficient_records(0));
+
+        // Quorum::One with known records.
+        let config = GetRecordConfig {
+            quorum: Quorum::One,
+            record_count: 10,
+            ..default_config()
+        };
+        assert!(config.sufficient_records(1));
+        assert!(config.sufficient_records(0));
+
+        // Quorum::N with no known records.
+        let config = GetRecordConfig {
+            quorum: Quorum::N(std::num::NonZeroUsize::new(10).expect("valid; qed")),
+            record_count: 0,
+            ..default_config()
+        };
+        assert!(config.sufficient_records(10));
+        assert!(!config.sufficient_records(9));
+
+        // Quorum::N with known records.
+        let config = GetRecordConfig {
+            quorum: Quorum::N(std::num::NonZeroUsize::new(10).expect("valid; qed")),
+            record_count: 5,
+            ..default_config()
+        };
+        assert!(config.sufficient_records(5));
+        assert!(!config.sufficient_records(4));
+    }
+}
