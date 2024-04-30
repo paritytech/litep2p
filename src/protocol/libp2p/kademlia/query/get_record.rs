@@ -266,6 +266,7 @@ impl GetRecordContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::libp2p::kademlia::types::ConnectionType;
 
     fn default_config() -> GetRecordConfig {
         GetRecordConfig {
@@ -276,6 +277,15 @@ mod tests {
             parallelism_factor: 10,
             query: QueryId(0),
             target: Key::new(vec![1, 2, 3].into()),
+        }
+    }
+
+    fn peer_to_kad(peer: PeerId) -> KademliaPeer {
+        KademliaPeer {
+            peer,
+            key: Key::from(peer),
+            addresses: vec![],
+            connection: ConnectionType::Connected,
         }
     }
 
@@ -367,15 +377,7 @@ mod tests {
             [PeerId::random(), PeerId::random(), PeerId::random()].into_iter().collect();
         assert_eq!(in_peers_set.len(), 3);
 
-        let in_peers = in_peers_set
-            .iter()
-            .map(|peer| KademliaPeer {
-                peer: *peer,
-                key: Key::from(*peer),
-                addresses: vec![],
-                connection: crate::protocol::libp2p::kademlia::types::ConnectionType::Connected,
-            })
-            .collect();
+        let in_peers = in_peers_set.iter().map(|peer| peer_to_kad(*peer)).collect();
         let mut context = GetRecordContext::new(config, in_peers);
 
         for num in 0..3 {
@@ -396,5 +398,109 @@ mod tests {
 
         // Fulfilled parallelism.
         assert!(context.next_action().is_none());
+    }
+
+    #[test]
+    fn completes_when_responses() {
+        let key = vec![1, 2, 3];
+        let config = GetRecordConfig {
+            parallelism_factor: 3,
+            replication_factor: 3,
+            ..default_config()
+        };
+
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+        let peer_c = PeerId::random();
+
+        let in_peers_set: HashSet<_> = [peer_a, peer_b, peer_c].into_iter().collect();
+        assert_eq!(in_peers_set.len(), 3);
+
+        let in_peers = [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = GetRecordContext::new(config, in_peers);
+
+        // Schedule peer queries.
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+
+                    // Check the peer is the one provided.
+                    assert!(in_peers_set.contains(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        // Checks a failed query that was not initiated.
+        let peer_d = PeerId::random();
+        context.register_response_failure(peer_d);
+        assert_eq!(context.pending.len(), 3);
+        assert!(context.queried.is_empty());
+
+        // Provide responses back.
+        let record = Record::new(key.clone(), vec![1, 2, 3]);
+        context.register_response(peer_a, Some(record), vec![]);
+        assert_eq!(context.pending.len(), 2);
+        assert_eq!(context.queried.len(), 1);
+        assert_eq!(context.found_records.len(), 1);
+
+        // Provide different response from peer b with peer d as candidate.
+        let record = Record::new(key.clone(), vec![4, 5, 6]);
+        context.register_response(peer_b, Some(record), vec![peer_to_kad(peer_d.clone())]);
+        assert_eq!(context.pending.len(), 1);
+        assert_eq!(context.queried.len(), 2);
+        assert_eq!(context.found_records.len(), 2);
+        assert_eq!(context.candidates.len(), 1);
+
+        // Peer C fails.
+        context.register_response_failure(peer_c);
+        assert!(context.pending.is_empty());
+        assert_eq!(context.queried.len(), 3);
+        assert_eq!(context.found_records.len(), 2);
+
+        // Drain the last candidate.
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 1);
+                assert_eq!(peer, peer_d);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        // Peer D responds.
+        let record = Record::new(key.clone(), vec![4, 5, 6]);
+        context.register_response(peer_d, Some(record), vec![]);
+
+        // Produces the result.
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+
+        // Check results.
+        let found_records = context.found_records();
+        assert_eq!(
+            found_records,
+            vec![
+                PeerRecord {
+                    peer: peer_a,
+                    record: Record::new(key.clone(), vec![1, 2, 3]),
+                },
+                PeerRecord {
+                    peer: peer_b,
+                    record: Record::new(key.clone(), vec![4, 5, 6]),
+                },
+                PeerRecord {
+                    peer: peer_d,
+                    record: Record::new(key.clone(), vec![4, 5, 6]),
+                },
+            ]
+        );
     }
 }
