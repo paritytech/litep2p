@@ -52,7 +52,7 @@ pub use handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode};
 pub use query::QueryId;
 pub use record::{Key as RecordKey, PeerRecord, Record};
 
-use self::handle::RecordsType;
+pub use self::handle::RecordsType;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
