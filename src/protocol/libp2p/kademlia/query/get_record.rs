@@ -355,4 +355,46 @@ mod tests {
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
     }
+
+    #[test]
+    fn fulfill_parallelism() {
+        let config = GetRecordConfig {
+            parallelism_factor: 3,
+            ..default_config()
+        };
+
+        let in_peers_set: HashSet<_> =
+            [PeerId::random(), PeerId::random(), PeerId::random()].into_iter().collect();
+        assert_eq!(in_peers_set.len(), 3);
+
+        let in_peers = in_peers_set
+            .iter()
+            .map(|peer| KademliaPeer {
+                peer: *peer,
+                key: Key::from(*peer),
+                addresses: vec![],
+                connection: crate::protocol::libp2p::kademlia::types::ConnectionType::Connected,
+            })
+            .collect();
+        let mut context = GetRecordContext::new(config, in_peers);
+
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+
+                    // Check the peer is the one provided.
+                    assert!(in_peers_set.contains(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        // Fulfilled parallelism.
+        assert!(context.next_action().is_none());
+    }
 }
