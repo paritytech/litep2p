@@ -86,7 +86,7 @@ enum QueryType {
 }
 
 /// Query action.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum QueryAction {
     /// Send message to peer.
     SendMessage {

@@ -337,4 +337,22 @@ mod tests {
         assert!(config.sufficient_records(5));
         assert!(!config.sufficient_records(4));
     }
+
+    #[test]
+    fn completes_when_no_candidates() {
+        let config = default_config();
+        let mut context = GetRecordContext::new(config, VecDeque::new());
+        assert!(context.is_done());
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
+
+        let config = GetRecordConfig {
+            record_count: 1,
+            ..default_config()
+        };
+        let mut context = GetRecordContext::new(config, VecDeque::new());
+        assert!(context.is_done());
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+    }
 }
