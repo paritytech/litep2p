@@ -357,8 +357,16 @@ impl WebRtcTransport {
                 "received non-stun message"
             );
 
-            if let Err(error) = self.opening.get_mut(&source).expect("to exist").on_input(contents)
-            {
+            let Some(connection) = self.opening.get_mut(&source) else {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?source,
+                    "connection doesn't exist",
+                );
+                return Err(Error::InvalidData);
+            };
+
+            if let Err(error) = connection.on_input(contents) {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?error,
