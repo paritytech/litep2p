@@ -284,6 +284,11 @@ impl OpeningWebRtcConnection {
             .with(Protocol::Certhash(certificate))
             .with(Protocol::P2p(PeerId::from(public_key).into()));
 
+        tracing::info!(
+            target: LOG_TARGET,
+            "webrtc on_noise_channel_data opening {address}",
+        );
+
         Ok(WebRtcEvent::ConnectionOpened {
             peer: remote_peer_id,
             endpoint: Endpoint::listener(address, self.connection_id),

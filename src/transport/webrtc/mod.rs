@@ -469,6 +469,13 @@ impl TransportBuilder for WebRtcTransport {
                 .with(Protocol::Certhash(certificate))]
         };
 
+        for address in &listen_multi_addresses {
+            tracing::info!(
+                target: LOG_TARGET,
+                "webrtc listening to {address}",
+            );
+        }
+
         Ok((
             Self {
                 context,
