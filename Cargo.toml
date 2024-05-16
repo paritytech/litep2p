@@ -19,7 +19,7 @@ futures-timer = "3.0.2"
 hex-literal = "0.4.1"
 indexmap = { version = "2.0.0", features = ["std"] }
 libc = "0.2.142"
-mockall = "0.11.4"
+mockall = "0.12.1"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
 network-interface = "1.1.1"
@@ -33,21 +33,21 @@ ring = "0.16.20"
 serde = "1.0.158"
 sha2 = "0.10.8"
 simple-dns = "0.5.3"
-smallvec = "1.10.0"
+smallvec = "1.13.2"
 snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
 socket2 = { version = "0.5.5", features = ["all"] }
 str0m = "0.4.1"
 thiserror = "1.0.39"
 tokio-stream = "0.1.12"
 tokio-tungstenite = { version = "0.20.0", features = ["rustls-tls-native-roots"] }
-tokio-util = { version = "0.7.7", features = ["compat", "io", "codec"] }
+tokio-util = { version = "0.7.11", features = ["compat", "io", "codec"] }
 tokio = { version = "1.26.0", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
-tracing = { version = "0.1.37", features = ["log"] }
+tracing = { version = "0.1.40", features = ["log"] }
 trust-dns-resolver = "0.23.2"
 uint = "0.9.5"
 unsigned-varint = { version = "0.7.2", features = ["codec"] }
 url = "2.4.0"
-webpki = "0.22.2"
+webpki = "0.22.4"
 x25519-dalek = "2.0.0"
 x509-parser = "0.15.0"
 yasna = "0.5.0"
@@ -63,7 +63,7 @@ features = ["dangerous_configuration"] # Must enable this to allow for custom ve
 
 [dev-dependencies]
 asynchronous-codec = "0.6.1"
-libp2p = { version = "0.51.3", features = [
+libp2p = { version = "0.51.4", features = [
     "tokio",
     "dns",
     "identify",
@@ -80,8 +80,8 @@ libp2p = { version = "0.51.3", features = [
 quickcheck = "1.0.3"
 rand_xorshift = "0.3.0"
 sc-network = "0.28.0"
-sc-utils = "8.0.0"
-serde_json = "1.0.108"
+sc-utils = "13.0.0"
+serde_json = "1.0.109"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
 

@@ -154,10 +154,6 @@ impl GetRecordContext {
             return;
         };
 
-        // Add the queried peer to `queried` and all new peers which haven't been
-        // queried to `candidates`
-        self.queried.insert(peer.peer);
-
         if let Some(record) = record {
             if !record.is_expired(std::time::Instant::now()) {
                 self.found_records.push(PeerRecord {
@@ -166,6 +162,10 @@ impl GetRecordContext {
                 });
             }
         }
+
+        // Add the queried peer to `queried` and all new peers which haven't been
+        // queried to `candidates`
+        self.queried.insert(peer.peer);
 
         let to_query_candidate = peers.into_iter().filter_map(|peer| {
             // Peer already produced a response.
