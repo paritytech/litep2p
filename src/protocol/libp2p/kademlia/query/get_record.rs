@@ -303,15 +303,15 @@ mod tests {
         assert!(config.sufficient_records(20));
         assert!(!config.sufficient_records(19));
 
-        // Quorum::All with 10 known records.
+        // Quorum::All with 1 known records.
         let config = GetRecordConfig {
             quorum: Quorum::All,
-            known_records: 10,
+            known_records: 1,
             replication_factor: 20,
             ..default_config()
         };
-        assert!(config.sufficient_records(10));
-        assert!(!config.sufficient_records(9));
+        assert!(config.sufficient_records(19));
+        assert!(!config.sufficient_records(18));
 
         // Quorum::One with no known records.
         let config = GetRecordConfig {
@@ -325,7 +325,7 @@ mod tests {
         // Quorum::One with known records.
         let config = GetRecordConfig {
             quorum: Quorum::One,
-            known_records: 10,
+            known_records: 1,
             ..default_config()
         };
         assert!(config.sufficient_records(1));
@@ -343,11 +343,11 @@ mod tests {
         // Quorum::N with known records.
         let config = GetRecordConfig {
             quorum: Quorum::N(std::num::NonZeroUsize::new(10).expect("valid; qed")),
-            known_records: 5,
+            known_records: 1,
             ..default_config()
         };
-        assert!(config.sufficient_records(5));
-        assert!(!config.sufficient_records(4));
+        assert!(config.sufficient_records(9));
+        assert!(!config.sufficient_records(8));
     }
 
     #[test]
