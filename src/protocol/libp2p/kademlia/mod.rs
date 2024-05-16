@@ -908,7 +908,7 @@ mod tests {
 
     #[tokio::test]
     async fn check_get_records_update() {
-        let (mut kademlia, _context, _manager) = _make_kademlia();
+        let (mut kademlia, _context, _manager) = make_kademlia();
 
         let key = RecordKey::from(vec![1, 2, 3]);
         let records = vec![
