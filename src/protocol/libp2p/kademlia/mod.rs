@@ -47,11 +47,11 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::collections::{hash_map::Entry, HashMap};
 
+pub use self::handle::RecordsType;
 pub use config::{Config, ConfigBuilder};
 pub use handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode};
 pub use query::QueryId;
 pub use record::{Key as RecordKey, PeerRecord, Record};
-pub use self::handle::RecordsType;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
