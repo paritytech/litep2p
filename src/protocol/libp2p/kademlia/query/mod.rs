@@ -288,7 +288,7 @@ impl QueryEngine {
         let target = Key::new(target);
         let config = GetRecordConfig {
             local_peer_id: self.local_peer_id,
-            record_count: count,
+            known_records: count,
             quorum,
             replication_factor: self.replication_factor,
             parallelism_factor: self.parallelism_factor,

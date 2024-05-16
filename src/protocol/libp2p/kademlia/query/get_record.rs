@@ -43,7 +43,9 @@ pub struct GetRecordConfig {
     pub local_peer_id: PeerId,
 
     /// How many records we already know about (ie extracted from storage).
-    pub record_count: usize,
+    ///
+    /// This can either be 0 or 1 when the record is extracted local storage.
+    pub known_records: usize,
 
     /// Quorum for the query.
     pub quorum: Quorum,
@@ -68,7 +70,7 @@ impl GetRecordConfig {
     fn sufficient_records(&self, records: usize) -> bool {
         // The total number of known records is the sum of the records we knew about before starting
         // the query and the records we found along the way.
-        let total_known = self.record_count + records;
+        let total_known = self.known_records + records;
 
         match self.quorum {
             Quorum::All => total_known >= self.replication_factor,
@@ -229,7 +231,7 @@ impl GetRecordContext {
     pub fn next_action(&mut self) -> Option<QueryAction> {
         // These are the records we knew about before starting the query and
         // the records we found along the way.
-        let known_records = self.config.record_count + self.found_records.len();
+        let known_records = self.config.known_records + self.found_records.len();
 
         // If we cannot make progress, return the final result.
         // A query failed when we are not able to identify one single record.
@@ -272,7 +274,7 @@ mod tests {
         GetRecordConfig {
             local_peer_id: PeerId::random(),
             quorum: Quorum::All,
-            record_count: 0,
+            known_records: 0,
             replication_factor: 20,
             parallelism_factor: 10,
             query: QueryId(0),
@@ -294,7 +296,7 @@ mod tests {
         // Quorum::All with no known records.
         let config = GetRecordConfig {
             quorum: Quorum::All,
-            record_count: 0,
+            known_records: 0,
             replication_factor: 20,
             ..default_config()
         };
@@ -304,7 +306,7 @@ mod tests {
         // Quorum::All with 10 known records.
         let config = GetRecordConfig {
             quorum: Quorum::All,
-            record_count: 10,
+            known_records: 10,
             replication_factor: 20,
             ..default_config()
         };
@@ -314,7 +316,7 @@ mod tests {
         // Quorum::One with no known records.
         let config = GetRecordConfig {
             quorum: Quorum::One,
-            record_count: 0,
+            known_records: 0,
             ..default_config()
         };
         assert!(config.sufficient_records(1));
@@ -323,7 +325,7 @@ mod tests {
         // Quorum::One with known records.
         let config = GetRecordConfig {
             quorum: Quorum::One,
-            record_count: 10,
+            known_records: 10,
             ..default_config()
         };
         assert!(config.sufficient_records(1));
@@ -332,7 +334,7 @@ mod tests {
         // Quorum::N with no known records.
         let config = GetRecordConfig {
             quorum: Quorum::N(std::num::NonZeroUsize::new(10).expect("valid; qed")),
-            record_count: 0,
+            known_records: 0,
             ..default_config()
         };
         assert!(config.sufficient_records(10));
@@ -341,7 +343,7 @@ mod tests {
         // Quorum::N with known records.
         let config = GetRecordConfig {
             quorum: Quorum::N(std::num::NonZeroUsize::new(10).expect("valid; qed")),
-            record_count: 5,
+            known_records: 5,
             ..default_config()
         };
         assert!(config.sufficient_records(5));
@@ -357,7 +359,7 @@ mod tests {
         assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
 
         let config = GetRecordConfig {
-            record_count: 1,
+            known_records: 1,
             ..default_config()
         };
         let mut context = GetRecordContext::new(config, VecDeque::new());
