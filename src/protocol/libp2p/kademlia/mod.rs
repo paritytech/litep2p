@@ -870,7 +870,7 @@ mod tests {
         event_rx: Receiver<KademliaEvent>,
     }
 
-    fn _make_kademlia() -> (Kademlia, Context, TransportManager) {
+    fn make_kademlia() -> (Kademlia, Context, TransportManager) {
         let (manager, handle) = TransportManager::new(
             Keypair::generate(),
             HashSet::new(),
@@ -935,5 +935,46 @@ mod tests {
         // Check the local storage was updated.
         let record = kademlia.store.get(&key).unwrap();
         assert_eq!(record.value, vec![0x1]);
+    }
+
+    #[tokio::test]
+    async fn check_get_records_update_with_expired_records() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+
+        let key = RecordKey::from(vec![1, 2, 3]);
+        let expired = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        let records = vec![
+            // 2 peers backing the same record, one record is expired.
+            PeerRecord {
+                peer: PeerId::random(),
+                record: Record {
+                    key: key.clone(),
+                    value: vec![0x1],
+                    publisher: None,
+                    expires: Some(expired),
+                },
+            },
+            PeerRecord {
+                peer: PeerId::random(),
+                record: Record::new(key.clone(), vec![0x1]),
+            },
+            // 2 peer backing the record.
+            PeerRecord {
+                peer: PeerId::random(),
+                record: Record::new(key.clone(), vec![0x2]),
+            },
+            PeerRecord {
+                peer: PeerId::random(),
+                record: Record::new(key.clone(), vec![0x2]),
+            },
+        ];
+
+        let query_id = QueryId(1);
+        let action = QueryAction::GetRecordQueryDone { query_id, records };
+        assert!(kademlia.on_query_action(action).await.is_ok());
+
+        // Check the local storage was updated.
+        let record = kademlia.store.get(&key).unwrap();
+        assert_eq!(record.value, vec![0x2]);
     }
 }
