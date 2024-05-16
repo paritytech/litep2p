@@ -729,7 +729,26 @@ impl Stream for WebRtcTransport {
     }
 }
 
-// Check if the packet received is STUN.
+/// Check if the packet received is STUN.
+///
+/// Extracted from the STUN RFC 5389 (<https://datatracker.ietf.org/doc/html/rfc5389#page-10>):
+///  All STUN messages MUST start with a 20-byte header followed by zero
+///  or more Attributes.  The STUN header contains a STUN message type,
+///  magic cookie, transaction ID, and message length.
+///
+/// ```ignore
+///      0                   1                   2                   3
+///      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///     |0 0|     STUN Message Type     |         Message Length        |
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///     |                         Magic Cookie                          |
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///     |                                                               |
+///     |                     Transaction ID (96 bits)                  |
+///     |                                                               |
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+/// ```
 fn is_stun_packet(bytes: &[u8]) -> bool {
     // 20 bytes for the header, then follows attributes.
     bytes.len() >= 20 && bytes[0] < 2
