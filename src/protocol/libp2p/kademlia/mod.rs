@@ -898,4 +898,35 @@ mod tests {
             manager,
         )
     }
+
+    #[tokio::test]
+    async fn check_get_records_update() {
+        let (mut kademlia, _context, _manager) = _make_kademlia();
+
+        let key = RecordKey::from(vec![1, 2, 3]);
+        let records = vec![
+            // 2 peers backing the same record.
+            PeerRecord {
+                peer: PeerId::random(),
+                record: Record::new(key.clone(), vec![0x1]),
+            },
+            PeerRecord {
+                peer: PeerId::random(),
+                record: Record::new(key.clone(), vec![0x1]),
+            },
+            // only 1 peer backing the record.
+            PeerRecord {
+                peer: PeerId::random(),
+                record: Record::new(key.clone(), vec![0x2]),
+            },
+        ];
+
+        let query_id = QueryId(1);
+        let action = QueryAction::GetRecordQueryDone { query_id, records };
+        assert!(kademlia.on_query_action(action).await.is_ok());
+
+        // Check the local storage was updated.
+        let record = kademlia.store.get(&key).unwrap();
+        assert_eq!(record.value, vec![0x1]);
+    }
 }
