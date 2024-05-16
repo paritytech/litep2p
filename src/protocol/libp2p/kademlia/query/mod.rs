@@ -22,9 +22,9 @@ use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{find_node::FindNodeContext, get_record::GetRecordContext},
-        record::{Key as RecordKey, PeerRecord, Record},
+        record::{Key as RecordKey, Record},
         types::{KademliaPeer, Key},
-        Quorum,
+        PeerRecord, Quorum,
     },
     PeerId,
 };
@@ -124,8 +124,8 @@ pub enum QueryAction {
         /// Query ID.
         query_id: QueryId,
 
-        /// Found record.
-        record: PeerRecord,
+        /// Found records.
+        records: Vec<PeerRecord>,
     },
 
     // TODO: remove
@@ -396,7 +396,7 @@ impl QueryEngine {
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.query,
-                record: context.found_record(),
+                records: context.found_records(),
             },
         }
     }
@@ -748,10 +748,21 @@ mod tests {
 
         let peers: std::collections::HashSet<_> = peers.into_iter().map(|p| p.peer).collect();
         match engine.next_action() {
-            Some(QueryAction::GetRecordQueryDone { record, .. }) => {
-                assert!(peers.contains(&record.peer.expect("Peer Id must be provided")));
-                assert_eq!(record.record.key, original_record.key);
-                assert_eq!(record.record.value, original_record.value);
+            Some(QueryAction::GetRecordQueryDone { records, .. }) => {
+                let query_peers = records
+                    .iter()
+                    .map(|peer_record| peer_record.peer)
+                    .collect::<std::collections::HashSet<_>>();
+                assert_eq!(peers, query_peers);
+
+                let records: std::collections::HashSet<_> =
+                    records.into_iter().map(|peer_record| peer_record.record).collect();
+                // One single record found across peers.
+                assert_eq!(records.len(), 1);
+                let record = records.into_iter().next().unwrap();
+
+                assert_eq!(record.key, original_record.key);
+                assert_eq!(record.value, original_record.value);
             }
             _ => panic!("invalid event received"),
         }

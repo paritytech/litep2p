@@ -109,9 +109,9 @@ impl GetRecordContext {
         }
     }
 
-    /// Get the found record.
-    pub fn found_record(mut self) -> PeerRecord {
-        self.found_records.pop().expect("record to exist since query succeeded")
+    /// Get the found records.
+    pub fn found_records(mut self) -> Vec<PeerRecord> {
+        self.found_records
     }
 
     /// Register response failure for `peer`.
@@ -136,12 +136,13 @@ impl GetRecordContext {
             return;
         };
 
-        // TODO: validate record
         if let Some(record) = record {
-            self.found_records.push(PeerRecord {
-                record,
-                peer: Some(peer.peer),
-            });
+            if !record.is_expired(std::time::Instant::now()) {
+                self.found_records.push(PeerRecord {
+                    peer: peer.peer,
+                    record,
+                });
+            }
         }
 
         // add the queried peer to `queried` and all new peers which haven't been
