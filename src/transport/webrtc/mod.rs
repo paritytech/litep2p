@@ -36,8 +36,9 @@ use futures_timer::Delay;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
 use str0m::{
-    change::{DtlsCert, IceCreds},
+    change::DtlsCert,
     channel::{ChannelConfig, ChannelId},
+    ice::IceCreds,
     net::{DatagramRecv, Protocol as Str0mProtocol, Receive},
     Candidate, Input, Rtc,
 };
@@ -337,64 +338,81 @@ impl WebRtcTransport {
             }
         }
 
+        if buffer.is_empty() {
+            // str0m crate panics if the buffer doesn't contain at least one byte:
+            // https://github.com/algesten/str0m/blob/2c5dc8ee8ddead08699dd6852a27476af6992a5c/src/io/mod.rs#L222
+            return Err(Error::InvalidData);
+        }
+
         // if the peer doesn't exist, decode the message and expect to receive `Stun`
         // so that a new connection can be initialized
         let contents: DatagramRecv =
             buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
 
-        match contents {
-            DatagramRecv::Stun(message) if !self.opening.contains_key(&source) => {
-                if let Some((ufrag, pass)) = message.split_username() {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?source,
-                        ?ufrag,
-                        ?pass,
-                        "received stun message"
-                    );
+        // Handle non stun packets.
+        if !is_stun_packet(&buffer) {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?source,
+                "received non-stun message"
+            );
 
-                    // create new `Rtc` object for the peer and give it the received STUN message
-                    let (mut rtc, noise_channel_id) = self.make_rtc_client(
-                        ufrag,
-                        pass,
-                        source,
-                        self.socket.local_addr().unwrap(),
-                    );
-
-                    rtc.handle_input(Input::Receive(
-                        Instant::now(),
-                        Receive {
-                            source,
-                            proto: Str0mProtocol::Udp,
-                            destination: self.socket.local_addr().unwrap(),
-                            contents: DatagramRecv::Stun(message.clone()),
-                        },
-                    ))
-                    .expect("client to handle input successfully");
-
-                    let connection_id = self.context.next_connection_id();
-                    let connection = OpeningWebRtcConnection::new(
-                        rtc,
-                        connection_id,
-                        noise_channel_id,
-                        self.context.keypair.clone(),
-                        source,
-                        self.listen_address,
-                    );
-                    self.opening.insert(source, connection);
-                }
+            if let Err(error) = self.opening.get_mut(&source).expect("to exist").on_input(contents)
+            {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?error,
+                    ?source,
+                    "failed to handle inbound datagram"
+                );
             }
-            msg => {
-                if let Err(error) = self.opening.get_mut(&source).expect("to exist").on_input(msg) {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?error,
-                        ?source,
-                        "failed to handle inbound datagram"
-                    );
-                }
-            }
+            return Ok(true);
         }
+
+        let stun_message =
+            str0m::ice::StunMessage::parse(&buffer).map_err(|_| Error::InvalidData)?;
+        let Some((ufrag, pass)) = stun_message.split_username() else {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?source,
+                "failed to split username/password",
+            );
+            return Err(Error::InvalidData);
+        };
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?source,
+            ?ufrag,
+            ?pass,
+            "received stun message"
+        );
+
+        // create new `Rtc` object for the peer and give it the received STUN message
+        let (mut rtc, noise_channel_id) =
+            self.make_rtc_client(ufrag, pass, source, self.socket.local_addr().unwrap());
+
+        rtc.handle_input(Input::Receive(
+            Instant::now(),
+            Receive {
+                source,
+                proto: Str0mProtocol::Udp,
+                destination: self.socket.local_addr().unwrap(),
+                contents,
+            },
+        ))
+        .expect("client to handle input successfully");
+
+        let connection_id = self.context.next_connection_id();
+        let connection = OpeningWebRtcConnection::new(
+            rtc,
+            connection_id,
+            noise_channel_id,
+            self.context.keypair.clone(),
+            source,
+            self.listen_address,
+        );
+        self.opening.insert(source, connection);
 
         Ok(true)
     }
@@ -416,18 +434,16 @@ impl TransportBuilder for WebRtcTransport {
         );
 
         let (listen_address, _) = Self::get_socket_address(&config.listen_addresses[0])?;
-        let socket = match listen_address.is_ipv4() {
-            true => {
-                let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?;
-                socket.bind(&listen_address.into())?;
-                socket
-            }
-            false => {
-                let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
-                socket.set_only_v6(true)?;
-                socket.bind(&listen_address.into())?;
-                socket
-            }
+
+        let socket = if listen_address.is_ipv4() {
+            let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?;
+            socket.bind(&listen_address.into())?;
+            socket
+        } else {
+            let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
+            socket.set_only_v6(true)?;
+            socket.bind(&listen_address.into())?;
+            socket
         };
 
         socket.set_reuse_address(true)?;
@@ -437,7 +453,7 @@ impl TransportBuilder for WebRtcTransport {
 
         let socket = UdpSocket::from_std(socket.into())?;
         let listen_address = socket.local_addr()?;
-        let dtls_cert = DtlsCert::new();
+        let dtls_cert = DtlsCert::new_openssl();
 
         let listen_multi_addresses = {
             let fingerprint = dtls_cert.fingerprint().bytes;
@@ -711,4 +727,29 @@ impl Stream for WebRtcTransport {
             .pop_front()
             .map_or(Poll::Pending, |event| Poll::Ready(Some(event)))
     }
+}
+
+/// Check if the packet received is STUN.
+///
+/// Extracted from the STUN RFC 5389 (<https://datatracker.ietf.org/doc/html/rfc5389#page-10>):
+///  All STUN messages MUST start with a 20-byte header followed by zero
+///  or more Attributes.  The STUN header contains a STUN message type,
+///  magic cookie, transaction ID, and message length.
+///
+/// ```ignore
+///      0                   1                   2                   3
+///      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///     |0 0|     STUN Message Type     |         Message Length        |
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///     |                         Magic Cookie                          |
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+///     |                                                               |
+///     |                     Transaction ID (96 bits)                  |
+///     |                                                               |
+///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+/// ```
+fn is_stun_packet(bytes: &[u8]) -> bool {
+    // 20 bytes for the header, then follows attributes.
+    bytes.len() >= 20 && bytes[0] < 2
 }
