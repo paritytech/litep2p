@@ -15,7 +15,7 @@ bytes = "1.4.0"
 cid = "0.10.1"
 ed25519-dalek = "1.0.1"
 futures = "0.3.27"
-futures-timer = "3.0.2"
+futures-timer = "3.0.3"
 hex-literal = "0.4.1"
 indexmap = { version = "2.0.0", features = ["std"] }
 libc = "0.2.142"
