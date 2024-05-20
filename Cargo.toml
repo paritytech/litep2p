@@ -62,7 +62,7 @@ default-features = false
 features = ["dangerous_configuration"] # Must enable this to allow for custom verification code.
 
 [dev-dependencies]
-asynchronous-codec = "0.6.1"
+asynchronous-codec = "0.7.0"
 libp2p = { version = "0.51.4", features = [
     "tokio",
     "dns",
