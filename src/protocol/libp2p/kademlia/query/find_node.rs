@@ -122,7 +122,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         if self.responses.len() < self.config.replication_factor {
             self.responses.insert(distance, peer);
         } else {
-            // Update the last entry if the peer is closer.
+            // Update the furthest peer if this response is closer.
             if let Some(mut entry) = self.responses.last_entry() {
                 if entry.key() > &distance {
                     entry.insert(peer);
@@ -179,71 +179,59 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         })
     }
 
+    /// Check if the query cannot make any progress.
+    ///
+    /// Returns true when there are no pending responses and no candidates to query.
+    fn is_done(&self) -> bool {
+        self.pending.is_empty() && self.candidates.is_empty()
+    }
+
     /// Get next action for a `FIND_NODE` query.
-    // TODO: refactor this function
     pub fn next_action(&mut self) -> Option<QueryAction> {
-        // we didn't receive any responses and there are no candidates or pending queries left.
-        if self.responses.is_empty() && self.pending.is_empty() && self.candidates.is_empty() {
-            return Some(QueryAction::QueryFailed {
-                query: self.config.query,
-            });
+        // If we cannot make progress, return the final result.
+        // A query failed when we are not able to identify one single peer.
+        if self.is_done() {
+            return if self.responses.is_empty() {
+                Some(QueryAction::QueryFailed {
+                    query: self.config.query,
+                })
+            } else {
+                Some(QueryAction::QuerySucceeded {
+                    query: self.config.query,
+                })
+            };
         }
 
-        // there are still possible peers to query or peers who are being queried
-        if self.responses.len() < self.config.replication_factor
-            && (!self.pending.is_empty() || !self.candidates.is_empty())
-        {
-            if self.pending.len() == self.config.parallelism_factor || self.candidates.is_empty() {
-                return None;
-            }
+        // At this point, we either have pending responses or candidates to query; and we need more
+        // results. Ensure we do not exceed the parallelism factor.
+        if self.pending.len() == self.config.parallelism_factor {
+            return None;
+        }
 
+        // Schedule the next peer to fill up the responses.
+        if self.responses.len() < self.config.replication_factor {
             return self.schedule_next_peer();
         }
 
-        // query succeeded with one or more results
-        if self.pending.is_empty() && self.candidates.is_empty() {
-            return Some(QueryAction::QuerySucceeded {
-                query: self.config.query,
-            });
-        }
-
-        // check if any candidate has lower distance thant the current worst
-        // `expect()` is ok because both `candidates` and `responses` have been confirmed to contain
-        // entries
-        if !self.candidates.is_empty() {
-            let first_candidate_distance = self
-                .config
-                .target
-                .distance(&self.candidates.first_key_value().expect("candidate to exist").1.key);
-            let worst_response_candidate =
-                *self.responses.last_entry().expect("response to exist").key();
-
-            if first_candidate_distance < worst_response_candidate
-                && self.pending.len() < self.config.parallelism_factor
-            {
-                return self.schedule_next_peer();
+        // We can finish the query here, but check if there is a better candidate for the query.
+        match (
+            self.candidates.first_key_value(),
+            self.responses.last_key_value(),
+        ) {
+            (Some((_, candidate_peer)), Some((worst_response_distance, _))) => {
+                let first_candidate_distance = self.config.target.distance(&candidate_peer.key);
+                if first_candidate_distance < *worst_response_distance {
+                    return self.schedule_next_peer();
+                }
             }
 
-            return Some(QueryAction::QuerySucceeded {
-                query: self.config.query,
-            });
+            _ => (),
         }
 
-        if self.responses.len() == self.config.replication_factor {
-            return Some(QueryAction::QuerySucceeded {
-                query: self.config.query,
-            });
-        }
-
-        tracing::error!(
-            target: LOG_TARGET,
-            candidates_len = ?self.candidates.len(),
-            pending_len = ?self.pending.len(),
-            responses_len = ?self.responses.len(),
-            "unhandled state"
-        );
-
-        unreachable!();
+        // We have found enough responses and there are no better candidates to query.
+        Some(QueryAction::QuerySucceeded {
+            query: self.config.query,
+        })
     }
 }
 
