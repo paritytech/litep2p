@@ -386,4 +386,50 @@ mod tests {
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
     }
+
+    #[test]
+    fn offers_closest_responses() {
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+        let target = PeerId::random();
+
+        let distance_a = Key::from(peer_a).distance(&Key::from(target));
+        let distance_b = Key::from(peer_b).distance(&Key::from(target));
+        let (closest, furthest) = if distance_a < distance_b {
+            (peer_a, peer_b)
+        } else {
+            (peer_b, peer_a)
+        };
+
+        let config = FindNodeConfig {
+            parallelism_factor: 1,
+            replication_factor: 1,
+            target: Key::from(target),
+            local_peer_id: PeerId::random(),
+            query: QueryId(0),
+        };
+
+        // Scenario where we should return with the number of responses.
+        let in_peers = vec![peer_to_kad(furthest), peer_to_kad(closest)];
+        let mut context = FindNodeContext::new(config, in_peers.into_iter().collect());
+
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 1);
+                assert!(context.pending.contains_key(&peer));
+
+                // The closest should be queried first regardless of the input order.
+                assert_eq!(closest, peer);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        context.register_response(closest, vec![]);
+
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+    }
 }
