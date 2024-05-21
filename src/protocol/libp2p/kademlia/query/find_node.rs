@@ -246,6 +246,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::libp2p::kademlia::types::ConnectionType;
 
     fn default_config() -> FindNodeConfig<Vec<u8>> {
         FindNodeConfig {
@@ -257,6 +258,15 @@ mod tests {
         }
     }
 
+    fn peer_to_kad(peer: PeerId) -> KademliaPeer {
+        KademliaPeer {
+            peer,
+            key: Key::from(peer),
+            addresses: vec![],
+            connection: ConnectionType::Connected,
+        }
+    }
+
     #[test]
     fn completes_when_no_candidates() {
         let config = default_config();
@@ -264,5 +274,36 @@ mod tests {
         assert!(context.is_done());
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
+    }
+
+    #[test]
+    fn fulfill_parallelism() {
+        let config = FindNodeConfig {
+            parallelism_factor: 3,
+            ..default_config()
+        };
+
+        let in_peers_set = (0..3).map(|_| PeerId::random()).collect::<HashSet<_>>();
+        let in_peers = in_peers_set.iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = FindNodeContext::new(config, in_peers);
+
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+
+                    // Check the peer is the one provided.
+                    assert!(in_peers_set.contains(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        // Fulfilled parallelism.
+        assert!(context.next_action().is_none());
     }
 }
