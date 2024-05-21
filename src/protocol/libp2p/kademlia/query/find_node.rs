@@ -306,4 +306,84 @@ mod tests {
         // Fulfilled parallelism.
         assert!(context.next_action().is_none());
     }
+
+    #[test]
+    fn completes_when_responses() {
+        let config = FindNodeConfig {
+            parallelism_factor: 3,
+            replication_factor: 3,
+            ..default_config()
+        };
+
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+        let peer_c = PeerId::random();
+
+        let in_peers_set: HashSet<_> = [peer_a, peer_b, peer_c].into_iter().collect();
+        assert_eq!(in_peers_set.len(), 3);
+
+        let in_peers = [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = FindNodeContext::new(config, in_peers);
+
+        // Schedule peer queries.
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+
+                    // Check the peer is the one provided.
+                    assert!(in_peers_set.contains(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        // Checks a failed query that was not initiated.
+        let peer_d = PeerId::random();
+        context.register_response_failure(peer_d);
+        assert_eq!(context.pending.len(), 3);
+        assert!(context.queried.is_empty());
+
+        // Provide responses back.
+        context.register_response(peer_a, vec![]);
+        assert_eq!(context.pending.len(), 2);
+        assert_eq!(context.queried.len(), 1);
+        assert_eq!(context.responses.len(), 1);
+
+        // Provide different response from peer b with peer d as candidate.
+        context.register_response(peer_b, vec![peer_to_kad(peer_d.clone())]);
+        assert_eq!(context.pending.len(), 1);
+        assert_eq!(context.queried.len(), 2);
+        assert_eq!(context.responses.len(), 2);
+        assert_eq!(context.candidates.len(), 1);
+
+        // Peer C fails.
+        context.register_response_failure(peer_c);
+        assert!(context.pending.is_empty());
+        assert_eq!(context.queried.len(), 3);
+        assert_eq!(context.responses.len(), 2);
+
+        // Drain the last candidate.
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 1);
+                assert_eq!(peer, peer_d);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        // Peer D responds.
+        context.register_response(peer_d, vec![]);
+
+        // Produces the result.
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+    }
 }
