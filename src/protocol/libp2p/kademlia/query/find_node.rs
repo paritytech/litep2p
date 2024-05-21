@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_node";
 
 /// The configuration needed to instantiate a new [`FindNodeContext`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FindNodeConfig<T: Clone + Into<Vec<u8>>> {
     /// Local peer ID.
     pub local_peer_id: PeerId,
@@ -267,6 +267,31 @@ mod tests {
         }
     }
 
+    fn setup_closest_responses() -> (PeerId, PeerId, FindNodeConfig<PeerId>) {
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+        let target = PeerId::random();
+
+        let distance_a = Key::from(peer_a).distance(&Key::from(target));
+        let distance_b = Key::from(peer_b).distance(&Key::from(target));
+
+        let (closest, furthest) = if distance_a < distance_b {
+            (peer_a, peer_b)
+        } else {
+            (peer_b, peer_a)
+        };
+
+        let config = FindNodeConfig {
+            parallelism_factor: 1,
+            replication_factor: 1,
+            target: Key::from(target),
+            local_peer_id: PeerId::random(),
+            query: QueryId(0),
+        };
+
+        (closest, furthest, config)
+    }
+
     #[test]
     fn completes_when_no_candidates() {
         let config = default_config();
@@ -389,29 +414,11 @@ mod tests {
 
     #[test]
     fn offers_closest_responses() {
-        let peer_a = PeerId::random();
-        let peer_b = PeerId::random();
-        let target = PeerId::random();
-
-        let distance_a = Key::from(peer_a).distance(&Key::from(target));
-        let distance_b = Key::from(peer_b).distance(&Key::from(target));
-        let (closest, furthest) = if distance_a < distance_b {
-            (peer_a, peer_b)
-        } else {
-            (peer_b, peer_a)
-        };
-
-        let config = FindNodeConfig {
-            parallelism_factor: 1,
-            replication_factor: 1,
-            target: Key::from(target),
-            local_peer_id: PeerId::random(),
-            query: QueryId(0),
-        };
+        let (closest, furthest, config) = setup_closest_responses();
 
         // Scenario where we should return with the number of responses.
         let in_peers = vec![peer_to_kad(furthest), peer_to_kad(closest)];
-        let mut context = FindNodeContext::new(config, in_peers.into_iter().collect());
+        let mut context = FindNodeContext::new(config.clone(), in_peers.into_iter().collect());
 
         let event = context.next_action().unwrap();
         match event {
@@ -422,6 +429,55 @@ mod tests {
                 assert!(context.pending.contains_key(&peer));
 
                 // The closest should be queried first regardless of the input order.
+                assert_eq!(closest, peer);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        context.register_response(closest, vec![]);
+
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+    }
+
+    #[test]
+    fn offers_closest_responses_with_better_candidates() {
+        let (closest, furthest, config) = setup_closest_responses();
+
+        println!("Closest: {:?}, Furthest: {:?}", closest, furthest);
+
+        // Scenario where the query is fulfilled however it continues because
+        // there is a closer peer to query.
+        let in_peers = vec![peer_to_kad(furthest)];
+        let mut context = FindNodeContext::new(config, in_peers.into_iter().collect());
+
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 1);
+                assert!(context.pending.contains_key(&peer));
+
+                // Furthest is the only peer available.
+                assert_eq!(furthest, peer);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        // Furthest node produces a response with the closest node.
+        // Even if we reach a total of 1 (parallelism factor) replies, we should continue.
+        context.register_response(furthest, vec![peer_to_kad(closest)]);
+
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 1);
+                assert!(context.pending.contains_key(&peer));
+
+                // Furthest provided another peer that is closer.
                 assert_eq!(closest, peer);
             }
             _ => panic!("Unexpected event"),
