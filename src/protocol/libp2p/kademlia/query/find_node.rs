@@ -444,8 +444,6 @@ mod tests {
     fn offers_closest_responses_with_better_candidates() {
         let (closest, furthest, config) = setup_closest_responses();
 
-        println!("Closest: {:?}, Furthest: {:?}", closest, furthest);
-
         // Scenario where the query is fulfilled however it continues because
         // there is a closer peer to query.
         let in_peers = vec![peer_to_kad(furthest)];
@@ -483,6 +481,11 @@ mod tests {
             _ => panic!("Unexpected event"),
         }
 
+        // Even if we have the total number of responses, we have at least one
+        // inflight query which might be closer to the target.
+        assert!(context.next_action().is_none());
+
+        // Query finishes when receiving the response back.
         context.register_response(closest, vec![]);
 
         let event = context.next_action().unwrap();
