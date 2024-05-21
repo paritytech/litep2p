@@ -119,32 +119,39 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         // always mark the peer as queried to prevent it getting queried again
         self.queried.insert(peer.peer);
 
-        // TODO: could this be written in another way?
-        // TODO: only insert nodes from whom a response was received
-        match self.responses.len() < self.config.replication_factor {
-            true => {
-                self.responses.insert(distance, peer);
-            }
-            false => {
-                let mut entry = self.responses.last_entry().expect("entry to exist");
+        if self.responses.len() < self.config.replication_factor {
+            self.responses.insert(distance, peer);
+        } else {
+            // Update the last entry if the peer is closer.
+            if let Some(mut entry) = self.responses.last_entry() {
                 if entry.key() > &distance {
                     entry.insert(peer);
                 }
             }
         }
 
-        // filter already queried peers and extend the set of candidates
-        for candidate in peers {
-            if !self.queried.contains(&candidate.peer)
-                && !self.pending.contains_key(&candidate.peer)
-            {
-                if self.config.local_peer_id == candidate.peer {
-                    continue;
-                }
-
-                let distance = self.config.target.distance(&candidate.key);
-                self.candidates.insert(distance, candidate);
+        let to_query_candidate = peers.into_iter().filter_map(|peer| {
+            // Peer already produced a response.
+            if self.queried.contains(&peer.peer) {
+                return None;
             }
+
+            // Peer was queried, awaiting response.
+            if self.pending.contains_key(&peer.peer) {
+                return None;
+            }
+
+            // Local node.
+            if self.config.local_peer_id == peer.peer {
+                return None;
+            }
+
+            Some(peer)
+        });
+
+        for candidate in to_query_candidate {
+            let distance = self.config.target.distance(&candidate.key);
+            self.candidates.insert(distance, candidate);
         }
     }
 
