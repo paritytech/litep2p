@@ -165,17 +165,18 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     }
 
     /// Schedule next peer for outbound `FIND_NODE` query.
-    pub fn schedule_next_peer(&mut self) -> QueryAction {
+    fn schedule_next_peer(&mut self) -> Option<QueryAction> {
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, "get next peer");
 
-        let (_, candidate) = self.candidates.pop_first().expect("entry to exist");
+        let (_, candidate) = self.candidates.pop_first()?;
+
         self.pending.insert(candidate.peer, candidate.clone());
 
-        QueryAction::SendMessage {
+        Some(QueryAction::SendMessage {
             query: self.config.query,
             peer: candidate.peer,
             message: KademliaMessage::find_node(self.config.target.clone().into_preimage()),
-        }
+        })
     }
 
     /// Get next action for a `FIND_NODE` query.
@@ -196,7 +197,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
                 return None;
             }
 
-            return Some(self.schedule_next_peer());
+            return self.schedule_next_peer();
         }
 
         // query succeeded with one or more results
@@ -220,7 +221,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             if first_candidate_distance < worst_response_candidate
                 && self.pending.len() < self.config.parallelism_factor
             {
-                return Some(self.schedule_next_peer());
+                return self.schedule_next_peer();
             }
 
             return Some(QueryAction::QuerySucceeded {
