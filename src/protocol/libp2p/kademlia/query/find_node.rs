@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use bytes::Bytes;
+
 use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
@@ -57,6 +59,9 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     /// Query immutable config.
     pub config: FindNodeConfig<T>,
 
+    /// Cached Kademlia message to send.
+    kad_message: Bytes,
+
     /// Peers from whom the `QueryEngine` is waiting to hear a response.
     pub pending: HashMap<PeerId, KademliaPeer>,
 
@@ -83,8 +88,11 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             candidates.insert(distance, candidate.clone());
         }
 
+        let kad_message = KademliaMessage::find_node(config.target.clone().into_preimage());
+
         Self {
             config,
+            kad_message,
 
             candidates,
             pending: HashMap::new(),
@@ -160,7 +168,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         self.pending.contains_key(peer).then_some(QueryAction::SendMessage {
             query: self.config.query,
             peer: *peer,
-            message: KademliaMessage::find_node(self.config.target.clone().into_preimage()),
+            message: self.kad_message.clone(),
         })
     }
 
@@ -175,7 +183,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         Some(QueryAction::SendMessage {
             query: self.config.query,
             peer: candidate.peer,
-            message: KademliaMessage::find_node(self.config.target.clone().into_preimage()),
+            message: self.kad_message.clone(),
         })
     }
 
