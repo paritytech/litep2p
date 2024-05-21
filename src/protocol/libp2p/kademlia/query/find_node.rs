@@ -243,4 +243,26 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     }
 }
 
-// TODO: tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> FindNodeConfig<Vec<u8>> {
+        FindNodeConfig {
+            local_peer_id: PeerId::random(),
+            replication_factor: 20,
+            parallelism_factor: 10,
+            query: QueryId(0),
+            target: Key::new(vec![1, 2, 3].into()),
+        }
+    }
+
+    #[test]
+    fn completes_when_no_candidates() {
+        let config = default_config();
+        let mut context = FindNodeContext::new(config, VecDeque::new());
+        assert!(context.is_done());
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
+    }
+}
