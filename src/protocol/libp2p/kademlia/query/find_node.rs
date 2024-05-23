@@ -131,9 +131,18 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             self.responses.insert(distance, peer);
         } else {
             // Update the furthest peer if this response is closer.
-            if let Some(mut entry) = self.responses.last_entry() {
-                if entry.key() > &distance {
-                    entry.insert(peer);
+            // Find the furthest distance.
+            let furthest_distance =
+                self.responses.last_entry().map(|entry| *entry.key()).unwrap_or(distance);
+
+            // The response received from the peer is closer than the furthest response.
+            if distance < furthest_distance {
+                // Update the entries only if the distance is not already present.
+                if !self.responses.contains_key(&distance) {
+                    self.responses.insert(distance, peer);
+
+                    // Remove the furthest entry.
+                    self.responses.pop_last();
                 }
             }
         }
