@@ -500,4 +500,77 @@ mod tests {
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
     }
+
+    #[test]
+    fn keep_k_best_results() {
+        let mut peers = (0..6).map(|_| PeerId::random()).collect::<Vec<_>>();
+        let target = Key::from(PeerId::random());
+        // Sort the peers by their distance to the target in descending order.
+        peers.sort_by_key(|peer| std::cmp::Reverse(target.distance(&Key::from(*peer))));
+
+        let config = FindNodeConfig {
+            parallelism_factor: 3,
+            replication_factor: 3,
+            target,
+            local_peer_id: PeerId::random(),
+            query: QueryId(0),
+        };
+
+        let in_peers = vec![peers[0], peers[1], peers[2]]
+            .iter()
+            .map(|peer| peer_to_kad(*peer))
+            .collect();
+        let mut context = FindNodeContext::new(config, in_peers);
+
+        // Schedule peer queries.
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        // Each peer responds with a better (closer) peer.
+        context.register_response(peers[0], vec![peer_to_kad(peers[3])]);
+        context.register_response(peers[1], vec![peer_to_kad(peers[4])]);
+        context.register_response(peers[2], vec![peer_to_kad(peers[5])]);
+
+        // Must schedule better peers.
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        context.register_response(peers[3], vec![]);
+        context.register_response(peers[4], vec![]);
+        context.register_response(peers[5], vec![]);
+
+        // Produces the result.
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+
+        // Because the FindNode query keeps a window of the best K (3 in this case) peers,
+        // we expect to produce the best K peers. As opposed to having only the last entry
+        // updated, which would have produced [peer[0], peer[1], peer[5]].
+
+        // Check the responses.
+        let responses = context.responses.values().map(|peer| peer.peer).collect::<Vec<_>>();
+        // Note: peers are returned in order closest to the target, our `peers` input is sorted in
+        // decreasing order.
+        assert_eq!(responses, [peers[5], peers[4], peers[3]]);
+    }
 }
