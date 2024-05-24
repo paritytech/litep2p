@@ -12,6 +12,10 @@ This is a small patch release that makes the `FindNode` command a bit more robst
 - The `FindNode` command now retains the K (replication factor) best results.
 - The `FindNode` command has been updated to handle errors and unexpected states without panicking.
 
+### Added
+
+- Add release checklist  ([#115](https://github.com/paritytech/litep2p/pull/115))
+
 ### Changed
 
 - kad: Refactor FindNode query, keep K best results and add tests  ([#114](https://github.com/paritytech/litep2p/pull/114))
@@ -32,7 +36,6 @@ Additionally, we've improved code coverage in the `kad` module by adding more te
 
 ### Added
 
-- Add release checklist  ([#115](https://github.com/paritytech/litep2p/pull/115))
 - Re-export `multihash` & `multiaddr` types  ([#79](https://github.com/paritytech/litep2p/pull/79))
 - kad: Expose all peer records of `GET_VALUE` query  ([#96](https://github.com/paritytech/litep2p/pull/96))
 
