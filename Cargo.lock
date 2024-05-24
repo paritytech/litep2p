@@ -2484,7 +2484,7 @@ checksum = "57bcfdad1b858c2db7c38303a6d2ad4dfaf5eb53dfeb0910128b2c26d6158503"
 
 [[package]]
 name = "litep2p"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "asynchronous-codec 0.7.0",
