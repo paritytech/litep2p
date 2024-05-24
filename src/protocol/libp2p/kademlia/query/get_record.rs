@@ -85,7 +85,7 @@ pub struct GetRecordContext {
     /// Query immutable config.
     pub config: GetRecordConfig,
 
-    /// Cached Kadmelia message to send.
+    /// Cached Kademlia message to send.
     kad_message: Bytes,
 
     /// Peers from whom the `QueryEngine` is waiting to hear a response.

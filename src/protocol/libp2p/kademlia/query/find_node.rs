@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use bytes::Bytes;
+
 use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
@@ -32,17 +34,33 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_node";
 
-/// Context for `FIND_NODE` queries.
-#[derive(Debug)]
-pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
+/// The configuration needed to instantiate a new [`FindNodeContext`].
+#[derive(Debug, Clone)]
+pub struct FindNodeConfig<T: Clone + Into<Vec<u8>>> {
     /// Local peer ID.
-    local_peer_id: PeerId,
+    pub local_peer_id: PeerId,
+
+    /// Replication factor.
+    pub replication_factor: usize,
+
+    /// Parallelism factor.
+    pub parallelism_factor: usize,
 
     /// Query ID.
     pub query: QueryId,
 
     /// Target key.
     pub target: Key<T>,
+}
+
+/// Context for `FIND_NODE` queries.
+#[derive(Debug)]
+pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
+    /// Query immutable config.
+    pub config: FindNodeConfig<T>,
+
+    /// Cached Kademlia message to send.
+    kad_message: Bytes,
 
     /// Peers from whom the `QueryEngine` is waiting to hear a response.
     pub pending: HashMap<PeerId, KademliaPeer>,
@@ -58,41 +76,28 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
 
     /// Responses.
     pub responses: BTreeMap<Distance, KademliaPeer>,
-
-    /// Replication factor.
-    pub replication_factor: usize,
-
-    /// Parallelism factor.
-    pub parallelism_factor: usize,
 }
 
 impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     /// Create new [`FindNodeContext`].
-    pub fn new(
-        local_peer_id: PeerId,
-        query: QueryId,
-        target: Key<T>,
-        in_peers: VecDeque<KademliaPeer>,
-        replication_factor: usize,
-        parallelism_factor: usize,
-    ) -> Self {
+    pub fn new(config: FindNodeConfig<T>, in_peers: VecDeque<KademliaPeer>) -> Self {
         let mut candidates = BTreeMap::new();
 
         for candidate in &in_peers {
-            let distance = target.distance(&candidate.key);
+            let distance = config.target.distance(&candidate.key);
             candidates.insert(distance, candidate.clone());
         }
 
+        let kad_message = KademliaMessage::find_node(config.target.clone().into_preimage());
+
         Self {
-            query,
-            target,
+            config,
+            kad_message,
+
             candidates,
-            local_peer_id,
             pending: HashMap::new(),
             queried: HashSet::new(),
             responses: BTreeMap::new(),
-            replication_factor,
-            parallelism_factor,
         }
     }
 
@@ -117,120 +122,454 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         // calculate distance for `peer` from target and insert it if
         //  a) the map doesn't have 20 responses
         //  b) it can replace some other peer that has a higher distance
-        let distance = self.target.distance(&peer.key);
+        let distance = self.config.target.distance(&peer.key);
 
         // always mark the peer as queried to prevent it getting queried again
         self.queried.insert(peer.peer);
 
-        // TODO: could this be written in another way?
-        // TODO: only insert nodes from whom a response was received
-        match self.responses.len() < self.replication_factor {
-            true => {
+        if self.responses.len() < self.config.replication_factor {
+            self.responses.insert(distance, peer);
+        } else {
+            // Update the furthest peer if this response is closer.
+            // Find the furthest distance.
+            let furthest_distance =
+                self.responses.last_entry().map(|entry| *entry.key()).unwrap_or(distance);
+
+            // The response received from the peer is closer than the furthest response.
+            if distance < furthest_distance {
                 self.responses.insert(distance, peer);
-            }
-            false => {
-                let mut entry = self.responses.last_entry().expect("entry to exist");
-                if entry.key() > &distance {
-                    entry.insert(peer);
+
+                // Remove the furthest entry.
+                if self.responses.len() > self.config.replication_factor {
+                    self.responses.pop_last();
                 }
             }
         }
 
-        // filter already queried peers and extend the set of candidates
-        for candidate in peers {
-            if !self.queried.contains(&candidate.peer)
-                && !self.pending.contains_key(&candidate.peer)
-            {
-                if self.local_peer_id == candidate.peer {
-                    continue;
-                }
-
-                let distance = self.target.distance(&candidate.key);
-                self.candidates.insert(distance, candidate);
+        let to_query_candidate = peers.into_iter().filter_map(|peer| {
+            // Peer already produced a response.
+            if self.queried.contains(&peer.peer) {
+                return None;
             }
+
+            // Peer was queried, awaiting response.
+            if self.pending.contains_key(&peer.peer) {
+                return None;
+            }
+
+            // Local node.
+            if self.config.local_peer_id == peer.peer {
+                return None;
+            }
+
+            Some(peer)
+        });
+
+        for candidate in to_query_candidate {
+            let distance = self.config.target.distance(&candidate.key);
+            self.candidates.insert(distance, candidate);
         }
     }
 
     /// Get next action for `peer`.
     pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
         self.pending.contains_key(peer).then_some(QueryAction::SendMessage {
-            query: self.query,
+            query: self.config.query,
             peer: *peer,
-            message: KademliaMessage::find_node(self.target.clone().into_preimage()),
+            message: self.kad_message.clone(),
         })
     }
 
     /// Schedule next peer for outbound `FIND_NODE` query.
-    pub fn schedule_next_peer(&mut self) -> QueryAction {
-        tracing::trace!(target: LOG_TARGET, query = ?self.query, "get next peer");
+    fn schedule_next_peer(&mut self) -> Option<QueryAction> {
+        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, "get next peer");
 
-        let (_, candidate) = self.candidates.pop_first().expect("entry to exist");
+        let (_, candidate) = self.candidates.pop_first()?;
+
         self.pending.insert(candidate.peer, candidate.clone());
 
-        QueryAction::SendMessage {
-            query: self.query,
+        Some(QueryAction::SendMessage {
+            query: self.config.query,
             peer: candidate.peer,
-            message: KademliaMessage::find_node(self.target.clone().into_preimage()),
-        }
+            message: self.kad_message.clone(),
+        })
+    }
+
+    /// Check if the query cannot make any progress.
+    ///
+    /// Returns true when there are no pending responses and no candidates to query.
+    fn is_done(&self) -> bool {
+        self.pending.is_empty() && self.candidates.is_empty()
     }
 
     /// Get next action for a `FIND_NODE` query.
-    // TODO: refactor this function
     pub fn next_action(&mut self) -> Option<QueryAction> {
-        // we didn't receive any responses and there are no candidates or pending queries left.
-        if self.responses.is_empty() && self.pending.is_empty() && self.candidates.is_empty() {
-            return Some(QueryAction::QueryFailed { query: self.query });
+        // If we cannot make progress, return the final result.
+        // A query failed when we are not able to identify one single peer.
+        if self.is_done() {
+            return if self.responses.is_empty() {
+                Some(QueryAction::QueryFailed {
+                    query: self.config.query,
+                })
+            } else {
+                Some(QueryAction::QuerySucceeded {
+                    query: self.config.query,
+                })
+            };
         }
 
-        // there are still possible peers to query or peers who are being queried
-        if self.responses.len() < self.replication_factor
-            && (!self.pending.is_empty() || !self.candidates.is_empty())
-        {
-            if self.pending.len() == self.parallelism_factor || self.candidates.is_empty() {
-                return None;
+        // At this point, we either have pending responses or candidates to query; and we need more
+        // results. Ensure we do not exceed the parallelism factor.
+        if self.pending.len() == self.config.parallelism_factor {
+            return None;
+        }
+
+        // Schedule the next peer to fill up the responses.
+        if self.responses.len() < self.config.replication_factor {
+            return self.schedule_next_peer();
+        }
+
+        // We can finish the query here, but check if there is a better candidate for the query.
+        match (
+            self.candidates.first_key_value(),
+            self.responses.last_key_value(),
+        ) {
+            (Some((_, candidate_peer)), Some((worst_response_distance, _))) => {
+                let first_candidate_distance = self.config.target.distance(&candidate_peer.key);
+                if first_candidate_distance < *worst_response_distance {
+                    return self.schedule_next_peer();
+                }
             }
 
-            return Some(self.schedule_next_peer());
+            _ => (),
         }
 
-        // query succeeded with one or more results
-        if self.pending.is_empty() && self.candidates.is_empty() {
-            return Some(QueryAction::QuerySucceeded { query: self.query });
-        }
-
-        // check if any candidate has lower distance thant the current worst
-        // `expect()` is ok because both `candidates` and `responses` have been confirmed to contain
-        // entries
-        if !self.candidates.is_empty() {
-            let first_candidate_distance = self
-                .target
-                .distance(&self.candidates.first_key_value().expect("candidate to exist").1.key);
-            let worst_response_candidate =
-                *self.responses.last_entry().expect("response to exist").key();
-
-            if first_candidate_distance < worst_response_candidate
-                && self.pending.len() < self.parallelism_factor
-            {
-                return Some(self.schedule_next_peer());
-            }
-
-            return Some(QueryAction::QuerySucceeded { query: self.query });
-        }
-
-        if self.responses.len() == self.replication_factor {
-            return Some(QueryAction::QuerySucceeded { query: self.query });
-        }
-
-        tracing::error!(
-            target: LOG_TARGET,
-            candidates_len = ?self.candidates.len(),
-            pending_len = ?self.pending.len(),
-            responses_len = ?self.responses.len(),
-            "unhandled state"
-        );
-
-        unreachable!();
+        // We have found enough responses and there are no better candidates to query.
+        Some(QueryAction::QuerySucceeded {
+            query: self.config.query,
+        })
     }
 }
 
-// TODO: tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::libp2p::kademlia::types::ConnectionType;
+
+    fn default_config() -> FindNodeConfig<Vec<u8>> {
+        FindNodeConfig {
+            local_peer_id: PeerId::random(),
+            replication_factor: 20,
+            parallelism_factor: 10,
+            query: QueryId(0),
+            target: Key::new(vec![1, 2, 3].into()),
+        }
+    }
+
+    fn peer_to_kad(peer: PeerId) -> KademliaPeer {
+        KademliaPeer {
+            peer,
+            key: Key::from(peer),
+            addresses: vec![],
+            connection: ConnectionType::Connected,
+        }
+    }
+
+    fn setup_closest_responses() -> (PeerId, PeerId, FindNodeConfig<PeerId>) {
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+        let target = PeerId::random();
+
+        let distance_a = Key::from(peer_a).distance(&Key::from(target));
+        let distance_b = Key::from(peer_b).distance(&Key::from(target));
+
+        let (closest, furthest) = if distance_a < distance_b {
+            (peer_a, peer_b)
+        } else {
+            (peer_b, peer_a)
+        };
+
+        let config = FindNodeConfig {
+            parallelism_factor: 1,
+            replication_factor: 1,
+            target: Key::from(target),
+            local_peer_id: PeerId::random(),
+            query: QueryId(0),
+        };
+
+        (closest, furthest, config)
+    }
+
+    #[test]
+    fn completes_when_no_candidates() {
+        let config = default_config();
+        let mut context = FindNodeContext::new(config, VecDeque::new());
+        assert!(context.is_done());
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
+    }
+
+    #[test]
+    fn fulfill_parallelism() {
+        let config = FindNodeConfig {
+            parallelism_factor: 3,
+            ..default_config()
+        };
+
+        let in_peers_set = (0..3).map(|_| PeerId::random()).collect::<HashSet<_>>();
+        let in_peers = in_peers_set.iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = FindNodeContext::new(config, in_peers);
+
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+
+                    // Check the peer is the one provided.
+                    assert!(in_peers_set.contains(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        // Fulfilled parallelism.
+        assert!(context.next_action().is_none());
+    }
+
+    #[test]
+    fn completes_when_responses() {
+        let config = FindNodeConfig {
+            parallelism_factor: 3,
+            replication_factor: 3,
+            ..default_config()
+        };
+
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+        let peer_c = PeerId::random();
+
+        let in_peers_set: HashSet<_> = [peer_a, peer_b, peer_c].into_iter().collect();
+        assert_eq!(in_peers_set.len(), 3);
+
+        let in_peers = [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = FindNodeContext::new(config, in_peers);
+
+        // Schedule peer queries.
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+
+                    // Check the peer is the one provided.
+                    assert!(in_peers_set.contains(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        // Checks a failed query that was not initiated.
+        let peer_d = PeerId::random();
+        context.register_response_failure(peer_d);
+        assert_eq!(context.pending.len(), 3);
+        assert!(context.queried.is_empty());
+
+        // Provide responses back.
+        context.register_response(peer_a, vec![]);
+        assert_eq!(context.pending.len(), 2);
+        assert_eq!(context.queried.len(), 1);
+        assert_eq!(context.responses.len(), 1);
+
+        // Provide different response from peer b with peer d as candidate.
+        context.register_response(peer_b, vec![peer_to_kad(peer_d.clone())]);
+        assert_eq!(context.pending.len(), 1);
+        assert_eq!(context.queried.len(), 2);
+        assert_eq!(context.responses.len(), 2);
+        assert_eq!(context.candidates.len(), 1);
+
+        // Peer C fails.
+        context.register_response_failure(peer_c);
+        assert!(context.pending.is_empty());
+        assert_eq!(context.queried.len(), 3);
+        assert_eq!(context.responses.len(), 2);
+
+        // Drain the last candidate.
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 1);
+                assert_eq!(peer, peer_d);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        // Peer D responds.
+        context.register_response(peer_d, vec![]);
+
+        // Produces the result.
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+    }
+
+    #[test]
+    fn offers_closest_responses() {
+        let (closest, furthest, config) = setup_closest_responses();
+
+        // Scenario where we should return with the number of responses.
+        let in_peers = vec![peer_to_kad(furthest), peer_to_kad(closest)];
+        let mut context = FindNodeContext::new(config.clone(), in_peers.into_iter().collect());
+
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 1);
+                assert!(context.pending.contains_key(&peer));
+
+                // The closest should be queried first regardless of the input order.
+                assert_eq!(closest, peer);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        context.register_response(closest, vec![]);
+
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+    }
+
+    #[test]
+    fn offers_closest_responses_with_better_candidates() {
+        let (closest, furthest, config) = setup_closest_responses();
+
+        // Scenario where the query is fulfilled however it continues because
+        // there is a closer peer to query.
+        let in_peers = vec![peer_to_kad(furthest)];
+        let mut context = FindNodeContext::new(config, in_peers.into_iter().collect());
+
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 1);
+                assert!(context.pending.contains_key(&peer));
+
+                // Furthest is the only peer available.
+                assert_eq!(furthest, peer);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        // Furthest node produces a response with the closest node.
+        // Even if we reach a total of 1 (parallelism factor) replies, we should continue.
+        context.register_response(furthest, vec![peer_to_kad(closest)]);
+
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 1);
+                assert!(context.pending.contains_key(&peer));
+
+                // Furthest provided another peer that is closer.
+                assert_eq!(closest, peer);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        // Even if we have the total number of responses, we have at least one
+        // inflight query which might be closer to the target.
+        assert!(context.next_action().is_none());
+
+        // Query finishes when receiving the response back.
+        context.register_response(closest, vec![]);
+
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+    }
+
+    #[test]
+    fn keep_k_best_results() {
+        let mut peers = (0..6).map(|_| PeerId::random()).collect::<Vec<_>>();
+        let target = Key::from(PeerId::random());
+        // Sort the peers by their distance to the target in descending order.
+        peers.sort_by_key(|peer| std::cmp::Reverse(target.distance(&Key::from(*peer))));
+
+        let config = FindNodeConfig {
+            parallelism_factor: 3,
+            replication_factor: 3,
+            target,
+            local_peer_id: PeerId::random(),
+            query: QueryId(0),
+        };
+
+        let in_peers = vec![peers[0], peers[1], peers[2]]
+            .iter()
+            .map(|peer| peer_to_kad(*peer))
+            .collect();
+        let mut context = FindNodeContext::new(config, in_peers);
+
+        // Schedule peer queries.
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        // Each peer responds with a better (closer) peer.
+        context.register_response(peers[0], vec![peer_to_kad(peers[3])]);
+        context.register_response(peers[1], vec![peer_to_kad(peers[4])]);
+        context.register_response(peers[2], vec![peer_to_kad(peers[5])]);
+
+        // Must schedule better peers.
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        context.register_response(peers[3], vec![]);
+        context.register_response(peers[4], vec![]);
+        context.register_response(peers[5], vec![]);
+
+        // Produces the result.
+        let event = context.next_action().unwrap();
+        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+
+        // Because the FindNode query keeps a window of the best K (3 in this case) peers,
+        // we expect to produce the best K peers. As opposed to having only the last entry
+        // updated, which would have produced [peer[0], peer[1], peer[5]].
+
+        // Check the responses.
+        let responses = context.responses.values().map(|peer| peer.peer).collect::<Vec<_>>();
+        // Note: peers are returned in order closest to the target, our `peers` input is sorted in
+        // decreasing order.
+        assert_eq!(responses, [peers[5], peers[4], peers[3]]);
+    }
+}

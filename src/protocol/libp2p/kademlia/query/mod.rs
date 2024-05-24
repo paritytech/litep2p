@@ -22,7 +22,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{
-            find_node::FindNodeContext,
+            find_node::{FindNodeConfig, FindNodeContext},
             get_record::{GetRecordConfig, GetRecordContext},
         },
         record::{Key as RecordKey, Record},
@@ -190,17 +190,19 @@ impl QueryEngine {
             "start `FIND_NODE` query"
         );
 
+        let target = Key::from(target);
+        let config = FindNodeConfig {
+            local_peer_id: self.local_peer_id,
+            replication_factor: self.replication_factor,
+            parallelism_factor: self.parallelism_factor,
+            query: query_id,
+            target,
+        };
+
         self.queries.insert(
             query_id,
             QueryType::FindNode {
-                context: FindNodeContext::new(
-                    self.local_peer_id,
-                    query_id,
-                    Key::from(target),
-                    candidates,
-                    self.replication_factor,
-                    self.parallelism_factor,
-                ),
+                context: FindNodeContext::new(config, candidates),
             },
         );
 
@@ -223,19 +225,19 @@ impl QueryEngine {
         );
 
         let target = Key::new(record.key.clone());
+        let config = FindNodeConfig {
+            local_peer_id: self.local_peer_id,
+            replication_factor: self.replication_factor,
+            parallelism_factor: self.parallelism_factor,
+            query: query_id,
+            target,
+        };
 
         self.queries.insert(
             query_id,
             QueryType::PutRecord {
                 record,
-                context: FindNodeContext::new(
-                    self.local_peer_id,
-                    query_id,
-                    target,
-                    candidates,
-                    self.replication_factor,
-                    self.parallelism_factor,
-                ),
+                context: FindNodeContext::new(config, candidates),
             },
         );
 
@@ -386,7 +388,7 @@ impl QueryEngine {
         match self.queries.remove(&query).expect("query to exist") {
             QueryType::FindNode { context } => QueryAction::FindNodeQuerySucceeded {
                 query,
-                target: context.target.into_preimage(),
+                target: context.config.target.into_preimage(),
                 peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
