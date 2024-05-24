@@ -137,11 +137,10 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
             // The response received from the peer is closer than the furthest response.
             if distance < furthest_distance {
-                // Update the entries only if the distance is not already present.
-                if !self.responses.contains_key(&distance) {
-                    self.responses.insert(distance, peer);
+                self.responses.insert(distance, peer);
 
-                    // Remove the furthest entry.
+                // Remove the furthest entry.
+                if self.responses.len() > self.config.replication_factor {
                     self.responses.pop_last();
                 }
             }
