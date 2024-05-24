@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2023-05-24
+
+This release introduces breaking changes to the litep2p crate, primarily affecting the `kad` module. Key updates include:
+
+- The `GetRecord` command now exposes all peer records, not just the latest one.
+- A new `RecordType` has been introduced to clearly distinguish between locally stored records and those discovered from the network.
+
+Significant refactoring has been done to enhance the efficiency and accuracy of the `kad` module. The updates are as follows:
+
+- The `FindNode` command now retains the K (replication factor) best results.
+- The `GetRecord` command now exposes all peer records.
+- Both `FindNode` and `GetRecord` commands have been updated to handle errors and unexpected states without panicking.
+- Both commands now accept a configuration parameter for cleaner instantiation.
+
+Additionally, we've improved code coverage in the `kad` module by adding more tests.
+
+### Added
+
+- Add release checklist  ([#115](https://github.com/paritytech/litep2p/pull/115))
+
+### Changed
+
+- kad: Refactor FindNode query, keep K best results and add tests  ([#114](https://github.com/paritytech/litep2p/pull/114))
+- multistream_select: Remove unneeded changelog.md  ([#116](https://github.com/paritytech/litep2p/pull/116))
+- kad: Refactor `GetRecord` query and add tests  ([#97](https://github.com/paritytech/litep2p/pull/97))
+- kad: Expose all peer records of `GET_VALUE` query  ([#96](https://github.com/paritytech/litep2p/pull/96))
+- kad/store: Set memory-store on an incoming record for PutRecordTo  ([#88](https://github.com/paritytech/litep2p/pull/88))
+- multistream: Dialer deny multiple /multistream/1.0.0 headers  ([#61](https://github.com/paritytech/litep2p/pull/61))
+- Re-export `multihash` & `multiaddr` types  ([#79](https://github.com/paritytech/litep2p/pull/79))
+- kad: Limit MemoryStore entries  ([#78](https://github.com/paritytech/litep2p/pull/78))
+- Refactor WebRTC code  ([#51](https://github.com/paritytech/litep2p/pull/51))
+- Revert "Bring `rustfmt.toml` in sync with polkadot-sdk (#71)"  ([#74](https://github.com/paritytech/litep2p/pull/74))
+
+### Fixed
+
+- Fix clippy  ([#83](https://github.com/paritytech/litep2p/pull/83))
+- crypto: Don't panic on unsupported key types  ([#84](https://github.com/paritytech/litep2p/pull/84))
+
 ## [0.3.0] - 2023-04-05
 
 ### Added
