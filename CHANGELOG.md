@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2023-05-25
+
+This is a small patch release that makes the `FindNode` command a bit more robst:
+
+- The `FindNode` command now retains the K (replication factor) best results.
+- The `FindNode` command has been updated to handle errors and unexpected states without panicking.
+
+### Changed
+
+- kad: Refactor FindNode query, keep K best results and add tests  ([#114](https://github.com/paritytech/litep2p/pull/114))
+
 ## [0.4.0] - 2023-05-24
 
 This release introduces breaking changes to the litep2p crate, primarily affecting the `kad` module. Key updates include:
@@ -14,10 +25,8 @@ This release introduces breaking changes to the litep2p crate, primarily affecti
 
 Significant refactoring has been done to enhance the efficiency and accuracy of the `kad` module. The updates are as follows:
 
-- The `FindNode` command now retains the K (replication factor) best results.
 - The `GetRecord` command now exposes all peer records.
-- Both `FindNode` and `GetRecord` commands have been updated to handle errors and unexpected states without panicking.
-- Both commands now accept a configuration parameter for cleaner instantiation.
+- The `GetRecord` command has been updated to handle errors and unexpected states without panicking.
 
 Additionally, we've improved code coverage in the `kad` module by adding more tests.
 
@@ -29,7 +38,6 @@ Additionally, we've improved code coverage in the `kad` module by adding more te
 
 ### Changed
 
-- kad: Refactor FindNode query, keep K best results and add tests  ([#114](https://github.com/paritytech/litep2p/pull/114))
 - multistream_select: Remove unneeded changelog.md  ([#116](https://github.com/paritytech/litep2p/pull/116))
 - kad: Refactor `GetRecord` query and add tests  ([#97](https://github.com/paritytech/litep2p/pull/97))
 - kad/store: Set memory-store on an incoming record for PutRecordTo  ([#88](https://github.com/paritytech/litep2p/pull/88))
