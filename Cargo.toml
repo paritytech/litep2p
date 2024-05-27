@@ -37,7 +37,7 @@ smallvec = "1.13.2"
 snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
 socket2 = { version = "0.5.5", features = ["all"] }
 str0m = "0.5.1"
-thiserror = "1.0.39"
+thiserror = "1.0.61"
 tokio-stream = "0.1.12"
 tokio-tungstenite = { version = "0.20.0", features = ["rustls-tls-native-roots"] }
 tokio-util = { version = "0.7.11", features = ["compat", "io", "codec"] }
