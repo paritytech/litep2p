@@ -197,7 +197,11 @@ impl Ping {
                                     self.on_outbound_substream(peer, substream_id, substream);
                                 }
                                 None => {
-                                    todo!("substream {substream_id:?} does not exist");
+                                    tracing::warn!(
+                                        target: LOG_TARGET,
+                                        ?substream_id,
+                                        "outbound ping substream ID does not exist",
+                                    );
                                 }
                             }
                         }
