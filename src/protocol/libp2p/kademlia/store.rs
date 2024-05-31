@@ -25,6 +25,9 @@ use crate::protocol::libp2p::kademlia::record::{Key, Record};
 
 use std::collections::{hash_map::Entry, HashMap};
 
+/// Logging target for the file.
+const LOG_TARGET: &str = "litep2p::ipfs::store";
+
 /// Memory store events.
 pub enum MemoryStoreEvent {}
 
@@ -71,6 +74,12 @@ impl MemoryStore {
     /// Store record.
     pub fn put(&mut self, record: Record) {
         if record.value.len() >= self.config.max_record_size_bytes {
+            tracing::warn!(
+                target: LOG_TARGET,
+                key = ?record.key,
+                publisher = ?record.publisher,
+                "discarding a DHT record that exceeds the configured limit",
+            );
             return;
         }
 
@@ -91,6 +100,10 @@ impl MemoryStore {
 
             Entry::Vacant(entry) => {
                 if len >= self.config.max_records {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        "discarding a DHT record, because maximum memory store size reached",
+                    );
                     return;
                 }
 
