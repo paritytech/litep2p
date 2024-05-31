@@ -21,7 +21,8 @@
 use crate::{
     codec::ProtocolCodec,
     protocol::libp2p::kademlia::handle::{
-        KademliaCommand, KademliaEvent, KademliaHandle, RoutingTableUpdateMode,
+        IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle,
+        RoutingTableUpdateMode,
     },
     types::protocol::ProtocolName,
     PeerId, DEFAULT_CHANNEL_SIZE,
@@ -59,6 +60,9 @@ pub struct Config {
     /// Routing table update mode.
     pub(super) update_mode: RoutingTableUpdateMode,
 
+    /// Incoming records validation mode.
+    pub(super) validation_mode: IncomingRecordValidationMode,
+
     /// TX channel for sending events to `KademliaHandle`.
     pub(super) event_tx: Sender<KademliaEvent>,
 
@@ -72,6 +76,7 @@ impl Config {
         known_peers: HashMap<PeerId, Vec<Multiaddr>>,
         mut protocol_names: Vec<ProtocolName>,
         update_mode: RoutingTableUpdateMode,
+        validation_mode: IncomingRecordValidationMode,
     ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -85,6 +90,7 @@ impl Config {
             Config {
                 protocol_names,
                 update_mode,
+                validation_mode,
                 codec: ProtocolCodec::UnsignedVarint(None),
                 replication_factor,
                 known_peers,
@@ -102,6 +108,7 @@ impl Config {
             HashMap::new(),
             Vec::new(),
             RoutingTableUpdateMode::Automatic,
+            IncomingRecordValidationMode::Automatic,
         )
     }
 }
@@ -114,6 +121,9 @@ pub struct ConfigBuilder {
 
     /// Routing table update mode.
     pub(super) update_mode: RoutingTableUpdateMode,
+
+    /// Incoming records validation mode.
+    pub(super) validation_mode: IncomingRecordValidationMode,
 
     /// Known peers.
     pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
@@ -136,6 +146,7 @@ impl ConfigBuilder {
             known_peers: HashMap::new(),
             protocol_names: Vec::new(),
             update_mode: RoutingTableUpdateMode::Automatic,
+            validation_mode: IncomingRecordValidationMode::Automatic,
         }
     }
 
@@ -154,6 +165,15 @@ impl ConfigBuilder {
     /// Set routing table update mode.
     pub fn with_routing_table_update_mode(mut self, mode: RoutingTableUpdateMode) -> Self {
         self.update_mode = mode;
+        self
+    }
+
+    /// Set incoming records validation mode.
+    pub fn with_incoming_records_validation_mode(
+        mut self,
+        mode: IncomingRecordValidationMode,
+    ) -> Self {
+        self.validation_mode = mode;
         self
     }
 
@@ -178,6 +198,7 @@ impl ConfigBuilder {
             self.known_peers,
             self.protocol_names,
             self.update_mode,
+            self.validation_mode,
         )
     }
 }

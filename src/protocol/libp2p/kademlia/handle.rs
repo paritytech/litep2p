@@ -60,6 +60,17 @@ pub enum RoutingTableUpdateMode {
     Automatic,
 }
 
+/// Incoming record validation mode.
+#[derive(Debug, Copy, Clone)]
+pub enum IncomingRecordValidationMode {
+    /// Don't insert incoming records automatically to the local DHT store
+    /// and let the user do that by calling [`KademliaHandle::store_record()`].
+    Manual,
+
+    /// Automatically accept all incoming records.
+    Automatic,
+}
+
 /// Kademlia commands.
 #[derive(Debug)]
 pub(crate) enum KademliaCommand {
@@ -118,6 +129,12 @@ pub(crate) enum KademliaCommand {
         /// Query ID for the query.
         query_id: QueryId,
     },
+
+    /// Store record locally.
+    StoreRecord {
+        // Record.
+        record: Record,
+    },
 }
 
 /// Kademlia events.
@@ -170,6 +187,16 @@ pub enum KademliaEvent {
     QueryFailed {
         /// Query ID.
         query_id: QueryId,
+    },
+
+    /// Incoming `PUT_VALUE` request received.
+    ///
+    /// In case of using [`IncomingRecordValidationMode::Manual`] and successful validation
+    /// the record must be manually inserted into the local DHT store with
+    /// [`KademliaHandle::store_record()`].
+    IncomingRecord {
+        /// Record.
+        record: Record,
     },
 }
 
@@ -272,6 +299,12 @@ impl KademliaHandle {
         query_id
     }
 
+    /// Store the record in the local store. Used in combination with
+    /// [`IncomingRecordValidationMode::Manual`].
+    pub async fn store_record(&mut self, record: Record) {
+        let _ = self.cmd_tx.send(KademliaCommand::StoreRecord { record }).await;
+    }
+
     /// Try to add known peer and if the channel is clogged, return an error.
     pub fn try_add_known_peer(&self, peer: PeerId, addresses: Vec<Multiaddr>) -> Result<(), ()> {
         self.cmd_tx
@@ -328,6 +361,12 @@ impl KademliaHandle {
             })
             .map(|_| query_id)
             .map_err(|_| ())
+    }
+
+    /// Try to store the record in the local store, and if the channel is clogged, return an error.
+    /// Used in combination with [`IncomingRecordValidationMode::Manual`].
+    pub fn try_store_record(&mut self, record: Record) -> Result<(), ()> {
+        self.cmd_tx.try_send(KademliaCommand::StoreRecord { record }).map_err(|_| ())
     }
 }
 

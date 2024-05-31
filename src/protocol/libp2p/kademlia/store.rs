@@ -78,7 +78,7 @@ impl MemoryStore {
                 target: LOG_TARGET,
                 key = ?record.key,
                 publisher = ?record.publisher,
-                "discarding a DHT record that exceeds the configured limit",
+                "discarding a DHT record that exceeds the configured size limit",
             );
             return;
         }
