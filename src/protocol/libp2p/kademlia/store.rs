@@ -26,7 +26,7 @@ use crate::protocol::libp2p::kademlia::record::{Key, Record};
 use std::collections::{hash_map::Entry, HashMap};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "litep2p::ipfs::store";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::store";
 
 /// Memory store events.
 pub enum MemoryStoreEvent {}

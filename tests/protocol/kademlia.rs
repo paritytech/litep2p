@@ -171,7 +171,8 @@ async fn records_are_stored_automatically() {
             _ = kad_handle1.next() => {}
             event = kad_handle2.next() => {
                 match event {
-                    Some(KademliaEvent::IncomingRecord { record }) => {
+                    Some(KademliaEvent::IncomingRecord { record: got_record }) => {
+                        assert_eq!(record, got_record);
                         // Check if the record was stored.
                         let _ = kad_handle2
                             .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::One).await;
