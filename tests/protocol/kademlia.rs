@@ -172,7 +172,7 @@ async fn records_are_stored_automatically() {
             event = kad_handle2.next() => {
                 match event {
                     Some(KademliaEvent::IncomingRecord { record: got_record }) => {
-                        assert_eq!(record, got_record);
+                        assert_eq!(got_record, record);
                         // Check if the record was stored.
                         let _ = kad_handle2
                             .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::One).await;
@@ -244,8 +244,9 @@ async fn records_are_stored_manually() {
             _ = kad_handle1.next() => {}
             event = kad_handle2.next() => {
                 match event {
-                    Some(KademliaEvent::IncomingRecord { record }) => {
-                        kad_handle2.store_record(record).await;
+                    Some(KademliaEvent::IncomingRecord { record: got_record }) => {
+                        assert_eq!(got_record, record);
+                        kad_handle2.store_record(got_record).await;
 
                         // Check if the record was stored.
                         let _ = kad_handle2
@@ -320,7 +321,8 @@ async fn not_validated_records_are_not_stored() {
             event = kad_handle1.next() => {}
             event = kad_handle2.next() => {
                 match event {
-                    Some(KademliaEvent::IncomingRecord { record }) => {
+                    Some(KademliaEvent::IncomingRecord { record: got_record }) => {
+                        assert_eq!(got_record, record);
                         // Do not call `kad_handle2.store_record(record).await`.
 
                         // Check if the record was stored.
