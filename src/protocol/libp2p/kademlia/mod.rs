@@ -49,7 +49,9 @@ use std::collections::{hash_map::Entry, HashMap};
 
 pub use self::handle::RecordsType;
 pub use config::{Config, ConfigBuilder};
-pub use handle::{KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode};
+pub use handle::{
+    IncomingRecordValidationMode, KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode,
+};
 pub use query::QueryId;
 pub use record::{Key as RecordKey, PeerRecord, Record};
 
@@ -142,6 +144,9 @@ pub(crate) struct Kademlia {
     /// Routing table update mode.
     update_mode: RoutingTableUpdateMode,
 
+    /// Incoming records validation mode.
+    validation_mode: IncomingRecordValidationMode,
+
     /// Query engine.
     engine: QueryEngine,
 
@@ -175,6 +180,7 @@ impl Kademlia {
             executor: QueryExecutor::new(),
             pending_substreams: HashMap::new(),
             update_mode: config.update_mode,
+            validation_mode: config.validation_mode,
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
         }
@@ -418,7 +424,11 @@ impl Kademlia {
                     "handle `PUT_VALUE` message",
                 );
 
-                self.store.put(record);
+                if let IncomingRecordValidationMode::Automatic = self.validation_mode {
+                    self.store.put(record.clone());
+                }
+
+                let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
             }
             ref message @ KademliaMessage::GetRecord {
                 ref key,
@@ -844,6 +854,15 @@ impl Kademlia {
                             self.service.add_known_address(&peer, addresses.into_iter());
 
                         }
+                        Some(KademliaCommand::StoreRecord { record }) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                key = ?record.key,
+                                "store record in local store",
+                            );
+
+                            self.store.put(record);
+                        }
                         None => return Err(Error::EssentialTaskClosed),
                     }
                 },
@@ -894,6 +913,7 @@ mod tests {
             codec: ProtocolCodec::UnsignedVarint(None),
             replication_factor: 20usize,
             update_mode: RoutingTableUpdateMode::Automatic,
+            validation_mode: IncomingRecordValidationMode::Automatic,
             event_tx,
             cmd_rx,
         };
