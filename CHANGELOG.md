@@ -5,7 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2023-05-24
+## [0.6.0] - 2024-06-03
+
+This release introduces breaking changes into `kad` module. The API is extended as following:
+
+- An event `KademliaEvent::IncomingRecord` is added.
+- New methods `KademliaHandle::store_record()` / `KademliaHandle::try_store_record()` are introduced.
+
+This allows implementing manual incoming DHT record validation by configuring `Kademlia` with `IncomingRecordValidationMode::Manual`.
+
+Also, the robustness of ping protocol implementation is improved.
+
+### Added
+
+- Support manual DHT record insertion ([#135](https://github.com/paritytech/litep2p/pull/135))
+
+### Fixed
+
+-  ping: Make ping fault tolerant wrt outbound substreams races ([#133](https://github.com/paritytech/litep2p/pull/133))
+
+## [0.5.0] - 2024-05-24
 
 This is a small release that makes the `FindNode` command a bit more robust:
 
@@ -20,7 +39,7 @@ This is a small release that makes the `FindNode` command a bit more robust:
 
 - kad: Refactor FindNode query, keep K best results and add tests  ([#114](https://github.com/paritytech/litep2p/pull/114))
 
-## [0.4.0] - 2023-05-23
+## [0.4.0] - 2024-05-23
 
 This release introduces breaking changes to the litep2p crate, primarily affecting the `kad` module. Key updates include:
 
@@ -55,7 +74,7 @@ Additionally, we've improved code coverage in the `kad` module by adding more te
 - Fix clippy  ([#83](https://github.com/paritytech/litep2p/pull/83))
 - crypto: Don't panic on unsupported key types  ([#84](https://github.com/paritytech/litep2p/pull/84))
 
-## [0.3.0] - 2023-04-05
+## [0.3.0] - 2024-04-05
 
 ### Added
 
