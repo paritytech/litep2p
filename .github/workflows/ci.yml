@@ -148,10 +148,7 @@ jobs:
 
       - name: Cleanup space
         run: |
-          cd /__t
-          du -sh *
-          cd /
-          du -sh *
+          rm -rf /__t
 
       - name: Run tests
         run: |
