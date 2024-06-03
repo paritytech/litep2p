@@ -78,6 +78,8 @@ impl MemoryStore {
                 target: LOG_TARGET,
                 key = ?record.key,
                 publisher = ?record.publisher,
+                size = record.value.len(),
+                max_size = self.config.max_record_size_bytes,
                 "discarding a DHT record that exceeds the configured size limit",
             );
             return;
@@ -102,6 +104,7 @@ impl MemoryStore {
                 if len >= self.config.max_records {
                     tracing::warn!(
                         target: LOG_TARGET,
+                        max_records = self.config.max_records,
                         "discarding a DHT record, because maximum memory store size reached",
                     );
                     return;
