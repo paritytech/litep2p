@@ -137,17 +137,6 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
       options: --sysctl net.ipv6.conf.all.disable_ipv6=0
     steps:
-      - name: Free space on the runner
-        run: |
-          df -h
-          sudo apt -y autoremove --purge
-          sudo apt -y autoclean
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          df -h
-
       - name: Checkout sources
         uses: actions/checkout@v4
 
@@ -158,4 +147,6 @@ jobs:
           cache-all-crates: true
 
       - name: Run tests
-        run: cargo test
+        run: |
+          df -h
+          cargo test || $(df -h;exit 1)
