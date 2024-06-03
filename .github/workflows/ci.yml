@@ -150,6 +150,8 @@ jobs:
         run: |
           cd /__t
           du -sh *
+          cd /
+          du -sh *
 
       - name: Run tests
         run: |
