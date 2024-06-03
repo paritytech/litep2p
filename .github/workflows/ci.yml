@@ -146,6 +146,11 @@ jobs:
           cache-on-failure: true
           cache-all-crates: true
 
+      - name: Cleanup space
+        run: |
+          cd /__t
+          du -sh *
+
       - name: Run tests
         run: |
           df -h
