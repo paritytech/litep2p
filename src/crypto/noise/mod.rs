@@ -103,7 +103,7 @@ impl NoiseContext {
         keypair: snow::Keypair,
         id_keys: &Keypair,
         role: Role,
-    ) -> Self {
+    ) -> crate::Result<Self> {
         let noise_payload = handshake_schema::NoiseHandshakePayload {
             identity_key: Some(PublicKey::Ed25519(id_keys.public()).to_protobuf_encoding()),
             identity_sig: Some(
@@ -113,14 +113,14 @@ impl NoiseContext {
         };
 
         let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-        noise_payload.encode(&mut payload).expect("Vec<u8> to provide needed capacity");
+        noise_payload.encode(&mut payload)?;
 
-        Self {
+        Ok(Self {
             noise: NoiseState::Handshake(noise),
             keypair,
             payload,
             role,
-        }
+        })
     }
 
     pub fn new(keypair: &Keypair, role: Role) -> Self {
