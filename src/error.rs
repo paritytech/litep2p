@@ -136,6 +136,8 @@ pub enum ParseError {
     InvalidMultihash(Multihash),
     #[error("Failed to decode protobuf message: `{0:?}`")]
     ProstDecodeError(prost::DecodeError),
+    #[error("Failed to encode protobuf message: `{0:?}`")]
+    ProstEncodeError(prost::EncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -223,6 +225,12 @@ impl From<tokio::sync::oneshot::error::RecvError> for Error {
 impl From<prost::DecodeError> for Error {
     fn from(error: prost::DecodeError) -> Self {
         Error::ParseError(ParseError::ProstDecodeError(error))
+    }
+}
+
+impl From<prost::EncodeError> for Error {
+    fn from(error: prost::EncodeError) -> Self {
+        Error::ParseError(ParseError::ProstEncodeError(error))
     }
 }
 
