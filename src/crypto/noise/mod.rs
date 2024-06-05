@@ -169,6 +169,7 @@ impl NoiseContext {
 
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             tracing::error!(target: LOG_TARGET, "invalid state to read the second handshake message");
+            debug_assert!(false);
             return Err(error::Error::Other(
                 "Noise state missmatch: expected handshake".into(),
             ));
