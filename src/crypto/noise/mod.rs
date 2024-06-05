@@ -123,12 +123,9 @@ impl NoiseContext {
         }
     }
 
-    // fn new(role: Role) -> Self {
     pub fn new(keypair: &Keypair, role: Role) -> Self {
         tracing::trace!(target: LOG_TARGET, ?role, "create new noise configuration");
 
-        // let builder: Builder<'_> =
-        //     Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise pattern"));
         let builder: Builder<'_> = Builder::with_resolver(
             NOISE_PARAMETERS.parse().expect("valid Noise pattern"),
             Box::new(protocol::Resolver),
@@ -158,7 +155,6 @@ impl NoiseContext {
             Box::new(protocol::Resolver),
         );
 
-        // let noise = snow::Builder::new(NOISE_PARAMETERS.parse().expect("valid Noise patterns"));
         let keypair = noise.generate_keypair().unwrap();
 
         let noise = noise
