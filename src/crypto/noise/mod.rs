@@ -143,19 +143,18 @@ impl NoiseContext {
     }
 
     /// Create new [`NoiseContext`] with prologue.
-    pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> Self {
+    pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> crate::Result<Self> {
         let noise: Builder<'_> = Builder::with_resolver(
-            NOISE_PARAMETERS.parse().expect("valid Noise pattern"),
+            NOISE_PARAMETERS.parse().expect("qed; Valid noise pattern"),
             Box::new(protocol::Resolver),
         );
 
-        let keypair = noise.generate_keypair().unwrap();
+        let keypair = noise.generate_keypair()?;
 
         let noise = noise
             .local_private_key(&keypair.private)
             .prologue(&prologue)
-            .build_initiator()
-            .expect("to succeed");
+            .build_initiator()?;
 
         Self::assemble(noise, keypair, id_keys, Role::Dialer)
     }
