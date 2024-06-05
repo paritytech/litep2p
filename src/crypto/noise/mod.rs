@@ -162,25 +162,20 @@ impl NoiseContext {
     /// Get remote public key from the received Noise payload.
     // TODO: refactor
     pub fn get_remote_public_key(&mut self, reply: &[u8]) -> crate::Result<PublicKey> {
-        if reply.len() <= 2 {
-            return Err(error::Error::InvalidData);
-        }
+        let (len_slice, reply) = reply.split_at(2);
+        let len = u16::from_be_bytes(len_slice.try_into().map_err(|_| error::Error::InvalidData)?)
+            as usize;
 
-        // TODO: no unwraps
-        let size: Result<[u8; 2], _> = reply[0..2].try_into();
-        let _size = u16::from_be_bytes(size.unwrap());
-
-        // TODO: buffer size
-        let mut inner = vec![0u8; 1024];
+        let mut buffer = vec![0u8; len];
 
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             panic!("invalid state to read the second handshake message");
         };
 
-        let res = noise.read_message(&reply[2..], &mut inner)?;
-        inner.truncate(res);
+        let res = noise.read_message(reply, &mut buffer)?;
+        buffer.truncate(res);
 
-        let payload = handshake_schema::NoiseHandshakePayload::decode(inner.as_slice())?;
+        let payload = handshake_schema::NoiseHandshakePayload::decode(buffer.as_slice())?;
 
         PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
             error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
