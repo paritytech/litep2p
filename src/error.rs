@@ -136,7 +136,7 @@ pub enum ParseError {
     InvalidMultihash(Multihash),
     #[error("Failed to decode protobuf message: `{0:?}`")]
     ProstDecodeError(prost::DecodeError),
-    #[error("Failed to encode profobuf message: `{0:?}`")]
+    #[error("Failed to encode protobuf message: `{0:?}`")]
     ProstEncodeError(prost::EncodeError),
 }
 
