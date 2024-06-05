@@ -123,26 +123,20 @@ impl NoiseContext {
         })
     }
 
-    pub fn new(keypair: &Keypair, role: Role) -> Self {
+    pub fn new(keypair: &Keypair, role: Role) -> crate::Result<Self> {
         tracing::trace!(target: LOG_TARGET, ?role, "create new noise configuration");
 
         let builder: Builder<'_> = Builder::with_resolver(
-            NOISE_PARAMETERS.parse().expect("valid Noise pattern"),
+            NOISE_PARAMETERS.parse().expect("qed; Valid noise pattern"),
             Box::new(protocol::Resolver),
         );
 
-        let dh_keypair = builder.generate_keypair().expect("keypair generation to succeed");
+        let dh_keypair = builder.generate_keypair()?;
         let static_key = &dh_keypair.private;
 
         let noise = match role {
-            Role::Dialer => builder
-                .local_private_key(static_key)
-                .build_initiator()
-                .expect("initialization to succeed"),
-            Role::Listener => builder
-                .local_private_key(static_key)
-                .build_responder()
-                .expect("initialization to succeed"),
+            Role::Dialer => builder.local_private_key(static_key).build_initiator()?,
+            Role::Listener => builder.local_private_key(static_key).build_responder()?,
         };
 
         Self::assemble(noise, dh_keypair, keypair, role)
