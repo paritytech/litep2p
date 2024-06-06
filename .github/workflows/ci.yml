@@ -156,3 +156,4 @@ jobs:
           cd -
           df -h
           cargo test || $(df -h;exit 1)
+          df -h
