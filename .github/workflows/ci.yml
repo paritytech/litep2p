@@ -136,6 +136,8 @@ jobs:
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
       options: --sysctl net.ipv6.conf.all.disable_ipv6=0 --privileged
+      volumes:
+        - /usr:/usr
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -148,6 +150,7 @@ jobs:
 
       - name: Run tests
         run: |
-          rm -rf /__w
+          rm -rf /usr/share/dotnet
+          rm -rf "/usr/local/share/boost"
           df -h
           cargo test || $(df -h;exit 1)
