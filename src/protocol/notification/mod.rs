@@ -1610,8 +1610,12 @@ impl NotificationProtocol {
             biased;
 
             event = self.negotiation.next(), if !self.negotiation.is_empty() => {
-                let (peer, event) = event.expect("`HandshakeService` to return `Some(..)`");
-                self.on_handshake_event(peer, event).await;
+                if let Some((peer, event)) = event {
+                    self.on_handshake_event(peer, event).await;
+                } else {
+                    tracing::warn!(target: LOG_TARGET, "`HandshakeService` expected to return `Some(..)`");
+                    debug_assert!(false);
+                };
             }
             event = self.shutdown_rx.recv() => match event {
                 None => (),
