@@ -148,6 +148,6 @@ jobs:
 
       - name: Run tests
         run: |
-          rm -rf /usr/share/dotnet
+          rm -rf /__w
           df -h
           cargo test || $(df -h;exit 1)
