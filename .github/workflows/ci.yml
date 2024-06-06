@@ -151,7 +151,8 @@ jobs:
 
       - name: Run tests
         run: |
-          rm -rf /tmp/share/dotnet
-          rm -rf /tmp/share/boost
+          cd /tmp
+          du -sh *
+          cd -
           df -h
           cargo test || $(df -h;exit 1)
