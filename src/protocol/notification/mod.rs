@@ -529,7 +529,7 @@ impl NotificationProtocol {
 
         // peer must exist since an outbound substream was received from them
         let Some(context) = self.peers.get_mut(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "peer doesn't exist for outbound substream");
+            tracing::error!(target: LOG_TARGET, ?peer, "peer doesn't exist for outbound substream");
             debug_assert!(false);
             return Err(Error::PeerDoesntExist(peer.clone()));
         };
@@ -659,7 +659,7 @@ impl NotificationProtocol {
     ) -> crate::Result<()> {
         // peer must exist since an inbound substream was received from them
         let Some(context) = self.peers.get_mut(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "peer doesn't exist for inbound substream");
+            tracing::error!(target: LOG_TARGET, ?peer, "peer doesn't exist for inbound substream");
             debug_assert!(false);
             return Err(Error::PeerDoesntExist(peer.clone()));
         };
@@ -1613,7 +1613,7 @@ impl NotificationProtocol {
                 if let Some((peer, event)) = event {
                     self.on_handshake_event(peer, event).await;
                 } else {
-                    tracing::warn!(target: LOG_TARGET, "`HandshakeService` expected to return `Some(..)`");
+                    tracing::error!(target: LOG_TARGET, "`HandshakeService` expected to return `Some(..)`");
                     debug_assert!(false);
                 };
             }
