@@ -130,15 +130,11 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: arc-runners-litep2p
     timeout-minutes: 15
     needs: [set-image]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
-      options: --sysctl net.ipv6.conf.all.disable_ipv6=0 --privileged
-      volumes:
-        - /usr/share/dotnet:/tmp/share/dotnet
-        - /usr/local/share/boost:/tmp/share/boost
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -150,10 +146,4 @@ jobs:
           cache-all-crates: true
 
       - name: Run tests
-        run: |
-          cd /tmp
-          du -sh *
-          cd -
-          df -h
-          cargo test || $(df -h;exit 1)
-          df -h
+        run: cargo test
