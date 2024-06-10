@@ -98,8 +98,8 @@ impl DialAddresses {
 pub struct SocketListener {
     /// Listeners.
     listeners: Vec<TokioTcpListener>,
-    /// Type of the listener.
-    ty: SocketListenerType,
+    /// The index in the listeners from which the polling is resumed.
+    poll_index: usize,
 }
 
 /// The type of the socket listener.
@@ -223,7 +223,10 @@ impl SocketListener {
         };
 
         (
-            Self { listeners, ty },
+            Self {
+                listeners,
+                poll_index: 0,
+            },
             listen_multi_addresses,
             dial_addresses,
         )
@@ -325,13 +328,21 @@ impl Stream for SocketListener {
             return Poll::Pending;
         }
 
-        // TODO: make this more fair
-        for listener in self.listeners.iter_mut() {
+        let len = self.listeners.len();
+        for index in 0..len {
+            let current = (self.poll_index + index) % len;
+            let listener = &mut self.listeners[current];
+
             match listener.poll_accept(cx) {
                 Poll::Pending => {}
-                Poll::Ready(Err(error)) => return Poll::Ready(Some(Err(error))),
-                Poll::Ready(Ok((stream, address))) =>
-                    return Poll::Ready(Some(Ok((stream, address)))),
+                Poll::Ready(Err(error)) => {
+                    self.poll_index = (self.poll_index + 1) % len;
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Ready(Ok((stream, address))) => {
+                    self.poll_index = (self.poll_index + 1) % len;
+                    return Poll::Ready(Some(Ok((stream, address))));
+                }
             }
         }
 
