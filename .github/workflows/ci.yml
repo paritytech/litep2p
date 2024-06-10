@@ -135,6 +135,7 @@ jobs:
     needs: [set-image]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
+      options: --sysctl net.ipv6.conf.all.disable_ipv6=0
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
