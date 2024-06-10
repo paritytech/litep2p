@@ -349,3 +349,283 @@ impl Stream for SocketListener {
         Poll::Pending
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+
+    #[test]
+    fn parse_multiaddresses_tcp() {
+        assert!(SocketListener::get_socket_address(
+            &"/ip6/::1/tcp/8888".parse().expect("valid multiaddress"),
+            SocketListenerType::Tcp,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress"),
+            SocketListenerType::Tcp,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::Tcp,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::Tcp,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/ip6/::1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::Tcp,
+        )
+        .is_err());
+        assert!(SocketListener::get_socket_address(
+            &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::Tcp,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parse_multiaddresses_websocket() {
+        assert!(SocketListener::get_socket_address(
+            &"/ip6/::1/tcp/8888/ws".parse().expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/ip4/127.0.0.1/tcp/8888/ws".parse().expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/ip6/::1/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/ip4/127.0.0.1/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/ip6/::1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_err());
+        assert!(SocketListener::get_socket_address(
+            &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_err());
+        assert!(SocketListener::get_socket_address(
+            &"/ip4/127.0.0.1/tcp/8888/ws/utp".parse().expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_err());
+        assert!(SocketListener::get_socket_address(
+            &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_err());
+        assert!(SocketListener::get_socket_address(
+            &"/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_err());
+        assert!(SocketListener::get_socket_address(
+            &"/dns/hello.world/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+            SocketListenerType::WebSocket,
+        )
+        .is_err());
+        assert!(SocketListener::get_socket_address(
+            &"/dns6/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress")
+                ,SocketListenerType::WebSocket,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/dns4/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+                SocketListenerType::WebSocket,
+        )
+        .is_ok());
+        assert!(SocketListener::get_socket_address(
+            &"/dns6/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .expect("valid multiaddress"),
+                SocketListenerType::WebSocket,
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn no_listeners_tcp() {
+        let (mut listener, _, _) = SocketListener::new(Vec::new(), true, SocketListenerType::Tcp);
+
+        futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            event => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn no_listeners_websocket() {
+        let (mut listener, _, _) =
+            SocketListener::new(Vec::new(), true, SocketListenerType::WebSocket);
+
+        futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            event => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn one_listener_tcp() {
+        let address: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
+        let (mut listener, listen_addresses, _) =
+            SocketListener::new(vec![address.clone()], true, SocketListenerType::Tcp);
+        let Some(Protocol::Tcp(port)) =
+            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        else {
+            panic!("invalid address");
+        };
+
+        let (res1, res2) =
+            tokio::join!(listener.next(), TcpStream::connect(format!("[::1]:{port}")));
+
+        assert!(res1.unwrap().is_ok() && res2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn one_listener_websocket() {
+        let address: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
+        let (mut listener, listen_addresses, _) =
+            SocketListener::new(vec![address.clone()], true, SocketListenerType::WebSocket);
+        let Some(Protocol::Tcp(port)) =
+            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        else {
+            panic!("invalid address");
+        };
+
+        let (res1, res2) =
+            tokio::join!(listener.next(), TcpStream::connect(format!("[::1]:{port}")));
+
+        assert!(res1.unwrap().is_ok() && res2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn two_listeners_tcp() {
+        let address1: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
+        let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
+        let (mut listener, listen_addresses, _) =
+            SocketListener::new(vec![address1, address2], true, SocketListenerType::Tcp);
+        let Some(Protocol::Tcp(port1)) =
+            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        else {
+            panic!("invalid address");
+        };
+
+        let Some(Protocol::Tcp(port2)) =
+            listen_addresses.iter().skip(1).next().unwrap().clone().iter().skip(1).next()
+        else {
+            panic!("invalid address");
+        };
+
+        tokio::spawn(async move { while let Some(_) = listener.next().await {} });
+
+        let (res1, res2) = tokio::join!(
+            TcpStream::connect(format!("[::1]:{port1}")),
+            TcpStream::connect(format!("127.0.0.1:{port2}"))
+        );
+
+        assert!(res1.is_ok() && res2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn two_listeners_websocket() {
+        let address1: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
+        let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap();
+        let (mut listener, listen_addresses, _) = SocketListener::new(
+            vec![address1, address2],
+            true,
+            SocketListenerType::WebSocket,
+        );
+
+        let Some(Protocol::Tcp(port1)) =
+            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        else {
+            panic!("invalid address");
+        };
+
+        let Some(Protocol::Tcp(port2)) =
+            listen_addresses.iter().skip(1).next().unwrap().clone().iter().skip(1).next()
+        else {
+            panic!("invalid address");
+        };
+
+        tokio::spawn(async move { while let Some(_) = listener.next().await {} });
+
+        let (res1, res2) = tokio::join!(
+            TcpStream::connect(format!("[::1]:{port1}")),
+            TcpStream::connect(format!("127.0.0.1:{port2}"))
+        );
+
+        assert!(res1.is_ok() && res2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn local_dial_address() {
+        let dial_addresses = DialAddresses::Reuse {
+            listen_addresses: Arc::new(vec![
+                "[2001:7d0:84aa:3900:2a5d:9e85::]:8888".parse().unwrap(),
+                "92.168.127.1:9999".parse().unwrap(),
+            ]),
+        };
+
+        assert_eq!(
+            dial_addresses.local_dial_address(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))),
+            Ok(Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                9999
+            ))),
+        );
+
+        assert_eq!(
+            dial_addresses.local_dial_address(&IpAddr::V6(Ipv6Addr::new(0, 1, 2, 3, 4, 5, 6, 7))),
+            Ok(Some(SocketAddr::new(
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                8888
+            ))),
+        );
+    }
+}
