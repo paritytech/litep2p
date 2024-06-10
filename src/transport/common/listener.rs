@@ -18,6 +18,48 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-//! Shared transport protocol implementation
+//! Shared socket listener between TCP and WebSocket.
 
-pub mod listener;
+use crate::{error::AddressError, Error, PeerId};
+
+use futures::Stream;
+use multiaddr::{Multiaddr, Protocol};
+use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
+use socket2::{Domain, Socket, Type};
+use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
+
+use std::{
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
+
+/// Address type.
+#[derive(Debug)]
+pub(super) enum AddressType {
+    /// Socket address.
+    Socket(SocketAddr),
+
+    /// DNS address.
+    Dns(String, u16),
+}
+
+/// Local addresses to use for outbound connections.
+#[derive(Clone, Default)]
+pub enum DialAddresses {
+    /// Reuse port from listen addresses.
+    Reuse {
+        listen_addresses: Arc<Vec<SocketAddr>>,
+    },
+    /// Do not reuse port.
+    #[default]
+    NoReuse,
+}
+
+/// Socket listening to zero or more addresses.
+pub struct SocketListener {
+    /// Listeners.
+    listeners: Vec<TokioTcpListener>,
+}
