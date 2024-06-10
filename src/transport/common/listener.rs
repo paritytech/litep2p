@@ -58,6 +58,39 @@ pub enum DialAddresses {
     NoReuse,
 }
 
+impl DialAddresses {
+    /// Get local dial address for an outbound connection.
+    pub(super) fn local_dial_address(
+        &self,
+        remote_address: &IpAddr,
+    ) -> Result<Option<SocketAddr>, ()> {
+        match self {
+            DialAddresses::Reuse { listen_addresses } => {
+                for address in listen_addresses.iter() {
+                    if remote_address.is_ipv4() == address.is_ipv4()
+                        && remote_address.is_loopback() == address.ip().is_loopback()
+                    {
+                        if remote_address.is_ipv4() {
+                            return Ok(Some(SocketAddr::new(
+                                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                                address.port(),
+                            )));
+                        } else {
+                            return Ok(Some(SocketAddr::new(
+                                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                                address.port(),
+                            )));
+                        }
+                    }
+                }
+
+                Err(())
+            }
+            DialAddresses::NoReuse => Ok(None),
+        }
+    }
+}
+
 /// Socket listening to zero or more addresses.
 pub struct SocketListener {
     /// Listeners.
