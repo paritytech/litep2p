@@ -316,3 +316,25 @@ impl SocketListener {
         Ok((socket_address, maybe_peer))
     }
 }
+
+impl Stream for SocketListener {
+    type Item = io::Result<(TcpStream, SocketAddr)>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.listeners.is_empty() {
+            return Poll::Pending;
+        }
+
+        // TODO: make this more fair
+        for listener in self.listeners.iter_mut() {
+            match listener.poll_accept(cx) {
+                Poll::Pending => {}
+                Poll::Ready(Err(error)) => return Poll::Ready(Some(Err(error))),
+                Poll::Ready(Ok((stream, address))) =>
+                    return Poll::Ready(Some(Ok((stream, address)))),
+            }
+        }
+
+        Poll::Pending
+    }
+}
