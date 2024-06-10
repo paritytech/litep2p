@@ -36,6 +36,9 @@ use std::{
     task::{Context, Poll},
 };
 
+/// Logging target for the file.
+const LOG_TARGET: &str = "litep2p::transport::listener";
+
 /// Address type.
 #[derive(Debug)]
 pub(super) enum AddressType {
@@ -95,4 +98,221 @@ impl DialAddresses {
 pub struct SocketListener {
     /// Listeners.
     listeners: Vec<TokioTcpListener>,
+    /// Type of the listener.
+    ty: SocketListenerType,
+}
+
+/// The type of the socket listener.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SocketListenerType {
+    Tcp,
+    WebSocket,
+}
+
+impl SocketListener {
+    /// Create new [`SocketListener`]
+    pub fn new(
+        addresses: Vec<Multiaddr>,
+        reuse_port: bool,
+        ty: SocketListenerType,
+    ) -> (Self, Vec<Multiaddr>, DialAddresses) {
+        let (listeners, listen_addresses): (_, Vec<Vec<_>>) = addresses
+            .into_iter()
+            .filter_map(|address| {
+                let address = match Self::get_socket_address(&address, ty).ok()?.0 {
+                    AddressType::Dns(address, port) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?address,
+                            ?port,
+                            "dns not supported as bind address"
+                        );
+
+                        return None;
+                    }
+                    AddressType::Socket(address) => address,
+                };
+
+                let socket = if address.is_ipv4() {
+                    Socket::new(Domain::IPV4, Type::STREAM, Some(socket2::Protocol::TCP)).ok()?
+                } else {
+                    let socket =
+                        Socket::new(Domain::IPV6, Type::STREAM, Some(socket2::Protocol::TCP))
+                            .ok()?;
+                    socket.set_only_v6(true).ok()?;
+                    socket
+                };
+
+                socket.set_nonblocking(true).ok()?;
+                socket.set_reuse_address(true).ok()?;
+                #[cfg(unix)]
+                if reuse_port {
+                    socket.set_reuse_port(true).ok()?;
+                }
+                socket.bind(&address.into()).ok()?;
+                socket.listen(1024).ok()?;
+
+                let socket: std::net::TcpListener = socket.into();
+                let listener = TokioTcpListener::from_std(socket).ok()?;
+                let local_address = listener.local_addr().ok()?;
+
+                let listen_addresses = if address.ip().is_unspecified() {
+                    match NetworkInterface::show() {
+                        Ok(ifaces) => ifaces
+                            .into_iter()
+                            .flat_map(|record| {
+                                record.addr.into_iter().filter_map(|iface_address| {
+                                    match (iface_address, address.is_ipv4()) {
+                                        (Addr::V4(inner), true) => Some(SocketAddr::new(
+                                            IpAddr::V4(inner.ip),
+                                            local_address.port(),
+                                        )),
+                                        (Addr::V6(inner), false) =>
+                                            match inner.ip.segments().first() {
+                                                Some(0xfe80) => None,
+                                                _ => Some(SocketAddr::new(
+                                                    IpAddr::V6(inner.ip),
+                                                    local_address.port(),
+                                                )),
+                                            },
+                                        _ => None,
+                                    }
+                                })
+                            })
+                            .collect(),
+                        Err(error) => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to fetch network interfaces",
+                            );
+
+                            return None;
+                        }
+                    }
+                } else {
+                    vec![local_address]
+                };
+
+                Some((listener, listen_addresses))
+            })
+            .unzip();
+
+        let listen_addresses = listen_addresses.into_iter().flatten().collect::<Vec<_>>();
+        let listen_multi_addresses = listen_addresses
+            .iter()
+            .cloned()
+            .map(|address| {
+                let multi_addr = Multiaddr::empty()
+                    .with(Protocol::from(address.ip()))
+                    .with(Protocol::Tcp(address.port()));
+
+                match ty {
+                    SocketListenerType::Tcp => multi_addr,
+                    SocketListenerType::WebSocket =>
+                        multi_addr.with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string()))),
+                }
+            })
+            .collect();
+        let dial_addresses = if reuse_port {
+            DialAddresses::Reuse {
+                listen_addresses: Arc::new(listen_addresses),
+            }
+        } else {
+            DialAddresses::NoReuse
+        };
+
+        (
+            Self { listeners, ty },
+            listen_multi_addresses,
+            dial_addresses,
+        )
+    }
+
+    /// Extract socket address and `PeerId`, if found, from `address`.
+    pub(super) fn get_socket_address(
+        address: &Multiaddr,
+        ty: SocketListenerType,
+    ) -> crate::Result<(AddressType, Option<PeerId>)> {
+        tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
+
+        let mut iter = address.iter();
+        let socket_address = match iter.next() {
+            Some(Protocol::Ip6(address)) => match iter.next() {
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid transport protocol, expected `Tcp`",
+                    );
+                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                }
+            },
+            Some(Protocol::Ip4(address)) => match iter.next() {
+                Some(Protocol::Tcp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid transport protocol, expected `Tcp`",
+                    );
+                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                }
+            },
+            Some(Protocol::Dns(address))
+            | Some(Protocol::Dns4(address))
+            | Some(Protocol::Dns6(address)) => match iter.next() {
+                Some(Protocol::Tcp(port)) => AddressType::Dns(address.to_string(), port),
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid transport protocol, expected `Tcp`",
+                    );
+                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                }
+            },
+            protocol => {
+                tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        };
+
+        match ty {
+            SocketListenerType::Tcp => (),
+            SocketListenerType::WebSocket => {
+                // verify that `/ws`/`/wss` is part of the multi address
+                match iter.next() {
+                    Some(Protocol::Ws(_address)) => {}
+                    Some(Protocol::Wss(_address)) => {}
+                    protocol => {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?protocol,
+                            "invalid protocol, expected `Ws` or `Wss`"
+                        );
+                        return Err(Error::AddressError(AddressError::InvalidProtocol));
+                    }
+                };
+            }
+        }
+
+        let maybe_peer = match iter.next() {
+            Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
+            None => None,
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid protocol, expected `P2p` or `None`"
+                );
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        };
+
+        Ok((socket_address, maybe_peer))
+    }
 }
