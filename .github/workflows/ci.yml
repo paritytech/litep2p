@@ -130,7 +130,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: arc-runners-litep2p
     timeout-minutes: 15
     needs: [set-image]
     container:
