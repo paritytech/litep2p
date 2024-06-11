@@ -106,6 +106,7 @@ impl TcpListener {
     pub fn new(
         addresses: Vec<Multiaddr>,
         reuse_port: bool,
+        nodelay: bool,
     ) -> (Self, Vec<Multiaddr>, DialAddresses) {
         let (listeners, listen_addresses): (_, Vec<Vec<_>>) = addresses
             .into_iter()
@@ -131,6 +132,7 @@ impl TcpListener {
                     },
                 };
 
+                socket.set_nodelay(nodelay).ok()?;
                 socket.set_nonblocking(true).ok()?;
                 socket.set_reuse_address(true).ok()?;
                 #[cfg(unix)]
@@ -339,7 +341,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_listeners() {
-        let (mut listener, _, _) = TcpListener::new(Vec::new(), true);
+        let (mut listener, _, _) = TcpListener::new(Vec::new(), true, false);
 
         futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -351,7 +353,8 @@ mod tests {
     #[tokio::test]
     async fn one_listener() {
         let address: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
-        let (mut listener, listen_addresses, _) = TcpListener::new(vec![address.clone()], true);
+        let (mut listener, listen_addresses, _) =
+            TcpListener::new(vec![address.clone()], true, false);
         let Some(Protocol::Tcp(port)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
@@ -368,7 +371,8 @@ mod tests {
     async fn two_listeners() {
         let address1: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
         let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
-        let (mut listener, listen_addresses, _) = TcpListener::new(vec![address1, address2], true);
+        let (mut listener, listen_addresses, _) =
+            TcpListener::new(vec![address1, address2], true, false);
         let Some(Protocol::Tcp(port1)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
@@ -421,7 +425,7 @@ mod tests {
     async fn show_all_addresses() {
         let address1: Multiaddr = "/ip6/::/tcp/0".parse().unwrap();
         let address2: Multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
-        let (_, listen_addresses, _) = TcpListener::new(vec![address1, address2], true);
+        let (_, listen_addresses, _) = TcpListener::new(vec![address1, address2], true, false);
 
         println!("{listen_addresses:#?}");
     }

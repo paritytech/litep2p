@@ -681,6 +681,7 @@ mod tests {
                 .with(Protocol::Tcp(address.port())),
             Default::default(),
             Duration::from_secs(10),
+            false,
         )
         .await
         .unwrap();
@@ -775,6 +776,7 @@ mod tests {
                 .with(Protocol::Tcp(address.port())),
             Default::default(),
             Duration::from_secs(10),
+            false,
         )
         .await
         .unwrap();
@@ -916,6 +918,7 @@ mod tests {
                 .with(Protocol::Tcp(address.port())),
             Default::default(),
             Duration::from_secs(10),
+            false,
         )
         .await
         .unwrap();
@@ -961,6 +964,7 @@ mod tests {
                 .with(Protocol::Tcp(address.port())),
             Default::default(),
             Duration::from_secs(10),
+            false,
         )
         .await
         .unwrap();
@@ -1115,6 +1119,7 @@ mod tests {
                 .with(Protocol::Tcp(address.port())),
             Default::default(),
             Duration::from_secs(10),
+            false,
         )
         .await
         .unwrap();
@@ -1224,6 +1229,7 @@ mod tests {
                 .with(Protocol::Tcp(address.port())),
             Default::default(),
             Duration::from_secs(10),
+            false,
         )
         .await
         .unwrap();
