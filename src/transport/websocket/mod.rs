@@ -24,11 +24,11 @@ use crate::{
     config::Role,
     error::{AddressError, Error},
     transport::{
+        common::listener::{AddressType, DialAddresses, SocketListener, SocketListenerType},
         manager::TransportHandle,
         websocket::{
             config::Config,
             connection::{NegotiatedConnection, WebSocketConnection},
-            listener::{AddressType, DialAddresses, WebSocketListener},
         },
         Transport, TransportBuilder, TransportEvent,
     },
@@ -94,7 +94,7 @@ pub(crate) struct WebSocketTransport {
     config: Config,
 
     /// WebSocket listener.
-    listener: WebSocketListener,
+    listener: SocketListener,
 
     /// Dial addresses.
     dial_addresses: DialAddresses,
@@ -184,7 +184,8 @@ impl WebSocketTransport {
         connection_open_timeout: Duration,
     ) -> crate::Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>)> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
-        let (socket_address, _) = WebSocketListener::get_socket_address(&address)?;
+        let (socket_address, _) =
+            SocketListener::get_socket_address(&address, SocketListenerType::WebSocket)?;
 
         let remote_address = match socket_address {
             AddressType::Socket(address) => address,
@@ -312,9 +313,10 @@ impl TransportBuilder for WebSocketTransport {
             listen_addresses = ?config.listen_addresses,
             "start websocket transport",
         );
-        let (listener, listen_addresses, dial_addresses) = WebSocketListener::new(
+        let (listener, listen_addresses, dial_addresses) = SocketListener::new(
             std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
+            SocketListenerType::WebSocket,
         );
 
         Ok((
