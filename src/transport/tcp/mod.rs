@@ -59,7 +59,6 @@ use std::{
 pub(crate) use substream::Substream;
 
 mod connection;
-mod listener;
 mod substream;
 
 pub mod config;
