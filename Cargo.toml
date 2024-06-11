@@ -9,7 +9,7 @@ edition = "2021"
 prost-build = "0.11"
 
 [dependencies]
-async-trait = "0.1.66"
+async-trait = "0.1.80"
 bs58 = "0.4.0"
 bytes = "1.4.0"
 cid = "0.10.1"
@@ -23,7 +23,7 @@ mockall = "0.12.1"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
 network-interface = "1.1.1"
-parking_lot = "0.12.1"
+parking_lot = "0.12.3"
 pin-project = "1.1.0"
 prost = "0.11.8"
 quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls", "runtime-tokio"] }
@@ -35,7 +35,7 @@ sha2 = "0.10.8"
 simple-dns = "0.5.3"
 smallvec = "1.13.2"
 snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
-socket2 = { version = "0.5.5", features = ["all"] }
+socket2 = { version = "0.5.7", features = ["all"] }
 str0m = "0.5.1"
 thiserror = "1.0.61"
 tokio-stream = "0.1.12"
@@ -51,7 +51,7 @@ webpki = "0.22.4"
 x25519-dalek = "2.0.0"
 x509-parser = "0.15.0"
 yasna = "0.5.0"
-zeroize = "1.5.7"
+zeroize = "1.8.1"
 nohash-hasher = "0.2.0"
 static_assertions = "1.1.0"
 
