@@ -528,7 +528,12 @@ impl NotificationProtocol {
         );
 
         // peer must exist since an outbound substream was received from them
-        let context = self.peers.get_mut(&peer).expect("peer to exist");
+        let Some(context) = self.peers.get_mut(&peer) else {
+            tracing::error!(target: LOG_TARGET, ?peer, "peer doesn't exist for outbound substream");
+            debug_assert!(false);
+            return Err(Error::PeerDoesntExist(peer.clone()));
+        };
+
         let pending_peer = self.pending_outbound.remove(&substream_id);
 
         match std::mem::replace(&mut context.state, PeerState::Poisoned) {
@@ -653,7 +658,11 @@ impl NotificationProtocol {
         substream: Substream,
     ) -> crate::Result<()> {
         // peer must exist since an inbound substream was received from them
-        let context = self.peers.get_mut(&peer).expect("peer to exist");
+        let Some(context) = self.peers.get_mut(&peer) else {
+            tracing::error!(target: LOG_TARGET, ?peer, "peer doesn't exist for inbound substream");
+            debug_assert!(false);
+            return Err(Error::PeerDoesntExist(peer.clone()));
+        };
 
         tracing::debug!(
             target: LOG_TARGET,
@@ -1601,8 +1610,12 @@ impl NotificationProtocol {
             biased;
 
             event = self.negotiation.next(), if !self.negotiation.is_empty() => {
-                let (peer, event) = event.expect("`HandshakeService` to return `Some(..)`");
-                self.on_handshake_event(peer, event).await;
+                if let Some((peer, event)) = event {
+                    self.on_handshake_event(peer, event).await;
+                } else {
+                    tracing::error!(target: LOG_TARGET, "`HandshakeService` expected to return `Some(..)`");
+                    debug_assert!(false);
+                };
             }
             event = self.shutdown_rx.recv() => match event {
                 None => (),
