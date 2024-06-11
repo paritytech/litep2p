@@ -41,7 +41,7 @@ const LOG_TARGET: &str = "litep2p::transport::listener";
 
 /// Address type.
 #[derive(Debug)]
-pub(super) enum AddressType {
+pub enum AddressType {
     /// Socket address.
     Socket(SocketAddr),
 
@@ -63,10 +63,7 @@ pub enum DialAddresses {
 
 impl DialAddresses {
     /// Get local dial address for an outbound connection.
-    pub(super) fn local_dial_address(
-        &self,
-        remote_address: &IpAddr,
-    ) -> Result<Option<SocketAddr>, ()> {
+    pub fn local_dial_address(&self, remote_address: &IpAddr) -> Result<Option<SocketAddr>, ()> {
         match self {
             DialAddresses::Reuse { listen_addresses } => {
                 for address in listen_addresses.iter() {
@@ -105,7 +102,9 @@ pub struct SocketListener {
 /// The type of the socket listener.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SocketListenerType {
+    /// Listener for TCP.
     Tcp,
+    /// Listener for WebSocket.
     WebSocket,
 }
 
@@ -233,7 +232,7 @@ impl SocketListener {
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
-    pub(super) fn get_socket_address(
+    pub fn get_socket_address(
         address: &Multiaddr,
         ty: SocketListenerType,
     ) -> crate::Result<(AddressType, Option<PeerId>)> {
