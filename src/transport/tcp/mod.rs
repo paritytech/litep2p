@@ -25,9 +25,7 @@ use crate::{
     config::Role,
     error::Error,
     transport::{
-        common::listener::{
-            AddressType, DialAddresses, GetSocketAddr, SocketListener, TcpListener,
-        },
+        common::listener::{AddressType, DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
         manager::TransportHandle,
         tcp::{
             config::Config,
@@ -140,7 +138,7 @@ impl TcpTransport {
         connection_open_timeout: Duration,
         nodelay: bool,
     ) -> crate::Result<(Multiaddr, TcpStream)> {
-        let (socket_address, _) = TcpListener::multiaddr_to_socket_address(&address)?;
+        let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
         let remote_address = match socket_address {
             AddressType::Socket(address) => address,
             AddressType::Dns(url, port) => {
@@ -261,7 +259,7 @@ impl TransportBuilder for TcpTransport {
         );
 
         // start tcp listeners for all listen addresses
-        let (listener, listen_addresses, dial_addresses) = SocketListener::new::<TcpListener>(
+        let (listener, listen_addresses, dial_addresses) = SocketListener::new::<TcpAddress>(
             std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
             config.nodelay,
@@ -289,7 +287,7 @@ impl Transport for TcpTransport {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
-        let (socket_address, peer) = TcpListener::multiaddr_to_socket_address(&address)?;
+        let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -414,7 +412,7 @@ impl Transport for TcpTransport {
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        let (socket_address, peer) = TcpListener::multiaddr_to_socket_address(&address)?;
+        let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
