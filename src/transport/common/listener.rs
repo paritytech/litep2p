@@ -391,6 +391,7 @@ impl Stream for SocketListener {
             }
         }
 
+        self.poll_index = (self.poll_index + 1) % len;
         Poll::Pending
     }
 }
@@ -544,8 +545,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_listeners_websocket() {
-        let (mut listener, _, _) =
-            SocketListener::new::<WebSocketAddress>(Vec::new(), true, false);
+        let (mut listener, _, _) = SocketListener::new::<WebSocketAddress>(Vec::new(), true, false);
 
         futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
