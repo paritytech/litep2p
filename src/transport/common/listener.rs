@@ -108,14 +108,29 @@ pub enum SocketListenerType {
     WebSocket,
 }
 
+/// Trait to convert between `Multiaddr` and `SocketAddr`.
 pub trait GetSocketAddr {
+    /// Convert `Multiaddr` to `SocketAddr`.
+    ///
+    /// # Note
+    ///
+    /// This method is called from two main code paths:
+    ///  - When creating a new `SocketListener` to bind to a specific address.
+    ///  - When dialing a new connection to a remote address.
+    ///
+    /// The `AddressType` is either `SocketAddr` or a `Dns` address.
+    /// For the `Dns` the concrete IP address is resolved later in our code.
+    ///
+    /// The `PeerId` is optional and may not be present.
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
     ) -> crate::Result<(AddressType, Option<PeerId>)>;
 
+    /// Convert concrete `SocketAddr` to `Multiaddr`.
     fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr;
 }
 
+/// TCP helper to convert between `Multiaddr` and `SocketAddr`.
 pub struct TcpListener;
 
 impl GetSocketAddr for TcpListener {
@@ -132,6 +147,7 @@ impl GetSocketAddr for TcpListener {
     }
 }
 
+/// WebSocket helper to convert between `Multiaddr` and `SocketAddr`.
 pub struct WebSocketListener;
 
 impl GetSocketAddr for WebSocketListener {
