@@ -914,7 +914,10 @@ impl TransportManager {
         let mut peers = self.peers.write();
         match peers.get_mut(&peer) {
             Some(context) => match context.state {
-                PeerState::Connected { .. } => match context.secondary_connection {
+                PeerState::Connected {
+                    ref mut dial_record,
+                    ..
+                } => match context.secondary_connection {
                     Some(_) => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -939,22 +942,50 @@ impl TransportManager {
 
                         return Ok(ConnectionEstablishedResult::Reject);
                     }
-                    None => {
-                        tracing::debug!(
+                    None => match dial_record.take() {
+                        Some(record)
+                            if record.connection_id() == &Some(endpoint.connection_id()) =>
+                        {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                connection_id = ?endpoint.connection_id(),
+                                address = ?endpoint.address(),
+                                "dialed connection opened as secondary connection",
+                            );
+
+                            context.secondary_connection = Some(AddressRecord::new(
+                                &peer,
+                                endpoint.address().clone(),
+                                SCORE_DIAL_SUCCESS,
+                                Some(endpoint.connection_id()),
+                            ));
+                        }
+                        None => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                connection_id = ?endpoint.connection_id(),
+                                address = ?endpoint.address(),
+                                "secondary connection",
+                            );
+
+                            context.secondary_connection = Some(AddressRecord::new(
+                                &peer,
+                                endpoint.address().clone(),
+                                SCORE_DIAL_SUCCESS,
+                                Some(endpoint.connection_id()),
+                            ));
+                        }
+                        Some(record) => tracing::warn!(
                             target: LOG_TARGET,
                             ?peer,
                             connection_id = ?endpoint.connection_id(),
                             address = ?endpoint.address(),
-                            "secondary connection",
-                        );
-
-                        context.secondary_connection = Some(AddressRecord::new(
-                            &peer,
-                            endpoint.address().clone(),
-                            SCORE_DIAL_SUCCESS,
-                            Some(endpoint.connection_id()),
-                        ));
-                    }
+                            dial_record = ?record,
+                            "unknown connection opened as secondary connection, discarding",
+                        ),
+                    },
                 },
                 PeerState::Dialing { ref record, .. } => {
                     match record.connection_id() == &Some(endpoint.connection_id()) {
