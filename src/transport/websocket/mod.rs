@@ -25,7 +25,7 @@ use crate::{
     error::{AddressError, Error},
     transport::{
         common::listener::{
-            AddressType, DialAddresses, SocketListener, SocketListenerType, WebSocketListener,
+            AddressType, DialAddresses, GetSocketAddr, SocketListener, WebSocketListener,
         },
         manager::TransportHandle,
         websocket::{
@@ -186,8 +186,7 @@ impl WebSocketTransport {
         nodelay: bool,
     ) -> crate::Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>)> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
-        let (socket_address, _) =
-            SocketListener::get_socket_address(&address, SocketListenerType::WebSocket)?;
+        let (socket_address, _) = WebSocketListener::multiaddr_to_socket_address(&address)?;
 
         let remote_address = match socket_address {
             AddressType::Socket(address) => address,

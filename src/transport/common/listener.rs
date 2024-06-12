@@ -101,7 +101,7 @@ pub struct SocketListener {
 
 /// The type of the socket listener.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SocketListenerType {
+enum SocketListenerType {
     /// Listener for TCP.
     Tcp,
     /// Listener for WebSocket.
@@ -278,7 +278,7 @@ impl SocketListener {
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
-    pub fn get_socket_address(
+    fn get_socket_address(
         address: &Multiaddr,
         ty: SocketListenerType,
     ) -> crate::Result<(AddressType, Option<PeerId>)> {

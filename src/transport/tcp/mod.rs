@@ -26,7 +26,7 @@ use crate::{
     error::Error,
     transport::{
         common::listener::{
-            AddressType, DialAddresses, SocketListener, SocketListenerType, TcpListener,
+            AddressType, DialAddresses, GetSocketAddr, SocketListener, TcpListener,
         },
         manager::TransportHandle,
         tcp::{
@@ -140,8 +140,7 @@ impl TcpTransport {
         connection_open_timeout: Duration,
         nodelay: bool,
     ) -> crate::Result<(Multiaddr, TcpStream)> {
-        let (socket_address, _) =
-            SocketListener::get_socket_address(&address, SocketListenerType::Tcp)?;
+        let (socket_address, _) = TcpListener::multiaddr_to_socket_address(&address)?;
         let remote_address = match socket_address {
             AddressType::Socket(address) => address,
             AddressType::Dns(url, port) => {
@@ -290,8 +289,7 @@ impl Transport for TcpTransport {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
-        let (socket_address, peer) =
-            SocketListener::get_socket_address(&address, SocketListenerType::Tcp)?;
+        let (socket_address, peer) = TcpListener::multiaddr_to_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -416,8 +414,7 @@ impl Transport for TcpTransport {
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        let (socket_address, peer) =
-            SocketListener::get_socket_address(&address, SocketListenerType::Tcp)?;
+        let (socket_address, peer) = TcpListener::multiaddr_to_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
