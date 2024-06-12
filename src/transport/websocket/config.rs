@@ -41,6 +41,11 @@ pub struct Config {
     /// Defaults to `true`.
     pub reuse_port: bool,
 
+    /// Enable `TCP_NODELAY`.
+    ///
+    /// Defaults to `false`.
+    pub nodelay: bool,
+
     /// Yamux configuration.
     pub yamux_config: crate::yamux::Config,
 
@@ -85,6 +90,7 @@ impl Default for Config {
                 "/ip6/::/tcp/0/ws".parse().expect("valid address"),
             ],
             reuse_port: true,
+            nodelay: false,
             yamux_config: Default::default(),
             noise_read_ahead_frame_count: MAX_READ_AHEAD_FACTOR,
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,
