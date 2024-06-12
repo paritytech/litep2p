@@ -24,7 +24,9 @@ use crate::{
     config::Role,
     error::{AddressError, Error},
     transport::{
-        common::listener::{AddressType, DialAddresses, SocketListener, SocketListenerType},
+        common::listener::{
+            AddressType, DialAddresses, SocketListener, SocketListenerType, WebSocketListener,
+        },
         manager::TransportHandle,
         websocket::{
             config::Config,
@@ -314,11 +316,10 @@ impl TransportBuilder for WebSocketTransport {
             listen_addresses = ?config.listen_addresses,
             "start websocket transport",
         );
-        let (listener, listen_addresses, dial_addresses) = SocketListener::new(
+        let (listener, listen_addresses, dial_addresses) = SocketListener::new::<WebSocketListener>(
             std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
             config.nodelay,
-            SocketListenerType::WebSocket,
         );
 
         Ok((

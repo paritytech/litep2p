@@ -25,7 +25,9 @@ use crate::{
     config::Role,
     error::Error,
     transport::{
-        common::listener::{AddressType, DialAddresses, SocketListener, SocketListenerType},
+        common::listener::{
+            AddressType, DialAddresses, SocketListener, SocketListenerType, TcpListener,
+        },
         manager::TransportHandle,
         tcp::{
             config::Config,
@@ -260,11 +262,10 @@ impl TransportBuilder for TcpTransport {
         );
 
         // start tcp listeners for all listen addresses
-        let (listener, listen_addresses, dial_addresses) = SocketListener::new(
+        let (listener, listen_addresses, dial_addresses) = SocketListener::new::<TcpListener>(
             std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
             config.nodelay,
-            SocketListenerType::Tcp,
         );
 
         Ok((

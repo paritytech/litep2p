@@ -108,18 +108,58 @@ pub enum SocketListenerType {
     WebSocket,
 }
 
+pub trait GetSocketAddr {
+    fn multiaddr_to_socket_address(
+        address: &Multiaddr,
+    ) -> crate::Result<(AddressType, Option<PeerId>)>;
+
+    fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr;
+}
+
+pub struct TcpListener;
+
+impl GetSocketAddr for TcpListener {
+    fn multiaddr_to_socket_address(
+        address: &Multiaddr,
+    ) -> crate::Result<(AddressType, Option<PeerId>)> {
+        SocketListener::get_socket_address(address, SocketListenerType::Tcp)
+    }
+
+    fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr {
+        Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+    }
+}
+
+pub struct WebSocketListener;
+
+impl GetSocketAddr for WebSocketListener {
+    fn multiaddr_to_socket_address(
+        address: &Multiaddr,
+    ) -> crate::Result<(AddressType, Option<PeerId>)> {
+        SocketListener::get_socket_address(address, SocketListenerType::WebSocket)
+    }
+
+    fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr {
+        Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
+    }
+}
+
 impl SocketListener {
     /// Create new [`SocketListener`]
-    pub fn new(
+    pub fn new<T: GetSocketAddr>(
         addresses: Vec<Multiaddr>,
         reuse_port: bool,
         nodelay: bool,
-        ty: SocketListenerType,
     ) -> (Self, Vec<Multiaddr>, DialAddresses) {
         let (listeners, listen_addresses): (_, Vec<Vec<_>>) = addresses
             .into_iter()
             .filter_map(|address| {
-                let address = match Self::get_socket_address(&address, ty).ok()?.0 {
+                let address = match T::multiaddr_to_socket_address(&address).ok()?.0 {
                     AddressType::Dns(address, port) => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -200,21 +240,9 @@ impl SocketListener {
             .unzip();
 
         let listen_addresses = listen_addresses.into_iter().flatten().collect::<Vec<_>>();
-        let listen_multi_addresses = listen_addresses
-            .iter()
-            .cloned()
-            .map(|address| {
-                let multi_addr = Multiaddr::empty()
-                    .with(Protocol::from(address.ip()))
-                    .with(Protocol::Tcp(address.port()));
+        let listen_multi_addresses =
+            listen_addresses.iter().map(T::socket_address_to_multiaddr).collect();
 
-                match ty {
-                    SocketListenerType::Tcp => multi_addr,
-                    SocketListenerType::WebSocket =>
-                        multi_addr.with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string()))),
-                }
-            })
-            .collect();
         let dial_addresses = if reuse_port {
             DialAddresses::Reuse {
                 listen_addresses: Arc::new(listen_addresses),
@@ -488,9 +516,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_listeners() {
-        let (mut listener, _, _) =
-            SocketListener::new(Vec::new(), true, false, SocketListenerType::WebSocket);
+    async fn no_listeners_tcp() {
+        let (mut listener, _, _) = SocketListener::new::<TcpListener>(Vec::new(), true, false);
 
         futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -502,7 +529,7 @@ mod tests {
     #[tokio::test]
     async fn no_listeners_websocket() {
         let (mut listener, _, _) =
-            SocketListener::new(Vec::new(), true, false, SocketListenerType::WebSocket);
+            SocketListener::new::<WebSocketListener>(Vec::new(), true, false);
 
         futures::future::poll_fn(|cx| match listener.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -515,7 +542,8 @@ mod tests {
     async fn one_listener_tcp() {
         let address: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
         let (mut listener, listen_addresses, _) =
-            SocketListener::new(vec![address.clone()], true, false, SocketListenerType::Tcp);
+            SocketListener::new::<TcpListener>(vec![address.clone()], true, false);
+
         let Some(Protocol::Tcp(port)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
@@ -531,12 +559,8 @@ mod tests {
     #[tokio::test]
     async fn one_listener_websocket() {
         let address: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
-        let (mut listener, listen_addresses, _) = SocketListener::new(
-            vec![address.clone()],
-            true,
-            false,
-            SocketListenerType::WebSocket,
-        );
+        let (mut listener, listen_addresses, _) =
+            SocketListener::new::<WebSocketListener>(vec![address.clone()], true, false);
         let Some(Protocol::Tcp(port)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
@@ -553,12 +577,8 @@ mod tests {
     async fn two_listeners_tcp() {
         let address1: Multiaddr = "/ip6/::1/tcp/0".parse().unwrap();
         let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
-        let (mut listener, listen_addresses, _) = SocketListener::new(
-            vec![address1, address2],
-            true,
-            false,
-            SocketListenerType::Tcp,
-        );
+        let (mut listener, listen_addresses, _) =
+            SocketListener::new::<TcpListener>(vec![address1, address2], true, false);
         let Some(Protocol::Tcp(port1)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
         else {
@@ -585,12 +605,8 @@ mod tests {
     async fn two_listeners_websocket() {
         let address1: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
         let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0/ws".parse().unwrap();
-        let (mut listener, listen_addresses, _) = SocketListener::new(
-            vec![address1, address2],
-            true,
-            false,
-            SocketListenerType::WebSocket,
-        );
+        let (mut listener, listen_addresses, _) =
+            SocketListener::new::<WebSocketListener>(vec![address1, address2], true, false);
 
         let Some(Protocol::Tcp(port1)) =
             listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
