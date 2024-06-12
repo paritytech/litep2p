@@ -181,6 +181,7 @@ impl WebSocketTransport {
         address: Multiaddr,
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
+        nodelay: bool,
     ) -> crate::Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>)> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
         let (socket_address, _) =
@@ -245,6 +246,7 @@ impl WebSocketTransport {
             socket.set_only_v6(true)?;
         }
         socket.set_nonblocking(true)?;
+        socket.set_nodelay(nodelay)?;
 
         match dial_addresses.local_dial_address(&remote_address.ip()) {
             Ok(Some(dial_address)) => {
@@ -315,6 +317,7 @@ impl TransportBuilder for WebSocketTransport {
         let (listener, listen_addresses, dial_addresses) = SocketListener::new(
             std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
+            config.nodelay,
             SocketListenerType::WebSocket,
         );
 
@@ -345,6 +348,8 @@ impl Transport for WebSocketTransport {
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let dial_addresses = self.dial_addresses.clone();
+        let nodelay = self.config.nodelay;
+
         self.pending_dials.insert(connection_id, address.clone());
 
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
@@ -354,6 +359,7 @@ impl Transport for WebSocketTransport {
                 address.clone(),
                 dial_addresses,
                 connection_open_timeout,
+                nodelay,
             )
             .await
             .map_err(|error| WebSocketError::new(error, Some(connection_id)))?;
@@ -438,10 +444,16 @@ impl Transport for WebSocketTransport {
             .map(|address| {
                 let connection_open_timeout = self.config.connection_open_timeout;
                 let dial_addresses = self.dial_addresses.clone();
+                let nodelay = self.config.nodelay;
 
                 async move {
-                    WebSocketTransport::dial_peer(address, dial_addresses, connection_open_timeout)
-                        .await
+                    WebSocketTransport::dial_peer(
+                        address,
+                        dial_addresses,
+                        connection_open_timeout,
+                        nodelay,
+                    )
+                    .await
                 }
             })
             .collect();

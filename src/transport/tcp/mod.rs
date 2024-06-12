@@ -136,6 +136,7 @@ impl TcpTransport {
         address: Multiaddr,
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
+        nodelay: bool,
     ) -> crate::Result<(Multiaddr, TcpStream)> {
         let (socket_address, _) =
             SocketListener::get_socket_address(&address, SocketListenerType::Tcp)?;
@@ -198,6 +199,7 @@ impl TcpTransport {
             socket.set_only_v6(true)?;
         }
         socket.set_nonblocking(true)?;
+        socket.set_nodelay(nodelay)?;
 
         match dial_addresses.local_dial_address(&remote_address.ip()) {
             Ok(Some(dial_address)) => {
@@ -261,6 +263,7 @@ impl TransportBuilder for TcpTransport {
         let (listener, listen_addresses, dial_addresses) = SocketListener::new(
             std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
+            config.nodelay,
             SocketListenerType::Tcp,
         );
 
@@ -295,11 +298,12 @@ impl Transport for TcpTransport {
         let substream_open_timeout = self.config.substream_open_timeout;
         let dial_addresses = self.dial_addresses.clone();
         let keypair = self.context.keypair.clone();
+        let nodelay = self.config.nodelay;
 
         self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
             let (_, stream) =
-                TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout)
+                TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout, nodelay)
                     .await
                     .map_err(|error| (connection_id, error))?;
 
@@ -372,9 +376,16 @@ impl Transport for TcpTransport {
             .map(|address| {
                 let dial_addresses = self.dial_addresses.clone();
                 let connection_open_timeout = self.config.connection_open_timeout;
+                let nodelay = self.config.nodelay;
 
                 async move {
-                    TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout).await
+                    TcpTransport::dial_peer(
+                        address,
+                        dial_addresses,
+                        connection_open_timeout,
+                        nodelay,
+                    )
+                    .await
                 }
             })
             .collect();
