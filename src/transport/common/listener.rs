@@ -356,6 +356,24 @@ fn multiaddr_to_socket_address(
     tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
     let mut iter = address.iter();
+    // Small helper to handle DNS types.
+    let handle_dns_type =
+        |address: String, dns_type: DnsType, protocol: Option<Protocol>| match protocol {
+            Some(Protocol::Tcp(port)) => Ok(AddressType::Dns {
+                address,
+                port,
+                dns_type,
+            }),
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid transport protocol, expected `Tcp`",
+                );
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        };
+
     let socket_address = match iter.next() {
         Some(Protocol::Ip6(address)) => match iter.next() {
             Some(Protocol::Tcp(port)) =>
@@ -381,51 +399,11 @@ fn multiaddr_to_socket_address(
                 return Err(Error::AddressError(AddressError::InvalidProtocol));
             }
         },
-        Some(Protocol::Dns(address)) => match iter.next() {
-            Some(Protocol::Tcp(port)) => AddressType::Dns {
-                address: address.into(),
-                port,
-                dns_type: DnsType::Dns,
-            },
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid transport protocol, expected `Tcp`",
-                );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        },
-        Some(Protocol::Dns4(address)) => match iter.next() {
-            Some(Protocol::Tcp(port)) => AddressType::Dns {
-                address: address.into(),
-                port,
-                dns_type: DnsType::Dns4,
-            },
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid transport protocol, expected `Tcp`",
-                );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        },
-        Some(Protocol::Dns6(address)) => match iter.next() {
-            Some(Protocol::Tcp(port)) => AddressType::Dns {
-                address: address.into(),
-                port,
-                dns_type: DnsType::Dns6,
-            },
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid transport protocol, expected `Tcp`",
-                );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        },
+        Some(Protocol::Dns(address)) => handle_dns_type(address.into(), DnsType::Dns, iter.next())?,
+        Some(Protocol::Dns4(address)) =>
+            handle_dns_type(address.into(), DnsType::Dns4, iter.next())?,
+        Some(Protocol::Dns6(address)) =>
+            handle_dns_type(address.into(), DnsType::Dns6, iter.next())?,
         protocol => {
             tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
             return Err(Error::AddressError(AddressError::InvalidProtocol));
