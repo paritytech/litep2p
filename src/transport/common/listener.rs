@@ -403,38 +403,38 @@ mod tests {
 
     #[test]
     fn parse_multiaddresses_tcp() {
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip6/::1/tcp/8888".parse().expect("valid multiaddress"),
             SocketListenerType::Tcp,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress"),
             SocketListenerType::Tcp,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::Tcp,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::Tcp,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip6/::1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::Tcp,
         )
         .is_err());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
@@ -445,85 +445,85 @@ mod tests {
 
     #[test]
     fn parse_multiaddresses_websocket() {
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip6/::1/tcp/8888/ws".parse().expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip4/127.0.0.1/tcp/8888/ws".parse().expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip6/::1/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip4/127.0.0.1/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip6/::1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_err());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_err());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip4/127.0.0.1/tcp/8888/ws/utp".parse().expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_err());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_err());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_err());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/dns/hello.world/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
             SocketListenerType::WebSocket,
         )
         .is_err());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/dns6/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress")
                 ,SocketListenerType::WebSocket,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/dns4/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
                 SocketListenerType::WebSocket,
         )
         .is_ok());
-        assert!(SocketListener::get_socket_address(
+        assert!(multiaddr_to_socket_address(
             &"/dns6/hello.world/tcp/8888/ws/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
                 .expect("valid multiaddress"),
