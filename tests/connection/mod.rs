@@ -22,15 +22,12 @@ use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
-    protocol::{
-        libp2p::ping::{Config as PingConfig, PingEvent},
-        notification::{Config as NotificationConfig, NotificationEvent},
-    },
+    protocol::libp2p::ping::{Config as PingConfig, PingEvent},
     transport::{
         quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
         websocket::config::Config as WebSocketConfig,
     },
-    Litep2p, Litep2pEvent, PeerId, ProtocolName,
+    Litep2p, Litep2pEvent, PeerId,
 };
 
 use futures::{Stream, StreamExt};
@@ -1400,19 +1397,10 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (notif_config1, mut handle1) = NotificationConfig::new(
-        ProtocolName::from("/notif/1"),
-        1024usize,
-        vec![1, 2, 3, 4],
-        Vec::new(),
-        true,
-        64,
-        64,
-        true,
-    );
+    let (ping_config1, _ping_event_stream1) = PingConfig::default();
     let config1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_notification_protocol(notif_config1);
+        .with_libp2p_ping(ping_config1);
 
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
@@ -1421,19 +1409,10 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
     }
     .build();
 
-    let (notif_config2, mut handle2) = NotificationConfig::new(
-        ProtocolName::from("/notif/1"),
-        1024usize,
-        vec![1, 2, 3, 4],
-        Vec::new(),
-        true,
-        64,
-        64,
-        true,
-    );
+    let (ping_config2, _ping_event_stream2) = PingConfig::default();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_notification_protocol(notif_config2);
+        .with_libp2p_ping(ping_config2);
 
     let config2 = match transport2 {
         Transport::Tcp(config) => config2.with_tcp(config),
@@ -1450,66 +1429,49 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
     litep2p1.add_known_address(peer2, litep2p2.listen_addresses().cloned());
     litep2p2.add_known_address(peer1, litep2p1.listen_addresses().cloned());
 
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = litep2p1.next_event() => {}
-                _ = litep2p2.next_event() => {}
-            }
-        }
-    });
-
-    // open substreams at the same time so both peers will have a primary and secondary connection
-    let (_, _) = tokio::join!(handle1.open_substream(peer2), handle2.open_substream(peer1));
+    let (_, _) = tokio::join!(litep2p1.dial(&peer2), litep2p2.dial(&peer1));
 
     let mut peer1_open = false;
     let mut peer2_open = false;
 
     while !peer1_open || !peer2_open {
         tokio::select! {
-            event = handle1.next() => match event.unwrap() {
-                NotificationEvent::NotificationStreamOpened { .. } => {
+            event = litep2p1.next_event() => match event.unwrap() {
+                Litep2pEvent::ConnectionEstablished { .. } => {
                     peer1_open = true;
                 }
                 _ => {},
             },
-            event = handle2.next() => match event.unwrap() {
-                NotificationEvent::NotificationStreamOpened { .. } => {
+            event = litep2p2.next_event() => match event.unwrap() {
+                Litep2pEvent::ConnectionEstablished { .. } => {
                     peer2_open = true;
                 }
                 _ => {},
-            }
+            },
         }
     }
 
-    // close the substreams and wait a moment for the connections to be closed
-    let (_, _) = tokio::join!(
-        handle1.close_substream(peer2),
-        handle2.close_substream(peer1)
-    );
-
     let mut peer1_close = false;
     let mut peer2_close = false;
+
     while !peer1_close || !peer2_close {
         tokio::select! {
-            event = handle1.next() => match event.unwrap() {
-                NotificationEvent::NotificationStreamClosed { .. } => {
+            event = litep2p1.next_event() => match event.unwrap() {
+                Litep2pEvent::ConnectionClosed { .. } => {
                     peer1_close = true;
                 }
                 _ => {},
             },
-            event = handle2.next() => match event.unwrap() {
-                NotificationEvent::NotificationStreamClosed { .. } => {
+            event = litep2p2.next_event() => match event.unwrap() {
+                Litep2pEvent::ConnectionClosed { .. } => {
                     peer2_close = true;
                 }
                 _ => {},
-            }
+            },
         }
     }
-    tokio::time::sleep(std::time::Duration::from_secs(15)).await;
 
-    // try to open new substreams (with new primary and secondary connections)
-    let (_, _) = tokio::join!(handle1.open_substream(peer2), handle2.open_substream(peer1));
+    let (_, _) = tokio::join!(litep2p1.dial(&peer2), litep2p2.dial(&peer1));
 
     let future = async move {
         let mut peer1_open = false;
@@ -1517,18 +1479,18 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
 
         while !peer1_open || !peer2_open {
             tokio::select! {
-                event = handle1.next() => match event.unwrap() {
-                    NotificationEvent::NotificationStreamOpened { .. } => {
+                event = litep2p1.next_event() => match event.unwrap() {
+                    Litep2pEvent::ConnectionEstablished { .. } => {
                         peer1_open = true;
                     }
                     _ => {},
                 },
-                event = handle2.next() => match event.unwrap() {
-                    NotificationEvent::NotificationStreamOpened { .. } => {
+                event = litep2p2.next_event() => match event.unwrap() {
+                    Litep2pEvent::ConnectionEstablished { .. } => {
                         peer2_open = true;
                     }
                     _ => {},
-                }
+                },
             }
         }
     };
