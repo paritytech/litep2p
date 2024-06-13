@@ -65,13 +65,13 @@ pub struct Config {
     /// By default the value is set to `2` which means that the `NoiseSocket` will allocate
     /// `130 KB` for each outgoing connection.
     ///
-    /// The write buffer size is separate from  the read-ahead frame count so by default
+    /// The write buffer size is separate from the read-ahead frame count so by default
     /// the Noise code will allocate `2 * 65 KB + 5 * 65 KB = 455 KB` per connection.
     pub noise_write_buffer_size: usize,
 
     /// Connection open timeout.
     ///
-    /// How long should litep2p wait for a connection to be opend before the host
+    /// How long should litep2p wait for a connection to be opened before the host
     /// is deemed unreachable.
     pub connection_open_timeout: std::time::Duration,
 
