@@ -28,7 +28,11 @@ use crate::{
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
-    transport::{common::listener::AddressType, tcp::substream::Substream, Endpoint},
+    transport::{
+        common::listener::{AddressType, DnsType},
+        tcp::substream::Substream,
+        Endpoint,
+    },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     BandwidthSink, PeerId,
 };
@@ -455,9 +459,21 @@ impl TcpConnection {
             AddressType::Socket(address) => Multiaddr::empty()
                 .with(Protocol::from(address.ip()))
                 .with(Protocol::Tcp(address.port())),
-            AddressType::Dns { address, port, .. } => Multiaddr::empty()
-                .with(Protocol::Dns(Cow::Owned(address)))
-                .with(Protocol::Tcp(port)),
+            AddressType::Dns {
+                address,
+                port,
+                dns_type,
+            } => match dns_type {
+                DnsType::Dns => Multiaddr::empty()
+                    .with(Protocol::Dns(Cow::Owned(address)))
+                    .with(Protocol::Tcp(port)),
+                DnsType::Dns4 => Multiaddr::empty()
+                    .with(Protocol::Dns4(Cow::Owned(address)))
+                    .with(Protocol::Tcp(port)),
+                DnsType::Dns6 => Multiaddr::empty()
+                    .with(Protocol::Dns6(Cow::Owned(address)))
+                    .with(Protocol::Tcp(port)),
+            },
         };
         let endpoint = match role {
             Role::Dialer => Endpoint::dialer(address, connection_id),
