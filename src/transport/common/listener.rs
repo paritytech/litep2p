@@ -99,15 +99,6 @@ pub struct SocketListener {
     poll_index: usize,
 }
 
-/// The type of the socket listener.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SocketListenerType {
-    /// Listener for TCP.
-    Tcp,
-    /// Listener for WebSocket.
-    WebSocket,
-}
-
 /// Trait to convert between `Multiaddr` and `SocketAddr`.
 pub trait GetSocketAddr {
     /// Convert `Multiaddr` to `SocketAddr`.
@@ -137,7 +128,7 @@ impl GetSocketAddr for TcpAddress {
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
     ) -> crate::Result<(AddressType, Option<PeerId>)> {
-        SocketListener::get_socket_address(address, SocketListenerType::Tcp)
+        multiaddr_to_socket_address(address, SocketListenerType::Tcp)
     }
 
     fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr {
@@ -154,7 +145,7 @@ impl GetSocketAddr for WebSocketAddress {
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
     ) -> crate::Result<(AddressType, Option<PeerId>)> {
-        SocketListener::get_socket_address(address, SocketListenerType::WebSocket)
+        multiaddr_to_socket_address(address, SocketListenerType::WebSocket)
     }
 
     fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr {
@@ -276,93 +267,102 @@ impl SocketListener {
             dial_addresses,
         )
     }
+}
 
-    /// Extract socket address and `PeerId`, if found, from `address`.
-    fn get_socket_address(
-        address: &Multiaddr,
-        ty: SocketListenerType,
-    ) -> crate::Result<(AddressType, Option<PeerId>)> {
-        tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
+/// The type of the socket listener.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SocketListenerType {
+    /// Listener for TCP.
+    Tcp,
+    /// Listener for WebSocket.
+    WebSocket,
+}
 
-        let mut iter = address.iter();
-        let socket_address = match iter.next() {
-            Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) =>
-                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) =>
-                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            Some(Protocol::Dns(address))
-            | Some(Protocol::Dns4(address))
-            | Some(Protocol::Dns6(address)) => match iter.next() {
-                Some(Protocol::Tcp(port)) => AddressType::Dns(address.to_string(), port),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Tcp`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            protocol => {
-                tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
+/// Extract socket address and `PeerId`, if found, from `address`.
+fn multiaddr_to_socket_address(
+    address: &Multiaddr,
+    ty: SocketListenerType,
+) -> crate::Result<(AddressType, Option<PeerId>)> {
+    tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
-        match ty {
-            SocketListenerType::Tcp => (),
-            SocketListenerType::WebSocket => {
-                // verify that `/ws`/`/wss` is part of the multi address
-                match iter.next() {
-                    Some(Protocol::Ws(_address)) => {}
-                    Some(Protocol::Wss(_address)) => {}
-                    protocol => {
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            ?protocol,
-                            "invalid protocol, expected `Ws` or `Wss`"
-                        );
-                        return Err(Error::AddressError(AddressError::InvalidProtocol));
-                    }
-                };
-            }
-        }
-
-        let maybe_peer = match iter.next() {
-            Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
-            None => None,
+    let mut iter = address.iter();
+    let socket_address = match iter.next() {
+        Some(Protocol::Ip6(address)) => match iter.next() {
+            Some(Protocol::Tcp(port)) =>
+                AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
             protocol => {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?protocol,
-                    "invalid protocol, expected `P2p` or `None`"
+                    "invalid transport protocol, expected `Tcp`",
                 );
                 return Err(Error::AddressError(AddressError::InvalidProtocol));
             }
-        };
+        },
+        Some(Protocol::Ip4(address)) => match iter.next() {
+            Some(Protocol::Tcp(port)) =>
+                AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid transport protocol, expected `Tcp`",
+                );
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        },
+        Some(Protocol::Dns(address))
+        | Some(Protocol::Dns4(address))
+        | Some(Protocol::Dns6(address)) => match iter.next() {
+            Some(Protocol::Tcp(port)) => AddressType::Dns(address.to_string(), port),
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid transport protocol, expected `Tcp`",
+                );
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        },
+        protocol => {
+            tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
+            return Err(Error::AddressError(AddressError::InvalidProtocol));
+        }
+    };
 
-        Ok((socket_address, maybe_peer))
+    match ty {
+        SocketListenerType::Tcp => (),
+        SocketListenerType::WebSocket => {
+            // verify that `/ws`/`/wss` is part of the multi address
+            match iter.next() {
+                Some(Protocol::Ws(_address)) => {}
+                Some(Protocol::Wss(_address)) => {}
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid protocol, expected `Ws` or `Wss`"
+                    );
+                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                }
+            };
+        }
     }
+
+    let maybe_peer = match iter.next() {
+        Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
+        None => None,
+        protocol => {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?protocol,
+                "invalid protocol, expected `P2p` or `None`"
+            );
+            return Err(Error::AddressError(AddressError::InvalidProtocol));
+        }
+    };
+
+    Ok((socket_address, maybe_peer))
 }
 
 impl Stream for SocketListener {
