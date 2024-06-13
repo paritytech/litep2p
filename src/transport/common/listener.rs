@@ -53,21 +53,32 @@ pub enum AddressType {
     Dns {
         address: String,
         port: u16,
-        is_dns6: bool,
+        dns_type: DnsType,
     },
+}
+
+/// The DNS type of the address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DnsType {
+    /// DNS supports both IPv4 and IPv6.
+    Dns,
+    /// DNS supports only IPv4.
+    Dns4,
+    /// DNS supports only IPv6.
+    Dns6,
 }
 
 impl AddressType {
     /// Resolve the address to a concrete IP.
     pub async fn lookup_ip(self) -> crate::Result<SocketAddr> {
-        let (url, port, is_dns6) = match self {
+        let (url, port, dns_type) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),
             AddressType::Dns {
                 address,
                 port,
-                is_dns6,
-            } => (address, port, is_dns6),
+                dns_type,
+            } => (address, port, dns_type),
         };
 
         let lookup =
@@ -88,8 +99,11 @@ impl AddressType {
                 }
             };
 
-        let Some(ip) = lookup.iter().find(|ip| if is_dns6 { ip.is_ipv6() } else { ip.is_ipv4() })
-        else {
+        let Some(ip) = lookup.iter().find(|ip| match dns_type {
+            DnsType::Dns => true,
+            DnsType::Dns4 => ip.is_ipv4(),
+            DnsType::Dns6 => ip.is_ipv6(),
+        }) else {
             tracing::debug!(
                 target: LOG_TARGET,
                 "Multiaddr DNS type does not match IP version `{}`",
@@ -367,11 +381,26 @@ fn multiaddr_to_socket_address(
                 return Err(Error::AddressError(AddressError::InvalidProtocol));
             }
         },
-        Some(Protocol::Dns(address)) | Some(Protocol::Dns4(address)) => match iter.next() {
+        Some(Protocol::Dns(address)) => match iter.next() {
             Some(Protocol::Tcp(port)) => AddressType::Dns {
                 address: address.into(),
                 port,
-                is_dns6: false,
+                dns_type: DnsType::Dns,
+            },
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid transport protocol, expected `Tcp`",
+                );
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        },
+        Some(Protocol::Dns4(address)) => match iter.next() {
+            Some(Protocol::Tcp(port)) => AddressType::Dns {
+                address: address.into(),
+                port,
+                dns_type: DnsType::Dns4,
             },
             protocol => {
                 tracing::error!(
@@ -386,7 +415,7 @@ fn multiaddr_to_socket_address(
             Some(Protocol::Tcp(port)) => AddressType::Dns {
                 address: address.into(),
                 port,
-                is_dns6: true,
+                dns_type: DnsType::Dns6,
             },
             protocol => {
                 tracing::error!(
