@@ -27,6 +27,10 @@ use multiaddr::{Multiaddr, Protocol};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
+use trust_dns_resolver::{
+    config::{ResolverConfig, ResolverOpts},
+    TokioAsyncResolver,
+};
 
 use std::{
     io,
@@ -46,7 +50,59 @@ pub enum AddressType {
     Socket(SocketAddr),
 
     /// DNS address.
-    Dns(String, u16),
+    Dns {
+        address: String,
+        port: u16,
+        is_dns6: bool,
+    },
+}
+
+impl AddressType {
+    /// Resolve the address to a concrete IP.
+    async fn lookup_ip(self) -> crate::Result<SocketAddr> {
+        let (url, port, is_dns6) = match self {
+            // We already have the IP address.
+            AddressType::Socket(address) => return Ok(address),
+            AddressType::Dns {
+                address,
+                port,
+                is_dns6,
+            } => (address, port, is_dns6),
+        };
+
+        let lookup =
+            match TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
+                .lookup_ip(url.clone())
+                .await
+            {
+                Ok(lookup) => lookup,
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to resolve DNS address `{}`",
+                        url
+                    );
+
+                    return Err(Error::Other(format!("Failed to resolve DNS address {url}")));
+                }
+            };
+
+        let Some(ip) = lookup.iter().find(|ip| if is_dns6 { ip.is_ipv6() } else { ip.is_ipv4() })
+        else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                "Multiaddr DNS type does not match IP version `{}`",
+                url
+            );
+
+            return Err(Error::Other(format!(
+                "Miss-match in DNS address IP version {url}"
+            )));
+        };
+
+        Ok(SocketAddr::new(ip, port))
+    }
 }
 
 /// Local addresses to use for outbound connections.
@@ -167,7 +223,7 @@ impl SocketListener {
             .into_iter()
             .filter_map(|address| {
                 let address = match T::multiaddr_to_socket_address(&address).ok()?.0 {
-                    AddressType::Dns(address, port) => {
+                    AddressType::Dns { address, port, .. } => {
                         tracing::debug!(
                             target: LOG_TARGET,
                             ?address,
@@ -311,10 +367,27 @@ fn multiaddr_to_socket_address(
                 return Err(Error::AddressError(AddressError::InvalidProtocol));
             }
         },
-        Some(Protocol::Dns(address))
-        | Some(Protocol::Dns4(address))
-        | Some(Protocol::Dns6(address)) => match iter.next() {
-            Some(Protocol::Tcp(port)) => AddressType::Dns(address.to_string(), port),
+        Some(Protocol::Dns(address)) | Some(Protocol::Dns4(address)) => match iter.next() {
+            Some(Protocol::Tcp(port)) => AddressType::Dns {
+                address: address.into(),
+                port,
+                is_dns6: false,
+            },
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid transport protocol, expected `Tcp`",
+                );
+                return Err(Error::AddressError(AddressError::InvalidProtocol));
+            }
+        },
+        Some(Protocol::Dns6(address)) => match iter.next() {
+            Some(Protocol::Tcp(port)) => AddressType::Dns {
+                address: address.into(),
+                port,
+                is_dns6: true,
+            },
             protocol => {
                 tracing::error!(
                     target: LOG_TARGET,
