@@ -59,7 +59,7 @@ pub enum AddressType {
 
 impl AddressType {
     /// Resolve the address to a concrete IP.
-    async fn lookup_ip(self) -> crate::Result<SocketAddr> {
+    pub async fn lookup_ip(self) -> crate::Result<SocketAddr> {
         let (url, port, is_dns6) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),

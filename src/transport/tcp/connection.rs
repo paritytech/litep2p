@@ -455,7 +455,7 @@ impl TcpConnection {
             AddressType::Socket(address) => Multiaddr::empty()
                 .with(Protocol::from(address.ip()))
                 .with(Protocol::Tcp(address.port())),
-            AddressType::Dns(address, port) => Multiaddr::empty()
+            AddressType::Dns { address, port, .. } => Multiaddr::empty()
                 .with(Protocol::Dns(Cow::Owned(address)))
                 .with(Protocol::Tcp(port)),
         };

@@ -25,7 +25,7 @@ use crate::{
     config::Role,
     error::Error,
     transport::{
-        common::listener::{AddressType, DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
+        common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
         manager::TransportHandle,
         tcp::{
             config::Config,
@@ -40,13 +40,9 @@ use futures::{
     future::BoxFuture,
     stream::{FuturesUnordered, Stream, StreamExt},
 };
-use multiaddr::{Multiaddr, Protocol};
+use multiaddr::Multiaddr;
 use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -139,55 +135,12 @@ impl TcpTransport {
         nodelay: bool,
     ) -> crate::Result<(Multiaddr, TcpStream)> {
         let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
-        let remote_address = match socket_address {
-            AddressType::Socket(address) => address,
-            AddressType::Dns(url, port) => {
-                let address = address.clone();
-                let future = async move {
-                    match TokioAsyncResolver::tokio(
-                        ResolverConfig::default(),
-                        ResolverOpts::default(),
-                    )
-                    .lookup_ip(url.clone())
-                    .await
-                    {
-                        // TODO: ugly
-                        Ok(lookup) => {
-                            let iter = lookup.iter();
-                            for ip in iter {
-                                match (
-                                    address.iter().next().expect("protocol to exist"),
-                                    ip.is_ipv4(),
-                                ) {
-                                    (Protocol::Dns(_), true)
-                                    | (Protocol::Dns4(_), true)
-                                    | (Protocol::Dns6(_), false) => {
-                                        tracing::trace!(
-                                            target: LOG_TARGET,
-                                            ?address,
-                                            ?ip,
-                                            "address resolved",
-                                        );
-
-                                        return Ok(SocketAddr::new(ip, port));
-                                    }
-                                    _ => {}
-                                }
-                            }
-
-                            Err(Error::Unknown)
-                        }
-                        Err(_) => Err(Error::Unknown),
-                    }
-                };
-
-                match tokio::time::timeout(connection_open_timeout, future).await {
-                    Err(_) => return Err(Error::Timeout),
-                    Ok(Err(error)) => return Err(error),
-                    Ok(Ok(address)) => address,
-                }
-            }
-        };
+        let remote_address =
+            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
+                Err(_) => return Err(Error::Timeout),
+                Ok(Err(error)) => return Err(error),
+                Ok(Ok(address)) => address,
+            };
 
         let domain = match remote_address.is_ipv4() {
             true => Domain::IPV4,
