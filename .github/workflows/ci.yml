@@ -41,12 +41,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
-        with:
-          cache-on-failure: true
-          cache-all-crates: true
-
       - name: Cargo fmt
         run: cargo +nightly fmt --all -- --check
 
@@ -59,12 +53,6 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
-        with:
-          cache-on-failure: true
-          cache-all-crates: true
 
       - name: Install cargo-machete
         run: cargo install cargo-machete
@@ -82,12 +70,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
-        with:
-          cache-on-failure: true
-          cache-all-crates: true
-
       - name: Cargo check
         run: cargo check
 
@@ -101,11 +83,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
-        with:
-          cache-on-failure: true
-          cache-all-crates: true
       - name: Check documentation
         run: RUSTDOCFLAGS="-D warnings -D rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps --document-private-items
 
@@ -118,12 +95,6 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
-        with:
-          cache-on-failure: true
-          cache-all-crates: true
 
       - name: Run clippy
         run: cargo clippy
@@ -139,12 +110,6 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
-        with:
-          cache-on-failure: true
-          cache-all-crates: true
 
       - name: Run tests
         run: cargo test
