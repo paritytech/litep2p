@@ -31,6 +31,7 @@ use std::{
     num::NonZeroUsize,
     pin::Pin,
     task::{Context, Poll},
+    time::{Duration, Instant},
 };
 
 /// Quorum.
@@ -222,15 +223,23 @@ pub struct KademliaHandle {
 
     /// Next query ID.
     next_query_id: usize,
+
+    /// Default TTL for the records.
+    record_ttl: Duration,
 }
 
 impl KademliaHandle {
     /// Create new [`KademliaHandle`].
-    pub(super) fn new(cmd_tx: Sender<KademliaCommand>, event_rx: Receiver<KademliaEvent>) -> Self {
+    pub(super) fn new(
+        cmd_tx: Sender<KademliaCommand>,
+        event_rx: Receiver<KademliaEvent>,
+        record_ttl: Duration,
+    ) -> Self {
         Self {
             cmd_tx,
             event_rx,
             next_query_id: 0usize,
+            record_ttl,
         }
     }
 
@@ -256,7 +265,9 @@ impl KademliaHandle {
     }
 
     /// Store record to DHT.
-    pub async fn put_record(&mut self, record: Record) -> QueryId {
+    pub async fn put_record(&mut self, mut record: Record) -> QueryId {
+        record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+
         let query_id = self.next_query_id();
         let _ = self.cmd_tx.send(KademliaCommand::PutRecord { record, query_id }).await;
 
@@ -266,10 +277,12 @@ impl KademliaHandle {
     /// Store record to DHT to the given peers.
     pub async fn put_record_to_peers(
         &mut self,
-        record: Record,
+        mut record: Record,
         peers: Vec<PeerId>,
         update_local_store: bool,
     ) -> QueryId {
+        record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+
         let query_id = self.next_query_id();
         let _ = self
             .cmd_tx
@@ -301,7 +314,9 @@ impl KademliaHandle {
 
     /// Store the record in the local store. Used in combination with
     /// [`IncomingRecordValidationMode::Manual`].
-    pub async fn store_record(&mut self, record: Record) {
+    pub async fn store_record(&mut self, mut record: Record) {
+        record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+
         let _ = self.cmd_tx.send(KademliaCommand::StoreRecord { record }).await;
     }
 
@@ -322,7 +337,9 @@ impl KademliaHandle {
     }
 
     /// Try to initiate `PUT_VALUE` query and if the channel is clogged, return an error.
-    pub fn try_put_record(&mut self, record: Record) -> Result<QueryId, ()> {
+    pub fn try_put_record(&mut self, mut record: Record) -> Result<QueryId, ()> {
+        record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+
         let query_id = self.next_query_id();
         self.cmd_tx
             .try_send(KademliaCommand::PutRecord { record, query_id })
@@ -334,10 +351,12 @@ impl KademliaHandle {
     /// return an error.
     pub fn try_put_record_to_peers(
         &mut self,
-        record: Record,
+        mut record: Record,
         peers: Vec<PeerId>,
         update_local_store: bool,
     ) -> Result<QueryId, ()> {
+        record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+
         let query_id = self.next_query_id();
         self.cmd_tx
             .try_send(KademliaCommand::PutRecordToPeers {
@@ -365,7 +384,9 @@ impl KademliaHandle {
 
     /// Try to store the record in the local store, and if the channel is clogged, return an error.
     /// Used in combination with [`IncomingRecordValidationMode::Manual`].
-    pub fn try_store_record(&mut self, record: Record) -> Result<(), ()> {
+    pub fn try_store_record(&mut self, mut record: Record) -> Result<(), ()> {
+        record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+
         self.cmd_tx.try_send(KademliaCommand::StoreRecord { record }).map_err(|_| ())
     }
 }

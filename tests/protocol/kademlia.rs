@@ -231,7 +231,7 @@ async fn records_are_stored_manually() {
         .await;
 
     // Publish the record.
-    let record = Record::new(vec![1, 2, 3], vec![0x01]);
+    let mut record = Record::new(vec![1, 2, 3], vec![0x01]);
     kad_handle1.put_record(record.clone()).await;
 
     loop {
@@ -246,6 +246,7 @@ async fn records_are_stored_manually() {
                 match event {
                     Some(KademliaEvent::IncomingRecord { record: got_record }) => {
                         assert_eq!(got_record, record);
+                        assert!(got_record.expires.is_none());
                         kad_handle2.store_record(got_record).await;
 
                         // Check if the record was stored.
@@ -255,6 +256,8 @@ async fn records_are_stored_manually() {
                     Some(KademliaEvent::GetRecordSuccess { query_id: _, records }) => {
                         match records {
                             RecordsType::LocalStore(got_record) => {
+                                assert!(got_record.expires.is_some());
+                                record.expires = got_record.expires;
                                 assert_eq!(got_record, record);
                                 break
                             }
