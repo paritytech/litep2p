@@ -902,6 +902,7 @@ mod tests {
             Vec::new(),
             Default::default(),
             handle,
+            std::time::Duration::from_secs(5),
         );
         let (event_tx, event_rx) = channel(64);
         let (_cmd_tx, cmd_rx) = channel(64);

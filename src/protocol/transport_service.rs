@@ -122,6 +122,9 @@ pub struct TransportService {
     /// Next substream ID.
     next_substream_id: Arc<AtomicUsize>,
 
+    /// Close the connection if no substreams are open within this time frame.
+    keep_alive: Duration,
+
     /// Pending keep-alive timeouts.
     keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
 }
@@ -134,6 +137,7 @@ impl TransportService {
         fallback_names: Vec<ProtocolName>,
         next_substream_id: Arc<AtomicUsize>,
         transport_handle: TransportManagerHandle,
+        keep_alive: Duration,
     ) -> (Self, Sender<InnerTransportEvent>) {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -146,6 +150,7 @@ impl TransportService {
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
+                keep_alive,
                 keep_alive_timeouts: FuturesUnordered::new(),
             },
             tx,
@@ -168,6 +173,7 @@ impl TransportService {
             ?connection_id,
             "connection established",
         );
+        let keep_alive = self.keep_alive;
 
         match self.connections.get_mut(&peer) {
             Some(context) => match context.secondary {
@@ -183,7 +189,7 @@ impl TransportService {
                 }
                 None => {
                     self.keep_alive_timeouts.push(Box::pin(async move {
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        tokio::time::sleep(keep_alive).await;
                         (peer, connection_id)
                     }));
                     context.secondary = Some(handle);
@@ -194,7 +200,7 @@ impl TransportService {
             None => {
                 self.connections.insert(peer, ConnectionContext::new(handle));
                 self.keep_alive_timeouts.push(Box::pin(async move {
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    tokio::time::sleep(keep_alive).await;
                     (peer, connection_id)
                 }));
 
@@ -439,6 +445,7 @@ mod tests {
             Vec::new(),
             Arc::new(AtomicUsize::new(0usize)),
             handle,
+            std::time::Duration::from_secs(5),
         );
 
         (service, sender, cmd_rx)
