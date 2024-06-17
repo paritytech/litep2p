@@ -2,7 +2,7 @@
 name = "litep2p"
 description = "Peer-to-peer networking library"
 license = "MIT"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 
 [build-dependencies]
@@ -23,7 +23,7 @@ mockall = "0.12.1"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
 network-interface = "1.1.1"
-parking_lot = "0.12.1"
+parking_lot = "0.12.3"
 pin-project = "1.1.0"
 prost = "0.11.8"
 quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls", "runtime-tokio"] }
@@ -51,7 +51,7 @@ webpki = "0.22.4"
 x25519-dalek = "2.0.0"
 x509-parser = "0.15.0"
 yasna = "0.5.0"
-zeroize = "1.5.7"
+zeroize = "1.8.1"
 nohash-hasher = "0.2.0"
 static_assertions = "1.1.0"
 

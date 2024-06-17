@@ -25,11 +25,11 @@ use crate::{
     config::Role,
     error::Error,
     transport::{
+        common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
         manager::TransportHandle,
         tcp::{
             config::Config,
             connection::{NegotiatedConnection, TcpConnection},
-            listener::{AddressType, DialAddresses, TcpListener},
         },
         Transport, TransportBuilder, TransportEvent,
     },
@@ -40,13 +40,9 @@ use futures::{
     future::BoxFuture,
     stream::{FuturesUnordered, Stream, StreamExt},
 };
-use multiaddr::{Multiaddr, Protocol};
+use multiaddr::Multiaddr;
 use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -59,7 +55,6 @@ use std::{
 pub(crate) use substream::Substream;
 
 mod connection;
-mod listener;
 mod substream;
 
 pub mod config;
@@ -76,7 +71,7 @@ pub(crate) struct TcpTransport {
     config: Config,
 
     /// TCP listener.
-    listener: TcpListener,
+    listener: SocketListener,
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
@@ -137,57 +132,15 @@ impl TcpTransport {
         address: Multiaddr,
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
+        nodelay: bool,
     ) -> crate::Result<(Multiaddr, TcpStream)> {
-        let (socket_address, _) = TcpListener::get_socket_address(&address)?;
-        let remote_address = match socket_address {
-            AddressType::Socket(address) => address,
-            AddressType::Dns(url, port) => {
-                let address = address.clone();
-                let future = async move {
-                    match TokioAsyncResolver::tokio(
-                        ResolverConfig::default(),
-                        ResolverOpts::default(),
-                    )
-                    .lookup_ip(url.clone())
-                    .await
-                    {
-                        // TODO: ugly
-                        Ok(lookup) => {
-                            let iter = lookup.iter();
-                            for ip in iter {
-                                match (
-                                    address.iter().next().expect("protocol to exist"),
-                                    ip.is_ipv4(),
-                                ) {
-                                    (Protocol::Dns(_), true)
-                                    | (Protocol::Dns4(_), true)
-                                    | (Protocol::Dns6(_), false) => {
-                                        tracing::trace!(
-                                            target: LOG_TARGET,
-                                            ?address,
-                                            ?ip,
-                                            "address resolved",
-                                        );
-
-                                        return Ok(SocketAddr::new(ip, port));
-                                    }
-                                    _ => {}
-                                }
-                            }
-
-                            Err(Error::Unknown)
-                        }
-                        Err(_) => Err(Error::Unknown),
-                    }
-                };
-
-                match tokio::time::timeout(connection_open_timeout, future).await {
-                    Err(_) => return Err(Error::Timeout),
-                    Ok(Err(error)) => return Err(error),
-                    Ok(Ok(address)) => address,
-                }
-            }
-        };
+        let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
+        let remote_address =
+            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
+                Err(_) => return Err(Error::Timeout),
+                Ok(Err(error)) => return Err(error),
+                Ok(Ok(address)) => address,
+            };
 
         let domain = match remote_address.is_ipv4() {
             true => Domain::IPV4,
@@ -198,6 +151,7 @@ impl TcpTransport {
             socket.set_only_v6(true)?;
         }
         socket.set_nonblocking(true)?;
+        socket.set_nodelay(nodelay)?;
 
         match dial_addresses.local_dial_address(&remote_address.ip()) {
             Ok(Some(dial_address)) => {
@@ -258,9 +212,10 @@ impl TransportBuilder for TcpTransport {
         );
 
         // start tcp listeners for all listen addresses
-        let (listener, listen_addresses, dial_addresses) = TcpListener::new(
+        let (listener, listen_addresses, dial_addresses) = SocketListener::new::<TcpAddress>(
             std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
+            config.nodelay,
         );
 
         Ok((
@@ -285,7 +240,7 @@ impl Transport for TcpTransport {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
-        let (socket_address, peer) = listener::TcpListener::get_socket_address(&address)?;
+        let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -293,11 +248,12 @@ impl Transport for TcpTransport {
         let substream_open_timeout = self.config.substream_open_timeout;
         let dial_addresses = self.dial_addresses.clone();
         let keypair = self.context.keypair.clone();
+        let nodelay = self.config.nodelay;
 
         self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
             let (_, stream) =
-                TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout)
+                TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout, nodelay)
                     .await
                     .map_err(|error| (connection_id, error))?;
 
@@ -370,9 +326,16 @@ impl Transport for TcpTransport {
             .map(|address| {
                 let dial_addresses = self.dial_addresses.clone();
                 let connection_open_timeout = self.config.connection_open_timeout;
+                let nodelay = self.config.nodelay;
 
                 async move {
-                    TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout).await
+                    TcpTransport::dial_peer(
+                        address,
+                        dial_addresses,
+                        connection_open_timeout,
+                        nodelay,
+                    )
+                    .await
                 }
             })
             .collect();
@@ -402,7 +365,7 @@ impl Transport for TcpTransport {
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        let (socket_address, peer) = listener::TcpListener::get_socket_address(&address)?;
+        let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;

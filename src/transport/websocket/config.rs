@@ -41,6 +41,11 @@ pub struct Config {
     /// Defaults to `true`.
     pub reuse_port: bool,
 
+    /// Enable `TCP_NODELAY`.
+    ///
+    /// Defaults to `false`.
+    pub nodelay: bool,
+
     /// Yamux configuration.
     pub yamux_config: crate::yamux::Config,
 
@@ -60,13 +65,13 @@ pub struct Config {
     /// By default the value is set to `2` which means that the `NoiseSocket` will allocate
     /// `130 KB` for each outgoing connection.
     ///
-    /// The write buffer size is separate from  the read-ahead frame count so by default
+    /// The write buffer size is separate from the read-ahead frame count so by default
     /// the Noise code will allocate `2 * 65 KB + 5 * 65 KB = 455 KB` per connection.
     pub noise_write_buffer_size: usize,
 
     /// Connection open timeout.
     ///
-    /// How long should litep2p wait for a connection to be opend before the host
+    /// How long should litep2p wait for a connection to be opened before the host
     /// is deemed unreachable.
     pub connection_open_timeout: std::time::Duration,
 
@@ -85,6 +90,7 @@ impl Default for Config {
                 "/ip6/::/tcp/0/ws".parse().expect("valid address"),
             ],
             reuse_port: true,
+            nodelay: false,
             yamux_config: Default::default(),
             noise_read_ahead_frame_count: MAX_READ_AHEAD_FACTOR,
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,

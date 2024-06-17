@@ -24,11 +24,11 @@ use crate::{
     config::Role,
     error::{AddressError, Error},
     transport::{
+        common::listener::{DialAddresses, GetSocketAddr, SocketListener, WebSocketAddress},
         manager::TransportHandle,
         websocket::{
             config::Config,
             connection::{NegotiatedConnection, WebSocketConnection},
-            listener::{AddressType, DialAddresses, WebSocketListener},
         },
         Transport, TransportBuilder, TransportEvent,
     },
@@ -41,15 +41,11 @@ use multiaddr::{Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
+
 use url::Url;
 
 use std::{
     collections::{HashMap, HashSet},
-    net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -58,7 +54,6 @@ use std::{
 pub(crate) use substream::Substream;
 
 mod connection;
-mod listener;
 mod stream;
 mod substream;
 
@@ -94,7 +89,7 @@ pub(crate) struct WebSocketTransport {
     config: Config,
 
     /// WebSocket listener.
-    listener: WebSocketListener,
+    listener: SocketListener,
 
     /// Dial addresses.
     dial_addresses: DialAddresses,
@@ -182,59 +177,17 @@ impl WebSocketTransport {
         address: Multiaddr,
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
+        nodelay: bool,
     ) -> crate::Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>)> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
-        let (socket_address, _) = WebSocketListener::get_socket_address(&address)?;
 
-        let remote_address = match socket_address {
-            AddressType::Socket(address) => address,
-            AddressType::Dns(url, port) => {
-                let address = address.clone();
-                let future = async move {
-                    match TokioAsyncResolver::tokio(
-                        ResolverConfig::default(),
-                        ResolverOpts::default(),
-                    )
-                    .lookup_ip(url.clone())
-                    .await
-                    {
-                        // TODO: ugly
-                        Ok(lookup) => {
-                            let iter = lookup.iter();
-                            for ip in iter {
-                                match (
-                                    address.iter().next().expect("protocol to exist"),
-                                    ip.is_ipv4(),
-                                ) {
-                                    (Protocol::Dns(_), true)
-                                    | (Protocol::Dns4(_), true)
-                                    | (Protocol::Dns6(_), false) => {
-                                        tracing::trace!(
-                                            target: LOG_TARGET,
-                                            ?address,
-                                            ?ip,
-                                            "address resolved",
-                                        );
-
-                                        return Ok(SocketAddr::new(ip, port));
-                                    }
-                                    _ => {}
-                                }
-                            }
-
-                            Err(Error::Unknown)
-                        }
-                        Err(_) => Err(Error::Unknown),
-                    }
-                };
-
-                match tokio::time::timeout(connection_open_timeout, future).await {
-                    Err(_) => return Err(Error::Timeout),
-                    Ok(Err(error)) => return Err(error),
-                    Ok(Ok(address)) => address,
-                }
-            }
-        };
+        let (socket_address, _) = WebSocketAddress::multiaddr_to_socket_address(&address)?;
+        let remote_address =
+            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
+                Err(_) => return Err(Error::Timeout),
+                Ok(Err(error)) => return Err(error),
+                Ok(Ok(address)) => address,
+            };
 
         let domain = match remote_address.is_ipv4() {
             true => Domain::IPV4,
@@ -245,6 +198,7 @@ impl WebSocketTransport {
             socket.set_only_v6(true)?;
         }
         socket.set_nonblocking(true)?;
+        socket.set_nodelay(nodelay)?;
 
         match dial_addresses.local_dial_address(&remote_address.ip()) {
             Ok(Some(dial_address)) => {
@@ -312,9 +266,10 @@ impl TransportBuilder for WebSocketTransport {
             listen_addresses = ?config.listen_addresses,
             "start websocket transport",
         );
-        let (listener, listen_addresses, dial_addresses) = WebSocketListener::new(
+        let (listener, listen_addresses, dial_addresses) = SocketListener::new::<WebSocketAddress>(
             std::mem::take(&mut config.listen_addresses),
             config.reuse_port,
+            config.nodelay,
         );
 
         Ok((
@@ -344,6 +299,8 @@ impl Transport for WebSocketTransport {
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let dial_addresses = self.dial_addresses.clone();
+        let nodelay = self.config.nodelay;
+
         self.pending_dials.insert(connection_id, address.clone());
 
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
@@ -353,6 +310,7 @@ impl Transport for WebSocketTransport {
                 address.clone(),
                 dial_addresses,
                 connection_open_timeout,
+                nodelay,
             )
             .await
             .map_err(|error| WebSocketError::new(error, Some(connection_id)))?;
@@ -437,10 +395,16 @@ impl Transport for WebSocketTransport {
             .map(|address| {
                 let connection_open_timeout = self.config.connection_open_timeout;
                 let dial_addresses = self.dial_addresses.clone();
+                let nodelay = self.config.nodelay;
 
                 async move {
-                    WebSocketTransport::dial_peer(address, dial_addresses, connection_open_timeout)
-                        .await
+                    WebSocketTransport::dial_peer(
+                        address,
+                        dial_addresses,
+                        connection_open_timeout,
+                        nodelay,
+                    )
+                    .await
                 }
             })
             .collect();

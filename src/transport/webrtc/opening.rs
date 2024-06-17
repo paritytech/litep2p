@@ -207,7 +207,7 @@ impl OpeningWebRtcConnection {
         };
 
         // create first noise handshake and send it to remote peer
-        let payload = WebRtcMessage::encode(context.first_message(Role::Dialer));
+        let payload = WebRtcMessage::encode(context.first_message(Role::Dialer)?);
 
         self.rtc
             .channel(self.noise_channel_id)
@@ -301,7 +301,7 @@ impl OpeningWebRtcConnection {
         };
 
         // create second noise handshake message and send it to remote
-        let payload = WebRtcMessage::encode(context.second_message());
+        let payload = WebRtcMessage::encode(context.second_message()?);
 
         let mut channel =
             self.rtc.channel(self.noise_channel_id).ok_or(Error::ChannelDoesntExist)?;
@@ -440,10 +440,21 @@ impl OpeningWebRtcConnection {
                             let remote_fingerprint = self.remote_fingerprint();
                             let local_fingerprint = self.local_fingerprint();
 
-                            let context = NoiseContext::with_prologue(
+                            let context = match NoiseContext::with_prologue(
                                 &self.id_keypair,
                                 noise_prologue(local_fingerprint, remote_fingerprint),
-                            );
+                            ) {
+                                Ok(context) => context,
+                                Err(err) => {
+                                    tracing::error!(
+                                        target: LOG_TARGET,
+                                        peer = ?self.peer_address,
+                                        "NoiseContext failed with error {err}",
+                                    );
+
+                                    return WebRtcEvent::ConnectionClosed;
+                                }
+                            };
 
                             tracing::debug!(
                                 target: LOG_TARGET,

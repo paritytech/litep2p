@@ -31,7 +31,10 @@ use crate::{
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
+
+/// Default TTL for the records.
+const DEFAULT_TTL: u64 = 36 * 60 * 60;
 
 /// Protocol name.
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
@@ -51,7 +54,6 @@ pub struct Config {
     pub(crate) codec: ProtocolCodec,
 
     /// Replication factor.
-    #[allow(unused)]
     pub(super) replication_factor: usize,
 
     /// Known peers.
@@ -77,6 +79,7 @@ impl Config {
         mut protocol_names: Vec<ProtocolName>,
         update_mode: RoutingTableUpdateMode,
         validation_mode: IncomingRecordValidationMode,
+        record_ttl: Duration,
     ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -97,7 +100,7 @@ impl Config {
                 cmd_rx,
                 event_tx,
             },
-            KademliaHandle::new(cmd_tx, event_rx),
+            KademliaHandle::new(cmd_tx, event_rx, record_ttl),
         )
     }
 
@@ -109,6 +112,7 @@ impl Config {
             Vec::new(),
             RoutingTableUpdateMode::Automatic,
             IncomingRecordValidationMode::Automatic,
+            Duration::from_secs(DEFAULT_TTL),
         )
     }
 }
@@ -130,6 +134,9 @@ pub struct ConfigBuilder {
 
     /// Protocol names.
     pub(super) protocol_names: Vec<ProtocolName>,
+
+    /// Default TTL for the records.
+    pub(super) record_ttl: Duration,
 }
 
 impl Default for ConfigBuilder {
@@ -147,6 +154,7 @@ impl ConfigBuilder {
             protocol_names: Vec::new(),
             update_mode: RoutingTableUpdateMode::Automatic,
             validation_mode: IncomingRecordValidationMode::Automatic,
+            record_ttl: Duration::from_secs(DEFAULT_TTL),
         }
     }
 
@@ -191,6 +199,14 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set default TTL for the records.
+    ///
+    /// If unspecified, the default TTL is 36 hours.
+    pub fn with_record_ttl(mut self, record_ttl: Duration) -> Self {
+        self.record_ttl = record_ttl;
+        self
+    }
+
     /// Build Kademlia [`Config`].
     pub fn build(self) -> (Config, KademliaHandle) {
         Config::new(
@@ -199,6 +215,7 @@ impl ConfigBuilder {
             self.protocol_names,
             self.update_mode,
             self.validation_mode,
+            self.record_ttl,
         )
     }
 }

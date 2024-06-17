@@ -27,6 +27,7 @@ use multiaddr::Multiaddr;
 
 use std::{fmt::Debug, time::Duration};
 
+pub(crate) mod common;
 pub mod quic;
 pub mod tcp;
 pub mod webrtc;

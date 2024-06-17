@@ -1352,3 +1352,151 @@ async fn unspecified_listen_address_websocket() {
         }
     }
 }
+
+#[tokio::test]
+async fn simultaneous_dial_then_redial_tcp() {
+    simultaneous_dial_then_redial(
+        Transport::Tcp(TcpConfig {
+            reuse_port: false,
+            ..Default::default()
+        }),
+        Transport::Tcp(TcpConfig {
+            reuse_port: false,
+            ..Default::default()
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn simultaneous_dial_then_redial_websocket() {
+    simultaneous_dial_then_redial(
+        Transport::WebSocket(WebSocketConfig {
+            reuse_port: false,
+            ..Default::default()
+        }),
+        Transport::WebSocket(WebSocketConfig {
+            reuse_port: false,
+            ..Default::default()
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn simultaneous_dial_then_redial_quic() {
+    simultaneous_dial_then_redial(
+        Transport::Quic(Default::default()),
+        Transport::Quic(Default::default()),
+    )
+    .await
+}
+
+async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transport) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (ping_config1, _ping_event_stream1) = PingConfig::default();
+    let config1 = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_libp2p_ping(ping_config1);
+
+    let config1 = match transport1 {
+        Transport::Tcp(config) => config1.with_tcp(config),
+        Transport::Quic(config) => config1.with_quic(config),
+        Transport::WebSocket(config) => config1.with_websocket(config),
+    }
+    .build();
+
+    let (ping_config2, _ping_event_stream2) = PingConfig::default();
+    let config2 = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_libp2p_ping(ping_config2);
+
+    let config2 = match transport2 {
+        Transport::Tcp(config) => config2.with_tcp(config),
+        Transport::Quic(config) => config2.with_quic(config),
+        Transport::WebSocket(config) => config2.with_websocket(config),
+    }
+    .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let peer1 = *litep2p1.local_peer_id();
+    let peer2 = *litep2p2.local_peer_id();
+
+    litep2p1.add_known_address(peer2, litep2p2.listen_addresses().cloned());
+    litep2p2.add_known_address(peer1, litep2p1.listen_addresses().cloned());
+
+    let (_, _) = tokio::join!(litep2p1.dial(&peer2), litep2p2.dial(&peer1));
+
+    let mut peer1_open = false;
+    let mut peer2_open = false;
+
+    while !peer1_open || !peer2_open {
+        tokio::select! {
+            event = litep2p1.next_event() => match event.unwrap() {
+                Litep2pEvent::ConnectionEstablished { .. } => {
+                    peer1_open = true;
+                }
+                _ => {},
+            },
+            event = litep2p2.next_event() => match event.unwrap() {
+                Litep2pEvent::ConnectionEstablished { .. } => {
+                    peer2_open = true;
+                }
+                _ => {},
+            },
+        }
+    }
+
+    let mut peer1_close = false;
+    let mut peer2_close = false;
+
+    while !peer1_close || !peer2_close {
+        tokio::select! {
+            event = litep2p1.next_event() => match event.unwrap() {
+                Litep2pEvent::ConnectionClosed { .. } => {
+                    peer1_close = true;
+                }
+                _ => {},
+            },
+            event = litep2p2.next_event() => match event.unwrap() {
+                Litep2pEvent::ConnectionClosed { .. } => {
+                    peer2_close = true;
+                }
+                _ => {},
+            },
+        }
+    }
+
+    let (_, _) = tokio::join!(litep2p1.dial(&peer2), litep2p2.dial(&peer1));
+
+    let future = async move {
+        let mut peer1_open = false;
+        let mut peer2_open = false;
+
+        while !peer1_open || !peer2_open {
+            tokio::select! {
+                event = litep2p1.next_event() => match event.unwrap() {
+                    Litep2pEvent::ConnectionEstablished { .. } => {
+                        peer1_open = true;
+                    }
+                    _ => {},
+                },
+                event = litep2p2.next_event() => match event.unwrap() {
+                    Litep2pEvent::ConnectionEstablished { .. } => {
+                        peer2_open = true;
+                    }
+                    _ => {},
+                },
+            }
+        }
+    };
+
+    match tokio::time::timeout(std::time::Duration::from_secs(10), future).await {
+        Err(_) => panic!("failed to open notification stream"),
+        _ => {}
+    }
+}
