@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2024-06-2024
+
+This is a bug fixing and security release. curve255190-dalek has been upgraded to v4.1.3, see [dalek-cryptography/curve25519-dalek#659](https://github.com/dalek-cryptography/curve25519-dalek/pull/659) for details.
+
+### Fixed
+
+- kad: Set default ttl 36h for kad records ([#154](https://github.com/paritytech/litep2p/pull/154))
+- chore: update ed25519-dalek to v2.1.1 ([#122](https://github.com/paritytech/litep2p/pull/122))
+- Bump curve255190-dalek 4.1.2 -> 4.1.3 ([#159](https://github.com/paritytech/litep2p/pull/159))
+
 ## [0.6.0] - 2024-06-14
 
 This release introduces breaking changes into `kad` module. The API has been extended as following:
