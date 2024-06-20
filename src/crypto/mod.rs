@@ -84,7 +84,7 @@ impl From<&PublicKey> for keys_proto::PublicKey {
         match key {
             PublicKey::Ed25519(key) => keys_proto::PublicKey {
                 r#type: keys_proto::KeyType::Ed25519 as i32,
-                data: key.encode().to_vec(),
+                data: key.to_bytes().to_vec(),
             },
         }
     }
@@ -99,7 +99,7 @@ impl TryFrom<keys_proto::PublicKey> for PublicKey {
 
         match key_type {
             keys_proto::KeyType::Ed25519 =>
-                Ok(ed25519::PublicKey::decode(&pubkey.data).map(PublicKey::Ed25519)?),
+                Ok(ed25519::PublicKey::try_from_bytes(&pubkey.data).map(PublicKey::Ed25519)?),
             _ => Err(Error::Other(format!(
                 "Unsupported key type: {}",
                 key_type.as_str_name()

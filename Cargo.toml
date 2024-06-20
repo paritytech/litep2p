@@ -13,7 +13,7 @@ async-trait = "0.1.80"
 bs58 = "0.4.0"
 bytes = "1.4.0"
 cid = "0.10.1"
-ed25519-dalek = "1.0.1"
+ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.27"
 futures-timer = "3.0.3"
 hex-literal = "0.4.1"
