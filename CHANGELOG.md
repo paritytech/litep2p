@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.1] - 2024-06-2024
+## [0.6.1] - 2024-06-20
 
 This is a bug fixing and security release. curve255190-dalek has been upgraded to v4.1.3, see [dalek-cryptography/curve25519-dalek#659](https://github.com/dalek-cryptography/curve25519-dalek/pull/659) for details.
 
