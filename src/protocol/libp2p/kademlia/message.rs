@@ -245,3 +245,45 @@ fn record_from_schema(record: schema::kademlia::Record) -> Option<Record> {
         },
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_empty_publisher_and_ttl_are_preserved() {
+        let expires = Instant::now() + Duration::from_secs(3600);
+
+        let record = Record {
+            key: vec![1, 2, 3].into(),
+            value: vec![17],
+            publisher: Some(PeerId::random()),
+            expires: Some(expires),
+        };
+
+        let got_record = record_from_schema(record_to_schema(record.clone())).unwrap();
+
+        assert_eq!(got_record.key, record.key);
+        assert_eq!(got_record.value, record.value);
+        assert_eq!(got_record.publisher, record.publisher);
+
+        // Check that the expiration time is sane.
+        let got_expires = got_record.expires.unwrap();
+        assert!(got_expires - expires >= Duration::ZERO);
+        assert!(got_expires - expires < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn empty_publisher_and_ttl_are_preserved() {
+        let record = Record {
+            key: vec![1, 2, 3].into(),
+            value: vec![17],
+            publisher: None,
+            expires: None,
+        };
+
+        let got_record = record_from_schema(record_to_schema(record.clone())).unwrap();
+
+        assert_eq!(got_record, record);
+    }
+}
