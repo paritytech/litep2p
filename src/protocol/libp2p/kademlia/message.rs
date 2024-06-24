@@ -18,14 +18,18 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::protocol::libp2p::kademlia::{
-    record::{Key as RecordKey, Record},
-    schema,
-    types::KademliaPeer,
+use crate::{
+    protocol::libp2p::kademlia::{
+        record::{Key as RecordKey, Record},
+        schema,
+        types::KademliaPeer,
+    },
+    PeerId,
 };
 
 use bytes::{Bytes, BytesMut};
 use prost::Message;
+use std::time::{Duration, Instant};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::message";
@@ -78,16 +82,11 @@ impl KademliaMessage {
     }
 
     /// Create `PUT_VALUE` message for `record`.
-    // TODO: set ttl
     pub fn put_value(record: Record) -> Bytes {
         let message = schema::kademlia::Message {
             key: record.key.clone().into(),
             r#type: schema::kademlia::MessageType::PutValue.into(),
-            record: Some(schema::kademlia::Record {
-                key: record.key.into(),
-                value: record.value,
-                ..Default::default()
-            }),
+            record: Some(record_to_schema(record)),
             cluster_level_raw: 10,
             ..Default::default()
         };
@@ -140,11 +139,7 @@ impl KademliaMessage {
             cluster_level_raw: 10,
             r#type: schema::kademlia::MessageType::GetValue.into(),
             closer_peers: peers.iter().map(|peer| peer.into()).collect(),
-            record: record.map(|record| schema::kademlia::Record {
-                key: record.key.to_vec(),
-                value: record.value,
-                ..Default::default()
-            }),
+            record: record.map(record_to_schema),
             ..Default::default()
         };
 
@@ -174,7 +169,7 @@ impl KademliaMessage {
                     let record = message.record?;
 
                     Some(Self::PutValue {
-                        record: Record::new(record.key, record.value),
+                        record: record_from_schema(record)?,
                     })
                 }
                 1 => {
@@ -185,9 +180,15 @@ impl KademliaMessage {
                         false => Some(RecordKey::from(message.key.clone())),
                     };
 
+                    let record = if let Some(record) = message.record {
+                        Some(record_from_schema(record)?)
+                    } else {
+                        None
+                    };
+
                     Some(Self::GetRecord {
                         key,
-                        record: message.record.map(|record| Record::new(record.key, record.value)),
+                        record,
                         peers: message
                             .closer_peers
                             .iter()
@@ -206,4 +207,41 @@ impl KademliaMessage {
             }
         }
     }
+}
+
+fn record_to_schema(record: Record) -> schema::kademlia::Record {
+    schema::kademlia::Record {
+        key: record.key.into(),
+        value: record.value,
+        time_received: String::new(),
+        publisher: record.publisher.map(|peer_id| peer_id.to_bytes()).unwrap_or_default(),
+        ttl: record
+            .expires
+            .map(|expires| {
+                let now = Instant::now();
+                if expires > now {
+                    u32::try_from((expires - now).as_secs()).unwrap_or(u32::MAX)
+                } else {
+                    1 // because 0 means "does not expire"
+                }
+            })
+            .unwrap_or(0),
+    }
+}
+
+fn record_from_schema(record: schema::kademlia::Record) -> Option<Record> {
+    Some(Record {
+        key: record.key.into(),
+        value: record.value,
+        publisher: if !record.publisher.is_empty() {
+            Some(PeerId::from_bytes(&record.publisher).ok()?)
+        } else {
+            None
+        },
+        expires: if record.ttl > 0 {
+            Some(Instant::now() + Duration::from_secs(record.ttl as u64))
+        } else {
+            None
+        },
+    })
 }

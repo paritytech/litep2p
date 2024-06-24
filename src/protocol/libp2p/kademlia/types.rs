@@ -49,7 +49,7 @@ construct_uint! {
 /// the hash digests, interpreted as an integer. See [`Key::distance`].
 #[derive(Clone, Debug)]
 pub struct Key<T: Clone> {
-    _preimage: T,
+    preimage: T,
     bytes: KeyBytes,
 }
 
@@ -59,17 +59,17 @@ impl<T: Clone> Key<T> {
     ///
     /// The preimage of type `T` is preserved.
     /// See [`Key::into_preimage`] for more details.
-    pub fn new(_preimage: T) -> Key<T>
+    pub fn new(preimage: T) -> Key<T>
     where
         T: Borrow<[u8]>,
     {
-        let bytes = KeyBytes::new(_preimage.borrow());
-        Key { _preimage, bytes }
+        let bytes = KeyBytes::new(preimage.borrow());
+        Key { preimage, bytes }
     }
 
     /// Convert [`Key`] into its preimage.
     pub fn into_preimage(self) -> T {
-        self._preimage
+        self.preimage
     }
 
     /// Computes the distance of the keys according to the XOR metric.
@@ -94,8 +94,8 @@ impl<T: Clone> Key<T> {
     ///
     /// Only used for testing
     #[cfg(test)]
-    pub fn from_bytes(bytes: KeyBytes, _preimage: T) -> Key<T> {
-        Self { bytes, _preimage }
+    pub fn from_bytes(bytes: KeyBytes, preimage: T) -> Key<T> {
+        Self { bytes, preimage }
     }
 }
 
@@ -108,10 +108,7 @@ impl<T: Clone> From<Key<T>> for KeyBytes {
 impl From<PeerId> for Key<PeerId> {
     fn from(p: PeerId) -> Self {
         let bytes = KeyBytes(Sha256::digest(p.to_bytes()));
-        Key {
-            _preimage: p,
-            bytes,
-        }
+        Key { preimage: p, bytes }
     }
 }
 

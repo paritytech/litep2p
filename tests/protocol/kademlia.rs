@@ -172,7 +172,11 @@ async fn records_are_stored_automatically() {
             event = kad_handle2.next() => {
                 match event {
                     Some(KademliaEvent::IncomingRecord { record: got_record }) => {
-                        assert_eq!(got_record, record);
+                        assert_eq!(got_record.key, record.key);
+                        assert_eq!(got_record.value, record.value);
+                        assert_eq!(got_record.publisher.unwrap(), *litep2p1.local_peer_id());
+                        assert!(got_record.expires.is_some());
+
                         // Check if the record was stored.
                         let _ = kad_handle2
                             .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::One).await;
@@ -180,7 +184,11 @@ async fn records_are_stored_automatically() {
                     Some(KademliaEvent::GetRecordSuccess { query_id: _, records }) => {
                         match records {
                             RecordsType::LocalStore(got_record) => {
-                                assert_eq!(got_record, record);
+                                assert_eq!(got_record.key, record.key);
+                                assert_eq!(got_record.value, record.value);
+                                assert_eq!(got_record.publisher.unwrap(), *litep2p1.local_peer_id());
+                                assert!(got_record.expires.is_some());
+
                                 break
                             }
                             RecordsType::Network(_) => {
@@ -245,8 +253,11 @@ async fn records_are_stored_manually() {
             event = kad_handle2.next() => {
                 match event {
                     Some(KademliaEvent::IncomingRecord { record: got_record }) => {
-                        assert_eq!(got_record, record);
-                        assert!(got_record.expires.is_none());
+                        assert_eq!(got_record.key, record.key);
+                        assert_eq!(got_record.value, record.value);
+                        assert_eq!(got_record.publisher.unwrap(), *litep2p1.local_peer_id());
+                        assert!(got_record.expires.is_some());
+
                         kad_handle2.store_record(got_record).await;
 
                         // Check if the record was stored.
@@ -256,9 +267,11 @@ async fn records_are_stored_manually() {
                     Some(KademliaEvent::GetRecordSuccess { query_id: _, records }) => {
                         match records {
                             RecordsType::LocalStore(got_record) => {
+                                assert_eq!(got_record.key, record.key);
+                                assert_eq!(got_record.value, record.value);
+                                assert_eq!(got_record.publisher.unwrap(), *litep2p1.local_peer_id());
                                 assert!(got_record.expires.is_some());
-                                record.expires = got_record.expires;
-                                assert_eq!(got_record, record);
+
                                 break
                             }
                             RecordsType::Network(_) => {
@@ -325,7 +338,10 @@ async fn not_validated_records_are_not_stored() {
             event = kad_handle2.next() => {
                 match event {
                     Some(KademliaEvent::IncomingRecord { record: got_record }) => {
-                        assert_eq!(got_record, record);
+                        assert_eq!(got_record.key, record.key);
+                        assert_eq!(got_record.value, record.value);
+                        assert_eq!(got_record.publisher.unwrap(), *litep2p1.local_peer_id());
+                        assert!(got_record.expires.is_some());
                         // Do not call `kad_handle2.store_record(record).await`.
 
                         // Check if the record was stored.
@@ -424,9 +440,14 @@ async fn get_record_retrieves_remote_records() {
                             }
                             RecordsType::Network(records) => {
                                 assert_eq!(records.len(), 1);
+
                                 let PeerRecord { peer, record } = records.first().unwrap();
                                 assert_eq!(peer, litep2p1.local_peer_id());
-                                assert_eq!(record, &original_record);
+                                assert_eq!(record.key, original_record.key);
+                                assert_eq!(record.value, original_record.value);
+                                assert_eq!(record.publisher.unwrap(), *litep2p1.local_peer_id());
+                                assert!(record.expires.is_some());
+
                                 break
                             }
                         }

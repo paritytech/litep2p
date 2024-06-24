@@ -115,7 +115,7 @@ pub(crate) struct Kademlia {
     service: TransportService,
 
     /// Local Kademlia key.
-    _local_key: Key<PeerId>,
+    local_key: Key<PeerId>,
 
     /// Connected peers,
     peers: HashMap<PeerId, PeerContext>,
@@ -175,7 +175,7 @@ impl Kademlia {
             cmd_rx: config.cmd_rx,
             store: MemoryStore::new(),
             event_tx: config.event_tx,
-            _local_key: local_key,
+            local_key,
             pending_dials: HashMap::new(),
             executor: QueryExecutor::new(),
             pending_substreams: HashMap::new(),
@@ -775,8 +775,11 @@ impl Kademlia {
                                 self.routing_table.closest(Key::from(peer), self.replication_factor).into()
                             );
                         }
-                        Some(KademliaCommand::PutRecord { record, query_id }) => {
+                        Some(KademliaCommand::PutRecord { mut record, query_id }) => {
                             tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT");
+
+                            // For `PUT_RECORD` requests originating locally we are always the publisher.
+                            record.publisher = Some(self.local_key.clone().into_preimage());
 
                             let key = Key::new(record.key.clone());
 
