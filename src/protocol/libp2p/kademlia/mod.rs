@@ -45,7 +45,10 @@ use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    time::{Duration, Instant},
+};
 
 pub use self::handle::RecordsType;
 pub use config::{Config, ConfigBuilder};
@@ -115,7 +118,7 @@ pub(crate) struct Kademlia {
     service: TransportService,
 
     /// Local Kademlia key.
-    _local_key: Key<PeerId>,
+    local_key: Key<PeerId>,
 
     /// Connected peers,
     peers: HashMap<PeerId, PeerContext>,
@@ -147,6 +150,9 @@ pub(crate) struct Kademlia {
     /// Incoming records validation mode.
     validation_mode: IncomingRecordValidationMode,
 
+    /// Default record TTL.
+    record_ttl: Duration,
+
     /// Query engine.
     engine: QueryEngine,
 
@@ -175,12 +181,13 @@ impl Kademlia {
             cmd_rx: config.cmd_rx,
             store: MemoryStore::new(),
             event_tx: config.event_tx,
-            _local_key: local_key,
+            local_key,
             pending_dials: HashMap::new(),
             executor: QueryExecutor::new(),
             pending_substreams: HashMap::new(),
             update_mode: config.update_mode,
             validation_mode: config.validation_mode,
+            record_ttl: config.record_ttl,
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
         }
@@ -775,8 +782,14 @@ impl Kademlia {
                                 self.routing_table.closest(Key::from(peer), self.replication_factor).into()
                             );
                         }
-                        Some(KademliaCommand::PutRecord { record, query_id }) => {
+                        Some(KademliaCommand::PutRecord { mut record, query_id }) => {
                             tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT");
+
+                            // For `PUT_VALUE` requests originating locally we are always the publisher.
+                            record.publisher = Some(self.local_key.clone().into_preimage());
+
+                            // Make sure TTL is set.
+                            record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
 
                             let key = Key::new(record.key.clone());
 
@@ -788,8 +801,11 @@ impl Kademlia {
                                 self.routing_table.closest(key, self.replication_factor).into(),
                             );
                         }
-                        Some(KademliaCommand::PutRecordToPeers { record, query_id, peers, update_local_store }) => {
+                        Some(KademliaCommand::PutRecordToPeers { mut record, query_id, peers, update_local_store }) => {
                             tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT to specified peers");
+
+                            // Make sure TTL is set.
+                            record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
 
                             if update_local_store {
                                 self.store.put(record.clone());
@@ -854,12 +870,15 @@ impl Kademlia {
                             self.service.add_known_address(&peer, addresses.into_iter());
 
                         }
-                        Some(KademliaCommand::StoreRecord { record }) => {
+                        Some(KademliaCommand::StoreRecord { mut record }) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 key = ?record.key,
                                 "store record in local store",
                             );
+
+                            // Make sure TTL is set.
+                            record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
 
                             self.store.put(record);
                         }
@@ -914,6 +933,7 @@ mod tests {
             replication_factor: 20usize,
             update_mode: RoutingTableUpdateMode::Automatic,
             validation_mode: IncomingRecordValidationMode::Automatic,
+            record_ttl: Duration::from_secs(36 * 60 * 60),
             event_tx,
             cmd_rx,
         };

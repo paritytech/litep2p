@@ -65,6 +65,9 @@ pub struct Config {
     /// Incoming records validation mode.
     pub(super) validation_mode: IncomingRecordValidationMode,
 
+    /// Default record TTl.
+    pub(super) record_ttl: Duration,
+
     /// TX channel for sending events to `KademliaHandle`.
     pub(super) event_tx: Sender<KademliaEvent>,
 
@@ -94,13 +97,14 @@ impl Config {
                 protocol_names,
                 update_mode,
                 validation_mode,
+                record_ttl,
                 codec: ProtocolCodec::UnsignedVarint(None),
                 replication_factor,
                 known_peers,
                 cmd_rx,
                 event_tx,
             },
-            KademliaHandle::new(cmd_tx, event_rx, record_ttl),
+            KademliaHandle::new(cmd_tx, event_rx),
         )
     }
 
