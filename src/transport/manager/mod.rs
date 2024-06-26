@@ -51,6 +51,7 @@ use std::{
         Arc,
     },
     task::{Context, Poll},
+    time::Duration,
 };
 
 pub use handle::{TransportHandle, TransportManagerHandle};
@@ -315,6 +316,7 @@ impl TransportManager {
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
         codec: ProtocolCodec,
+        keep_alive: Duration,
     ) -> TransportService {
         assert!(!self.protocol_names.contains(&protocol));
 
@@ -330,6 +332,7 @@ impl TransportManager {
             fallback_names.clone(),
             self.next_substream_id.clone(),
             self.transport_manager_handle.clone(),
+            keep_alive,
         );
 
         self.protocols.insert(
@@ -1637,11 +1640,13 @@ mod tests {
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
+            Duration::from_secs(5),
         );
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
+            Duration::from_secs(5),
         );
     }
 
@@ -1657,6 +1662,7 @@ mod tests {
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
+            Duration::from_secs(5),
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1665,6 +1671,7 @@ mod tests {
                 ProtocolName::from("/notif/1"),
             ],
             ProtocolCodec::UnsignedVarint(None),
+            Duration::from_secs(5),
         );
     }
 
@@ -1683,6 +1690,7 @@ mod tests {
                 ProtocolName::from("/notif/1"),
             ],
             ProtocolCodec::UnsignedVarint(None),
+            Duration::from_secs(5),
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1691,6 +1699,7 @@ mod tests {
                 ProtocolName::from("/notif/1/new"),
             ],
             ProtocolCodec::UnsignedVarint(None),
+            Duration::from_secs(5),
         );
     }
 

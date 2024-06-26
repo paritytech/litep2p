@@ -60,6 +60,7 @@ fn protocol() -> (
         Vec::new(),
         std::sync::Arc::new(Default::default()),
         handle,
+        std::time::Duration::from_secs(5),
     );
     let (config, handle) =
         ConfigBuilder::new(ProtocolName::from("/req/1")).with_max_size(1024).build();

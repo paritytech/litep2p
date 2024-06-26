@@ -62,6 +62,7 @@ fn make_notification_protocol() -> (
         Vec::new(),
         std::sync::Arc::new(Default::default()),
         handle,
+        std::time::Duration::from_secs(5),
     );
     let (config, handle) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
