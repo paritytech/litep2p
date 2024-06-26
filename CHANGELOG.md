@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2024-06-26
+
+This is a bug fixing release. Kademlia now correctly sets and forwards publisher & ttl in the DHT records.
+
+### Fixed
+
+- kademlia: Preserve publisher & expiration time in DHT records ([#162](https://github.com/paritytech/litep2p/pull/162))
+
 ## [0.6.1] - 2024-06-20
 
 This is a bug fixing and security release. curve255190-dalek has been upgraded to v4.1.3, see [dalek-cryptography/curve25519-dalek#659](https://github.com/dalek-cryptography/curve25519-dalek/pull/659) for details.
