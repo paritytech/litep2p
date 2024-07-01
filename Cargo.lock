@@ -5003,9 +5003,9 @@ dependencies = [
 
 [[package]]
 name = "simple-dns"
-version = "0.5.7"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cae9a3fcdadafb6d97f4c0e007e4247b114ee0f119f650c3cbf3a8b3a1479694"
+checksum = "3625957337d21eb40a7125c2df5c92db5c0267195d66b297948c816ea9c33157"
 dependencies = [
  "bitflags 2.6.0",
 ]
