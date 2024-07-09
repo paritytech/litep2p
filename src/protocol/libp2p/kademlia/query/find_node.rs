@@ -104,7 +104,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist");
+            tracing::warn!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist");
             return;
         };
 
