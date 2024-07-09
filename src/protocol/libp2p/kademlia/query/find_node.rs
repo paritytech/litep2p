@@ -187,12 +187,14 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, "get next peer");
 
         let (_, candidate) = self.candidates.pop_first()?;
+        let peer = candidate.peer;
 
+        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "current candidate");
         self.pending.insert(candidate.peer, candidate.clone());
 
         Some(QueryAction::SendMessage {
             query: self.config.query,
-            peer: candidate.peer,
+            peer,
             message: self.kad_message.clone(),
         })
     }
