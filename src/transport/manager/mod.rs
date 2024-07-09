@@ -75,7 +75,7 @@ const SCORE_CONNECT_SUCCESS: i32 = 100i32;
 /// Score for a non-working address.
 const SCORE_CONNECT_FAILURE: i32 = -100i32;
 
-/// TODO:
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionEstablishedResult {
     /// Accept connection and inform `Litep2p` about the connection.
     Accept,
@@ -2255,14 +2255,15 @@ mod tests {
             ));
 
         // remote peer connected to local node
-        manager
+        let established_result = manager
             .on_connection_established(
                 peer,
                 &Endpoint::listener(address1, ConnectionId::from(0usize)),
             )
             .unwrap();
+        assert_eq!(established_result, ConnectionEstablishedResult::Accept);
 
-        // verify that the peer state is `Connected` with no seconary connection
+        // verify that the peer state is `Connected` with no secondary connection
         {
             let peers = manager.peers.read();
             let peer = peers.get(&peer).unwrap();
@@ -2277,13 +2278,14 @@ mod tests {
             }
         }
 
-        // second connection is established, verify that the seconary connection is tracked
-        manager
+        // second connection is established, verify that the secondary connection is tracked
+        let established_result = manager
             .on_connection_established(
                 peer,
                 &Endpoint::listener(address2.clone(), ConnectionId::from(1usize)),
             )
             .unwrap();
+        assert_eq!(established_result, ConnectionEstablishedResult::Accept);
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
@@ -2301,12 +2303,13 @@ mod tests {
         drop(peers);
 
         // tertiary connection is ignored
-        manager
+        let established_result = manager
             .on_connection_established(
                 peer,
                 &Endpoint::listener(address3.clone(), ConnectionId::from(2usize)),
             )
             .unwrap();
+        assert_eq!(established_result, ConnectionEstablishedResult::Reject);
 
         let peers = manager.peers.read();
         let peer = peers.get(&peer).unwrap();
