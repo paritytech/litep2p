@@ -977,14 +977,18 @@ impl TransportManager {
                                 Some(endpoint.connection_id()),
                             ));
                         }
-                        Some(record) => tracing::warn!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            connection_id = ?endpoint.connection_id(),
-                            address = ?endpoint.address(),
-                            dial_record = ?record,
-                            "unknown connection opened as secondary connection, discarding",
-                        ),
+                        Some(record) => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                connection_id = ?endpoint.connection_id(),
+                                address = ?endpoint.address(),
+                                dial_record = ?record,
+                                "unknown connection opened as secondary connection, discarding",
+                            );
+
+                            return Ok(ConnectionEstablishedResult::Reject);
+                        }
                     },
                 },
                 PeerState::Dialing { ref record, .. } => {
