@@ -987,6 +987,9 @@ impl TransportManager {
                                 "unknown connection opened as secondary connection, discarding",
                             );
 
+                            // Preserve the dial record.
+                            *dial_record = Some(record);
+
                             return Ok(ConnectionEstablishedResult::Reject);
                         }
                     },
@@ -2354,12 +2357,6 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&peer.to_bytes()).unwrap(),
             ));
-        let address3 = Multiaddr::empty()
-            .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 10, 64)))
-            .with(Protocol::Tcp(9999))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
 
         // remote peer connected to local node
         let established_result = manager
@@ -2425,6 +2422,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(established_result, ConnectionEstablishedResult::Reject);
+
+        // Accept the proper connection ID.
+        let established_result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::listener(address2.clone(), ConnectionId::from(0usize)),
+            )
+            .unwrap();
+        assert_eq!(established_result, ConnectionEstablishedResult::Accept);
     }
 
     #[tokio::test]
