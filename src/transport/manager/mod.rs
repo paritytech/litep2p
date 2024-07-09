@@ -2328,6 +2328,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn secondary_connection_with_different_dial_endpoint_is_rejected() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
+
+        let peer = PeerId::random();
+        let address1 = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        let address2 = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        let address3 = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 10, 64)))
+            .with(Protocol::Tcp(9999))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        // remote peer connected to local node
+        let established_result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::listener(address1, ConnectionId::from(0usize)),
+            )
+            .unwrap();
+        assert_eq!(established_result, ConnectionEstablishedResult::Accept);
+
+        // verify that the peer state is `Connected` with no secondary connection
+        {
+            let peers = manager.peers.read();
+            let peer = peers.get(&peer).unwrap();
+
+            match &peer.state {
+                PeerState::Connected {
+                    dial_record: None, ..
+                } => {
+                    assert!(peer.secondary_connection.is_none());
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
+
+        // Add a dial record for the peer.
+        {
+            let mut peers = manager.peers.write();
+            let peer_context = peers.get_mut(&peer).unwrap();
+
+            let record = match &peer_context.state {
+                PeerState::Connected { record, .. } => record.clone(),
+                state => panic!("invalid state: {state:?}"),
+            };
+
+            let dial_record = Some(AddressRecord::new(
+                &peer,
+                address2.clone(),
+                0,
+                Some(ConnectionId::from(0usize)),
+            ));
+
+            peer_context.state = PeerState::Connected {
+                record,
+                dial_record: dial_record,
+            };
+        }
+
+        // second connection is from a different endpoint should fail.
+        let established_result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::listener(address2.clone(), ConnectionId::from(1usize)),
+            )
+            .unwrap();
+        assert_eq!(established_result, ConnectionEstablishedResult::Reject);
+
+        // Multiple secondary connections should also fail.
+        let established_result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::listener(address2.clone(), ConnectionId::from(1usize)),
+            )
+            .unwrap();
+        assert_eq!(established_result, ConnectionEstablishedResult::Reject);
+    }
+
+    #[tokio::test]
     async fn secondary_connection_closed() {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
