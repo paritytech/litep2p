@@ -399,6 +399,7 @@ impl Kademlia {
                             target: LOG_TARGET,
                             ?peer,
                             ?target,
+                            ?query_id,
                             "handle `FIND_NODE` response",
                         );
 

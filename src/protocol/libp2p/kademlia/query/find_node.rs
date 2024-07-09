@@ -104,7 +104,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::debug!(target: LOG_TARGET, ?peer, "pending peer doesn't exist");
+            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist");
             return;
         };
 
@@ -113,8 +113,10 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
     /// Register `FIND_NODE` response from `peer`.
     pub fn register_response(&mut self, peer: PeerId, peers: Vec<KademliaPeer>) {
+        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer");
+
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::warn!(target: LOG_TARGET, ?peer, "received response from peer but didn't expect it");
+            tracing::warn!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer but didn't expect it");
             debug_assert!(false);
             return;
         };
