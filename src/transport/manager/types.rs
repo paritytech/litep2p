@@ -55,7 +55,7 @@ pub enum PeerState {
         ///
         /// While the local node was dialing a remote peer, the remote peer might've dialed
         /// the local node and connection was established successfully. This dial address
-        /// is stored for processing later when the dial attempt conclused as either
+        /// is stored for processing later when the dial attempt concluded as either
         /// successful/failed.
         dial_record: Option<AddressRecord>,
     },
