@@ -135,7 +135,7 @@ impl GetRecordContext {
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::warn!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist");
+            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist");
             return;
         };
 
@@ -152,7 +152,7 @@ impl GetRecordContext {
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer");
 
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::warn!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer but didn't expect it");
+            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer but didn't expect it");
             return;
         };
 
