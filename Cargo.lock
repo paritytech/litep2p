@@ -2800,7 +2800,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "pin-project",
  "prost 0.12.6",
- "prost-build",
+ "prost-build 0.13.1",
  "quickcheck",
  "quinn",
  "rand 0.8.5",
@@ -3862,6 +3862,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e13db3d3fde688c61e2446b4d843bc27a7e8af269a69440c0308021dc92333cc"
+dependencies = [
+ "bytes",
+ "prost-derive 0.13.1",
+]
+
+[[package]]
 name = "prost-build"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3876,11 +3886,32 @@ dependencies = [
  "petgraph",
  "prettyplease 0.1.25",
  "prost 0.11.9",
- "prost-types",
+ "prost-types 0.11.9",
  "regex",
  "syn 1.0.109",
  "tempfile",
  "which",
+]
+
+[[package]]
+name = "prost-build"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5bb182580f71dd070f88d01ce3de9f4da5021db7115d2e1c3605a754153b77c1"
+dependencies = [
+ "bytes",
+ "heck",
+ "itertools 0.12.1",
+ "log",
+ "multimap",
+ "once_cell",
+ "petgraph",
+ "prettyplease 0.2.20",
+ "prost 0.13.1",
+ "prost-types 0.13.1",
+ "regex",
+ "syn 2.0.68",
+ "tempfile",
 ]
 
 [[package]]
@@ -3910,12 +3941,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost-derive"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18bec9b0adc4eba778b33684b7ba3e7137789434769ee3ce3930463ef904cfca"
+dependencies = [
+ "anyhow",
+ "itertools 0.12.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.68",
+]
+
+[[package]]
 name = "prost-types"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "213622a1460818959ac1181aaeb2dc9c7f63df720db7d788b3e24eacd1983e13"
 dependencies = [
  "prost 0.11.9",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cee5168b05f49d4b0ca581206eb14a7b22fafd963efe729ac48eb03266e25cc2"
+dependencies = [
+ "prost 0.13.1",
 ]
 
 [[package]]
@@ -4637,7 +4690,7 @@ dependencies = [
  "futures",
  "libp2p-identity",
  "parity-scale-codec",
- "prost-build",
+ "prost-build 0.11.9",
  "sc-consensus",
  "sp-consensus",
  "sp-consensus-grandpa",
@@ -5003,9 +5056,9 @@ dependencies = [
 
 [[package]]
 name = "simple-dns"
-version = "0.5.7"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cae9a3fcdadafb6d97f4c0e007e4247b114ee0f119f650c3cbf3a8b3a1479694"
+checksum = "3625957337d21eb40a7125c2df5c92db5c0267195d66b297948c816ea9c33157"
 dependencies = [
  "bitflags 2.6.0",
 ]
