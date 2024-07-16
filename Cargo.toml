@@ -26,7 +26,7 @@ network-interface = "1.1.1"
 parking_lot = "0.12.3"
 pin-project = "1.1.0"
 prost = "0.12.6"
-quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls", "runtime-tokio"] }
+quinn = { version = "0.10.2", default-features = false, features = ["tls-rustls", "runtime-tokio"] }
 rand = { version = "0.8.0", features = ["getrandom"] }
 rcgen = "0.10.0"
 ring = "0.16.20"
