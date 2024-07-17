@@ -75,7 +75,7 @@ const SCORE_CONNECT_SUCCESS: i32 = 100i32;
 /// Score for a non-working address.
 const SCORE_CONNECT_FAILURE: i32 = -100i32;
 
-/// TODO:
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionEstablishedResult {
     /// Accept connection and inform `Litep2p` about the connection.
     Accept,
@@ -3430,5 +3430,159 @@ mod tests {
             assert!(!peer_context.addresses.contains(&dial_address));
             assert!(!peer_context.addresses.contains(&second_address));
         }
+    }
+
+    #[tokio::test]
+    async fn reject_unknown_secondary_connections_with_different_connection_ids() {
+        // This is the repro case for https://github.com/paritytech/litep2p/issues/172.
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
+
+        // Random peer ID.
+        let peer = PeerId::random();
+
+        let setup_dial_addr = |connection_id: u16| {
+            let dial_address = Multiaddr::empty()
+                .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+                .with(Protocol::Tcp(8888 + connection_id))
+                .with(Protocol::P2p(
+                    Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+                ));
+            let connection_id = ConnectionId::from(connection_id as usize);
+
+            (dial_address, connection_id)
+        };
+
+        // Setup addresses.
+        let (first_addr, first_connection_id) = setup_dial_addr(0);
+        let (second_addr, _second_connection_id) = setup_dial_addr(1);
+        let (remote_addr, remote_connection_id) = setup_dial_addr(2);
+
+        // Step 1. Dialing state to peer.
+        manager.dial_address(first_addr.clone()).await.unwrap();
+        {
+            let peers = manager.peers.read();
+            let peer_context = peers.get(&peer).unwrap();
+            match &peer_context.state {
+                PeerState::Dialing { record } => {
+                    assert_eq!(record.address(), &first_addr);
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
+
+        // Step 2. Connection established by the remote peer.
+        let result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::listener(remote_addr.clone(), remote_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
+        {
+            let peers = manager.peers.read();
+            let peer_context = peers.get(&peer).unwrap();
+            match &peer_context.state {
+                PeerState::Connected {
+                    record,
+                    dial_record,
+                } => {
+                    assert_eq!(record.address(), &remote_addr);
+                    assert_eq!(record.connection_id(), &Some(remote_connection_id));
+
+                    let dial_record = dial_record.as_ref().unwrap();
+                    assert_eq!(dial_record.address(), &first_addr);
+                    assert_eq!(dial_record.connection_id(), &Some(first_connection_id))
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
+
+        // Step 3. The peer disconnects while we have a dialing in flight.
+        let event = manager.on_connection_closed(peer, remote_connection_id).unwrap().unwrap();
+        match event {
+            TransportEvent::ConnectionClosed {
+                peer: event_peer,
+                connection_id: event_connection_id,
+            } => {
+                assert_eq!(peer, event_peer);
+                assert_eq!(event_connection_id, remote_connection_id);
+            }
+            event => panic!("invalid event: {event:?}"),
+        }
+        {
+            let peers = manager.peers.read();
+            let peer_context = peers.get(&peer).unwrap();
+            match &peer_context.state {
+                PeerState::Disconnected { dial_record } => {
+                    let dial_record = dial_record.as_ref().unwrap();
+                    assert_eq!(dial_record.address(), &first_addr);
+                    assert_eq!(dial_record.connection_id(), &Some(first_connection_id));
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
+
+        // Step 4. Dial by the second address and expect to not overwrite the state.
+        manager.dial_address(second_addr.clone()).await.unwrap();
+        // The state remains unchanged since we already have a dialing in flight.
+        {
+            let peers = manager.peers.read();
+            let peer_context = peers.get(&peer).unwrap();
+            match &peer_context.state {
+                PeerState::Disconnected { dial_record } => {
+                    let dial_record = dial_record.as_ref().unwrap();
+                    assert_eq!(dial_record.address(), &first_addr);
+                    assert_eq!(dial_record.connection_id(), &Some(first_connection_id));
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
+
+        // Step 5. Remote peer reconnects again.
+        let result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::listener(remote_addr.clone(), remote_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
+        {
+            let peers = manager.peers.read();
+            let peer_context = peers.get(&peer).unwrap();
+            match &peer_context.state {
+                PeerState::Connected {
+                    record,
+                    dial_record,
+                } => {
+                    assert_eq!(record.address(), &remote_addr);
+                    assert_eq!(record.connection_id(), &Some(remote_connection_id));
+
+                    // We have not overwritten the first dial record in step 4.
+                    let dial_record = dial_record.as_ref().unwrap();
+                    assert_eq!(dial_record.address(), &first_addr);
+                    assert_eq!(dial_record.connection_id(), &Some(first_connection_id));
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
+
+        // Step 6. First dial responds.
+        let result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::dialer(first_addr.clone(), first_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
     }
 }
