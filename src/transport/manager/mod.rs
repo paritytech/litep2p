@@ -629,6 +629,12 @@ impl TransportManager {
                 Entry::Occupied(occupied) => {
                     let context = occupied.into_mut();
 
+                    // `context.addresses.insert` does not overwrite the existing record.
+                    // This inserts the record with a score of 0 if it doesn't exist, for
+                    // keeping track of the potential address. This becomes useful for
+                    // consecutive `fn dial` calls.
+                    context.addresses.insert(record.clone());
+
                     tracing::debug!(
                         target: LOG_TARGET,
                         peer = ?remote_peer_id,
@@ -655,7 +661,6 @@ impl TransportManager {
                             return Ok(());
                         }
                         PeerState::Disconnected { dial_record: None } => {
-                            // TODO: verify that the address is not in `context.addresses` already.
                             context.state = PeerState::Dialing {
                                 record: record.clone(),
                             };
