@@ -102,7 +102,7 @@ impl AddressRecord {
 
     /// Update score of an address.
     pub fn update_score(&mut self, score: i32) {
-        self.score += score;
+        self.score = self.score.saturating_add(score);
     }
 
     /// Set `ConnectionId` for the [`AddressRecord`].
