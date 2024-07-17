@@ -2997,6 +2997,25 @@ mod tests {
         };
 
         manager.dial(peer).await.unwrap();
+
+        // Check state is unaltered.
+        {
+            let peers = manager.peers.read();
+            let peer_context = peers.get(&peer).unwrap();
+
+            match &peer_context.state {
+                PeerState::Dialing { record } => {
+                    assert_eq!(
+                        record.address(),
+                        &Multiaddr::empty()
+                            .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                            .with(Protocol::Tcp(8888))
+                            .with(Protocol::P2p(Multihash::from(peer)))
+                    );
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+        }
     }
 
     #[tokio::test]
@@ -3335,6 +3354,81 @@ mod tests {
                 assert_eq!(record.connection_id(), &Some(connection_id));
             }
             state => panic!("invalid peer state: {state:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn do_not_overwrite_dial_addresses() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+        );
+        let peer = PeerId::random();
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        let connection_id = ConnectionId::from(0);
+        let transport = Box::new({
+            let mut transport = DummyTransport::new();
+            transport.inject_event(TransportEvent::ConnectionEstablished {
+                peer,
+                endpoint: Endpoint::listener(dial_address.clone(), connection_id),
+            });
+            transport
+        });
+        manager.register_transport(SupportedTransport::Tcp, transport);
+
+        // First dial attempt.
+        manager.dial_address(dial_address.clone()).await.unwrap();
+        // check the state of the peer.
+        {
+            let peers = manager.peers.read();
+            let peer_context = peers.get(&peer).unwrap();
+            match &peer_context.state {
+                PeerState::Dialing { record } => {
+                    assert_eq!(record.address(), &dial_address);
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+
+            // The address is not saved yet.
+            assert!(!peer_context.addresses.contains(&dial_address));
+        }
+
+        let second_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8889))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        // Second dial attempt with different address.
+        manager.dial_address(second_address.clone()).await.unwrap();
+        // check the state of the peer.
+        {
+            let peers = manager.peers.read();
+            let peer_context = peers.get(&peer).unwrap();
+            match &peer_context.state {
+                // Must still be dialing the first address.
+                PeerState::Dialing { record } => {
+                    assert_eq!(record.address(), &dial_address);
+                }
+                state => panic!("invalid state: {state:?}"),
+            }
+
+            // The address is saved.
+            assert!(!peer_context.addresses.contains(&dial_address));
+            assert!(peer_context.addresses.contains(&second_address));
         }
     }
 }
