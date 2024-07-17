@@ -633,7 +633,8 @@ impl TransportManager {
                     // This inserts the record with a score of 0 if it doesn't exist, for
                     // keeping track of the potential address. This becomes useful for
                     // consecutive `fn dial` calls.
-                    context.addresses.insert(record.clone());
+                    // However, the record score cannot be updated in the future.
+                    // TODO: context.addresses.insert(record.clone());
 
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -3426,9 +3427,8 @@ mod tests {
                 state => panic!("invalid state: {state:?}"),
             }
 
-            // The address is saved.
             assert!(!peer_context.addresses.contains(&dial_address));
-            assert!(peer_context.addresses.contains(&second_address));
+            assert!(!peer_context.addresses.contains(&second_address));
         }
     }
 }
