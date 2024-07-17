@@ -44,7 +44,7 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet},
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -435,7 +435,7 @@ impl TransportManager {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?peer,
-                "peer is aready being dialed",
+                "peer is already being dialed",
             );
 
             peers.insert(
@@ -625,35 +625,53 @@ impl TransportManager {
         {
             let mut peers = self.peers.write();
 
-            match peers.get_mut(&remote_peer_id) {
-                None => {
-                    drop(peers);
-                    self.peers.write().insert(
-                        remote_peer_id,
-                        PeerContext {
-                            state: PeerState::Dialing {
-                                record: record.clone(),
-                            },
-                            addresses: AddressStore::new(),
-                            secondary_connection: None,
-                        },
+            match peers.entry(remote_peer_id) {
+                Entry::Occupied(occupied) => {
+                    let context = occupied.into_mut();
+
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?remote_peer_id,
+                        state = ?context.state,
+                        "peer state exists",
                     );
+
+                    match context.state {
+                        PeerState::Connected { .. } => {
+                            return Err(Error::AlreadyConnected);
+                        }
+                        PeerState::Dialing { .. } | PeerState::Opening { .. } => {
+                            return Ok(());
+                        }
+                        PeerState::Disconnected {
+                            dial_record: Some(_),
+                        } => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                peer = ?remote_peer_id,
+                                state = ?context.state,
+                                "peer is already being dialed from a disconnected state"
+                            );
+
+                            return Ok(());
+                        }
+                        PeerState::Disconnected { dial_record: None } => {
+                            context.state = PeerState::Dialing {
+                                record: record.clone(),
+                            };
+                        }
+                    }
                 }
-                Some(PeerContext {
-                    state:
-                        PeerState::Dialing { .. }
-                        | PeerState::Connected { .. }
-                        | PeerState::Opening { .. },
-                    ..
-                }) => return Ok(()),
-                Some(PeerContext { ref mut state, .. }) => {
-                    // TODO: verify that the address is not in `addresses` already
-                    // addresses.insert(address.clone());
-                    *state = PeerState::Dialing {
-                        record: record.clone(),
-                    };
+                Entry::Vacant(vacant) => {
+                    vacant.insert(PeerContext {
+                        state: PeerState::Dialing {
+                            record: record.clone(),
+                        },
+                        addresses: AddressStore::new(),
+                        secondary_connection: None,
+                    });
                 }
-            }
+            };
         }
 
         self.transports
