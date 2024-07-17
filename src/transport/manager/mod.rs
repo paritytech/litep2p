@@ -721,14 +721,13 @@ impl TransportManager {
                         ?peer,
                         ?connection_id,
                         ?record,
-                        "unknown dial failure, ignore secondary dial failure",
+                        "unknown dial failure for a dialing peer",
                     );
 
                     context.state = PeerState::Dialing {
                         record: record.clone(),
                     };
                     debug_assert!(false);
-
                     return Ok(());
                 }
 
@@ -745,6 +744,23 @@ impl TransportManager {
                 record,
                 dial_record: Some(mut dial_record),
             } => {
+                if dial_record.connection_id() != &Some(connection_id) {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?connection_id,
+                        ?record,
+                        "unknown dial failure for a connected peer",
+                    );
+
+                    context.state = PeerState::Connected {
+                        record,
+                        dial_record: Some(dial_record),
+                    };
+                    debug_assert!(false);
+                    return Ok(());
+                }
+
                 dial_record.update_score(SCORE_CONNECT_FAILURE);
                 context.addresses.insert(dial_record);
 
@@ -763,6 +779,22 @@ impl TransportManager {
                     ?dial_record,
                     "dial failed for a disconnected peer",
                 );
+
+                if dial_record.connection_id() != &Some(connection_id) {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?connection_id,
+                        ?dial_record,
+                        "unknown dial failure for a disconnected peer",
+                    );
+
+                    context.state = PeerState::Disconnected {
+                        dial_record: Some(dial_record),
+                    };
+                    debug_assert!(false);
+                    return Ok(());
+                }
 
                 dial_record.update_score(SCORE_CONNECT_FAILURE);
                 context.addresses.insert(dial_record);
@@ -1085,9 +1117,9 @@ impl TransportManager {
                     });
 
                     // since an inbound connection was removed, the outbound connection can be
-                    // removed from pendind dials
+                    // removed from pending dials
                     //
-                    // all records have the same `ConnectionId` so it doens't matter which of them
+                    // all records have the same `ConnectionId` so it doesn't matter which of them
                     // is used to remove the pending dial
                     self.pending_connections.remove(
                         &records
