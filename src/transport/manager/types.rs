@@ -97,7 +97,7 @@ pub struct PeerContext {
     /// Peer state.
     pub state: PeerState,
 
-    /// Seconary connection, if it's open.
+    /// Secondary connection, if it's open.
     pub secondary_connection: Option<AddressRecord>,
 
     /// Known addresses of peer.
