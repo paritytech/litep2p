@@ -652,10 +652,10 @@ impl TransportManager {
                                 state = ?context.state,
                                 "peer is already being dialed from a disconnected state"
                             );
-
                             return Ok(());
                         }
                         PeerState::Disconnected { dial_record: None } => {
+                            // TODO: verify that the address is not in `context.addresses` already.
                             context.state = PeerState::Dialing {
                                 record: record.clone(),
                             };
@@ -702,7 +702,7 @@ impl TransportManager {
                 target: LOG_TARGET,
                 ?peer,
                 ?connection_id,
-                "dial failed for a peer that doens't exist",
+                "dial failed for a peer that doesn't exist",
             );
             debug_assert!(false);
 
@@ -715,6 +715,22 @@ impl TransportManager {
         ) {
             PeerState::Dialing { ref mut record } => {
                 debug_assert_eq!(record.connection_id(), &Some(connection_id));
+                if record.connection_id() != &Some(connection_id) {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?connection_id,
+                        ?record,
+                        "unknown dial failure, ignore secondary dial failure",
+                    );
+
+                    context.state = PeerState::Dialing {
+                        record: record.clone(),
+                    };
+                    debug_assert!(false);
+
+                    return Ok(());
+                }
 
                 record.update_score(SCORE_CONNECT_FAILURE);
                 context.addresses.insert(record.clone());
