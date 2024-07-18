@@ -122,8 +122,13 @@ impl RoutingTable {
 
     /// Add known peer to [`RoutingTable`].
     ///
-    /// In order to bootstrap the lookup process, the routing table must be aware of at least one
-    /// node and of its addresses. The insert operation is ignored
+    /// In order to bootstrap the lookup process, the routing table must be aware of
+    /// at least one node and of its addresses.
+    ///
+    /// The operation is ignored when:
+    ///  - the provided addresses are empty
+    ///  - the local node is being added
+    ///  - the routing table is full
     pub fn add_known_peer(
         &mut self,
         peer: PeerId,
@@ -151,27 +156,31 @@ impl RoutingTable {
             })
             .collect();
 
-        match (self.entry(Key::from(peer)), addresses.is_empty()) {
-            (KBucketEntry::Occupied(entry), false) => {
+        if addresses.is_empty() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "tried to add zero addresses to the routing table"
+            );
+            return;
+        }
+
+        match self.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
                 entry.addresses = addresses;
             }
-            (mut entry @ KBucketEntry::Vacant(_), false) => {
+            mut entry @ KBucketEntry::Vacant(_) => {
                 entry.insert(KademliaPeer::new(peer, addresses, connection));
             }
-            (KBucketEntry::LocalNode, _) => tracing::warn!(
+            KBucketEntry::LocalNode => tracing::warn!(
                 target: LOG_TARGET,
                 ?peer,
                 "tried to add local node to routing table",
             ),
-            (KBucketEntry::NoSlot, _) => tracing::trace!(
+            KBucketEntry::NoSlot => tracing::trace!(
                 target: LOG_TARGET,
                 ?peer,
                 "routing table full, cannot add new entry",
-            ),
-            (_, true) => tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                "tried to add zero addresses to the routing table",
             ),
         }
     }
