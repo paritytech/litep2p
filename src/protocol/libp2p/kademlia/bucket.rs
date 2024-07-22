@@ -68,13 +68,17 @@ impl KBucket {
         }
     }
 
+    /// Get the index position of the key in the k-bucket.
+    fn get_index<K: Clone>(&self, key: &Key<K>) -> Option<usize> {
+        self.nodes.iter().position(|p| p.key.as_ref() == key.as_ref())
+    }
+
     /// Get entry into the bucket.
     // TODO: this is horrible code
     pub fn entry<K: Clone>(&mut self, key: Key<K>) -> KBucketEntry<'_> {
-        for i in 0..self.nodes.len() {
-            if self.nodes[i].key == key {
-                return KBucketEntry::Occupied(&mut self.nodes[i]);
-            }
+        // Return the entry if present.
+        if let Some(index) = self.get_index(&key) {
+            return KBucketEntry::Occupied(&mut self.nodes[index]);
         }
 
         if self.nodes.len() < 20 {
@@ -83,6 +87,7 @@ impl KBucket {
                 vec![],
                 ConnectionType::NotConnected,
             ));
+
             let len = self.nodes.len() - 1;
             return KBucketEntry::Vacant(&mut self.nodes[len]);
         }
