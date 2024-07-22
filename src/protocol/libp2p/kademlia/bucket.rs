@@ -94,7 +94,7 @@ impl KBucket {
 
         for i in 0..self.nodes.len() {
             match self.nodes[i].connection {
-                ConnectionType::NotConnected | ConnectionType::CannotConnect => {
+                ConnectionType::NotConnected => {
                     return KBucketEntry::Vacant(&mut self.nodes[i]);
                 }
                 _ => continue,

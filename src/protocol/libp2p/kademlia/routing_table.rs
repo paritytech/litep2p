@@ -445,7 +445,7 @@ mod tests {
         entry.insert(KademliaPeer::new(
             peer,
             vec!["/ip6/::1/tcp/8888".parse().unwrap()],
-            ConnectionType::CanConnect,
+            ConnectionType::Connected,
         ));
 
         // verify the node is still there
@@ -456,7 +456,7 @@ mod tests {
             KBucketEntry::Occupied(&mut KademliaPeer::new(
                 peer,
                 addresses,
-                ConnectionType::CanConnect,
+                ConnectionType::Connected,
             ))
         );
     }
@@ -497,7 +497,7 @@ mod tests {
         entry.insert(KademliaPeer::new(
             peer,
             vec!["/ip6/::1/tcp/8888".parse().unwrap()],
-            ConnectionType::CanConnect,
+            ConnectionType::Connected,
         ));
     }
 
