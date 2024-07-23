@@ -36,6 +36,7 @@ use crate::{
         Direction, TransportEvent, TransportService,
     },
     substream::Substream,
+    transport::Endpoint,
     types::SubstreamId,
     PeerId,
 };
@@ -194,13 +195,22 @@ impl Kademlia {
     }
 
     /// Connection established to remote peer.
-    fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
+    fn on_connection_established(
+        &mut self,
+        peer: PeerId,
+        _endpoint: Endpoint,
+    ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
-                    entry.connection = ConnectionType::Connected;
+                match self.routing_table.entry(Key::from(peer)) {
+                    KBucketEntry::Occupied(entry) => {
+                        entry.connection = ConnectionType::Connected;
+                    }
+                    entry => {
+                        tracing::warn!(target: LOG_TARGET, ?peer, ?entry, "failed to update routing table on connection");
+                    }
                 }
 
                 let Some(actions) = self.pending_dials.remove(&peer) else {
@@ -263,8 +273,13 @@ impl Kademlia {
             });
         }
 
-        if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
-            entry.connection = ConnectionType::NotConnected;
+        match self.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                entry.connection = ConnectionType::NotConnected;
+            }
+            entry => {
+                tracing::warn!(target: LOG_TARGET, ?peer, ?entry, "failed to update routing table on disconnect");
+            }
         }
     }
 
@@ -714,8 +729,8 @@ impl Kademlia {
 
             tokio::select! {
                 event = self.service.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer) {
+                    Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
+                        if let Err(error) = self.on_connection_established(peer, endpoint) {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to handle established connection");
                         }
                     }
