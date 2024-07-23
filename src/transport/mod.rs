@@ -104,6 +104,22 @@ impl Endpoint {
     pub fn is_listener(&self) -> bool {
         std::matches!(self, Self::Listener { .. })
     }
+
+    /// Transform the endpoint into its parts.
+    ///
+    /// This is useful when the direction of the connection is not needed.
+    pub fn into_parts(self) -> (Multiaddr, ConnectionId) {
+        match self {
+            Self::Dialer {
+                address,
+                connection_id,
+            } => (address, connection_id),
+            Self::Listener {
+                address,
+                connection_id,
+            } => (address, connection_id),
+        }
+    }
 }
 
 /// Transport event.

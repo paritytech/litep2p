@@ -195,11 +195,7 @@ impl Kademlia {
     }
 
     /// Connection established to remote peer.
-    fn on_connection_established(
-        &mut self,
-        peer: PeerId,
-        _endpoint: Endpoint,
-    ) -> crate::Result<()> {
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
         match self.peers.entry(peer) {
@@ -207,6 +203,14 @@ impl Kademlia {
                 match self.routing_table.entry(Key::from(peer)) {
                     KBucketEntry::Occupied(entry) => {
                         entry.connection = ConnectionType::Connected;
+                    }
+                    KBucketEntry::Vacant(old) => {
+                        let (endpoint_address, _) = endpoint.into_parts();
+
+                        old.key = Key::from(peer);
+                        old.peer = peer;
+                        old.addresses = vec![endpoint_address];
+                        old.connection = ConnectionType::Connected;
                     }
                     entry => {
                         tracing::warn!(target: LOG_TARGET, ?peer, ?entry, "failed to update routing table on connection");
