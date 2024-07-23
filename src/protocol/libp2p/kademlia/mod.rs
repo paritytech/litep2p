@@ -204,16 +204,23 @@ impl Kademlia {
                     KBucketEntry::Occupied(entry) => {
                         entry.connection = ConnectionType::Connected;
                     }
-                    KBucketEntry::Vacant(old) => {
-                        let (endpoint_address, _) = endpoint.into_parts();
-
-                        old.key = Key::from(peer);
-                        old.peer = peer;
-                        old.addresses = vec![endpoint_address];
-                        old.connection = ConnectionType::Connected;
+                    mut vacant @ KBucketEntry::Vacant(_) => {
+                        // Can only insert a new peer if the routing table update mode is set to
+                        // automatic.
+                        //
+                        // Otherwise, the user is responsible of adding the peer manually if it
+                        // deems necessary.
+                        if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
+                            let (endpoint_address, _) = endpoint.into_parts();
+                            vacant.insert(KademliaPeer::new(
+                                peer,
+                                vec![endpoint_address],
+                                ConnectionType::Connected,
+                            ));
+                        }
                     }
                     entry => {
-                        tracing::warn!(target: LOG_TARGET, ?peer, ?entry, "failed to update routing table on connection");
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?entry, "failed to update routing table on connection");
                     }
                 }
 
@@ -277,13 +284,12 @@ impl Kademlia {
             });
         }
 
-        match self.routing_table.entry(Key::from(peer)) {
-            KBucketEntry::Occupied(entry) => {
-                entry.connection = ConnectionType::NotConnected;
-            }
-            entry => {
-                tracing::warn!(target: LOG_TARGET, ?peer, ?entry, "failed to update routing table on disconnect");
-            }
+        // Don't add the peer to the routing table into a vacant (or already disconnected) entry.
+        //
+        // Update the state if the peer could enter the kbucket during `add_known_peer` or
+        // `on_connection_established`.
+        if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
+            entry.connection = ConnectionType::NotConnected;
         }
     }
 
