@@ -203,6 +203,11 @@ impl Kademlia {
                 match self.routing_table.entry(Key::from(peer)) {
                     KBucketEntry::Occupied(entry) => {
                         entry.connection = ConnectionType::Connected;
+
+                        // Update the address if not already present.
+                        if !entry.addresses.iter().any(|address| address == endpoint.address()) {
+                            entry.addresses.push(endpoint.address().clone());
+                        }
                     }
                     mut vacant @ KBucketEntry::Vacant(_) => {
                         // Can only insert a new peer if the routing table update mode is set to
@@ -211,10 +216,9 @@ impl Kademlia {
                         // Otherwise, the user is responsible of adding the peer manually if it
                         // deems necessary.
                         if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
-                            let (endpoint_address, _) = endpoint.into_parts();
                             vacant.insert(KademliaPeer::new(
                                 peer,
-                                vec![endpoint_address],
+                                vec![endpoint.address().clone()],
                                 ConnectionType::Connected,
                             ));
                         }
