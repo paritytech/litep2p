@@ -68,17 +68,19 @@ impl KBucket {
         }
     }
 
-    /// Get the index position of the key in the k-bucket.
-    fn get_index<K: Clone>(&self, key: &Key<K>) -> Option<usize> {
-        self.nodes.iter().position(|p| p.key.as_ref() == key.as_ref())
-    }
-
     /// Get entry into the bucket.
-    // TODO: this is horrible code
     pub fn entry<K: Clone>(&mut self, key: Key<K>) -> KBucketEntry<'_> {
-        // Return the entry if present.
-        if let Some(index) = self.get_index(&key) {
-            return KBucketEntry::Occupied(&mut self.nodes[index]);
+        let mut replace_candidate = None;
+        for (index, node) in self.nodes.iter().enumerate() {
+            // If the node is already present in the k-bucket, return it.
+            if node.key.as_ref() == key.as_ref() {
+                return KBucketEntry::Occupied(&mut self.nodes[index]);
+            }
+
+            // Cache a not-connected node to replace it if necessary.
+            if node.connection == ConnectionType::NotConnected {
+                replace_candidate = Some(index);
+            }
         }
 
         if self.nodes.len() < 20 {
@@ -88,17 +90,12 @@ impl KBucket {
                 ConnectionType::NotConnected,
             ));
 
-            let len = self.nodes.len() - 1;
-            return KBucketEntry::Vacant(&mut self.nodes[len]);
+            let index: usize = self.nodes.len() - 1;
+            return KBucketEntry::Vacant(&mut self.nodes[index]);
         }
 
-        for i in 0..self.nodes.len() {
-            match self.nodes[i].connection {
-                ConnectionType::NotConnected => {
-                    return KBucketEntry::Vacant(&mut self.nodes[i]);
-                }
-                _ => continue,
-            }
+        if let Some(replace_candidate) = replace_candidate {
+            return KBucketEntry::Vacant(&mut self.nodes[replace_candidate]);
         }
 
         KBucketEntry::NoSlot
