@@ -20,6 +20,10 @@
 
 //! Limits for the transport manager.
 
+use crate::{transport::Endpoint, types::ConnectionId, PeerId};
+
+use std::collections::{HashMap, HashSet};
+
 /// Configuration for the connection limits.
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionLimitsConfig {
@@ -34,12 +38,6 @@ pub struct ConnectionLimitsConfig {
 }
 
 impl ConnectionLimitsConfig {
-    /// Configures the maximum number of connections that can be established.
-    pub fn max_connections(mut self, limit: Option<usize>) -> Self {
-        self.max_connections = limit;
-        self
-    }
-
     /// Configures the maximum number of incoming connections that can be established.
     pub fn max_incoming_connections(mut self, limit: Option<usize>) -> Self {
         self.max_incoming_connections = limit;
@@ -56,5 +54,109 @@ impl ConnectionLimitsConfig {
     pub fn max_connections_per_peer(mut self, limit: Option<usize>) -> Self {
         self.max_connections_per_peer = limit;
         self
+    }
+
+    /// Configures the maximum number of connections that can be established.
+    pub fn max_connections(mut self, limit: Option<usize>) -> Self {
+        self.max_connections = limit;
+        self
+    }
+}
+
+/// Error type for connection limits.
+enum ConnectionLimitsError {
+    /// Maximum number of incoming connections exceeded.
+    MaxIncomingConnectionsExceeded,
+    /// Maximum number of outgoing connections exceeded.
+    MaxOutgoingConnectionsExceeded,
+    /// Maximum number of connections per peer exceeded.
+    MaxConnectionsPerPeerExceeded,
+    /// Maximum number of connections exceeded.
+    MaxConnectionsExceeded,
+}
+
+/// Connection limits.
+#[derive(Debug, Clone)]
+pub struct ConnectionLimits {
+    /// Configuration for the connection limits.
+    config: ConnectionLimitsConfig,
+
+    /// Established incoming connections.
+    incoming_connections: HashSet<ConnectionId>,
+    /// Established outgoing connections.
+    outgoing_connections: HashSet<ConnectionId>,
+    /// Maximum number of connections that can be established per peer.
+    connections_per_peer: HashMap<PeerId, HashSet<ConnectionId>>,
+}
+
+impl ConnectionLimits {
+    /// Called when a new connection is established.
+    pub fn on_connection_established(
+        &mut self,
+        peer: PeerId,
+        connection_id: ConnectionId,
+        is_listener: bool,
+    ) -> Result<(), ConnectionLimitsError> {
+        // incoming
+        // outgoing
+        // per peer
+        // total
+
+        // Check connection limits.
+        if is_listener {
+            if let Some(max_incoming_connections) = self.config.max_incoming_connections {
+                if self.incoming_connections.len() >= max_incoming_connections {
+                    return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded);
+                }
+            }
+        } else {
+            if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
+                if self.outgoing_connections.len() >= max_outgoing_connections {
+                    return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded);
+                }
+            }
+        }
+
+        if let Some(max_connections_per_peer) = self.config.max_connections_per_peer {
+            if let Some(connections) = self.connections_per_peer.get(&peer) {
+                if connections.len() >= max_connections_per_peer {
+                    return Err(ConnectionLimitsError::MaxConnectionsPerPeerExceeded);
+                }
+            }
+        }
+
+        if let Some(max_connections) = self.config.max_connections {
+            if self.incoming_connections.len() + self.outgoing_connections.len() >= max_connections
+            {
+                return Err(ConnectionLimitsError::MaxConnectionsExceeded);
+            }
+        }
+
+        // Keep track of the connection.
+        if is_listener {
+            self.incoming_connections.insert(connection_id);
+        } else {
+            self.outgoing_connections.insert(connection_id);
+        }
+        self.connections_per_peer.entry(peer).or_default().insert(connection_id);
+
+        Ok(())
+    }
+
+    /// Called when a connection is closed.
+    pub fn on_connection_closed(
+        &mut self,
+        peer: PeerId,
+        connection_id: ConnectionId,
+        is_listener: bool,
+    ) {
+        if is_listener {
+            self.incoming_connections.remove(&connection_id);
+        } else {
+            self.outgoing_connections.remove(&connection_id);
+        }
+        if let Some(connections) = self.connections_per_peer.get_mut(&peer) {
+            connections.remove(&connection_id);
+        }
     }
 }
