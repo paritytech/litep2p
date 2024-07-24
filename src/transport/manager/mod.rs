@@ -57,6 +57,7 @@ pub use handle::{TransportHandle, TransportManagerHandle};
 pub use types::SupportedTransport;
 
 mod address;
+pub mod limits;
 mod types;
 
 pub(crate) mod handle;
