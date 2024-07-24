@@ -20,15 +20,13 @@
 
 //! Limits for the transport manager.
 
-use crate::{transport::Endpoint, types::ConnectionId, PeerId};
+use crate::{types::ConnectionId, PeerId};
 
 use std::collections::{HashMap, HashSet};
 
 /// Configuration for the connection limits.
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionLimitsConfig {
-    /// Maximum number of connections that can be established.
-    max_connections: Option<usize>,
     /// Maximum number of incoming connections that can be established.
     max_incoming_connections: Option<usize>,
     /// Maximum number of outgoing connections that can be established.
@@ -55,12 +53,6 @@ impl ConnectionLimitsConfig {
         self.max_connections_per_peer = limit;
         self
     }
-
-    /// Configures the maximum number of connections that can be established.
-    pub fn max_connections(mut self, limit: Option<usize>) -> Self {
-        self.max_connections = limit;
-        self
-    }
 }
 
 /// Error type for connection limits.
@@ -71,8 +63,6 @@ enum ConnectionLimitsError {
     MaxOutgoingConnectionsExceeded,
     /// Maximum number of connections per peer exceeded.
     MaxConnectionsPerPeerExceeded,
-    /// Maximum number of connections exceeded.
-    MaxConnectionsExceeded,
 }
 
 /// Connection limits.
@@ -90,6 +80,19 @@ pub struct ConnectionLimits {
 }
 
 impl ConnectionLimits {
+    /// Creates a new connection limits instance.
+    pub fn new(config: ConnectionLimitsConfig) -> Self {
+        let max_incoming_connections = config.max_incoming_connections.unwrap_or(0);
+        let max_outgoing_connections = config.max_outgoing_connections.unwrap_or(0);
+
+        Self {
+            config,
+            incoming_connections: HashSet::with_capacity(max_incoming_connections),
+            outgoing_connections: HashSet::with_capacity(max_outgoing_connections),
+            connections_per_peer: HashMap::new(),
+        }
+    }
+
     /// Called when a new connection is established.
     pub fn on_connection_established(
         &mut self,
@@ -97,11 +100,6 @@ impl ConnectionLimits {
         connection_id: ConnectionId,
         is_listener: bool,
     ) -> Result<(), ConnectionLimitsError> {
-        // incoming
-        // outgoing
-        // per peer
-        // total
-
         // Check connection limits.
         if is_listener {
             if let Some(max_incoming_connections) = self.config.max_incoming_connections {
@@ -125,20 +123,23 @@ impl ConnectionLimits {
             }
         }
 
-        if let Some(max_connections) = self.config.max_connections {
-            if self.incoming_connections.len() + self.outgoing_connections.len() >= max_connections
-            {
-                return Err(ConnectionLimitsError::MaxConnectionsExceeded);
+        // Keep track of the connection.
+        if is_listener {
+            if self.config.max_incoming_connections.is_some() {
+                self.incoming_connections.insert(connection_id);
+            }
+        } else {
+            if self.config.max_outgoing_connections.is_some() {
+                self.outgoing_connections.insert(connection_id);
             }
         }
 
-        // Keep track of the connection.
-        if is_listener {
-            self.incoming_connections.insert(connection_id);
-        } else {
-            self.outgoing_connections.insert(connection_id);
+        if let Some(max_connections_per_peer) = self.config.max_connections_per_peer {
+            self.connections_per_peer
+                .entry(peer)
+                .or_insert_with(|| HashSet::with_capacity(max_connections_per_peer))
+                .insert(connection_id);
         }
-        self.connections_per_peer.entry(peer).or_default().insert(connection_id);
 
         Ok(())
     }
