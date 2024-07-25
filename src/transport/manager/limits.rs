@@ -20,7 +20,7 @@
 
 //! Limits for the transport manager.
 
-use crate::{types::ConnectionId, PeerId};
+use crate::types::ConnectionId;
 
 use std::collections::HashSet;
 

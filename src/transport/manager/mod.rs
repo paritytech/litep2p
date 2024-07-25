@@ -76,7 +76,7 @@ const SCORE_CONNECT_SUCCESS: i32 = 100i32;
 /// Score for a non-working address.
 const SCORE_CONNECT_FAILURE: i32 = -100i32;
 
-/// TODO:
+/// The connection established result.
 enum ConnectionEstablishedResult {
     /// Accept connection and inform `Litep2p` about the connection.
     Accept,
@@ -243,6 +243,9 @@ pub struct TransportManager {
 
     /// Pending connections.
     pending_connections: HashMap<ConnectionId, PeerId>,
+
+    /// Connection limits.
+    connection_limits: limits::ConnectionLimits,
 }
 
 impl TransportManager {
@@ -253,6 +256,7 @@ impl TransportManager {
         supported_transports: HashSet<SupportedTransport>,
         bandwidth_sink: BandwidthSink,
         max_parallel_dials: usize,
+        connection_limits_config: limits::ConnectionLimitsConfig,
     ) -> (Self, TransportManagerHandle) {
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let peers = Arc::new(RwLock::new(HashMap::new()));
@@ -285,6 +289,7 @@ impl TransportManager {
                 pending_connections: HashMap::new(),
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
+                connection_limits: limits::ConnectionLimits::new(connection_limits_config),
             },
             handle,
         )
@@ -760,6 +765,8 @@ impl TransportManager {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> crate::Result<Option<TransportEvent>> {
+        self.connection_limits.on_connection_closed(connection_id);
+
         let mut peers = self.peers.write();
         let Some(context) = peers.get_mut(&peer) else {
             tracing::warn!(
@@ -911,6 +918,21 @@ impl TransportManager {
                 return Err(Error::InvalidState);
             }
         };
+
+        // Reject the connection if exceeded limits.
+        if let Err(error) = self
+            .connection_limits
+            .on_connection_established(endpoint.connection_id(), endpoint.is_listener())
+        {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                ?endpoint,
+                ?error,
+                "connection limit exceeded, rejecting connection",
+            );
+            return Ok(ConnectionEstablishedResult::Reject);
+        }
 
         let mut peers = self.peers.write();
         match peers.get_mut(&peer) {

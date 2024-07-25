@@ -29,9 +29,9 @@ use crate::{
         notification, request_response, UserProtocol,
     },
     transport::{
-        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
-        webrtc::config::Config as WebRtcConfig, websocket::config::Config as WebSocketConfig,
-        MAX_PARALLEL_DIALS,
+        manager::limits::ConnectionLimitsConfig, quic::config::Config as QuicConfig,
+        tcp::config::Config as TcpConfig, webrtc::config::Config as WebRtcConfig,
+        websocket::config::Config as WebSocketConfig, MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
     PeerId,
@@ -109,6 +109,9 @@ pub struct ConfigBuilder {
 
     /// Maximum number of parallel dial attempts.
     max_parallel_dials: usize,
+
+    /// Connection limits config.
+    connection_limits: ConnectionLimitsConfig,
 }
 
 impl Default for ConfigBuilder {
@@ -137,6 +140,7 @@ impl ConfigBuilder {
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
             known_addresses: Vec::new(),
+            connection_limits: ConnectionLimitsConfig::default(),
         }
     }
 
@@ -243,6 +247,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set connection limits configuration.
+    pub fn with_connection_limits(mut self, config: ConnectionLimitsConfig) -> Self {
+        self.connection_limits = config;
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     pub fn build(mut self) -> Litep2pConfig {
         let keypair = match self.keypair {
@@ -267,6 +277,7 @@ impl ConfigBuilder {
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
             known_addresses: self.known_addresses,
+            connection_limits: self.connection_limits,
         }
     }
 }
@@ -320,4 +331,7 @@ pub struct Litep2pConfig {
 
     /// Known addresses.
     pub(crate) known_addresses: Vec<(PeerId, Vec<Multiaddr>)>,
+
+    /// Connection limits config.
+    pub(crate) connection_limits: ConnectionLimitsConfig,
 }
