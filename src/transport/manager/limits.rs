@@ -84,7 +84,6 @@ impl ConnectionLimits {
     /// Called when a new connection is established.
     pub fn on_connection_established(
         &mut self,
-        peer: PeerId,
         connection_id: ConnectionId,
         is_listener: bool,
     ) -> Result<(), ConnectionLimitsError> {
@@ -118,7 +117,7 @@ impl ConnectionLimits {
     }
 
     /// Called when a connection is closed.
-    pub fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
+    pub fn on_connection_closed(&mut self, connection_id: ConnectionId) {
         self.incoming_connections.remove(&connection_id);
         self.outgoing_connections.remove(&connection_id);
     }
@@ -127,19 +126,15 @@ impl ConnectionLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{types::ConnectionId, PeerId};
+    use crate::types::ConnectionId;
 
     #[test]
     fn connection_limits() {
         let config = ConnectionLimitsConfig::default()
             .max_incoming_connections(Some(3))
-            .max_outgoing_connections(Some(2))
-            .max_connections_per_peer(Some(2));
+            .max_outgoing_connections(Some(2));
         let mut limits = ConnectionLimits::new(config);
 
-        let peer_a = PeerId::random();
-        let peer_b = PeerId::random();
-        let peer_c = PeerId::random();
         let connection_id_in_1 = ConnectionId::random();
         let connection_id_in_2 = ConnectionId::random();
         let connection_id_out_1 = ConnectionId::random();
@@ -148,66 +143,42 @@ mod tests {
         let connection_id_out_3 = ConnectionId::random();
 
         // Establish incoming connection.
-        assert!(limits
-            .on_connection_established(peer_a.clone(), connection_id_in_1, true)
-            .is_ok());
+        assert!(limits.on_connection_established(connection_id_in_1, true).is_ok());
         assert_eq!(limits.incoming_connections.len(), 1);
 
-        assert!(limits
-            .on_connection_established(peer_b.clone(), connection_id_in_2, true)
-            .is_ok());
+        assert!(limits.on_connection_established(connection_id_in_2, true).is_ok());
         assert_eq!(limits.incoming_connections.len(), 2);
 
-        assert!(limits
-            .on_connection_established(peer_c.clone(), connection_id_in_3, true)
-            .is_ok());
+        assert!(limits.on_connection_established(connection_id_in_3, true).is_ok());
         assert_eq!(limits.incoming_connections.len(), 3);
 
         assert_eq!(
-            limits
-                .on_connection_established(PeerId::random(), ConnectionId::random(), true)
-                .unwrap_err(),
+            limits.on_connection_established(ConnectionId::random(), true).unwrap_err(),
             ConnectionLimitsError::MaxIncomingConnectionsExceeded
         );
         assert_eq!(limits.incoming_connections.len(), 3);
 
         // Establish outgoing connection.
-        assert!(limits
-            .on_connection_established(peer_a.clone(), connection_id_out_1, false)
-            .is_ok());
+        assert!(limits.on_connection_established(connection_id_out_1, false).is_ok());
         assert_eq!(limits.incoming_connections.len(), 3);
         assert_eq!(limits.outgoing_connections.len(), 1);
 
-        assert!(limits
-            .on_connection_established(peer_b.clone(), connection_id_out_2, false)
-            .is_ok());
+        assert!(limits.on_connection_established(connection_id_out_2, false).is_ok());
         assert_eq!(limits.incoming_connections.len(), 3);
         assert_eq!(limits.outgoing_connections.len(), 2);
 
         assert_eq!(
-            limits
-                .on_connection_established(peer_c.clone(), connection_id_out_3, false)
-                .unwrap_err(),
+            limits.on_connection_established(connection_id_out_3, false).unwrap_err(),
             ConnectionLimitsError::MaxOutgoingConnectionsExceeded
         );
 
         // Close connections with peer a.
-        limits.on_connection_closed(peer_a.clone(), connection_id_in_1);
+        limits.on_connection_closed(connection_id_in_1);
         assert_eq!(limits.incoming_connections.len(), 2);
         assert_eq!(limits.outgoing_connections.len(), 2);
-        assert_eq!(limits.connections_per_peer.len(), 3);
 
-        limits.on_connection_closed(peer_a.clone(), connection_id_out_1);
+        limits.on_connection_closed(connection_id_out_1);
         assert_eq!(limits.incoming_connections.len(), 2);
         assert_eq!(limits.outgoing_connections.len(), 1);
-        assert_eq!(limits.connections_per_peer.len(), 2);
-
-        // We have room for another incoming connection, however the limit for peer b is reached.
-        assert_eq!(
-            limits
-                .on_connection_established(peer_b.clone(), connection_id_in_3, false)
-                .unwrap_err(),
-            ConnectionLimitsError::MaxConnectionsPerPeerExceeded
-        );
     }
 }
