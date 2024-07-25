@@ -1639,6 +1639,8 @@ impl TransportManager {
 
 #[cfg(test)]
 mod tests {
+    use limits::ConnectionLimitsConfig;
+
     use super::*;
     use crate::{
         crypto::ed25519::Keypair, executor::DefaultExecutor, transport::dummy::DummyTransport,
@@ -1653,8 +1655,13 @@ mod tests {
     #[cfg(debug_assertions)]
     fn duplicate_protocol() {
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink, 8usize);
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            sink,
+            8usize,
+            ConnectionLimitsConfig::default(),
+        );
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1673,8 +1680,13 @@ mod tests {
     #[cfg(debug_assertions)]
     fn fallback_protocol_as_duplicate_main_protocol() {
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink, 8usize);
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            sink,
+            8usize,
+            ConnectionLimitsConfig::default(),
+        );
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1696,8 +1708,13 @@ mod tests {
     #[cfg(debug_assertions)]
     fn duplicate_fallback_protocol() {
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink, 8usize);
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            sink,
+            8usize,
+            ConnectionLimitsConfig::default(),
+        );
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1722,8 +1739,13 @@ mod tests {
     #[cfg(debug_assertions)]
     fn duplicate_transport() {
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) =
-            TransportManager::new(Keypair::generate(), HashSet::new(), sink, 8usize);
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            sink,
+            8usize,
+            ConnectionLimitsConfig::default(),
+        );
 
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1734,7 +1756,13 @@ mod tests {
         let keypair = Keypair::generate();
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(keypair, HashSet::new(), sink, 8usize);
+        let (mut manager, _handle) = TransportManager::new(
+            keypair,
+            HashSet::new(),
+            sink,
+            8usize,
+            ConnectionLimitsConfig::default(),
+        );
 
         assert!(manager.dial(local_peer_id).await.is_err());
     }
@@ -1746,6 +1774,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1775,6 +1804,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1836,6 +1866,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1866,6 +1897,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1910,6 +1942,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1928,6 +1961,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1956,6 +1990,7 @@ mod tests {
             HashSet::from_iter([SupportedTransport::Tcp, SupportedTransport::Quic]),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         // ipv6
@@ -2014,6 +2049,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -2080,6 +2116,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -2166,6 +2203,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -2250,6 +2288,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2354,6 +2393,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2456,6 +2496,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2562,6 +2603,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2690,6 +2732,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         manager.on_dial_failure(ConnectionId::random()).unwrap();
@@ -2708,6 +2751,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
@@ -2728,6 +2772,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         manager.on_connection_closed(PeerId::random(), ConnectionId::random()).unwrap();
     }
@@ -2745,6 +2790,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         manager
             .on_connection_opened(
@@ -2768,6 +2814,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
@@ -2791,6 +2838,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
@@ -2817,6 +2865,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         manager
@@ -2837,6 +2886,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
@@ -2856,6 +2906,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         assert!(manager.next().await.is_none());
@@ -2868,6 +2919,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         let peer = {
@@ -2915,6 +2967,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         let peer = {
@@ -2958,6 +3011,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         let peer = {
@@ -3001,6 +3055,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         // transport doesn't start with ip/dns
@@ -3066,6 +3121,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         async fn call_manager(manager: &mut TransportManager, address: Multiaddr) {
@@ -3119,6 +3175,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -3210,6 +3267,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()

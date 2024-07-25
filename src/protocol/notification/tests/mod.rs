@@ -29,7 +29,7 @@ use crate::{
         },
         InnerTransportEvent, ProtocolCommand, TransportService,
     },
-    transport::manager::TransportManager,
+    transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
     types::protocol::ProtocolName,
     BandwidthSink, PeerId,
 };
@@ -53,6 +53,7 @@ fn make_notification_protocol() -> (
         HashSet::new(),
         BandwidthSink::new(),
         8usize,
+        ConnectionLimitsConfig::default(),
     );
 
     let peer = PeerId::random();
