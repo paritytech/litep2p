@@ -22,7 +22,7 @@
 
 use crate::{types::ConnectionId, PeerId};
 
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::HashSet;
 
 /// Configuration for the connection limits.
 #[derive(Debug, Clone, Default)]
@@ -31,8 +31,6 @@ pub struct ConnectionLimitsConfig {
     max_incoming_connections: Option<usize>,
     /// Maximum number of outgoing connections that can be established.
     max_outgoing_connections: Option<usize>,
-    /// Maximum number of connections that can be established per peer.
-    max_connections_per_peer: Option<usize>,
 }
 
 impl ConnectionLimitsConfig {
@@ -47,12 +45,6 @@ impl ConnectionLimitsConfig {
         self.max_outgoing_connections = limit;
         self
     }
-
-    /// Configures the maximum number of connections that can be established per peer.
-    pub fn max_connections_per_peer(mut self, limit: Option<usize>) -> Self {
-        self.max_connections_per_peer = limit;
-        self
-    }
 }
 
 /// Error type for connection limits.
@@ -62,8 +54,6 @@ pub enum ConnectionLimitsError {
     MaxIncomingConnectionsExceeded,
     /// Maximum number of outgoing connections exceeded.
     MaxOutgoingConnectionsExceeded,
-    /// Maximum number of connections per peer exceeded.
-    MaxConnectionsPerPeerExceeded,
 }
 
 /// Connection limits.
@@ -76,8 +66,6 @@ pub struct ConnectionLimits {
     incoming_connections: HashSet<ConnectionId>,
     /// Established outgoing connections.
     outgoing_connections: HashSet<ConnectionId>,
-    /// Maximum number of connections that can be established per peer.
-    connections_per_peer: HashMap<PeerId, HashSet<ConnectionId>>,
 }
 
 impl ConnectionLimits {
@@ -90,7 +78,6 @@ impl ConnectionLimits {
             config,
             incoming_connections: HashSet::with_capacity(max_incoming_connections),
             outgoing_connections: HashSet::with_capacity(max_outgoing_connections),
-            connections_per_peer: HashMap::new(),
         }
     }
 
@@ -116,14 +103,6 @@ impl ConnectionLimits {
             }
         }
 
-        if let Some(max_connections_per_peer) = self.config.max_connections_per_peer {
-            if let Some(connections) = self.connections_per_peer.get(&peer) {
-                if connections.len() >= max_connections_per_peer {
-                    return Err(ConnectionLimitsError::MaxConnectionsPerPeerExceeded);
-                }
-            }
-        }
-
         // Keep track of the connection.
         if is_listener {
             if self.config.max_incoming_connections.is_some() {
@@ -135,13 +114,6 @@ impl ConnectionLimits {
             }
         }
 
-        if let Some(max_connections_per_peer) = self.config.max_connections_per_peer {
-            self.connections_per_peer
-                .entry(peer)
-                .or_insert_with(|| HashSet::with_capacity(max_connections_per_peer))
-                .insert(connection_id);
-        }
-
         Ok(())
     }
 
@@ -149,14 +121,6 @@ impl ConnectionLimits {
     pub fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
         self.incoming_connections.remove(&connection_id);
         self.outgoing_connections.remove(&connection_id);
-
-        if let Entry::Occupied(mut entry) = self.connections_per_peer.entry(peer) {
-            entry.get_mut().remove(&connection_id);
-
-            if entry.get().is_empty() {
-                entry.remove();
-            }
-        }
     }
 }
 
