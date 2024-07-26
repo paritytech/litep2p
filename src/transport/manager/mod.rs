@@ -3444,4 +3444,99 @@ mod tests {
             .unwrap();
         assert_eq!(result, ConnectionEstablishedResult::Accept);
     }
+
+    #[tokio::test]
+    async fn manager_limits_outbound_connections() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+            ConnectionLimitsConfig::default()
+                .max_incoming_connections(Some(3))
+                .max_outgoing_connections(Some(2)),
+        );
+        // The connection limit is agnostic of the underlying transports.
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
+
+        let peer = PeerId::random();
+        let second_peer = PeerId::random();
+        let third_peer = PeerId::random();
+
+        let setup_dial_addr = |peer: PeerId, connection_id: u16| {
+            let dial_address = Multiaddr::empty()
+                .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+                .with(Protocol::Tcp(8888 + connection_id))
+                .with(Protocol::P2p(
+                    Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+                ));
+            let connection_id = ConnectionId::from(connection_id as usize);
+
+            (dial_address, connection_id)
+        };
+
+        // Setup addresses.
+        let (first_addr, first_connection_id) = setup_dial_addr(peer, 0);
+        let (second_addr, second_connection_id) = setup_dial_addr(second_peer, 1);
+        let (third_addr, third_connection_id) = setup_dial_addr(third_peer, 2);
+
+        // First dial.
+        manager.dial_address(first_addr.clone()).await.unwrap();
+
+        // Second dial.
+        manager.dial_address(second_addr.clone()).await.unwrap();
+
+        // Third dial, we have a limit on 2 outbound connections.
+        manager.dial_address(third_addr.clone()).await.unwrap();
+
+        let result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::dialer(first_addr.clone(), first_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
+
+        let result = manager
+            .on_connection_established(
+                second_peer,
+                &Endpoint::dialer(second_addr.clone(), second_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
+
+        // We have reached the limit now.
+        let result = manager
+            .on_connection_established(
+                third_peer,
+                &Endpoint::dialer(third_addr.clone(), third_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Reject);
+
+        // While we have 2 outbound connections active, any dials will fail immediately.
+        // We cannot perform this check for the non negotiated inbound connections yet,
+        // since the transport will eagerly accept and negotiate them. This requires
+        // a refactor into the transport manager, to not waste resources on
+        // negotiating connections that will be rejected.
+        let result = manager.dial(peer).await.unwrap_err();
+        assert!(std::matches!(
+            result,
+            Error::ConnectionLimit(limits::ConnectionLimitsError::MaxOutgoingConnectionsExceeded)
+        ));
+        let result = manager.dial_address(first_addr.clone()).await.unwrap_err();
+        assert!(std::matches!(
+            result,
+            Error::ConnectionLimit(limits::ConnectionLimitsError::MaxOutgoingConnectionsExceeded)
+        ));
+
+        // Close one connection.
+        let _ = manager.on_connection_closed(peer, first_connection_id).unwrap();
+        // We can now dial again.
+        manager.dial_address(first_addr).await.unwrap();
+    }
 }
