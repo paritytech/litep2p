@@ -1659,6 +1659,19 @@ mod tests {
         sync::Arc,
     };
 
+    /// Setup TCP address and connection id.
+    fn setup_dial_addr(peer: PeerId, connection_id: u16) -> (Multiaddr, ConnectionId) {
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888 + connection_id))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        let connection_id = ConnectionId::from(connection_id as usize);
+
+        (dial_address, connection_id)
+    }
+
     #[test]
     #[should_panic]
     #[cfg(debug_assertions)]
@@ -3378,23 +3391,11 @@ mod tests {
         let peer = PeerId::random();
         let second_peer = PeerId::random();
 
-        let setup_dial_addr = |connection_id: u16| {
-            let dial_address = Multiaddr::empty()
-                .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
-                .with(Protocol::Tcp(8888 + connection_id))
-                .with(Protocol::P2p(
-                    Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-                ));
-            let connection_id = ConnectionId::from(connection_id as usize);
-
-            (dial_address, connection_id)
-        };
-
         // Setup addresses.
-        let (first_addr, first_connection_id) = setup_dial_addr(0);
-        let (second_addr, second_connection_id) = setup_dial_addr(1);
-        let (_, third_connection_id) = setup_dial_addr(2);
-        let (_, remote_connection_id) = setup_dial_addr(3);
+        let (first_addr, first_connection_id) = setup_dial_addr(peer, 0);
+        let (second_addr, second_connection_id) = setup_dial_addr(second_peer, 1);
+        let (_, third_connection_id) = setup_dial_addr(peer, 2);
+        let (_, remote_connection_id) = setup_dial_addr(peer, 3);
 
         // Peer established the first inbound connection.
         let result = manager
@@ -3466,18 +3467,6 @@ mod tests {
         let peer = PeerId::random();
         let second_peer = PeerId::random();
         let third_peer = PeerId::random();
-
-        let setup_dial_addr = |peer: PeerId, connection_id: u16| {
-            let dial_address = Multiaddr::empty()
-                .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
-                .with(Protocol::Tcp(8888 + connection_id))
-                .with(Protocol::P2p(
-                    Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-                ));
-            let connection_id = ConnectionId::from(connection_id as usize);
-
-            (dial_address, connection_id)
-        };
 
         // Setup addresses.
         let (first_addr, first_connection_id) = setup_dial_addr(peer, 0);
