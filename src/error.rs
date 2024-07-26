@@ -28,6 +28,7 @@
 
 use crate::{
     protocol::Direction,
+    transport::manager::limits::ConnectionLimitsError,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
@@ -118,6 +119,8 @@ pub enum Error {
     ChannelClogged,
     #[error("Connection doesn't exist: `{0:?}`")]
     ConnectionDoesntExist(ConnectionId),
+    #[error("Exceeded connection limits `{0:?}`")]
+    ConnectionLimit(ConnectionLimitsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -240,6 +243,12 @@ impl From<quinn::ConnectionError> for Error {
             quinn::ConnectionError::TimedOut => Error::Timeout,
             error => Error::Quinn(error),
         }
+    }
+}
+
+impl From<ConnectionLimitsError> for Error {
+    fn from(error: ConnectionLimitsError) -> Self {
+        Error::ConnectionLimit(error)
     }
 }
 

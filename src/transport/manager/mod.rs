@@ -399,6 +399,12 @@ impl TransportManager {
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
     pub async fn dial(&mut self, peer: PeerId) -> crate::Result<()> {
+        // Don't alter the peer state if there's no capacity to dial.
+        let available_capacity = self.connection_limits.on_dial_address()?;
+        // The available capacity is the maximum number of connections that can be established,
+        // so we limit the number of parallel dials to the minimum of these values.
+        let limit = available_capacity.min(self.max_parallel_dials);
+
         if peer == self.local_peer_id {
             return Err(Error::TriedToDialSelf);
         }
@@ -441,7 +447,7 @@ impl TransportManager {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?peer,
-                "peer is aready being dialed",
+                "peer is already being dialed",
             );
 
             peers.insert(
@@ -457,7 +463,7 @@ impl TransportManager {
         }
 
         let mut records: HashMap<_, _> = addresses
-            .take(self.max_parallel_dials)
+            .take(limit)
             .into_iter()
             .map(|record| (record.address().clone(), record))
             .collect();
@@ -564,6 +570,8 @@ impl TransportManager {
     ///
     /// Returns an error if address it not valid.
     pub async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
+        self.connection_limits.on_dial_address()?;
+
         let mut record = AddressRecord::from_multiaddr(address)
             .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
 
@@ -1074,7 +1082,7 @@ impl TransportManager {
                     });
 
                     // since an inbound connection was removed, the outbound connection can be
-                    // removed from pendind dials
+                    // removed from pending dials
                     //
                     // all records have the same `ConnectionId` so it doens't matter which of them
                     // is used to remove the pending dial

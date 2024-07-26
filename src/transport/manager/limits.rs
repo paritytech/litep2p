@@ -81,6 +81,26 @@ impl ConnectionLimits {
         }
     }
 
+    /// Called when dialing an address.
+    ///
+    /// Returns the number of outgoing connections permitted to be established.
+    /// It is guaranteed that at least one connection can be established if the method returns `Ok`.
+    /// The number of available outgoing connections can influence the maximum parallel dials to a
+    /// single address.
+    ///
+    /// If the maximum number of outgoing connections is not set, `Ok(usize::MAX)` is returned.
+    pub fn on_dial_address(&mut self) -> Result<usize, ConnectionLimitsError> {
+        if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
+            if self.outgoing_connections.len() >= max_outgoing_connections {
+                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded);
+            }
+
+            return Ok(max_outgoing_connections - self.outgoing_connections.len());
+        }
+
+        Ok(usize::MAX)
+    }
+
     /// Called when a new connection is established.
     pub fn on_connection_established(
         &mut self,
