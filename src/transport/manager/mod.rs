@@ -77,6 +77,7 @@ const SCORE_CONNECT_SUCCESS: i32 = 100i32;
 const SCORE_CONNECT_FAILURE: i32 = -100i32;
 
 /// The connection established result.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ConnectionEstablishedResult {
     /// Accept connection and inform `Litep2p` about the connection.
     Accept,
@@ -3354,5 +3355,93 @@ mod tests {
             }
             state => panic!("invalid peer state: {state:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn manager_limits_incoming_connections() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+            ConnectionLimitsConfig::default()
+                .max_incoming_connections(Some(3))
+                .max_outgoing_connections(Some(2)),
+        );
+        // The connection limit is agnostic of the underlying transports.
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
+
+        let peer = PeerId::random();
+        let second_peer = PeerId::random();
+
+        let setup_dial_addr = |connection_id: u16| {
+            let dial_address = Multiaddr::empty()
+                .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+                .with(Protocol::Tcp(8888 + connection_id))
+                .with(Protocol::P2p(
+                    Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+                ));
+            let connection_id = ConnectionId::from(connection_id as usize);
+
+            (dial_address, connection_id)
+        };
+
+        // Setup addresses.
+        let (first_addr, first_connection_id) = setup_dial_addr(0);
+        let (second_addr, second_connection_id) = setup_dial_addr(1);
+        let (_, third_connection_id) = setup_dial_addr(2);
+        let (_, remote_connection_id) = setup_dial_addr(3);
+
+        // Peer established the first inbound connection.
+        let result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::listener(first_addr.clone(), first_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
+
+        // The peer is allowed to dial us a second time.
+        let result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::listener(first_addr.clone(), second_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
+
+        // Second peer calls us.
+        let result = manager
+            .on_connection_established(
+                second_peer,
+                &Endpoint::listener(second_addr.clone(), third_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
+
+        // Limits of inbound connections are reached.
+        let result = manager
+            .on_connection_established(
+                second_peer,
+                &Endpoint::listener(second_addr.clone(), remote_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Reject);
+
+        // Close one connection.
+        let _ = manager.on_connection_closed(peer, first_connection_id).unwrap();
+
+        // The second peer can establish 2 inbounds now.
+        let result = manager
+            .on_connection_established(
+                second_peer,
+                &Endpoint::listener(second_addr.clone(), remote_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
     }
 }
