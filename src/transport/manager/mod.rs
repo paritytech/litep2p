@@ -3526,6 +3526,11 @@ mod tests {
         // Close one connection.
         let _ = manager.on_connection_closed(peer, first_connection_id).unwrap();
         // We can now dial again.
-        manager.dial_address(first_addr).await.unwrap();
+        manager.dial_address(first_addr.clone()).await.unwrap();
+
+        let result = manager
+            .on_connection_established(peer, &Endpoint::dialer(first_addr, first_connection_id))
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Accept);
     }
 }
