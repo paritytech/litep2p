@@ -897,8 +897,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        codec::ProtocolCodec, crypto::ed25519::Keypair, transport::manager::TransportManager,
-        types::protocol::ProtocolName, BandwidthSink,
+        codec::ProtocolCodec,
+        crypto::ed25519::Keypair,
+        transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
+        types::protocol::ProtocolName,
+        BandwidthSink,
     };
     use tokio::sync::mpsc::channel;
 
@@ -914,6 +917,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         let peer = PeerId::random();

@@ -29,7 +29,7 @@ use crate::{
         InnerTransportEvent, TransportService,
     },
     substream::Substream,
-    transport::manager::TransportManager,
+    transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
     types::{RequestId, SubstreamId},
     BandwidthSink, Error, PeerId, ProtocolName,
 };
@@ -51,6 +51,7 @@ fn protocol() -> (
         HashSet::new(),
         BandwidthSink::new(),
         8usize,
+        ConnectionLimitsConfig::default(),
     );
 
     let peer = PeerId::random();

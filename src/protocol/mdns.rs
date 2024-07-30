@@ -334,7 +334,11 @@ impl Mdns {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{crypto::ed25519::Keypair, transport::manager::TransportManager, BandwidthSink};
+    use crate::{
+        crypto::ed25519::Keypair,
+        transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
+        BandwidthSink,
+    };
     use futures::StreamExt;
     use multiaddr::Protocol;
 
@@ -350,6 +354,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         let mdns1 = Mdns::new(
@@ -372,6 +377,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         let mdns2 = Mdns::new(
