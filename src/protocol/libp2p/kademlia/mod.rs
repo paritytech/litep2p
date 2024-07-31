@@ -951,9 +951,8 @@ mod tests {
         let action = QueryAction::GetRecordQueryDone { query_id, records };
         assert!(kademlia.on_query_action(action).await.is_ok());
 
-        // Check the local storage was updated.
-        let record = kademlia.store.get(&key).unwrap();
-        assert_eq!(record.value, vec![0x1]);
+        // Check the local storage should not get updated updated.
+        assert!(kademlia.store.get(&key).is_none());
     }
 
     #[tokio::test]
@@ -992,8 +991,7 @@ mod tests {
         let action = QueryAction::GetRecordQueryDone { query_id, records };
         assert!(kademlia.on_query_action(action).await.is_ok());
 
-        // Check the local storage was updated.
-        let record = kademlia.store.get(&key).unwrap();
-        assert_eq!(record.value, vec![0x2]);
+        // Check the local storage should not get updated updated.
+        assert!(kademlia.store.get(&key).is_none());
     }
 }
