@@ -991,7 +991,7 @@ mod tests {
         let action = QueryAction::GetRecordQueryDone { query_id, records };
         assert!(kademlia.on_query_action(action).await.is_ok());
 
-        // Check the local storage should not get updated updated.
+        // Check the local storage should not get updated.
         assert!(kademlia.store.get(&key).is_none());
     }
 }
