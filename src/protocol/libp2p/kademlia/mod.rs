@@ -656,31 +656,6 @@ impl Kademlia {
                 Ok(())
             }
             QueryAction::GetRecordQueryDone { query_id, records } => {
-                // Considering this gives a view of all peers and their records, some peers may have
-                // outdated records. Store only the record which is backed by most
-                // peers.
-                let now = std::time::Instant::now();
-                let rec = records
-                    .iter()
-                    .filter_map(|peer_record| {
-                        if peer_record.record.is_expired(now) {
-                            None
-                        } else {
-                            Some(&peer_record.record)
-                        }
-                    })
-                    .fold(HashMap::new(), |mut acc, rec| {
-                        *acc.entry(rec).or_insert(0) += 1;
-                        acc
-                    })
-                    .into_iter()
-                    .max_by_key(|(_, v)| *v)
-                    .map(|(k, _)| k);
-
-                if let Some(record) = rec {
-                    self.store.put(record.clone());
-                }
-
                 let _ = self
                     .event_tx
                     .send(KademliaEvent::GetRecordSuccess {
@@ -976,9 +951,8 @@ mod tests {
         let action = QueryAction::GetRecordQueryDone { query_id, records };
         assert!(kademlia.on_query_action(action).await.is_ok());
 
-        // Check the local storage was updated.
-        let record = kademlia.store.get(&key).unwrap();
-        assert_eq!(record.value, vec![0x1]);
+        // Check the local storage should not get updated.
+        assert!(kademlia.store.get(&key).is_none());
     }
 
     #[tokio::test]
@@ -1017,8 +991,7 @@ mod tests {
         let action = QueryAction::GetRecordQueryDone { query_id, records };
         assert!(kademlia.on_query_action(action).await.is_ok());
 
-        // Check the local storage was updated.
-        let record = kademlia.store.get(&key).unwrap();
-        assert_eq!(record.value, vec![0x2]);
+        // Check the local storage should not get updated.
+        assert!(kademlia.store.get(&key).is_none());
     }
 }
