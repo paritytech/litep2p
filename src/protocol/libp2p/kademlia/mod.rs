@@ -386,7 +386,7 @@ impl Kademlia {
         message: BytesMut,
         substream: Substream,
     ) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?peer, ?query_id, "handle message from peer");
+        tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "handle message from peer");
 
         match KademliaMessage::from_bytes(message).ok_or(Error::InvalidData)? {
             ref message @ KademliaMessage::FindNode {
@@ -399,6 +399,7 @@ impl Kademlia {
                             target: LOG_TARGET,
                             ?peer,
                             ?target,
+                            query = ?query_id,
                             "handle `FIND_NODE` response",
                         );
 
@@ -447,7 +448,7 @@ impl Kademlia {
                         tracing::trace!(
                             target: LOG_TARGET,
                             ?peer,
-                            ?query_id,
+                            query = ?query_id,
                             ?peers,
                             ?record,
                             "handle `GET_VALUE` response",
@@ -531,7 +532,7 @@ impl Kademlia {
                 tracing::trace!(
                     target: LOG_TARGET,
                     ?peer,
-                    ?query_id,
+                    query = ?query_id,
                     ?address,
                     "report failure for pending query",
                 );
@@ -748,11 +749,11 @@ impl Kademlia {
 
                     match result {
                         QueryResult::SendSuccess { substream } => {
-                            tracing::trace!(target: LOG_TARGET, ?peer, ?query_id, "message sent to peer");
+                            tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "message sent to peer");
                             let _ = substream.close().await;
                         }
                         QueryResult::ReadSuccess { substream, message } => {
-                            tracing::trace!(target: LOG_TARGET, ?peer, ?query_id, "message read from peer");
+                            tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "message read from peer");
 
                             if let Err(error) = self.on_message_received(peer, query_id, message, substream).await {
                                 tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to process message");
@@ -762,7 +763,7 @@ impl Kademlia {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
-                                ?query_id,
+                                query = ?query_id,
                                 ?result,
                                 "failed to read message from substream",
                             );
@@ -774,7 +775,7 @@ impl Kademlia {
                 command = self.cmd_rx.recv() => {
                     match command {
                         Some(KademliaCommand::FindNode { peer, query_id }) => {
-                            tracing::debug!(target: LOG_TARGET, ?peer, ?query_id, "starting `FIND_NODE` query");
+                            tracing::debug!(target: LOG_TARGET, ?peer, query = ?query_id, "starting `FIND_NODE` query");
 
                             self.engine.start_find_node(
                                 query_id,
@@ -783,7 +784,7 @@ impl Kademlia {
                             );
                         }
                         Some(KademliaCommand::PutRecord { mut record, query_id }) => {
-                            tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT");
+                            tracing::debug!(target: LOG_TARGET, query = ?query_id, key = ?record.key, "store record to DHT");
 
                             // For `PUT_VALUE` requests originating locally we are always the publisher.
                             record.publisher = Some(self.local_key.clone().into_preimage());
@@ -802,7 +803,7 @@ impl Kademlia {
                             );
                         }
                         Some(KademliaCommand::PutRecordToPeers { mut record, query_id, peers, update_local_store }) => {
-                            tracing::debug!(target: LOG_TARGET, ?query_id, key = ?record.key, "store record to DHT to specified peers");
+                            tracing::debug!(target: LOG_TARGET, query = ?query_id, key = ?record.key, "store record to DHT to specified peers");
 
                             // Make sure TTL is set.
                             record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
@@ -896,8 +897,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        codec::ProtocolCodec, crypto::ed25519::Keypair, transport::manager::TransportManager,
-        types::protocol::ProtocolName, BandwidthSink,
+        codec::ProtocolCodec,
+        crypto::ed25519::Keypair,
+        transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
+        types::protocol::ProtocolName,
+        BandwidthSink,
     };
     use tokio::sync::mpsc::channel;
 
@@ -913,6 +917,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
 
         let peer = PeerId::random();

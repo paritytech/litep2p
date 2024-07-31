@@ -11,7 +11,7 @@ prost-build = "0.13"
 [dependencies]
 async-trait = "0.1.80"
 bs58 = "0.4.0"
-bytes = "1.4.0"
+bytes = "1.6.1"
 cid = "0.10.1"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.27"
@@ -19,7 +19,7 @@ futures-timer = "3.0.3"
 hex-literal = "0.4.1"
 indexmap = { version = "2.0.0", features = ["std"] }
 libc = "0.2.142"
-mockall = "0.12.1"
+mockall = "0.13.0"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
 network-interface = "1.1.1"
@@ -80,7 +80,7 @@ libp2p = { version = "0.51.4", features = [
 quickcheck = "1.0.3"
 rand_xorshift = "0.3.0"
 sc-network = "0.31.0"
-sc-utils = "13.0.0"
+sc-utils = "17.0.0"
 serde_json = "1.0.109"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"

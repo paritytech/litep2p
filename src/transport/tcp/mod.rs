@@ -490,7 +490,9 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
-        transport::manager::{ProtocolContext, SupportedTransport, TransportManager},
+        transport::manager::{
+            limits::ConnectionLimitsConfig, ProtocolContext, SupportedTransport, TransportManager,
+        },
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
     };
@@ -683,6 +685,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
+            ConnectionLimitsConfig::default(),
         );
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
