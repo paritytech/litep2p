@@ -121,16 +121,18 @@ impl TransportManagerHandle {
 
         match iter.next() {
             None => false,
-            Some(Protocol::Tcp(_)) => match (
-                iter.next(),
-                self.supported_transport.contains(&SupportedTransport::WebSocket),
-            ) {
-                (Some(Protocol::Ws(_)), true) => true,
-                (Some(Protocol::Wss(_)), true) => true,
-                (Some(Protocol::P2p(_)), _) =>
+            Some(Protocol::Tcp(_)) => match iter.next() {
+                Some(Protocol::P2p(_)) =>
                     self.supported_transport.contains(&SupportedTransport::Tcp),
+                #[cfg(feature = "websocket")]
+                Some(Protocol::Ws(_)) =>
+                    self.supported_transport.contains(&SupportedTransport::WebSocket),
+                #[cfg(feature = "websocket")]
+                Some(Protocol::Wss(_)) =>
+                    self.supported_transport.contains(&SupportedTransport::WebSocket),
                 _ => false,
             },
+            #[cfg(feature = "quic")]
             Some(Protocol::Udp(_)) => match (
                 iter.next(),
                 self.supported_transport.contains(&SupportedTransport::Quic),
@@ -333,9 +335,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tcp_and_websocket_supported() {
+    async fn tcp_supported() {
         let (mut handle, _rx) = make_transport_manager_handle();
         handle.supported_transport.insert(SupportedTransport::Tcp);
+
+        let address =
+            "/dns4/google.com/tcp/24928/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
+                .parse()
+                .unwrap();
+        assert!(handle.supported_transport(&address));
+    }
+
+    #[cfg(feature = "websocket")]
+    #[tokio::test]
+    async fn websocket_supported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
         handle.supported_transport.insert(SupportedTransport::WebSocket);
 
         let address =
@@ -378,7 +392,7 @@ mod tests {
     #[test]
     fn zero_addresses_added() {
         let (mut handle, _rx) = make_transport_manager_handle();
-        handle.supported_transport.insert(SupportedTransport::Quic);
+        handle.supported_transport.insert(SupportedTransport::Tcp);
 
         assert!(
             handle.add_known_address(
@@ -388,9 +402,6 @@ mod tests {
                         .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                         .with(Protocol::Udp(8888))
                         .with(Protocol::Utp),
-                    Multiaddr::empty()
-                        .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
-                        .with(Protocol::Tcp(8888)),
                     Multiaddr::empty()
                         .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                         .with(Protocol::Tcp(8888))

@@ -36,8 +36,8 @@ use crate::{
     PeerId,
 };
 
-#[cfg(feature = "quick")]
-use crate::transport::quick::config::Config as QuicConfig;
+#[cfg(feature = "quic")]
+use crate::transport::quic::config::Config as QuicConfig;
 #[cfg(feature = "webrtc")]
 use crate::transport::webrtc::config::Config as WebRtcConfig;
 #[cfg(feature = "websocket")]
@@ -72,7 +72,7 @@ pub struct ConfigBuilder {
     tcp: Option<TcpConfig>,
 
     /// QUIC transport config.
-    #[cfg(feature = "quick")]
+    #[cfg(feature = "quic")]
     quic: Option<QuicConfig>,
 
     /// WebRTC transport config.
@@ -134,7 +134,7 @@ impl ConfigBuilder {
     pub fn new() -> Self {
         Self {
             tcp: None,
-            #[cfg(feature = "quick")]
+            #[cfg(feature = "quic")]
             quic: None,
             #[cfg(feature = "webrtc")]
             webrtc: None,
@@ -163,7 +163,7 @@ impl ConfigBuilder {
     }
 
     /// Add QUIC transport configuration, enabling the transport.
-    #[cfg(feature = "quick")]
+    #[cfg(feature = "quic")]
     pub fn with_quic(mut self, config: QuicConfig) -> Self {
         self.quic = Some(config);
         self
@@ -279,7 +279,7 @@ impl ConfigBuilder {
             keypair,
             tcp: self.tcp.take(),
             mdns: self.mdns.take(),
-            #[cfg(feature = "quick")]
+            #[cfg(feature = "quic")]
             quic: self.quic.take(),
             #[cfg(feature = "webrtc")]
             webrtc: self.webrtc.take(),
@@ -306,7 +306,7 @@ pub struct Litep2pConfig {
     pub(crate) tcp: Option<TcpConfig>,
 
     /// QUIC transport config.
-    #[cfg(feature = "quick")]
+    #[cfg(feature = "quic")]
     pub(crate) quic: Option<QuicConfig>,
 
     /// WebRTC transport config.

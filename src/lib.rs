@@ -43,7 +43,7 @@ use crate::{
     },
 };
 
-#[cfg(feature = "quick")]
+#[cfg(feature = "quic")]
 use crate::transport::quick::QuicTransport;
 #[cfg(feature = "webrtc")]
 use crate::transport::webrtc::WebRtcTransport;
@@ -301,7 +301,7 @@ impl Litep2p {
         }
 
         // enable quic transport if the config exists
-        #[cfg(feature = "quick")]
+        #[cfg(feature = "quic")]
         if let Some(config) = litep2p_config.quic.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
@@ -403,7 +403,7 @@ impl Litep2p {
             .tcp
             .is_some()
             .then(|| supported_transports.insert(SupportedTransport::Tcp));
-        #[cfg(feature = "quick")]
+        #[cfg(feature = "quic")]
         config
             .quic
             .is_some()
@@ -525,7 +525,6 @@ mod tests {
 
         let config = ConfigBuilder::new()
             .with_tcp(Default::default())
-            .with_quic(Default::default())
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)
@@ -601,7 +600,6 @@ mod tests {
 
         let config = ConfigBuilder::new()
             .with_tcp(Default::default())
-            .with_quic(Default::default())
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)

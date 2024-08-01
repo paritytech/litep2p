@@ -112,7 +112,7 @@ pub enum Error {
     NoAddressAvailable(PeerId),
     #[error("Connection closed")]
     ConnectionClosed,
-    #[cfg(feature = "quick")]
+    #[cfg(feature = "quic")]
     #[error("Quinn error: `{0}`")]
     Quinn(quinn::ConnectionError),
     #[error("Invalid certificate")]
@@ -241,7 +241,7 @@ impl From<prost::EncodeError> for Error {
     }
 }
 
-#[cfg(feature = "quick")]
+#[cfg(feature = "quic")]
 impl From<quinn::ConnectionError> for Error {
     fn from(error: quinn::ConnectionError) -> Self {
         match error {
