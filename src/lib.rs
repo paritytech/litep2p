@@ -38,13 +38,17 @@ use crate::{
     },
     transport::{
         manager::{SupportedTransport, TransportManager},
-        quic::QuicTransport,
         tcp::TcpTransport,
-        webrtc::WebRtcTransport,
-        websocket::WebSocketTransport,
         TransportBuilder, TransportEvent,
     },
 };
+
+#[cfg(feature = "quick")]
+use crate::transport::quick::QuicTransport;
+#[cfg(feature = "webrtc")]
+use crate::transport::webrtc::WebRtcTransport;
+#[cfg(feature = "websocket")]
+use crate::transport::websocket::WebSocketTransport;
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
@@ -297,6 +301,7 @@ impl Litep2p {
         }
 
         // enable quic transport if the config exists
+        #[cfg(feature = "quick")]
         if let Some(config) = litep2p_config.quic.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
@@ -313,6 +318,7 @@ impl Litep2p {
         }
 
         // enable webrtc transport if the config exists
+        #[cfg(feature = "webrtc")]
         if let Some(config) = litep2p_config.webrtc.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
@@ -329,6 +335,7 @@ impl Litep2p {
         }
 
         // enable websocket transport if the config exists
+        #[cfg(feature = "websocket")]
         if let Some(config) = litep2p_config.websocket.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
@@ -396,14 +403,17 @@ impl Litep2p {
             .tcp
             .is_some()
             .then(|| supported_transports.insert(SupportedTransport::Tcp));
+        #[cfg(feature = "quick")]
         config
             .quic
             .is_some()
             .then(|| supported_transports.insert(SupportedTransport::Quic));
+        #[cfg(feature = "websocket")]
         config
             .websocket
             .is_some()
             .then(|| supported_transports.insert(SupportedTransport::WebSocket));
+        #[cfg(feature = "webrtc")]
         config
             .webrtc
             .is_some()
