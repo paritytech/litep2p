@@ -83,7 +83,7 @@ pub enum Error {
     DnsAddressResolutionFailed,
     #[error("Transport error: `{0}`")]
     TransportError(String),
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "quic")]
     #[error("Failed to generate certificate: `{0}`")]
     CertificateGeneration(#[from] crate::crypto::tls::certificate::GenError),
     #[error("Invalid data")]

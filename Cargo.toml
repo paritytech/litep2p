@@ -87,10 +87,17 @@ futures_ringbuf = "0.4.0"
 
 [features]
 custom_sc_network = []
-tls = ["dep:webpki"]
-quic = ["tls", "dep:quinn"]
+quic = ["dep:webpki", "dep:quinn"]
 webrtc = ["dep:str0m"]
 websocket = ["dep:tokio-tungstenite"]
 
 [profile.release]
 debug = true
+
+[[example]]
+name = "echo_notification"
+required-features = ["quic"]
+
+[[example]]
+name = "syncing"
+required-features = ["quic"]
