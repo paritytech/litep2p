@@ -370,7 +370,7 @@ fn multiaddr_to_socket_address(
                     ?protocol,
                     "invalid transport protocol, expected `Tcp`",
                 );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
+                Err(Error::AddressError(AddressError::InvalidProtocol))
             }
         };
 
