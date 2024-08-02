@@ -357,7 +357,7 @@ impl TransportManager {
             keypair: self.keypair.clone(),
             protocols: self.protocols.clone(),
             bandwidth_sink: self.bandwidth_sink.clone(),
-            protocol_names: self.protocol_names.iter().cloned().collect(),
+            _protocol_names: self.protocol_names.iter().cloned().collect(),
             next_substream_id: self.next_substream_id.clone(),
             next_connection_id: self.next_connection_id.clone(),
         }

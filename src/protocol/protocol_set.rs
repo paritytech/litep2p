@@ -38,14 +38,13 @@ use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
+#[cfg(any(feature = "quic", feature = "webrtc", feature = "websocket"))]
+use std::sync::atomic::Ordering;
 use std::{
     collections::HashMap,
     fmt::Debug,
     pin::Pin,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicUsize, Arc},
     task::{Context, Poll},
 };
 
@@ -213,6 +212,7 @@ pub struct ProtocolSet {
     mgr_tx: Sender<TransportManagerEvent>,
     connection: ConnectionHandle,
     rx: Receiver<ProtocolCommand>,
+    #[allow(unused)]
     next_substream_id: Arc<AtomicUsize>,
     fallback_names: HashMap<ProtocolName, ProtocolName>,
 }
@@ -253,6 +253,7 @@ impl ProtocolSet {
     }
 
     /// Get next substream ID.
+    #[cfg(any(feature = "quic", feature = "webrtc", feature = "websocket"))]
     pub fn next_substream_id(&self) -> SubstreamId {
         SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed))
     }

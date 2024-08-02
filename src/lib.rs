@@ -44,7 +44,7 @@ use crate::{
 };
 
 #[cfg(feature = "quic")]
-use crate::transport::quick::QuicTransport;
+use crate::transport::quic::QuicTransport;
 #[cfg(feature = "webrtc")]
 use crate::transport::webrtc::WebRtcTransport;
 #[cfg(feature = "websocket")]
@@ -76,8 +76,10 @@ pub mod types;
 pub mod yamux;
 
 mod bandwidth;
-mod mock;
 mod multistream_select;
+
+#[cfg(test)]
+mod mock;
 
 /// Public result type used by the crate.
 pub type Result<T> = std::result::Result<T, error::Error>;
