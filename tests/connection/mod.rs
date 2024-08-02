@@ -37,7 +37,7 @@ use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use tokio::net::TcpListener;
-#[cfg(fetaure = "quic")]
+#[cfg(feature = "quic")]
 use tokio::net::UdpSocket;
 
 #[cfg(test)]

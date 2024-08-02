@@ -841,7 +841,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
 
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
-        #[cfg(feature = "websocket")]
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => config1.with_quic(config),
         #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => config1.with_websocket(config),

@@ -289,7 +289,7 @@ async fn too_big_identity_payload_framed(transport1: Transport, transport2: Tran
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
         #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
-        #[cfg(feature = "wesocket")]
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))
@@ -380,7 +380,7 @@ async fn too_big_identity_payload_sink(transport1: Transport, transport2: Transp
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
         #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
-        #[cfg(feature = "webscocket")]
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))

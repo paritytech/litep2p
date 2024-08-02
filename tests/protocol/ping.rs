@@ -56,7 +56,7 @@ async fn ping_supported_tcp() {
     .await;
 }
 
-#[cfg(feature = "webscocket")]
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn ping_supported_websocket() {
     ping_supported(
