@@ -43,6 +43,16 @@ enum Transport {
     WebSocket(WebSocketConfig),
 }
 
+fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {
+    match transport {
+        Transport::Tcp(transport) => config.with_tcp(transport),
+        #[cfg(feature = "quic")]
+        Transport::Quic(transport) => config.with_quic(transport),
+        #[cfg(feature = "websocket")]
+        Transport::WebSocket(transport) => config.with_websocket(transport),
+    }
+}
+
 #[tokio::test]
 async fn identify_supported_tcp() {
     identify_supported(
@@ -82,36 +92,20 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
         Some("agent v1".to_string()),
         Vec::new(),
     );
-    let config_builder = ConfigBuilder::new()
+    let config_builder1 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config1);
-
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config_builder.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config_builder.with_quic(config),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(config) => config_builder.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config_builder1, transport1).build();
 
     let (identify_config2, mut identify_event_stream2) = Config::new(
         "/proto/2".to_string(),
         Some("agent v2".to_string()),
         Vec::new(),
     );
-    let config_builder = ConfigBuilder::new()
+    let config_builder2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config2);
-
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config_builder.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config_builder.with_quic(config),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(config) => config_builder.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config_builder2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -216,31 +210,17 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
         .try_init();
 
     let (ping_config, _event_stream) = PingConfig::default();
-    let config1 = match transport1 {
-        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
-    }
-    .with_keypair(Keypair::generate())
-    .with_libp2p_ping(ping_config)
-    .build();
+    let config_builder1 = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_libp2p_ping(ping_config);
+    let config1 = add_transport(config_builder1, transport1).build();
 
     let (identify_config2, mut identify_event_stream2) =
         Config::new("litep2p".to_string(), None, Vec::new());
-    let config_builder = ConfigBuilder::new()
+    let config_builder2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_identify(identify_config2);
-
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config_builder.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config_builder.with_quic(config),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(config) => config_builder.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config_builder2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();

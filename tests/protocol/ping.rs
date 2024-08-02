@@ -33,8 +33,18 @@ enum Transport {
     Tcp(TcpConfig),
     #[cfg(feature = "quic")]
     Quic(QuicConfig),
-    #[cfg(feature = "webscocket")]
+    #[cfg(feature = "websocket")]
     WebSocket(WebSocketConfig),
+}
+
+fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {
+    match transport {
+        Transport::Tcp(transport) => config.with_tcp(transport),
+        #[cfg(feature = "quic")]
+        Transport::Quic(transport) => config.with_quic(transport),
+        #[cfg(feature = "websocket")]
+        Transport::WebSocket(transport) => config.with_websocket(transport),
+    }
 }
 
 #[tokio::test]
@@ -73,26 +83,12 @@ async fn ping_supported(transport1: Transport, transport2: Transport) {
 
     let (ping_config1, mut ping_event_stream1) =
         PingConfigBuilder::new().with_max_failure(3usize).build();
-    let config1 = match transport1 {
-        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
-        #[cfg(feature = "webscocket")]
-        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
-    }
-    .with_libp2p_ping(ping_config1)
-    .build();
+    let config1 = ConfigBuilder::new().with_libp2p_ping(ping_config1);
+    let config1 = add_transport(config1, transport1).build();
 
     let (ping_config2, mut ping_event_stream2) = PingConfigBuilder::new().build();
-    let config2 = match transport2 {
-        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
-        #[cfg(feature = "webscocket")]
-        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
-    }
-    .with_libp2p_ping(ping_config2)
-    .build();
+    let config2 = ConfigBuilder::new().with_libp2p_ping(ping_config2);
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();

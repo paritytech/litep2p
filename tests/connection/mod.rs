@@ -51,6 +51,16 @@ enum Transport {
     WebSocket(WebSocketConfig),
 }
 
+fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {
+    match transport {
+        Transport::Tcp(transport) => config.with_tcp(transport),
+        #[cfg(feature = "quic")]
+        Transport::Quic(transport) => config.with_quic(transport),
+        #[cfg(feature = "websocket")]
+        Transport::WebSocket(transport) => config.with_websocket(transport),
+    }
+}
+
 #[tokio::test]
 async fn two_litep2ps_work_tcp() {
     two_litep2ps_work(
@@ -102,28 +112,14 @@ async fn two_litep2ps_work(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config1.with_quic(config),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (ping_config2, _ping_event_stream2) = PingConfig::default();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config2.with_quic(config),
-        #[cfg(feature = "webscoekt")]
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -211,28 +207,14 @@ async fn dial_failure(transport1: Transport, transport2: Transport, dial_address
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config1.with_quic(config),
-        #[cfg(feature = "webscocket")]
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (ping_config2, _ping_event_stream2) = PingConfig::default();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config2.with_quic(config),
-        #[cfg(feature = "webscocket")]
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -384,15 +366,7 @@ async fn connection_timeout(transport: Transport, address: Multiaddr) {
     let litep2p_config = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config);
-
-    let litep2p_config = match transport {
-        Transport::Tcp(config) => litep2p_config.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => litep2p_config.with_quic(config),
-        #[cfg(feature = "webscocket")]
-        Transport::WebSocket(config) => litep2p_config.with_websocket(config),
-    }
-    .build();
+    let litep2p_config = add_transport(litep2p_config, transport).build();
 
     let mut litep2p = Litep2p::new(litep2p_config).unwrap();
 
@@ -475,15 +449,7 @@ async fn dial_self(transport: Transport) {
     let litep2p_config = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config);
-
-    let litep2p_config = match transport {
-        Transport::Tcp(config) => litep2p_config.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => litep2p_config.with_quic(config),
-        #[cfg(feature = "webscocket")]
-        Transport::WebSocket(config) => litep2p_config.with_websocket(config),
-    }
-    .build();
+    let litep2p_config = add_transport(litep2p_config, transport).build();
 
     let mut litep2p = Litep2p::new(litep2p_config).unwrap();
     let address = litep2p.listen_addresses().next().unwrap().clone();
@@ -602,14 +568,7 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config1.with_quic(config),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
     let (ping_config2, mut ping_event_stream2) = PingConfig::default();
@@ -617,14 +576,7 @@ async fn keep_alive_timeout(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config2.with_quic(config),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let address1 = litep2p1.listen_addresses().next().unwrap().clone();
@@ -1476,28 +1428,14 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config1.with_quic(config),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (ping_config2, _ping_event_stream2) = PingConfig::default();
     let config2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
         .with_libp2p_ping(ping_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        #[cfg(feature = "quic")]
-        Transport::Quic(config) => config2.with_quic(config),
-        #[cfg(feature = "webscocket")]
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
