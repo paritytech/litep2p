@@ -34,7 +34,7 @@ pub struct AddressRecord {
     /// Address.
     address: Multiaddr,
 
-    /// Connection ID, if specifed.
+    /// Connection ID, if specified.
     connection_id: Option<ConnectionId>,
 }
 
