@@ -629,11 +629,9 @@ impl TransportManager {
                 Entry::Occupied(occupied) => {
                     let context = occupied.into_mut();
 
-                    // `context.addresses.insert` does not overwrite the existing record.
-                    // This inserts the record with a score of 0 if it doesn't exist, for
-                    // keeping track of the potential address. This becomes useful for
-                    // consecutive `fn dial` calls.
-                    // However, the record score cannot be updated in the future.
+                    // For a better address tacking, see:
+                    // https://github.com/paritytech/litep2p/issues/180
+                    //
                     // TODO: context.addresses.insert(record.clone());
 
                     tracing::debug!(
