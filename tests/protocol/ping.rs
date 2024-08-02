@@ -20,18 +20,20 @@
 
 use futures::StreamExt;
 use litep2p::{
-    config::ConfigBuilder,
-    protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
-    transport::{
-        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
-        websocket::config::Config as WebSocketConfig,
-    },
-    Litep2p,
+    config::ConfigBuilder, protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
+    transport::tcp::config::Config as TcpConfig, Litep2p,
 };
+
+#[cfg(feature = "quic")]
+use litep2p::transport::quic::config::Config as QuicConfig;
+#[cfg(feature = "websocket")]
+use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 enum Transport {
     Tcp(TcpConfig),
+    #[cfg(feature = "quic")]
     Quic(QuicConfig),
+    #[cfg(feature = "webscocket")]
     WebSocket(WebSocketConfig),
 }
 
@@ -44,6 +46,7 @@ async fn ping_supported_tcp() {
     .await;
 }
 
+#[cfg(feature = "webscocket")]
 #[tokio::test]
 async fn ping_supported_websocket() {
     ping_supported(
@@ -53,6 +56,7 @@ async fn ping_supported_websocket() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn ping_supported_quic() {
     ping_supported(
@@ -71,7 +75,9 @@ async fn ping_supported(transport1: Transport, transport2: Transport) {
         PingConfigBuilder::new().with_max_failure(3usize).build();
     let config1 = match transport1 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "webscocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_libp2p_ping(ping_config1)
@@ -80,7 +86,9 @@ async fn ping_supported(transport1: Transport, transport2: Transport) {
     let (ping_config2, mut ping_event_stream2) = PingConfigBuilder::new().build();
     let config2 = match transport2 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "webscocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_libp2p_ping(ping_config2)
