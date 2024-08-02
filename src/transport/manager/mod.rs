@@ -710,8 +710,6 @@ impl TransportManager {
                 ?connection_id,
                 "dial failed for a connection that doesn't exist",
             );
-            debug_assert!(false);
-
             Error::InvalidState
         })?;
 
@@ -1398,8 +1396,6 @@ impl TransportManager {
                 ?connection_id,
                 "open failure but dial record doesn't exist",
             );
-
-            debug_assert!(false);
             return Err(Error::InvalidState);
         };
 
