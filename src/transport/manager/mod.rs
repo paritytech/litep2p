@@ -3738,6 +3738,60 @@ mod tests {
 
     #[tokio::test]
     async fn reject_unknown_secondary_connections_with_different_connection_ids() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+            ConnectionLimitsConfig::default(),
+        );
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
+
+        // Random peer ID.
+        let peer = PeerId::random();
+        let (first_addr, first_connection_id) = setup_dial_addr(peer, 0);
+        let second_connection_id = ConnectionId::from(1);
+        let different_connection_id = ConnectionId::from(2);
+
+        // Setup a connected peer with a dial record active.
+        {
+            let mut peers = manager.peers.write();
+
+            let state = PeerState::Connected {
+                record: AddressRecord::new(&peer, first_addr.clone(), 0, Some(first_connection_id)),
+                dial_record: Some(AddressRecord::new(
+                    &peer,
+                    first_addr.clone(),
+                    0,
+                    Some(second_connection_id),
+                )),
+            };
+
+            let peer_context = PeerContext {
+                state,
+                secondary_connection: None,
+                addresses: AddressStore::from_iter(vec![first_addr.clone()].into_iter()),
+            };
+
+            peers.insert(peer, peer_context);
+        }
+
+        // Establish a connection, however the connection ID is different.
+        let result = manager
+            .on_connection_established(
+                peer,
+                &Endpoint::dialer(first_addr.clone(), different_connection_id),
+            )
+            .unwrap();
+        assert_eq!(result, ConnectionEstablishedResult::Reject);
+    }
+
+    #[tokio::test]
+    async fn guard_against_secondary_connections_with_different_connection_ids() {
         // This is the repro case for https://github.com/paritytech/litep2p/issues/172.
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
