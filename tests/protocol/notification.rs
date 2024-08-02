@@ -41,9 +41,9 @@ use futures::StreamExt;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
-#[cfg(any(feature = "quic", feature = "websocket"))]
-use std::net::Ipv6Addr;
-use std::{net::Ipv4Addr, task::Poll, time::Duration};
+#[cfg(feature = "quic")]
+use std::net::Ipv4Addr;
+use std::{net::Ipv6Addr, task::Poll, time::Duration};
 
 enum Transport {
     Tcp(TcpConfig),
@@ -3445,11 +3445,11 @@ async fn dial_failure(transport1: Transport, transport2: Transport) {
 
     let known_address = match &transport2 {
         Transport::Tcp(_) => Multiaddr::empty()
-            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5)),
         #[cfg(feature = "quic")]
         Transport::Quic(_) => Multiaddr::empty()
-            .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Udp(5))
             .with(Protocol::QuicV1),
         #[cfg(feature = "websocket")]
