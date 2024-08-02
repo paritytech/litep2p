@@ -26,16 +26,20 @@ use litep2p::{
         identify::{Config, IdentifyEvent},
         ping::Config as PingConfig,
     },
-    transport::{
-        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
-        websocket::config::Config as WebSocketConfig,
-    },
+    transport::tcp::config::Config as TcpConfig,
     Litep2p, Litep2pEvent,
 };
 
+#[cfg(feature = "quic")]
+use litep2p::transport::quic::config::Config as QuicConfig;
+#[cfg(feature = "websocket")]
+use litep2p::transport::websocket::config::Config as WebSocketConfig;
+
 enum Transport {
-    Quic(QuicConfig),
     Tcp(TcpConfig),
+    #[cfg(feature = "quic")]
+    Quic(QuicConfig),
+    #[cfg(feature = "websocket")]
     WebSocket(WebSocketConfig),
 }
 
@@ -48,6 +52,7 @@ async fn identify_supported_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn identify_supported_quic() {
     identify_supported(
@@ -57,6 +62,7 @@ async fn identify_supported_quic() {
     .await
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn identify_supported_websocket() {
     identify_supported(
@@ -82,7 +88,9 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
 
     let config1 = match transport1 {
         Transport::Tcp(config) => config_builder.with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => config_builder.with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => config_builder.with_websocket(config),
     }
     .build();
@@ -98,7 +106,9 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
 
     let config2 = match transport2 {
         Transport::Tcp(config) => config_builder.with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => config_builder.with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => config_builder.with_websocket(config),
     }
     .build();
@@ -180,6 +190,7 @@ async fn identify_not_supported_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn identify_not_supported_quic() {
     identify_not_supported(
@@ -189,6 +200,7 @@ async fn identify_not_supported_quic() {
     .await
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn identify_not_supported_websocket() {
     identify_not_supported(
@@ -206,7 +218,9 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
     let (ping_config, _event_stream) = PingConfig::default();
     let config1 = match transport1 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_keypair(Keypair::generate())
@@ -221,7 +235,9 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
 
     let config2 = match transport2 {
         Transport::Tcp(config) => config_builder.with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => config_builder.with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => config_builder.with_websocket(config),
     }
     .build();
