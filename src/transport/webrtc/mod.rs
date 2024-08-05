@@ -499,6 +499,30 @@ impl Transport for WebRtcTransport {
         Err(Error::NotSupported("webrtc cannot dial peers".to_string()))
     }
 
+    fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?connection_id,
+            "webrtc cannot accept pending connections",
+        );
+
+        Err(Error::NotSupported(
+            "webrtc cannot accept pending connections".to_string(),
+        ))
+    }
+
+    fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?connection_id,
+            "webrtc cannot reject pending connections",
+        );
+
+        Err(Error::NotSupported(
+            "webrtc cannot reject pending connections".to_string(),
+        ))
+    }
+
     fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,

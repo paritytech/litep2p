@@ -62,6 +62,14 @@ pub mod config;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::tcp";
 
+/// Pending inbound connection.
+struct PendingInboundConnection {
+    /// Socket address of the remote peer.
+    connection: TcpStream,
+    /// Address of the remote peer.
+    address: SocketAddr,
+}
+
 /// TCP transport.
 pub(crate) struct TcpTransport {
     /// Transport context.
@@ -78,6 +86,9 @@ pub(crate) struct TcpTransport {
 
     /// Dial addresses.
     dial_addresses: DialAddresses,
+
+    /// Pending inbound connections.
+    pending_inbound_connections: HashMap<ConnectionId, PendingInboundConnection>,
 
     /// Pending opening connections.
     pending_connections:
@@ -101,8 +112,12 @@ pub(crate) struct TcpTransport {
 
 impl TcpTransport {
     /// Handle inbound TCP connection.
-    fn on_inbound_connection(&mut self, connection: TcpStream, address: SocketAddr) {
-        let connection_id = self.context.next_connection_id();
+    fn on_inbound_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        connection: TcpStream,
+        address: SocketAddr,
+    ) {
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -228,6 +243,7 @@ impl TransportBuilder for TcpTransport {
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
+                pending_inbound_connections: HashMap::new(),
                 pending_connections: FuturesUnordered::new(),
                 pending_raw_connections: FuturesUnordered::new(),
             },
@@ -307,6 +323,23 @@ impl Transport for TcpTransport {
         }));
 
         Ok(())
+    }
+
+    fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let pending = self
+            .pending_inbound_connections
+            .remove(&connection_id)
+            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+
+        self.on_inbound_connection(connection_id, pending.connection, pending.address);
+
+        Ok(())
+    }
+
+    fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.pending_inbound_connections
+            .remove(&connection_id)
+            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
@@ -423,7 +456,19 @@ impl Stream for TcpTransport {
             match event {
                 None | Some(Err(_)) => return Poll::Ready(None),
                 Some(Ok((connection, address))) => {
-                    self.on_inbound_connection(connection, address);
+                    let connection_id = self.context.next_connection_id();
+
+                    self.pending_inbound_connections.insert(
+                        connection_id,
+                        PendingInboundConnection {
+                            connection,
+                            address,
+                        },
+                    );
+
+                    return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                        connection_id,
+                    }));
                 }
             }
         }
@@ -620,6 +665,7 @@ mod tests {
                     TransportEvent::DialFailure { .. } => {}
                     TransportEvent::ConnectionOpened { .. } => {}
                     TransportEvent::OpenFailure { .. } => {}
+                    TransportEvent::PendingInboundConnection { .. } => {}
                 }
             }
         });

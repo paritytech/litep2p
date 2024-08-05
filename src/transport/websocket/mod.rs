@@ -39,6 +39,7 @@ use crate::{
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
+use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -80,6 +81,14 @@ impl WebSocketError {
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::websocket";
 
+/// Pending inbound connection.
+struct PendingInboundConnection {
+    /// Socket address of the remote peer.
+    connection: TcpStream,
+    /// Address of the remote peer.
+    address: SocketAddr,
+}
+
 /// WebSocket transport.
 pub(crate) struct WebSocketTransport {
     /// Transport context.
@@ -96,6 +105,9 @@ pub(crate) struct WebSocketTransport {
 
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
+
+    /// Pending inbound connections.
+    pending_inbound_connections: HashMap<ConnectionId, PendingInboundConnection>,
 
     /// Pending connections.
     pending_connections:
@@ -127,6 +139,46 @@ pub(crate) struct WebSocketTransport {
 }
 
 impl WebSocketTransport {
+    /// Handle inbound connection.
+    fn on_inbound_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        connection: TcpStream,
+        address: SocketAddr,
+    ) {
+        let keypair = self.context.keypair.clone();
+        let yamux_config = self.config.yamux_config.clone();
+        let connection_open_timeout = self.config.connection_open_timeout;
+        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+        let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let address = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())));
+
+        self.pending_connections.push(Box::pin(async move {
+            match tokio::time::timeout(connection_open_timeout, async move {
+                WebSocketConnection::accept_connection(
+                    connection,
+                    connection_id,
+                    keypair,
+                    address,
+                    yamux_config,
+                    max_read_ahead_factor,
+                    max_write_buffer_size,
+                )
+                .await
+                .map_err(|error| WebSocketError::new(error, None))
+            })
+            .await
+            {
+                Err(_) => Err(WebSocketError::new(Error::Timeout, None)),
+                Ok(Err(error)) => Err(error),
+                Ok(Ok(result)) => Ok(result),
+            }
+        }));
+    }
+
     /// Convert `Multiaddr` into `url::Url`
     fn multiaddr_into_url(address: Multiaddr) -> crate::Result<(Url, PeerId)> {
         let mut protocol_stack = address.iter();
@@ -282,6 +334,7 @@ impl TransportBuilder for WebSocketTransport {
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
+                pending_inbound_connections: HashMap::new(),
                 pending_connections: FuturesUnordered::new(),
                 pending_raw_connections: FuturesUnordered::new(),
             },
@@ -379,6 +432,24 @@ impl Transport for WebSocketTransport {
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.canceled.insert(connection_id);
+        self.pending_open
+            .remove(&connection_id)
+            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
+    }
+
+    fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let pending = self
+            .pending_inbound_connections
+            .remove(&connection_id)
+            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+
+        self.on_inbound_connection(connection_id, pending.connection, pending.address);
+
+        Ok(())
+    }
+
+    fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
         self.canceled.insert(connection_id);
         self.pending_open
             .remove(&connection_id)
@@ -492,38 +563,19 @@ impl Stream for WebSocketTransport {
         while let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
             match connection {
                 Err(_) => return Poll::Ready(None),
-                Ok((stream, address)) => {
+                Ok((connection, address)) => {
                     let connection_id = self.context.next_connection_id();
-                    let keypair = self.context.keypair.clone();
-                    let yamux_config = self.config.yamux_config.clone();
-                    let connection_open_timeout = self.config.connection_open_timeout;
-                    let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
-                    let max_write_buffer_size = self.config.noise_write_buffer_size;
-                    let address = Multiaddr::empty()
-                        .with(Protocol::from(address.ip()))
-                        .with(Protocol::Tcp(address.port()))
-                        .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())));
 
-                    self.pending_connections.push(Box::pin(async move {
-                        match tokio::time::timeout(connection_open_timeout, async move {
-                            WebSocketConnection::accept_connection(
-                                stream,
-                                connection_id,
-                                keypair,
-                                address,
-                                yamux_config,
-                                max_read_ahead_factor,
-                                max_write_buffer_size,
-                            )
-                            .await
-                            .map_err(|error| WebSocketError::new(error, None))
-                        })
-                        .await
-                        {
-                            Err(_) => Err(WebSocketError::new(Error::Timeout, None)),
-                            Ok(Err(error)) => Err(error),
-                            Ok(Ok(result)) => Ok(result),
-                        }
+                    self.pending_inbound_connections.insert(
+                        connection_id,
+                        PendingInboundConnection {
+                            connection,
+                            address,
+                        },
+                    );
+
+                    return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                        connection_id,
                     }));
                 }
             }

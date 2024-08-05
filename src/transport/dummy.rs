@@ -77,6 +77,14 @@ impl Transport for DummyTransport {
         Ok(())
     }
 
+    fn accept_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn reject_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+        Ok(())
+    }
+
     fn reject(&mut self, _: ConnectionId) -> crate::Result<()> {
         Ok(())
     }
