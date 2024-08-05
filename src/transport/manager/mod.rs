@@ -834,6 +834,11 @@ impl TransportManager {
         }
     }
 
+    fn on_pending_incoming_connection(&mut self) -> crate::Result<()> {
+        self.connection_limits.on_incoming()?;
+        Ok(())
+    }
+
     /// Handle closed connection.
     fn on_connection_closed(
         &mut self,
@@ -1708,7 +1713,34 @@ impl TransportManager {
                                 }
                                 Ok(None) => {}
                             }
-                        }
+                        },
+                        TransportEvent::PendingInboundConnection { connection_id } => {
+                            if self.on_pending_incoming_connection().is_ok() {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    ?connection_id,
+                                    "accept pending incoming connection",
+                                );
+
+                                let _ = self
+                                    .transports
+                                    .get_mut(&transport)
+                                    .expect("transport to exist")
+                                    .accept_pending(connection_id);
+                            } else {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?connection_id,
+                                    "reject pending incoming connection",
+                                );
+
+                                let _ = self
+                                    .transports
+                                    .get_mut(&transport)
+                                    .expect("transport to exist")
+                                    .reject_pending(connection_id);
+                            }
+                        },
                         event => panic!("event not supported: {event:?}"),
                     }
                 },
