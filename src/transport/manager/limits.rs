@@ -101,6 +101,17 @@ impl ConnectionLimits {
         Ok(usize::MAX)
     }
 
+    /// Called before accepting a new incoming connection.
+    pub fn on_incoming(&mut self) -> Result<(), ConnectionLimitsError> {
+        if let Some(max_incoming_connections) = self.config.max_incoming_connections {
+            if self.incoming_connections.len() >= max_incoming_connections {
+                return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Called when a new connection is established.
     pub fn on_connection_established(
         &mut self,
