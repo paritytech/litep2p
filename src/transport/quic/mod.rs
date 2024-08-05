@@ -577,6 +577,15 @@ mod tests {
         ));
 
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
+
+        let event = transport1.next().await.unwrap();
+        match event {
+            TransportEvent::PendingInboundConnection { connection_id } => {
+                transport1.accept_pending(connection_id).unwrap();
+            }
+            _ => panic!("unexpected event"),
+        }
+
         let (res1, res2) = tokio::join!(transport1.next(), transport2.next());
 
         assert!(std::matches!(
