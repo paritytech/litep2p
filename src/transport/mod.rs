@@ -118,6 +118,11 @@ pub(crate) enum TransportEvent {
         endpoint: Endpoint,
     },
 
+    PendingInboundConnection {
+        /// Connection ID.
+        connection_id: ConnectionId,
+    },
+
     /// Connection opened to remote but not yet negotiated.
     ConnectionOpened {
         /// Connection ID.
@@ -172,6 +177,12 @@ pub(crate) trait Transport: Stream + Unpin + Send {
 
     /// Accept negotiated connection.
     fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+
+    /// Accept pending connection.
+    fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+
+    /// Reject pending connection.
+    fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
 
     /// Reject negotiated connection.
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
