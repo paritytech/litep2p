@@ -25,13 +25,13 @@ use litep2p::{
         Config as RequestResponseConfig, ConfigBuilder, DialOptions, RequestResponseError,
         RequestResponseEvent,
     },
-    transport::{
-        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
-        websocket::config::Config as WebSocketConfig,
-    },
+    transport::tcp::config::Config as TcpConfig,
     types::{protocol::ProtocolName, RequestId},
     Litep2p, Litep2pEvent, PeerId,
 };
+
+#[cfg(feature = "websocket")]
+use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 use futures::{channel, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
@@ -40,18 +40,16 @@ use rand::{Rng, SeedableRng};
 use rand_xorshift::XorShiftRng;
 use tokio::time::sleep;
 
+#[cfg(feature = "quic")]
+use std::net::Ipv4Addr;
 use std::{
     collections::{HashMap, HashSet},
-    net::{Ipv4Addr, Ipv6Addr},
+    net::Ipv6Addr,
     task::Poll,
     time::Duration,
 };
 
-enum Transport {
-    Tcp(TcpConfig),
-    Quic(QuicConfig),
-    WebSocket(WebSocketConfig),
-}
+use crate::common::{add_transport, Transport};
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let address = litep2p2.listen_addresses().next().unwrap().clone();
@@ -100,6 +98,7 @@ async fn send_request_receive_response_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn send_request_receive_response_quic() {
     send_request_receive_response(
@@ -109,6 +108,7 @@ async fn send_request_receive_response_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn send_request_receive_response_websocket() {
     send_request_receive_response(
@@ -140,12 +140,7 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1"),
@@ -158,12 +153,7 @@ async fn send_request_receive_response(transport1: Transport, transport2: Transp
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -225,6 +215,7 @@ async fn reject_request_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn reject_request_quic() {
     reject_request(
@@ -234,6 +225,7 @@ async fn reject_request_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn reject_request_websocket() {
     reject_request(
@@ -266,12 +258,7 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1"),
@@ -284,12 +271,7 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -352,6 +334,7 @@ async fn multiple_simultaneous_requests_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn multiple_simultaneous_requests_quic() {
     multiple_simultaneous_requests(
@@ -361,6 +344,7 @@ async fn multiple_simultaneous_requests_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn multiple_simultaneous_requests_websocket() {
     multiple_simultaneous_requests(
@@ -393,12 +377,7 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1"),
@@ -411,12 +390,7 @@ async fn multiple_simultaneous_requests(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -516,6 +490,7 @@ async fn request_timeout_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn request_timeout_quic() {
     request_timeout(
@@ -525,6 +500,7 @@ async fn request_timeout_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn request_timeout_websocket() {
     request_timeout(
@@ -557,12 +533,7 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, _handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1"),
@@ -575,12 +546,7 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -632,6 +598,7 @@ async fn protocol_not_supported_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn protocol_not_supported_quic() {
     protocol_not_supported(
@@ -641,6 +608,7 @@ async fn protocol_not_supported_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn protocol_not_supported_websocket() {
     protocol_not_supported(
@@ -673,12 +641,7 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, _handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/2"),
@@ -691,12 +654,7 @@ async fn protocol_not_supported(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -746,6 +704,7 @@ async fn connection_close_while_request_is_pending_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn connection_close_while_request_is_pending_quic() {
     connection_close_while_request_is_pending(
@@ -755,6 +714,7 @@ async fn connection_close_while_request_is_pending_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn connection_close_while_request_is_pending_websocket() {
     connection_close_while_request_is_pending(
@@ -786,12 +746,7 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1"),
@@ -804,12 +759,7 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -859,6 +809,7 @@ async fn request_too_big_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn request_too_big_quic() {
     request_too_big(
@@ -868,6 +819,7 @@ async fn request_too_big_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn request_too_big_websocket() {
     request_too_big(
@@ -899,12 +851,7 @@ async fn request_too_big(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, _handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1"),
@@ -917,12 +864,7 @@ async fn request_too_big(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -968,6 +910,7 @@ async fn response_too_big_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn response_too_big_quic() {
     response_too_big(
@@ -977,6 +920,7 @@ async fn response_too_big_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn response_too_big_websocket() {
     response_too_big(
@@ -1008,12 +952,7 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1"),
@@ -1026,12 +965,7 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1206,6 +1140,7 @@ async fn dialer_fallback_protocol_works_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn dialer_fallback_protocol_works_quic() {
     dialer_fallback_protocol_works(
@@ -1215,6 +1150,7 @@ async fn dialer_fallback_protocol_works_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn dialer_fallback_protocol_works_websocket() {
     dialer_fallback_protocol_works(
@@ -1245,12 +1181,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1"),
@@ -1263,12 +1194,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1330,6 +1256,7 @@ async fn listener_fallback_protocol_works_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn listener_fallback_protocol_works_quic() {
     listener_fallback_protocol_works(
@@ -1339,6 +1266,7 @@ async fn listener_fallback_protocol_works_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn listener_fallback_protocol_works_websocket() {
     listener_fallback_protocol_works(
@@ -1370,12 +1298,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1/improved"),
@@ -1388,12 +1311,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1455,6 +1373,7 @@ async fn dial_peer_when_sending_request_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn dial_peer_when_sending_request_quic() {
     dial_peer_when_sending_request(
@@ -1464,6 +1383,7 @@ async fn dial_peer_when_sending_request_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn dial_peer_when_sending_request_websocket() {
     dial_peer_when_sending_request(
@@ -1495,12 +1415,7 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1/improved"),
@@ -1513,12 +1428,7 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1580,6 +1490,7 @@ async fn dial_peer_but_no_known_address_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn dial_peer_but_no_known_address_quic() {
     dial_peer_but_no_known_address(
@@ -1589,6 +1500,7 @@ async fn dial_peer_but_no_known_address_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn dial_peer_but_no_known_address_websocket() {
     dial_peer_but_no_known_address(
@@ -1620,12 +1532,7 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, _handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1/improved"),
@@ -1638,12 +1545,7 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1687,6 +1589,7 @@ async fn cancel_request_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn cancel_request_quic() {
     cancel_request(
@@ -1696,6 +1599,7 @@ async fn cancel_request_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn cancel_request_websocket() {
     cancel_request(
@@ -1727,12 +1631,7 @@ async fn cancel_request(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/1"),
@@ -1745,12 +1644,7 @@ async fn cancel_request(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1812,6 +1706,7 @@ async fn substream_open_failure_reported_once_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn substream_open_failure_reported_once_quic() {
     substream_open_failure_reported_once(
@@ -1821,6 +1716,7 @@ async fn substream_open_failure_reported_once_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn substream_open_failure_reported_once_websocket() {
     substream_open_failure_reported_once(
@@ -1852,12 +1748,7 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, _handle2) = RequestResponseConfig::new(
         ProtocolName::from("/protocol/2"),
@@ -1870,12 +1761,7 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1937,6 +1823,7 @@ async fn excess_inbound_request_rejected_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn excess_inbound_request_rejected_quic() {
     excess_inbound_request_rejected(
@@ -1946,6 +1833,7 @@ async fn excess_inbound_request_rejected_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn excess_inbound_request_rejected_websocket() {
     excess_inbound_request_rejected(
@@ -1974,12 +1862,7 @@ async fn excess_inbound_request_rejected(transport1: Transport, transport2: Tran
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, _handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
         .with_max_size(1024)
@@ -1990,12 +1873,7 @@ async fn excess_inbound_request_rejected(transport1: Transport, transport2: Tran
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2058,6 +1936,7 @@ async fn feedback_received_for_succesful_response_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn feedback_received_for_succesful_response_quic() {
     feedback_received_for_succesful_response(
@@ -2067,6 +1946,7 @@ async fn feedback_received_for_succesful_response_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn feedback_received_for_succesful_response_websocket() {
     feedback_received_for_succesful_response(
@@ -2095,12 +1975,7 @@ async fn feedback_received_for_succesful_response(transport1: Transport, transpo
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
         .with_max_size(1024)
@@ -2110,12 +1985,7 @@ async fn feedback_received_for_succesful_response(transport1: Transport, transpo
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2179,6 +2049,7 @@ async fn feedback_received_for_succesful_response(transport1: Transport, transpo
 //     .await;
 // }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn feedback_not_received_for_failed_response_quic() {
     feedback_not_received_for_failed_response(
@@ -2203,6 +2074,7 @@ async fn feedback_not_received_for_failed_response_quic() {
 //     .await;
 // }
 
+#[cfg(feature = "quic")]
 async fn feedback_not_received_for_failed_response(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -2216,12 +2088,7 @@ async fn feedback_not_received_for_failed_response(transport1: Transport, transp
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
         .with_max_size(1024)
@@ -2231,12 +2098,7 @@ async fn feedback_not_received_for_failed_response(transport1: Transport, transp
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2289,6 +2151,7 @@ async fn custom_timeout_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn custom_timeout_quic() {
     custom_timeout(
@@ -2298,6 +2161,7 @@ async fn custom_timeout_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn custom_timeout_websocket() {
     custom_timeout(
@@ -2321,12 +2185,7 @@ async fn custom_timeout(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, _handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
         .with_max_size(1024)
@@ -2336,12 +2195,7 @@ async fn custom_timeout(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2383,11 +2237,13 @@ async fn outbound_request_for_unconnected_peer_tcp() {
     outbound_request_for_unconnected_peer(Transport::Tcp(Default::default())).await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn outbound_request_for_unconnected_peer_quic() {
     outbound_request_for_unconnected_peer(Transport::Quic(Default::default())).await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn outbound_request_for_unconnected_peer_websocket() {
     outbound_request_for_unconnected_peer(Transport::WebSocket(Default::default())).await;
@@ -2406,12 +2262,7 @@ async fn outbound_request_for_unconnected_peer(transport1: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     tokio::spawn(async move {
         let mut litep2p1 = Litep2p::new(config1).unwrap();
@@ -2440,11 +2291,13 @@ async fn dial_failure_tcp() {
     dial_failure(Transport::Tcp(Default::default())).await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn dial_failure_quic() {
     dial_failure(Transport::Quic(Default::default())).await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn dial_failure_websocket() {
     dial_failure(Transport::WebSocket(Default::default())).await;
@@ -2469,11 +2322,13 @@ async fn dial_failure(transport: Transport) {
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5))
             .with(Protocol::P2p(Multihash::from(peer))),
+        #[cfg(feature = "quic")]
         Transport::Quic(_) => Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Udp(5))
             .with(Protocol::QuicV1)
             .with(Protocol::P2p(Multihash::from(peer))),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(_) => Multiaddr::empty()
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5))
@@ -2481,12 +2336,7 @@ async fn dial_failure(transport: Transport) {
             .with(Protocol::P2p(Multihash::from(peer))),
     };
 
-    let config = match transport {
-        Transport::Tcp(config) => litep2p_config.with_tcp(config),
-        Transport::Quic(config) => litep2p_config.with_quic(config),
-        Transport::WebSocket(config) => litep2p_config.with_websocket(config),
-    }
-    .build();
+    let config = add_transport(litep2p_config, transport).build();
 
     let mut litep2p = Litep2p::new(config).unwrap();
     litep2p.add_known_address(peer, vec![known_address].into_iter());
@@ -2514,6 +2364,7 @@ async fn large_response_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn large_response_quic() {
     large_response(
@@ -2523,6 +2374,7 @@ async fn large_response_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn large_response_websocket() {
     large_response(
@@ -2546,12 +2398,7 @@ async fn large_response(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
         .with_max_size(16 * 1024 * 1024)
@@ -2561,12 +2408,7 @@ async fn large_response(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2624,6 +2466,7 @@ async fn binary_incompatible_fallback_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn binary_incompatible_fallback_quic() {
     binary_incompatible_fallback(
@@ -2633,6 +2476,7 @@ async fn binary_incompatible_fallback_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn binary_incompatible_fallback_websocket() {
     binary_incompatible_fallback(
@@ -2657,12 +2501,7 @@ async fn binary_incompatible_fallback(transport1: Transport, transport2: Transpo
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
         .with_max_size(16 * 1024 * 1024)
@@ -2672,12 +2511,7 @@ async fn binary_incompatible_fallback(transport1: Transport, transport2: Transpo
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2737,6 +2571,7 @@ async fn binary_incompatible_fallback_inbound_request_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn binary_incompatible_fallback_inbound_request_quic() {
     binary_incompatible_fallback_inbound_request(
@@ -2746,6 +2581,7 @@ async fn binary_incompatible_fallback_inbound_request_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn binary_incompatible_fallback_inbound_request_websocket() {
     binary_incompatible_fallback_inbound_request(
@@ -2773,12 +2609,7 @@ async fn binary_incompatible_fallback_inbound_request(
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/protocol/1"))
         .with_max_size(16 * 1024 * 1024)
@@ -2788,12 +2619,7 @@ async fn binary_incompatible_fallback_inbound_request(
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2848,6 +2674,7 @@ async fn binary_incompatible_fallback_two_fallback_protocols_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn binary_incompatible_fallback_two_fallback_protocols_quic() {
     binary_incompatible_fallback_two_fallback_protocols(
@@ -2857,6 +2684,7 @@ async fn binary_incompatible_fallback_two_fallback_protocols_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn binary_incompatible_fallback_two_fallback_protocols_websocket() {
     binary_incompatible_fallback_two_fallback_protocols(
@@ -2888,12 +2716,7 @@ async fn binary_incompatible_fallback_two_fallback_protocols(
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) =
         ConfigBuilder::new(ProtocolName::from("/genesis/protocol/1"))
@@ -2905,12 +2728,7 @@ async fn binary_incompatible_fallback_two_fallback_protocols(
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2970,6 +2788,7 @@ async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request_tcp
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request_quic() {
     binary_incompatible_fallback_two_fallback_protocols_inbound_request(
@@ -2979,6 +2798,7 @@ async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request_qui
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request_websocket() {
     binary_incompatible_fallback_two_fallback_protocols_inbound_request(
@@ -3010,12 +2830,7 @@ async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request(
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) =
         ConfigBuilder::new(ProtocolName::from("/genesis/protocol/1"))
@@ -3027,12 +2842,7 @@ async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request(
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -3087,6 +2897,7 @@ async fn binary_incompatible_fallback_compatible_nodes_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn binary_incompatible_fallback_compatible_nodes_quic() {
     binary_incompatible_fallback_compatible_nodes(
@@ -3096,6 +2907,7 @@ async fn binary_incompatible_fallback_compatible_nodes_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn binary_incompatible_fallback_compatible_nodes_websocket() {
     binary_incompatible_fallback_compatible_nodes(
@@ -3127,12 +2939,7 @@ async fn binary_incompatible_fallback_compatible_nodes(
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (req_resp_config2, mut handle2) =
         ConfigBuilder::new(ProtocolName::from("/genesis/protocol/2"))
@@ -3148,12 +2955,7 @@ async fn binary_incompatible_fallback_compatible_nodes(
         .with_keypair(Keypair::generate())
         .with_request_response_protocol(req_resp_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();

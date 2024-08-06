@@ -26,30 +26,24 @@ use litep2p::{
         Config as NotificationConfig, ConfigBuilder, Direction, NotificationError,
         NotificationEvent, NotificationHandle, ValidationResult,
     },
-    transport::{
-        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
-        websocket::config::Config as WebSocketConfig,
-    },
+    transport::tcp::config::Config as TcpConfig,
     types::protocol::ProtocolName,
     Litep2p, Litep2pEvent, PeerId,
 };
+
+#[cfg(feature = "websocket")]
+use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 use bytes::BytesMut;
 use futures::StreamExt;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
-use std::{
-    net::{Ipv4Addr, Ipv6Addr},
-    task::Poll,
-    time::Duration,
-};
+#[cfg(feature = "quic")]
+use std::net::Ipv4Addr;
+use std::{net::Ipv6Addr, task::Poll, time::Duration};
 
-enum Transport {
-    Tcp(TcpConfig),
-    Quic(QuicConfig),
-    WebSocket(WebSocketConfig),
-}
+use crate::common::{add_transport, Transport};
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let address = litep2p2.listen_addresses().next().unwrap().clone();
@@ -97,12 +91,7 @@ async fn make_default_litep2p(transport: Transport) -> (Litep2p, NotificationHan
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config);
 
-    let config = match transport {
-        Transport::Tcp(transport_config) => config.with_tcp(transport_config),
-        Transport::Quic(transport_config) => config.with_quic(transport_config),
-        Transport::WebSocket(transport_config) => config.with_websocket(transport_config),
-    }
-    .build();
+    let config = add_transport(config, transport).build();
 
     (Litep2p::new(config).unwrap(), handle)
 }
@@ -122,6 +111,7 @@ async fn open_substreams_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn open_substreams_quic() {
     open_substreams(
@@ -131,6 +121,7 @@ async fn open_substreams_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn open_substreams_websocket() {
     open_substreams(
@@ -165,12 +156,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -186,12 +172,7 @@ async fn open_substreams(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -289,6 +270,7 @@ async fn reject_substream_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn reject_substream_quic() {
     reject_substream(
@@ -298,6 +280,7 @@ async fn reject_substream_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn reject_substream_websocket() {
     reject_substream(
@@ -332,12 +315,7 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -353,12 +331,7 @@ async fn reject_substream(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -414,6 +387,7 @@ async fn notification_stream_closed_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn notification_stream_closed_quic() {
     notification_stream_closed(
@@ -423,6 +397,7 @@ async fn notification_stream_closed_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn notification_stream_closed_websocket() {
     notification_stream_closed(
@@ -457,12 +432,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -478,12 +448,7 @@ async fn notification_stream_closed(transport1: Transport, transport2: Transport
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -588,6 +553,7 @@ async fn reconnect_after_disconnect_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn reconnect_after_disconnect_quic() {
     reconnect_after_disconnect(
@@ -597,6 +563,7 @@ async fn reconnect_after_disconnect_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn reconnect_after_disconnect_websocket() {
     reconnect_after_disconnect(
@@ -631,12 +598,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -652,12 +614,7 @@ async fn reconnect_after_disconnect(transport1: Transport, transport2: Transport
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -819,6 +776,7 @@ async fn set_new_handshake_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn set_new_handshake_quic() {
     set_new_handshake(
@@ -828,6 +786,7 @@ async fn set_new_handshake_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn set_new_handshake_websocket() {
     set_new_handshake(
@@ -864,7 +823,9 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
 
     let config1 = match transport1 {
         Transport::Tcp(config) => config1.with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => config1.with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => config1.with_websocket(config),
     }
     .build();
@@ -883,12 +844,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1035,6 +991,7 @@ async fn both_nodes_open_substreams_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn both_nodes_open_substreams_quic() {
     both_nodes_open_substreams(
@@ -1044,6 +1001,7 @@ async fn both_nodes_open_substreams_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn both_nodes_open_substreams_websocket() {
     both_nodes_open_substreams(
@@ -1078,12 +1036,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -1099,12 +1052,7 @@ async fn both_nodes_open_substreams(transport1: Transport, transport2: Transport
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1207,6 +1155,7 @@ async fn both_nodes_open_substream_one_rejects_substreams_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 #[cfg(debug_assertions)]
 async fn both_nodes_open_substream_one_rejects_substreams_quic() {
@@ -1217,6 +1166,7 @@ async fn both_nodes_open_substream_one_rejects_substreams_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 #[cfg(debug_assertions)]
 async fn both_nodes_open_substream_one_rejects_substreams_websocket() {
@@ -1255,12 +1205,7 @@ async fn both_nodes_open_substream_one_rejects_substreams(
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -1276,12 +1221,7 @@ async fn both_nodes_open_substream_one_rejects_substreams(
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1348,11 +1288,13 @@ async fn send_sync_notification_to_non_existent_peer_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_quic() {
     send_sync_notification_to_non_existent_peer(Transport::Quic(Default::default())).await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn send_sync_notification_to_non_existent_peer_websocket() {
     send_sync_notification_to_non_existent_peer(Transport::WebSocket(WebSocketConfig {
@@ -1381,12 +1323,7 @@ async fn send_sync_notification_to_non_existent_peer(transport1: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
@@ -1410,11 +1347,13 @@ async fn send_async_notification_to_non_existent_peer_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_quic() {
     send_async_notification_to_non_existent_peer(Transport::Quic(Default::default())).await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn send_async_notification_to_non_existent_peer_websocket() {
     send_async_notification_to_non_existent_peer(Transport::WebSocket(WebSocketConfig {
@@ -1443,12 +1382,7 @@ async fn send_async_notification_to_non_existent_peer(transport1: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
@@ -1475,11 +1409,13 @@ async fn try_to_connect_to_non_existent_peer_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_quic() {
     try_to_connect_to_non_existent_peer(Transport::Quic(Default::default())).await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn try_to_connect_to_non_existent_peer_websocket() {
     try_to_connect_to_non_existent_peer(Transport::WebSocket(WebSocketConfig {
@@ -1508,12 +1444,7 @@ async fn try_to_connect_to_non_existent_peer(transport1: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
@@ -1545,11 +1476,13 @@ async fn try_to_disconnect_non_existent_peer_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_quic() {
     try_to_disconnect_non_existent_peer(Transport::Quic(Default::default())).await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn try_to_disconnect_non_existent_peer_websocket() {
     try_to_disconnect_non_existent_peer(Transport::WebSocket(WebSocketConfig {
@@ -1578,12 +1511,7 @@ async fn try_to_disconnect_non_existent_peer(transport1: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
@@ -1613,6 +1541,7 @@ async fn try_to_reopen_substream_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn try_to_reopen_substream_quic() {
     try_to_reopen_substream(
@@ -1622,6 +1551,7 @@ async fn try_to_reopen_substream_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn try_to_reopen_substream_websocket() {
     try_to_reopen_substream(
@@ -1656,12 +1586,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -1677,12 +1602,7 @@ async fn try_to_reopen_substream(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1769,6 +1689,7 @@ async fn substream_validation_timeout_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn substream_validation_timeout_quic() {
     substream_validation_timeout(
@@ -1778,6 +1699,7 @@ async fn substream_validation_timeout_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn substream_validation_timeout_websocket() {
     substream_validation_timeout(
@@ -1812,12 +1734,7 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -1833,12 +1750,7 @@ async fn substream_validation_timeout(transport1: Transport, transport2: Transpo
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1894,6 +1806,7 @@ async fn unsupported_protocol_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn unsupported_protocol_quic() {
     unsupported_protocol(
@@ -1903,6 +1816,7 @@ async fn unsupported_protocol_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn unsupported_protocol_websocket() {
     unsupported_protocol(
@@ -1932,12 +1846,7 @@ async fn unsupported_protocol(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, _handle2) = ConfigBuilder::new(ProtocolName::from("/notif/2"))
         .with_max_size(1024usize)
@@ -1947,12 +1856,7 @@ async fn unsupported_protocol(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -1996,6 +1900,7 @@ async fn dialer_fallback_protocol_works_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn dialer_fallback_protocol_works_quic() {
     dialer_fallback_protocol_works(
@@ -2005,6 +1910,7 @@ async fn dialer_fallback_protocol_works_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn dialer_fallback_protocol_works_websocket() {
     dialer_fallback_protocol_works(
@@ -2035,12 +1941,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
         .with_max_size(1024usize)
@@ -2050,12 +1951,7 @@ async fn dialer_fallback_protocol_works(transport1: Transport, transport2: Trans
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2134,6 +2030,7 @@ async fn listener_fallback_protocol_works_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn listener_fallback_protocol_works_quic() {
     listener_fallback_protocol_works(
@@ -2143,6 +2040,7 @@ async fn listener_fallback_protocol_works_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn listener_fallback_protocol_works_websocket() {
     listener_fallback_protocol_works(
@@ -2172,12 +2070,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/2"))
         .with_max_size(1024usize)
@@ -2188,12 +2081,7 @@ async fn listener_fallback_protocol_works(transport1: Transport, transport2: Tra
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2272,6 +2160,7 @@ async fn enable_auto_accept_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn enable_auto_accept_quic() {
     enable_auto_accept(
@@ -2281,6 +2170,7 @@ async fn enable_auto_accept_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn enable_auto_accept_websocket() {
     enable_auto_accept(
@@ -2315,12 +2205,7 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -2336,12 +2221,7 @@ async fn enable_auto_accept(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2428,6 +2308,7 @@ async fn send_using_notification_sink_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn send_using_notification_sink_quic() {
     send_using_notification_sink(
@@ -2437,6 +2318,7 @@ async fn send_using_notification_sink_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn send_using_notification_sink_websocket() {
     send_using_notification_sink(
@@ -2471,12 +2353,7 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -2492,12 +2369,7 @@ async fn send_using_notification_sink(transport1: Transport, transport2: Transpo
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2609,6 +2481,7 @@ async fn dial_peer_when_opening_substream_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn dial_peer_when_opening_substream_quic() {
     dial_peer_when_opening_substream(
@@ -2618,6 +2491,7 @@ async fn dial_peer_when_opening_substream_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn dial_peer_when_opening_substream_websocket() {
     dial_peer_when_opening_substream(
@@ -2652,12 +2526,7 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config2, mut handle2) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),
@@ -2673,12 +2542,7 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -2796,6 +2660,7 @@ async fn open_and_close_batched_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn open_and_close_batched_quic() {
     open_and_close_batched(
@@ -2806,6 +2671,7 @@ async fn open_and_close_batched_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn open_and_close_batched_websocket() {
     open_and_close_batched(
@@ -2999,6 +2865,7 @@ async fn open_and_close_batched_duplicate_peer_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn open_and_close_batched_duplicate_peer_quic() {
     open_and_close_batched_duplicate_peer(
@@ -3009,6 +2876,7 @@ async fn open_and_close_batched_duplicate_peer_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn open_and_close_batched_duplicate_peer_websocket() {
     open_and_close_batched_duplicate_peer(
@@ -3245,6 +3113,7 @@ async fn no_listener_address_for_one_peer_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn no_listener_address_for_one_peer_quic() {
     no_listener_address_for_one_peer(
@@ -3254,6 +3123,7 @@ async fn no_listener_address_for_one_peer_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn no_listener_address_for_one_peer_websocket() {
     no_listener_address_for_one_peer(
@@ -3365,6 +3235,7 @@ async fn auto_accept_inbound_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn auto_accept_inbound_quic() {
     auto_accept_inbound(
@@ -3374,6 +3245,7 @@ async fn auto_accept_inbound_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn auto_accept_inbound_websocket() {
     auto_accept_inbound(
@@ -3400,12 +3272,7 @@ async fn auto_accept_inbound(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (mut notif_config2, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
         .with_max_size(1024usize)
@@ -3422,12 +3289,7 @@ async fn auto_accept_inbound(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config2);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -3507,6 +3369,7 @@ async fn dial_failure_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn dial_failure_quic() {
     dial_failure(
@@ -3516,6 +3379,7 @@ async fn dial_failure_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn dial_failure_websocket() {
     dial_failure(
@@ -3547,12 +3411,7 @@ async fn dial_failure(transport1: Transport, transport2: Transport) {
         .with_notification_protocol(notif_config1)
         .with_notification_protocol(notif_config2);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config3, _handle3) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
         .with_max_size(1024usize)
@@ -3570,22 +3429,19 @@ async fn dial_failure(transport1: Transport, transport2: Transport) {
         Transport::Tcp(_) => Multiaddr::empty()
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5)),
+        #[cfg(feature = "quic")]
         Transport::Quic(_) => Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Udp(5))
             .with(Protocol::QuicV1),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(_) => Multiaddr::empty()
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5))
             .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string()))),
     };
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -3630,6 +3486,7 @@ async fn dialing_disabled_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn dialing_disabled_quic() {
     dialing_disabled(
@@ -3639,6 +3496,7 @@ async fn dialing_disabled_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn dialing_disabled_websocket() {
     dialing_disabled(
@@ -3672,12 +3530,7 @@ async fn dialing_disabled(transport1: Transport, transport2: Transport) {
         .with_notification_protocol(notif_config1)
         .with_notification_protocol(notif_config2);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config3, _handle3) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
         .with_max_size(1024usize)
@@ -3691,12 +3544,7 @@ async fn dialing_disabled(transport1: Transport, transport2: Transport) {
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config3);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -3741,6 +3589,7 @@ async fn validation_takes_too_long_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn validation_takes_too_long_quic() {
     validation_takes_too_long(
@@ -3750,6 +3599,7 @@ async fn validation_takes_too_long_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn validation_takes_too_long_websocket() {
     validation_takes_too_long(
@@ -3773,12 +3623,7 @@ async fn validation_takes_too_long(transport1: Transport, transport2: Transport)
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config3, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
         .with_max_size(1024usize)
@@ -3789,12 +3634,7 @@ async fn validation_takes_too_long(transport1: Transport, transport2: Transport)
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config3);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -3856,6 +3696,7 @@ async fn ignored_validation_open_substream_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn ignored_validation_open_substream_quic() {
     ignored_validation_open_substream(
@@ -3865,6 +3706,7 @@ async fn ignored_validation_open_substream_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn ignored_validation_open_substream_websocket() {
     ignored_validation_open_substream(
@@ -3888,12 +3730,7 @@ async fn ignored_validation_open_substream(transport1: Transport, transport2: Tr
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config3, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
         .with_max_size(1024usize)
@@ -3904,12 +3741,7 @@ async fn ignored_validation_open_substream(transport1: Transport, transport2: Tr
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config3);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
@@ -4007,6 +3839,7 @@ async fn clogged_channel_disconnects_peer_tcp() {
     .await
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn clogged_channel_disconnects_peer_quic() {
     clogged_channel_disconnects_peer(
@@ -4016,6 +3849,7 @@ async fn clogged_channel_disconnects_peer_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn clogged_channel_disconnects_peer_websocket() {
     clogged_channel_disconnects_peer(
@@ -4040,12 +3874,7 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config1);
 
-    let config1 = match transport1 {
-        Transport::Tcp(config) => config1.with_tcp(config),
-        Transport::Quic(config) => config1.with_quic(config),
-        Transport::WebSocket(config) => config1.with_websocket(config),
-    }
-    .build();
+    let config1 = add_transport(config1, transport1).build();
 
     let (notif_config3, mut handle2) = ConfigBuilder::new(ProtocolName::from("/notif/1"))
         .with_max_size(100 * 1024)
@@ -4057,12 +3886,7 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
         .with_keypair(Keypair::generate())
         .with_notification_protocol(notif_config3);
 
-    let config2 = match transport2 {
-        Transport::Tcp(config) => config2.with_tcp(config),
-        Transport::Quic(config) => config2.with_quic(config),
-        Transport::WebSocket(config) => config2.with_websocket(config),
-    }
-    .build();
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();

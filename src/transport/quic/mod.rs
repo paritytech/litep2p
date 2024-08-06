@@ -495,7 +495,6 @@ mod tests {
 
         let handle1 = TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
-            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair1.clone(),
@@ -522,7 +521,6 @@ mod tests {
 
         let handle2 = TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
-            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair2.clone(),

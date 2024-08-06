@@ -29,13 +29,19 @@ use crate::{
         notification, request_response, UserProtocol,
     },
     transport::{
-        manager::limits::ConnectionLimitsConfig, quic::config::Config as QuicConfig,
-        tcp::config::Config as TcpConfig, webrtc::config::Config as WebRtcConfig,
-        websocket::config::Config as WebSocketConfig, MAX_PARALLEL_DIALS,
+        manager::limits::ConnectionLimitsConfig, tcp::config::Config as TcpConfig,
+        MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
     PeerId,
 };
+
+#[cfg(feature = "quic")]
+use crate::transport::quic::config::Config as QuicConfig;
+#[cfg(feature = "webrtc")]
+use crate::transport::webrtc::config::Config as WebRtcConfig;
+#[cfg(feature = "websocket")]
+use crate::transport::websocket::config::Config as WebSocketConfig;
 
 use multiaddr::Multiaddr;
 
@@ -66,12 +72,15 @@ pub struct ConfigBuilder {
     tcp: Option<TcpConfig>,
 
     /// QUIC transport config.
+    #[cfg(feature = "quic")]
     quic: Option<QuicConfig>,
 
     /// WebRTC transport config.
+    #[cfg(feature = "webrtc")]
     webrtc: Option<WebRtcConfig>,
 
     /// WebSocket transport config.
+    #[cfg(feature = "websocket")]
     websocket: Option<WebSocketConfig>,
 
     /// Keypair.
@@ -125,8 +134,11 @@ impl ConfigBuilder {
     pub fn new() -> Self {
         Self {
             tcp: None,
+            #[cfg(feature = "quic")]
             quic: None,
+            #[cfg(feature = "webrtc")]
             webrtc: None,
+            #[cfg(feature = "websocket")]
             websocket: None,
             keypair: None,
             ping: None,
@@ -151,18 +163,21 @@ impl ConfigBuilder {
     }
 
     /// Add QUIC transport configuration, enabling the transport.
+    #[cfg(feature = "quic")]
     pub fn with_quic(mut self, config: QuicConfig) -> Self {
         self.quic = Some(config);
         self
     }
 
     /// Add WebRTC transport configuration, enabling the transport.
+    #[cfg(feature = "webrtc")]
     pub fn with_webrtc(mut self, config: WebRtcConfig) -> Self {
         self.webrtc = Some(config);
         self
     }
 
     /// Add WebSocket transport configuration, enabling the transport.
+    #[cfg(feature = "websocket")]
     pub fn with_websocket(mut self, config: WebSocketConfig) -> Self {
         self.websocket = Some(config);
         self
@@ -264,8 +279,11 @@ impl ConfigBuilder {
             keypair,
             tcp: self.tcp.take(),
             mdns: self.mdns.take(),
+            #[cfg(feature = "quic")]
             quic: self.quic.take(),
+            #[cfg(feature = "webrtc")]
             webrtc: self.webrtc.take(),
+            #[cfg(feature = "websocket")]
             websocket: self.websocket.take(),
             ping: self.ping.take(),
             identify: self.identify.take(),
@@ -288,12 +306,15 @@ pub struct Litep2pConfig {
     pub(crate) tcp: Option<TcpConfig>,
 
     /// QUIC transport config.
+    #[cfg(feature = "quic")]
     pub(crate) quic: Option<QuicConfig>,
 
     /// WebRTC transport config.
+    #[cfg(feature = "webrtc")]
     pub(crate) webrtc: Option<WebRtcConfig>,
 
     /// WebSocket transport config.
+    #[cfg(feature = "websocket")]
     pub(crate) websocket: Option<WebSocketConfig>,
 
     /// Keypair.

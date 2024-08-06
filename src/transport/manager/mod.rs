@@ -357,7 +357,6 @@ impl TransportManager {
             keypair: self.keypair.clone(),
             protocols: self.protocols.clone(),
             bandwidth_sink: self.bandwidth_sink.clone(),
-            protocol_names: self.protocol_names.iter().cloned().collect(),
             next_substream_id: self.next_substream_id.clone(),
             next_connection_id: self.next_connection_id.clone(),
         }
@@ -499,33 +498,35 @@ impl TransportManager {
         );
 
         let mut transports = HashSet::new();
+        #[cfg(feature = "websocket")]
         let mut websocket = Vec::new();
+        #[cfg(feature = "quic")]
         let mut quic = Vec::new();
         let mut tcp = Vec::new();
 
         for (address, record) in &mut records {
             record.set_connection_id(connection_id);
 
-            let mut iter = address.iter();
-            match iter.find(|protocol| std::matches!(protocol, Protocol::QuicV1)) {
-                Some(_) => {
-                    quic.push(address.clone());
-                    transports.insert(SupportedTransport::Quic);
-                }
-                _ => match address
-                    .iter()
-                    .find(|protocol| std::matches!(protocol, Protocol::Ws(_) | Protocol::Wss(_)))
-                {
-                    Some(_) => {
-                        websocket.push(address.clone());
-                        transports.insert(SupportedTransport::WebSocket);
-                    }
-                    None => {
-                        tcp.push(address.clone());
-                        transports.insert(SupportedTransport::Tcp);
-                    }
-                },
+            #[cfg(feature = "quic")]
+            if address.iter().find(|p| std::matches!(p, Protocol::QuicV1)).is_some() {
+                quic.push(address.clone());
+                transports.insert(SupportedTransport::Quic);
+                continue;
             }
+
+            #[cfg(feature = "websocket")]
+            if address
+                .iter()
+                .find(|p| std::matches!(p, Protocol::Ws(_) | Protocol::Wss(_)))
+                .is_some()
+            {
+                websocket.push(address.clone());
+                transports.insert(SupportedTransport::WebSocket);
+                continue;
+            }
+
+            tcp.push(address.clone());
+            transports.insert(SupportedTransport::Tcp);
         }
 
         peers.insert(
@@ -548,6 +549,7 @@ impl TransportManager {
                 .open(connection_id, tcp)?;
         }
 
+        #[cfg(feature = "quic")]
         if !quic.is_empty() {
             self.transports
                 .get_mut(&SupportedTransport::Quic)
@@ -555,6 +557,7 @@ impl TransportManager {
                 .open(connection_id, quic)?;
         }
 
+        #[cfg(feature = "websocket")]
         if !websocket.is_empty() {
             self.transports
                 .get_mut(&SupportedTransport::WebSocket)
@@ -604,10 +607,12 @@ impl TransportManager {
             .ok_or_else(|| Error::TransportNotSupported(record.address().clone()))?
         {
             Protocol::Tcp(_) => match protocol_stack.next() {
+                #[cfg(feature = "websocket")]
                 Some(Protocol::Ws(_)) | Some(Protocol::Wss(_)) => SupportedTransport::WebSocket,
                 Some(Protocol::P2p(_)) => SupportedTransport::Tcp,
                 _ => return Err(Error::TransportNotSupported(record.address().clone())),
             },
+            #[cfg(feature = "quic")]
             Protocol::Udp(_) => match protocol_stack
                 .next()
                 .ok_or_else(|| Error::TransportNotSupported(record.address().clone()))?
@@ -622,7 +627,7 @@ impl TransportManager {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?protocol,
-                    "invalid protocol, expected `tcp`"
+                    "invalid protocol"
                 );
 
                 return Err(Error::TransportNotSupported(record.address().clone()));
@@ -2078,9 +2083,14 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
+        let mut transports = HashSet::new();
+        transports.insert(SupportedTransport::Tcp);
+        #[cfg(feature = "quic")]
+        transports.insert(SupportedTransport::Quic);
+
         let (_manager, handle) = TransportManager::new(
             Keypair::generate(),
-            HashSet::from_iter([SupportedTransport::Tcp, SupportedTransport::Quic]),
+            transports,
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
@@ -2112,7 +2122,10 @@ mod tests {
             .with(Protocol::P2p(
                 Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
             ));
+        #[cfg(feature = "quic")]
         assert!(handle.supported_transport(&address));
+        #[cfg(not(feature = "quic"))]
+        assert!(!handle.supported_transport(&address));
 
         // websocket
         let address = Multiaddr::empty()

@@ -143,6 +143,7 @@ impl NoiseContext {
     }
 
     /// Create new [`NoiseContext`] with prologue.
+    #[cfg(feature = "webrtc")]
     pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> crate::Result<Self> {
         let noise: Builder<'_> = Builder::with_resolver(
             NOISE_PARAMETERS.parse().expect("qed; Valid noise pattern"),
@@ -160,6 +161,7 @@ impl NoiseContext {
     }
 
     /// Get remote public key from the received Noise payload.
+    #[cfg(feature = "webrtc")]
     pub fn get_remote_public_key(&mut self, reply: &[u8]) -> crate::Result<PublicKey> {
         let (len_slice, reply) = reply.split_at(2);
         let len = u16::from_be_bytes(len_slice.try_into().map_err(|_| error::Error::InvalidData)?)

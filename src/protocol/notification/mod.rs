@@ -531,7 +531,7 @@ impl NotificationProtocol {
         let Some(context) = self.peers.get_mut(&peer) else {
             tracing::error!(target: LOG_TARGET, ?peer, "peer doesn't exist for outbound substream");
             debug_assert!(false);
-            return Err(Error::PeerDoesntExist(peer.clone()));
+            return Err(Error::PeerDoesntExist(peer));
         };
 
         let pending_peer = self.pending_outbound.remove(&substream_id);
@@ -661,7 +661,7 @@ impl NotificationProtocol {
         let Some(context) = self.peers.get_mut(&peer) else {
             tracing::error!(target: LOG_TARGET, ?peer, "peer doesn't exist for inbound substream");
             debug_assert!(false);
-            return Err(Error::PeerDoesntExist(peer.clone()));
+            return Err(Error::PeerDoesntExist(peer));
         };
 
         tracing::debug!(

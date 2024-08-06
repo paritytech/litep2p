@@ -38,13 +38,17 @@ use crate::{
     },
     transport::{
         manager::{SupportedTransport, TransportManager},
-        quic::QuicTransport,
         tcp::TcpTransport,
-        webrtc::WebRtcTransport,
-        websocket::WebSocketTransport,
         TransportBuilder, TransportEvent,
     },
 };
+
+#[cfg(feature = "quic")]
+use crate::transport::quic::QuicTransport;
+#[cfg(feature = "webrtc")]
+use crate::transport::webrtc::WebRtcTransport;
+#[cfg(feature = "websocket")]
+use crate::transport::websocket::WebSocketTransport;
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
@@ -72,8 +76,10 @@ pub mod types;
 pub mod yamux;
 
 mod bandwidth;
-mod mock;
 mod multistream_select;
+
+#[cfg(test)]
+mod mock;
 
 /// Public result type used by the crate.
 pub type Result<T> = std::result::Result<T, error::Error>;
@@ -297,6 +303,7 @@ impl Litep2p {
         }
 
         // enable quic transport if the config exists
+        #[cfg(feature = "quic")]
         if let Some(config) = litep2p_config.quic.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
@@ -313,6 +320,7 @@ impl Litep2p {
         }
 
         // enable webrtc transport if the config exists
+        #[cfg(feature = "webrtc")]
         if let Some(config) = litep2p_config.webrtc.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
@@ -329,6 +337,7 @@ impl Litep2p {
         }
 
         // enable websocket transport if the config exists
+        #[cfg(feature = "websocket")]
         if let Some(config) = litep2p_config.websocket.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
@@ -396,14 +405,17 @@ impl Litep2p {
             .tcp
             .is_some()
             .then(|| supported_transports.insert(SupportedTransport::Tcp));
+        #[cfg(feature = "quic")]
         config
             .quic
             .is_some()
             .then(|| supported_transports.insert(SupportedTransport::Quic));
+        #[cfg(feature = "websocket")]
         config
             .websocket
             .is_some()
             .then(|| supported_transports.insert(SupportedTransport::WebSocket));
+        #[cfg(feature = "webrtc")]
         config
             .webrtc
             .is_some()
@@ -515,7 +527,6 @@ mod tests {
 
         let config = ConfigBuilder::new()
             .with_tcp(Default::default())
-            .with_quic(Default::default())
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)
@@ -591,7 +602,6 @@ mod tests {
 
         let config = ConfigBuilder::new()
             .with_tcp(Default::default())
-            .with_quic(Default::default())
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)

@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::crypto::{self, noise::x25519_spec};
+use crate::crypto::noise::x25519_spec;
 
 use rand::SeedableRng;
 use zeroize::Zeroize;
@@ -28,16 +28,6 @@ use zeroize::Zeroize;
 pub struct Keypair<T: Zeroize> {
     pub secret: SecretKey<T>,
     pub public: PublicKey<T>,
-}
-
-/// The associated public identity of a DH keypair.
-#[derive(Clone)]
-pub struct KeypairIdentity {
-    /// The public identity key.
-    pub public: crypto::PublicKey,
-
-    /// The signature over the public DH key.
-    pub signature: Option<Vec<u8>>,
 }
 
 /// DH secret key.

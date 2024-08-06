@@ -24,5 +24,5 @@ mod identify;
 mod kademlia;
 #[cfg(test)]
 mod ping;
-#[cfg(test)]
+#[cfg(all(test, feature = "quic"))]
 mod quic_ping;
