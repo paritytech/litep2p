@@ -89,7 +89,7 @@ jobs:
           cache-all-crates: true
 
       - name: Cargo check
-        run: cargo check
+        run: cargo check --all-features
 
   doc:
     name: Check documentation
@@ -126,7 +126,7 @@ jobs:
           cache-all-crates: true
 
       - name: Run clippy
-        run: cargo clippy
+        run: cargo clippy --all-features
 
   test:
     name: Test
@@ -147,4 +147,4 @@ jobs:
           cache-all-crates: true
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --all-features

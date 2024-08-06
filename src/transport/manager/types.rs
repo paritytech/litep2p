@@ -34,12 +34,15 @@ pub enum SupportedTransport {
     Tcp,
 
     /// QUIC.
+    #[cfg(feature = "quic")]
     Quic,
 
     /// WebRTC
+    #[cfg(feature = "webrtc")]
     WebRtc,
 
     /// WebSocket
+    #[cfg(feature = "websocket")]
     WebSocket,
 }
 

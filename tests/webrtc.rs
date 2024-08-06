@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+#![cfg(feature = "webrtc")]
+
 use futures::StreamExt;
 use litep2p::{
     config::ConfigBuilder as Litep2pConfigBuilder,

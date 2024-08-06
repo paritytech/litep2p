@@ -25,6 +25,7 @@ use crate::{error::*, peer_id::*};
 
 pub mod ed25519;
 pub(crate) mod noise;
+#[cfg(feature = "quic")]
 pub(crate) mod tls;
 pub(crate) mod keys_proto {
     include!(concat!(env!("OUT_DIR"), "/keys_proto.rs"));
@@ -94,8 +95,8 @@ impl TryFrom<keys_proto::PublicKey> for PublicKey {
     type Error = Error;
 
     fn try_from(pubkey: keys_proto::PublicKey) -> Result<Self, Self::Error> {
-        let key_type = keys_proto::KeyType::from_i32(pubkey.r#type)
-            .ok_or_else(|| Error::Other(format!("Unknown key type: {}", pubkey.r#type)))?;
+        let key_type = keys_proto::KeyType::try_from(pubkey.r#type)
+            .map_err(|_| Error::Other(format!("Unknown key type: {}", pubkey.r#type)))?;
 
         match key_type {
             keys_proto::KeyType::Ed25519 =>

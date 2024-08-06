@@ -26,7 +26,7 @@ network-interface = "1.1.1"
 parking_lot = "0.12.3"
 pin-project = "1.1.0"
 prost = "0.12.6"
-quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls", "runtime-tokio"] }
+quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls", "runtime-tokio"], optional = true }
 rand = { version = "0.8.0", features = ["getrandom"] }
 rcgen = "0.10.0"
 ring = "0.16.20"
@@ -36,10 +36,10 @@ simple-dns = "0.7.0"
 smallvec = "1.13.2"
 snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
 socket2 = { version = "0.5.7", features = ["all"] }
-str0m = "0.5.1"
+str0m = { version = "0.5.1", optional = true }
 thiserror = "1.0.61"
 tokio-stream = "0.1.12"
-tokio-tungstenite = { version = "0.20.0", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.20.0", features = ["rustls-tls-native-roots"], optional = true }
 tokio-util = { version = "0.7.11", features = ["compat", "io", "codec"] }
 tokio = { version = "1.26.0", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
 tracing = { version = "0.1.40", features = ["log"] }
@@ -47,7 +47,7 @@ trust-dns-resolver = "0.23.2"
 uint = "0.9.5"
 unsigned-varint = { version = "0.8.0", features = ["codec"] }
 url = "2.4.0"
-webpki = "0.22.4"
+webpki = { version = "0.22.4", optional = true }
 x25519-dalek = "2.0.0"
 x509-parser = "0.16.0"
 yasna = "0.5.0"
@@ -81,12 +81,23 @@ quickcheck = "1.0.3"
 rand_xorshift = "0.3.0"
 sc-network = "0.31.0"
 sc-utils = "17.0.0"
-serde_json = "1.0.109"
+serde_json = "1.0.122"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
 
 [features]
 custom_sc_network = []
+quic = ["dep:webpki", "dep:quinn"]
+webrtc = ["dep:str0m"]
+websocket = ["dep:tokio-tungstenite"]
 
 [profile.release]
 debug = true
+
+[[example]]
+name = "echo_notification"
+required-features = ["quic"]
+
+[[example]]
+name = "syncing"
+required-features = ["quic"]

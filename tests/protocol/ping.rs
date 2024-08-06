@@ -20,20 +20,10 @@
 
 use futures::StreamExt;
 use litep2p::{
-    config::ConfigBuilder,
-    protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
-    transport::{
-        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
-        websocket::config::Config as WebSocketConfig,
-    },
-    Litep2p,
+    config::ConfigBuilder, protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder, Litep2p,
 };
 
-enum Transport {
-    Tcp(TcpConfig),
-    Quic(QuicConfig),
-    WebSocket(WebSocketConfig),
-}
+use crate::common::{add_transport, Transport};
 
 #[tokio::test]
 async fn ping_supported_tcp() {
@@ -44,6 +34,7 @@ async fn ping_supported_tcp() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn ping_supported_websocket() {
     ping_supported(
@@ -53,6 +44,7 @@ async fn ping_supported_websocket() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn ping_supported_quic() {
     ping_supported(
@@ -69,22 +61,12 @@ async fn ping_supported(transport1: Transport, transport2: Transport) {
 
     let (ping_config1, mut ping_event_stream1) =
         PingConfigBuilder::new().with_max_failure(3usize).build();
-    let config1 = match transport1 {
-        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
-    }
-    .with_libp2p_ping(ping_config1)
-    .build();
+    let config1 = ConfigBuilder::new().with_libp2p_ping(ping_config1);
+    let config1 = add_transport(config1, transport1).build();
 
     let (ping_config2, mut ping_event_stream2) = PingConfigBuilder::new().build();
-    let config2 = match transport2 {
-        Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
-        Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
-        Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
-    }
-    .with_libp2p_ping(ping_config2)
-    .build();
+    let config2 = ConfigBuilder::new().with_libp2p_ping(ping_config2);
+    let config2 = add_transport(config2, transport2).build();
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();

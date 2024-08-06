@@ -83,18 +83,21 @@ pub enum Error {
     DnsAddressResolutionFailed,
     #[error("Transport error: `{0}`")]
     TransportError(String),
+    #[cfg(feature = "quic")]
     #[error("Failed to generate certificate: `{0}`")]
     CertificateGeneration(#[from] crate::crypto::tls::certificate::GenError),
     #[error("Invalid data")]
     InvalidData,
     #[error("Input rejected")]
     InputRejected,
+    #[cfg(feature = "websocket")]
     #[error("WebSocket error: `{0}`")]
     WebSocket(#[from] tokio_tungstenite::tungstenite::error::Error),
     #[error("Insufficient peers")]
     InsufficientPeers,
     #[error("Substream doens't exist")]
     SubstreamDoesntExist,
+    #[cfg(feature = "webrtc")]
     #[error("`str0m` error: `{0}`")]
     WebRtc(#[from] str0m::RtcError),
     #[error("Remote peer disconnected")]
@@ -109,6 +112,7 @@ pub enum Error {
     NoAddressAvailable(PeerId),
     #[error("Connection closed")]
     ConnectionClosed,
+    #[cfg(feature = "quic")]
     #[error("Quinn error: `{0}`")]
     Quinn(quinn::ConnectionError),
     #[error("Invalid certificate")]
@@ -237,6 +241,7 @@ impl From<prost::EncodeError> for Error {
     }
 }
 
+#[cfg(feature = "quic")]
 impl From<quinn::ConnectionError> for Error {
     fn from(error: quinn::ConnectionError) -> Self {
         match error {

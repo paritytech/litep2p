@@ -23,13 +23,15 @@ use litep2p::{
     config::ConfigBuilder,
     protocol::{Direction, TransportEvent, TransportService, UserProtocol},
     substream::{Substream, SubstreamSet},
-    transport::{
-        quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig,
-        websocket::config::Config as WebSocketConfig,
-    },
+    transport::tcp::config::Config as TcpConfig,
     types::{protocol::ProtocolName, SubstreamId},
     Error, Litep2p, Litep2pEvent, PeerId,
 };
+
+#[cfg(feature = "quic")]
+use litep2p::transport::quic::config::Config as QuicConfig;
+#[cfg(feature = "websocket")]
+use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 use bytes::Bytes;
 use futures::{Sink, SinkExt, StreamExt};
@@ -50,7 +52,9 @@ use std::{
 
 enum Transport {
     Tcp(TcpConfig),
+    #[cfg(feature = "quic")]
     Quic(QuicConfig),
+    #[cfg(feature = "websocket")]
     WebSocket(WebSocketConfig),
 }
 
@@ -243,6 +247,7 @@ async fn too_big_identity_payload_framed_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn too_big_identity_payload_framed_quic() {
     too_big_identity_payload_framed(
@@ -252,6 +257,7 @@ async fn too_big_identity_payload_framed_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn too_big_identity_payload_framed_websocket() {
     too_big_identity_payload_framed(
@@ -270,7 +276,9 @@ async fn too_big_identity_payload_framed(transport1: Transport, transport2: Tran
     let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config1 = match transport1 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol1))
@@ -279,7 +287,9 @@ async fn too_big_identity_payload_framed(transport1: Transport, transport2: Tran
     let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config2 = match transport2 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))
@@ -328,6 +338,7 @@ async fn too_big_identity_payload_sink_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn too_big_identity_payload_sink_quic() {
     too_big_identity_payload_sink(
@@ -337,6 +348,7 @@ async fn too_big_identity_payload_sink_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn too_big_identity_payload_sink_websocket() {
     too_big_identity_payload_sink(
@@ -355,7 +367,9 @@ async fn too_big_identity_payload_sink(transport1: Transport, transport2: Transp
     let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config1 = match transport1 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol1))
@@ -364,7 +378,9 @@ async fn too_big_identity_payload_sink(transport1: Transport, transport2: Transp
     let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config2 = match transport2 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))
@@ -415,6 +431,7 @@ async fn correct_payload_size_sink_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn correct_payload_size_sink_quic() {
     correct_payload_size_sink(
@@ -424,6 +441,7 @@ async fn correct_payload_size_sink_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn correct_payload_size_sink_websocket() {
     correct_payload_size_sink(
@@ -442,7 +460,9 @@ async fn correct_payload_size_sink(transport1: Transport, transport2: Transport)
     let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config1 = match transport1 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol1))
@@ -451,7 +471,9 @@ async fn correct_payload_size_sink(transport1: Transport, transport2: Transport)
     let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config2 = match transport2 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))
@@ -499,6 +521,7 @@ async fn correct_payload_size_async_write_tcp() {
     .await;
 }
 
+#[cfg(feature = "quic")]
 #[tokio::test]
 async fn correct_payload_size_async_write_quic() {
     correct_payload_size_async_write(
@@ -508,6 +531,7 @@ async fn correct_payload_size_async_write_quic() {
     .await;
 }
 
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn correct_payload_size_async_write_websocket() {
     correct_payload_size_async_write(
@@ -526,7 +550,9 @@ async fn correct_payload_size_async_write(transport1: Transport, transport2: Tra
     let (custom_protocol1, tx1) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config1 = match transport1 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol1))
@@ -535,7 +561,9 @@ async fn correct_payload_size_async_write(transport1: Transport, transport2: Tra
     let (custom_protocol2, _tx2) = CustomProtocol::new(ProtocolCodec::Identity(10usize));
     let config2 = match transport2 {
         Transport::Tcp(config) => ConfigBuilder::new().with_tcp(config),
+        #[cfg(feature = "quic")]
         Transport::Quic(config) => ConfigBuilder::new().with_quic(config),
+        #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => ConfigBuilder::new().with_websocket(config),
     }
     .with_user_protocol(Box::new(custom_protocol2))

@@ -1,4 +1,4 @@
-// Copyright 2023 litep2p developers
+// Copyright 2024 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
 // copy of this software and associated documentation files (the "Software"),
@@ -18,7 +18,27 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-mod common;
-mod conformance;
-mod connection;
-mod protocol;
+use litep2p::{config::ConfigBuilder, transport::tcp::config::Config as TcpConfig};
+
+#[cfg(feature = "quic")]
+use litep2p::transport::quic::config::Config as QuicConfig;
+#[cfg(feature = "websocket")]
+use litep2p::transport::websocket::config::Config as WebSocketConfig;
+
+pub(crate) enum Transport {
+    Tcp(TcpConfig),
+    #[cfg(feature = "quic")]
+    Quic(QuicConfig),
+    #[cfg(feature = "websocket")]
+    WebSocket(WebSocketConfig),
+}
+
+pub(crate) fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {
+    match transport {
+        Transport::Tcp(transport) => config.with_tcp(transport),
+        #[cfg(feature = "quic")]
+        Transport::Quic(transport) => config.with_quic(transport),
+        #[cfg(feature = "websocket")]
+        Transport::WebSocket(transport) => config.with_websocket(transport),
+    }
+}
