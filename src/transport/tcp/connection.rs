@@ -247,7 +247,10 @@ impl TcpConnection {
         })
         .await
         {
-            Err(_) => Err(Error::Timeout),
+            Err(_) => {
+                tracing::trace!(target: LOG_TARGET, ?connection_id, "connection timed out during negotiation");
+                Err(Error::Timeout)
+            }
             Ok(result) => result,
         }
     }
