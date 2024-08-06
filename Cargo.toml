@@ -22,7 +22,7 @@ libc = "0.2.142"
 mockall = "0.13.0"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
-network-interface = "1.1.1"
+network-interface = "2.0.0"
 parking_lot = "0.12.3"
 pin-project = "1.1.0"
 prost = "0.12.6"
