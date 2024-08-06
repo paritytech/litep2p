@@ -40,26 +40,10 @@ use tokio::net::TcpListener;
 #[cfg(feature = "quic")]
 use tokio::net::UdpSocket;
 
+use crate::common::{add_transport, Transport};
+
 #[cfg(test)]
 mod protocol_dial_invalid_address;
-
-enum Transport {
-    Tcp(TcpConfig),
-    #[cfg(feature = "quic")]
-    Quic(QuicConfig),
-    #[cfg(feature = "websocket")]
-    WebSocket(WebSocketConfig),
-}
-
-fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {
-    match transport {
-        Transport::Tcp(transport) => config.with_tcp(transport),
-        #[cfg(feature = "quic")]
-        Transport::Quic(transport) => config.with_quic(transport),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(transport) => config.with_websocket(transport),
-    }
-}
 
 #[tokio::test]
 async fn two_litep2ps_work_tcp() {

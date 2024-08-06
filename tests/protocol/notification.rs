@@ -31,8 +31,6 @@ use litep2p::{
     Litep2p, Litep2pEvent, PeerId,
 };
 
-#[cfg(feature = "quic")]
-use litep2p::transport::quic::config::Config as QuicConfig;
 #[cfg(feature = "websocket")]
 use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
@@ -45,23 +43,7 @@ use multihash::Multihash;
 use std::net::Ipv4Addr;
 use std::{net::Ipv6Addr, task::Poll, time::Duration};
 
-enum Transport {
-    Tcp(TcpConfig),
-    #[cfg(feature = "quic")]
-    Quic(QuicConfig),
-    #[cfg(feature = "websocket")]
-    WebSocket(WebSocketConfig),
-}
-
-fn add_transport(config: Litep2pConfigBuilder, transport: Transport) -> Litep2pConfigBuilder {
-    match transport {
-        Transport::Tcp(transport) => config.with_tcp(transport),
-        #[cfg(feature = "quic")]
-        Transport::Quic(transport) => config.with_quic(transport),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(transport) => config.with_websocket(transport),
-    }
-}
+use crate::common::{add_transport, Transport};
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let address = litep2p2.listen_addresses().next().unwrap().clone();

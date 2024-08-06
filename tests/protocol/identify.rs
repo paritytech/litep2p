@@ -26,32 +26,10 @@ use litep2p::{
         identify::{Config, IdentifyEvent},
         ping::Config as PingConfig,
     },
-    transport::tcp::config::Config as TcpConfig,
     Litep2p, Litep2pEvent,
 };
 
-#[cfg(feature = "quic")]
-use litep2p::transport::quic::config::Config as QuicConfig;
-#[cfg(feature = "websocket")]
-use litep2p::transport::websocket::config::Config as WebSocketConfig;
-
-enum Transport {
-    Tcp(TcpConfig),
-    #[cfg(feature = "quic")]
-    Quic(QuicConfig),
-    #[cfg(feature = "websocket")]
-    WebSocket(WebSocketConfig),
-}
-
-fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {
-    match transport {
-        Transport::Tcp(transport) => config.with_tcp(transport),
-        #[cfg(feature = "quic")]
-        Transport::Quic(transport) => config.with_quic(transport),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(transport) => config.with_websocket(transport),
-    }
-}
+use crate::common::{add_transport, Transport};
 
 #[tokio::test]
 async fn identify_supported_tcp() {

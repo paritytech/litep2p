@@ -20,32 +20,10 @@
 
 use futures::StreamExt;
 use litep2p::{
-    config::ConfigBuilder, protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder,
-    transport::tcp::config::Config as TcpConfig, Litep2p,
+    config::ConfigBuilder, protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder, Litep2p,
 };
 
-#[cfg(feature = "quic")]
-use litep2p::transport::quic::config::Config as QuicConfig;
-#[cfg(feature = "websocket")]
-use litep2p::transport::websocket::config::Config as WebSocketConfig;
-
-enum Transport {
-    Tcp(TcpConfig),
-    #[cfg(feature = "quic")]
-    Quic(QuicConfig),
-    #[cfg(feature = "websocket")]
-    WebSocket(WebSocketConfig),
-}
-
-fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {
-    match transport {
-        Transport::Tcp(transport) => config.with_tcp(transport),
-        #[cfg(feature = "quic")]
-        Transport::Quic(transport) => config.with_quic(transport),
-        #[cfg(feature = "websocket")]
-        Transport::WebSocket(transport) => config.with_websocket(transport),
-    }
-}
+use crate::common::{add_transport, Transport};
 
 #[tokio::test]
 async fn ping_supported_tcp() {
