@@ -482,13 +482,9 @@ impl Stream for TcpTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        tracing::trace!(target: LOG_TARGET, "poll transport");
-
-        while let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
-            tracing::trace!(target: LOG_TARGET, ?event, "event");
-
-            match event {
-                None | Some(Err(_)) => return Poll::Ready(None),
+        if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
+            return match event {
+                None | Some(Err(_)) => Poll::Ready(None),
                 Some(Ok((connection, address))) => {
                     let connection_id = self.context.next_connection_id();
                     tracing::trace!(
@@ -506,14 +502,12 @@ impl Stream for TcpTransport {
                         },
                     );
 
-                    return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                    Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                         connection_id,
-                    }));
+                    }))
                 }
-            }
+            };
         }
-
-        tracing::trace!(target: LOG_TARGET, "poll pending RAW connections");
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
             match result {
@@ -542,8 +536,6 @@ impl Stream for TcpTransport {
             }
         }
 
-        tracing::trace!(target: LOG_TARGET, "poll pending connections");
-
         while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
             match connection {
                 Ok(connection) => {
@@ -567,8 +559,6 @@ impl Stream for TcpTransport {
                 }
             }
         }
-
-        tracing::trace!(target: LOG_TARGET, "return Pending");
 
         Poll::Pending
     }
@@ -698,7 +688,6 @@ mod tests {
 
         let handle1 = crate::transport::manager::TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
-            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair1.clone(),
@@ -729,7 +718,6 @@ mod tests {
 
         let handle2 = crate::transport::manager::TransportHandle {
             executor: Arc::new(DefaultExecutor {}),
-            protocol_names: Vec::new(),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
             keypair: keypair2.clone(),

@@ -508,18 +508,14 @@ impl TransportManager {
             record.set_connection_id(connection_id);
 
             #[cfg(feature = "quic")]
-            if address.iter().find(|p| std::matches!(p, Protocol::QuicV1)).is_some() {
+            if address.iter().any(|p| std::matches!(&p, Protocol::QuicV1)) {
                 quic.push(address.clone());
                 transports.insert(SupportedTransport::Quic);
                 continue;
             }
 
             #[cfg(feature = "websocket")]
-            if address
-                .iter()
-                .find(|p| std::matches!(p, Protocol::Ws(_) | Protocol::Wss(_)))
-                .is_some()
-            {
+            if address.iter().any(|p| std::matches!(&p, Protocol::Ws(_) | Protocol::Wss(_))) {
                 websocket.push(address.clone());
                 transports.insert(SupportedTransport::WebSocket);
                 continue;
@@ -2595,7 +2591,7 @@ mod tests {
 
             peer_context.state = PeerState::Connected {
                 record,
-                dial_record: dial_record,
+                dial_record,
             };
         }
 

@@ -560,9 +560,9 @@ impl Stream for WebSocketTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        while let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
-            match connection {
-                Err(_) => return Poll::Ready(None),
+        if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
+            return match connection {
+                Err(_) => Poll::Ready(None),
                 Ok((connection, address)) => {
                     let connection_id = self.context.next_connection_id();
 
@@ -574,11 +574,11 @@ impl Stream for WebSocketTransport {
                         },
                     );
 
-                    return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                    Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                         connection_id,
-                    }));
+                    }))
                 }
-            }
+            };
         }
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {

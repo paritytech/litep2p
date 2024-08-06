@@ -125,11 +125,9 @@ impl ConnectionLimits {
                     return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded);
                 }
             }
-        } else {
-            if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
-                if self.outgoing_connections.len() >= max_outgoing_connections {
-                    return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded);
-                }
+        } else if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
+            if self.outgoing_connections.len() >= max_outgoing_connections {
+                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded);
             }
         }
 
@@ -138,10 +136,8 @@ impl ConnectionLimits {
             if self.config.max_incoming_connections.is_some() {
                 self.incoming_connections.insert(connection_id);
             }
-        } else {
-            if self.config.max_outgoing_connections.is_some() {
-                self.outgoing_connections.insert(connection_id);
-            }
+        } else if self.config.max_outgoing_connections.is_some() {
+            self.outgoing_connections.insert(connection_id);
         }
 
         Ok(())
