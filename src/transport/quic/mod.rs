@@ -443,7 +443,7 @@ impl Stream for QuicTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        while let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
+        if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
             let connection_id = self.context.next_connection_id();
 
             tracing::trace!(
