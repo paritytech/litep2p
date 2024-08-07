@@ -36,7 +36,7 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use quinn::{ClientConfig, Connection, Endpoint, IdleTimeout};
+use quinn::{ClientConfig, Connecting, Connection, Endpoint, IdleTimeout};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -80,6 +80,9 @@ pub(crate) struct QuicTransport {
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
+    /// Pending inbound connections.
+    pending_inbound_connections: HashMap<ConnectionId, Connecting>,
+
     /// Pending connections.
     pending_connections:
         FuturesUnordered<BoxFuture<'static, (ConnectionId, Result<NegotiatedConnection, Error>)>>,
@@ -108,6 +111,22 @@ impl QuicTransport {
             .expect("the certificate was validated during TLS handshake; qed");
 
         Some(p2p_cert.peer_id())
+    }
+
+    /// Handle inbound accepted connection.
+    fn on_inbound_connection(&mut self, connection_id: ConnectionId, connection: Connecting) {
+        self.pending_connections.push(Box::pin(async move {
+            let connection = match connection.await {
+                Ok(connection) => connection,
+                Err(error) => return (connection_id, Err(error.into())),
+            };
+
+            let Some(peer) = Self::extract_peer_id(&connection) else {
+                return (connection_id, Err(Error::InvalidCertificate));
+            };
+
+            (connection_id, Ok(NegotiatedConnection { peer, connection }))
+        }));
     }
 
     /// Handle established connection.
@@ -193,6 +212,7 @@ impl TransportBuilder for QuicTransport {
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
+                pending_inbound_connections: HashMap::new(),
                 pending_raw_connections: FuturesUnordered::new(),
                 pending_connections: FuturesUnordered::new(),
             },
@@ -287,6 +307,23 @@ impl Transport for QuicTransport {
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
         self.canceled.insert(connection_id);
         self.pending_open
+            .remove(&connection_id)
+            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
+    }
+
+    fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let connection = self
+            .pending_inbound_connections
+            .remove(&connection_id)
+            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+
+        self.on_inbound_connection(connection_id, connection);
+
+        Ok(())
+    }
+
+    fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.pending_inbound_connections
             .remove(&connection_id)
             .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
     }
@@ -406,26 +443,19 @@ impl Stream for QuicTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        while let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
+        if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
             let connection_id = self.context.next_connection_id();
 
             tracing::trace!(
                 target: LOG_TARGET,
                 ?connection_id,
-                "accept connection",
+                "pending inbound connection",
             );
 
-            self.pending_connections.push(Box::pin(async move {
-                let connection = match connection.await {
-                    Ok(connection) => connection,
-                    Err(error) => return (connection_id, Err(error.into())),
-                };
+            self.pending_inbound_connections.insert(connection_id, connection);
 
-                let Some(peer) = Self::extract_peer_id(&connection) else {
-                    return (connection_id, Err(Error::InvalidCertificate));
-                };
-
-                (connection_id, Ok(NegotiatedConnection { peer, connection }))
+            return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                connection_id,
             }));
         }
 
@@ -545,6 +575,15 @@ mod tests {
         ));
 
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
+
+        let event = transport1.next().await.unwrap();
+        match event {
+            TransportEvent::PendingInboundConnection { connection_id } => {
+                transport1.accept_pending(connection_id).unwrap();
+            }
+            _ => panic!("unexpected event"),
+        }
+
         let (res1, res2) = tokio::join!(transport1.next(), transport2.next());
 
         assert!(std::matches!(
