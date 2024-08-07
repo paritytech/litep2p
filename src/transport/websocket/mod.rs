@@ -154,7 +154,7 @@ impl WebSocketTransport {
         let address = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
-            .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())));
+            .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")));
 
         self.pending_connections.push(Box::pin(async move {
             match tokio::time::timeout(connection_open_timeout, async move {
@@ -450,7 +450,6 @@ impl Transport for WebSocketTransport {
     }
 
     fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        self.canceled.insert(connection_id);
         self.pending_open
             .remove(&connection_id)
             .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
