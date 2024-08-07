@@ -496,6 +496,7 @@ impl Transport for WebRtcTransport {
             "webrtc cannot dial",
         );
 
+        debug_assert!(false);
         Err(Error::NotSupported("webrtc cannot dial peers".to_string()))
     }
 
@@ -506,6 +507,7 @@ impl Transport for WebRtcTransport {
             "webrtc cannot accept pending connections",
         );
 
+        debug_assert!(false);
         Err(Error::NotSupported(
             "webrtc cannot accept pending connections".to_string(),
         ))
@@ -518,6 +520,7 @@ impl Transport for WebRtcTransport {
             "webrtc cannot reject pending connections",
         );
 
+        debug_assert!(false);
         Err(Error::NotSupported(
             "webrtc cannot reject pending connections".to_string(),
         ))
