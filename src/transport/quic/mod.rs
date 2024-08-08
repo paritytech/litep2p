@@ -305,7 +305,6 @@ impl Transport for QuicTransport {
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        self.canceled.insert(connection_id);
         self.pending_open
             .remove(&connection_id)
             .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
