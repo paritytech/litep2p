@@ -166,10 +166,24 @@ impl RoutingTable {
 
         match self.entry(Key::from(peer)) {
             KBucketEntry::Occupied(entry) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection,
+                    ?entry,
+                    "Peer present into the routing table, overwriting entry",
+                );
+
                 entry.addresses = addresses;
                 entry.connection = connection;
             }
             mut entry @ KBucketEntry::Vacant(_) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection,
+                    "Adding peer to the routing table into a vacant entry",
+                );
                 entry.insert(KademliaPeer::new(peer, addresses, connection));
             }
             KBucketEntry::LocalNode => tracing::warn!(
@@ -445,7 +459,7 @@ mod tests {
         entry.insert(KademliaPeer::new(
             peer,
             vec!["/ip6/::1/tcp/8888".parse().unwrap()],
-            ConnectionType::CanConnect,
+            ConnectionType::Connected,
         ));
 
         // verify the node is still there
@@ -456,7 +470,7 @@ mod tests {
             KBucketEntry::Occupied(&mut KademliaPeer::new(
                 peer,
                 addresses,
-                ConnectionType::CanConnect,
+                ConnectionType::Connected,
             ))
         );
     }
@@ -497,7 +511,7 @@ mod tests {
         entry.insert(KademliaPeer::new(
             peer,
             vec!["/ip6/::1/tcp/8888".parse().unwrap()],
-            ConnectionType::CanConnect,
+            ConnectionType::Connected,
         ));
     }
 

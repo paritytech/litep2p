@@ -201,12 +201,6 @@ pub enum ConnectionType {
 
     /// Sender is connected to the peer.
     Connected,
-
-    /// Sender has recently been connected to the peer.
-    CanConnect,
-
-    /// Sender is unable to connect to the peer.
-    CannotConnect,
 }
 
 impl TryFrom<i32> for ConnectionType {
@@ -216,8 +210,6 @@ impl TryFrom<i32> for ConnectionType {
         match value {
             0 => Ok(ConnectionType::NotConnected),
             1 => Ok(ConnectionType::Connected),
-            2 => Ok(ConnectionType::CanConnect),
-            3 => Ok(ConnectionType::CannotConnect),
             _ => Err(()),
         }
     }
@@ -228,8 +220,6 @@ impl From<ConnectionType> for i32 {
         match connection {
             ConnectionType::NotConnected => 0,
             ConnectionType::Connected => 1,
-            ConnectionType::CanConnect => 2,
-            ConnectionType::CannotConnect => 3,
         }
     }
 }
