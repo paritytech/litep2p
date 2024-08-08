@@ -508,18 +508,14 @@ impl TransportManager {
             record.set_connection_id(connection_id);
 
             #[cfg(feature = "quic")]
-            if address.iter().find(|p| std::matches!(p, Protocol::QuicV1)).is_some() {
+            if address.iter().any(|p| std::matches!(&p, Protocol::QuicV1)) {
                 quic.push(address.clone());
                 transports.insert(SupportedTransport::Quic);
                 continue;
             }
 
             #[cfg(feature = "websocket")]
-            if address
-                .iter()
-                .find(|p| std::matches!(p, Protocol::Ws(_) | Protocol::Wss(_)))
-                .is_some()
-            {
+            if address.iter().any(|p| std::matches!(&p, Protocol::Ws(_) | Protocol::Wss(_))) {
                 websocket.push(address.clone());
                 transports.insert(SupportedTransport::WebSocket);
                 continue;
@@ -837,6 +833,11 @@ impl TransportManager {
                 Ok(())
             }
         }
+    }
+
+    fn on_pending_incoming_connection(&mut self) -> crate::Result<()> {
+        self.connection_limits.on_incoming()?;
+        Ok(())
     }
 
     /// Handle closed connection.
@@ -1713,7 +1714,34 @@ impl TransportManager {
                                 }
                                 Ok(None) => {}
                             }
-                        }
+                        },
+                        TransportEvent::PendingInboundConnection { connection_id } => {
+                            if self.on_pending_incoming_connection().is_ok() {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    ?connection_id,
+                                    "accept pending incoming connection",
+                                );
+
+                                let _ = self
+                                    .transports
+                                    .get_mut(&transport)
+                                    .expect("transport to exist")
+                                    .accept_pending(connection_id);
+                            } else {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?connection_id,
+                                    "reject pending incoming connection",
+                                );
+
+                                let _ = self
+                                    .transports
+                                    .get_mut(&transport)
+                                    .expect("transport to exist")
+                                    .reject_pending(connection_id);
+                            }
+                        },
                         event => panic!("event not supported: {event:?}"),
                     }
                 },
@@ -2563,7 +2591,7 @@ mod tests {
 
             peer_context.state = PeerState::Connected {
                 record,
-                dial_record: dial_record,
+                dial_record,
             };
         }
 

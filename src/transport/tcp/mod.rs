@@ -62,6 +62,14 @@ pub mod config;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::tcp";
 
+/// Pending inbound connection.
+struct PendingInboundConnection {
+    /// Socket address of the remote peer.
+    connection: TcpStream,
+    /// Address of the remote peer.
+    address: SocketAddr,
+}
+
 /// TCP transport.
 pub(crate) struct TcpTransport {
     /// Transport context.
@@ -78,6 +86,9 @@ pub(crate) struct TcpTransport {
 
     /// Dial addresses.
     dial_addresses: DialAddresses,
+
+    /// Pending inbound connections.
+    pending_inbound_connections: HashMap<ConnectionId, PendingInboundConnection>,
 
     /// Pending opening connections.
     pending_connections:
@@ -101,14 +112,25 @@ pub(crate) struct TcpTransport {
 
 impl TcpTransport {
     /// Handle inbound TCP connection.
-    fn on_inbound_connection(&mut self, connection: TcpStream, address: SocketAddr) {
-        let connection_id = self.context.next_connection_id();
+    fn on_inbound_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        connection: TcpStream,
+        address: SocketAddr,
+    ) {
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let connection_open_timeout = self.config.connection_open_timeout;
         let substream_open_timeout = self.config.substream_open_timeout;
         let keypair = self.context.keypair.clone();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?connection_id,
+            ?address,
+            "accept connection",
+        );
 
         self.pending_connections.push(Box::pin(async move {
             TcpConnection::accept_connection(
@@ -137,7 +159,15 @@ impl TcpTransport {
         let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
         let remote_address =
             match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
-                Err(_) => return Err(Error::Timeout),
+                Err(_) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?address,
+                        ?connection_open_timeout,
+                        "failed to resolve address within timeout",
+                    );
+                    return Err(Error::Timeout);
+                }
                 Ok(Err(error)) => return Err(error),
                 Ok(Ok(address)) => address,
             };
@@ -189,9 +219,24 @@ impl TcpTransport {
         };
 
         match tokio::time::timeout(connection_open_timeout, future).await {
-            Err(_) => Err(Error::Timeout),
+            Err(_) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?connection_open_timeout,
+                    "failed to connect within timeout",
+                );
+                Err(Error::Timeout)
+            }
             Ok(Err(error)) => Err(error.into()),
-            Ok(Ok((address, stream))) => Ok((address, stream)),
+            Ok(Ok((address, stream))) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?address,
+                    "connected",
+                );
+
+                Ok((address, stream))
+            }
         }
     }
 }
@@ -228,6 +273,7 @@ impl TransportBuilder for TcpTransport {
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
+                pending_inbound_connections: HashMap::new(),
                 pending_connections: FuturesUnordered::new(),
                 pending_raw_connections: FuturesUnordered::new(),
             },
@@ -307,6 +353,23 @@ impl Transport for TcpTransport {
         }));
 
         Ok(())
+    }
+
+    fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let pending = self
+            .pending_inbound_connections
+            .remove(&connection_id)
+            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+
+        self.on_inbound_connection(connection_id, pending.connection, pending.address);
+
+        Ok(())
+    }
+
+    fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.pending_inbound_connections
+            .remove(&connection_id)
+            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
@@ -418,13 +481,31 @@ impl Stream for TcpTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        while let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
-            match event {
-                None | Some(Err(_)) => return Poll::Ready(None),
+        if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
+            return match event {
+                None | Some(Err(_)) => Poll::Ready(None),
                 Some(Ok((connection, address))) => {
-                    self.on_inbound_connection(connection, address);
+                    let connection_id = self.context.next_connection_id();
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?address,
+                        "pending inbound TCP connection",
+                    );
+
+                    self.pending_inbound_connections.insert(
+                        connection_id,
+                        PendingInboundConnection {
+                            connection,
+                            address,
+                        },
+                    );
+
+                    Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                        connection_id,
+                    }))
                 }
-            }
+            };
         }
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
@@ -566,15 +647,118 @@ mod tests {
         let (mut transport2, _) = TcpTransport::new(handle2, transport_config2).unwrap();
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
-        let (res1, res2) = tokio::join!(transport1.next(), transport2.next());
+        let (tx, mut from_transport2) = channel(64);
+        tokio::spawn(async move {
+            let event = transport2.next().await;
+            tx.send(event).await.unwrap();
+        });
 
+        let event = transport1.next().await.unwrap();
+        match event {
+            TransportEvent::PendingInboundConnection { connection_id } => {
+                transport1.accept_pending(connection_id).unwrap();
+            }
+            _ => panic!("unexpected event"),
+        }
+
+        let event = transport1.next().await;
         assert!(std::matches!(
-            res1,
+            event,
             Some(TransportEvent::ConnectionEstablished { .. })
         ));
+
+        let event = from_transport2.recv().await.unwrap();
         assert!(std::matches!(
-            res2,
+            event,
             Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn connect_and_reject_works() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let keypair1 = Keypair::generate();
+        let (tx1, _rx1) = channel(64);
+        let (event_tx1, _event_rx1) = channel(64);
+        let bandwidth_sink = BandwidthSink::new();
+
+        let handle1 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
+            next_substream_id: Default::default(),
+            next_connection_id: Default::default(),
+            keypair: keypair1.clone(),
+            tx: event_tx1,
+            bandwidth_sink: bandwidth_sink.clone(),
+
+            protocols: HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                },
+            )]),
+        };
+        let transport_config1 = Config {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        };
+
+        let (mut transport1, listen_addresses) =
+            TcpTransport::new(handle1, transport_config1).unwrap();
+        let listen_address = listen_addresses[0].clone();
+
+        let keypair2 = Keypair::generate();
+        let (tx2, _rx2) = channel(64);
+        let (event_tx2, _event_rx2) = channel(64);
+
+        let handle2 = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
+            next_substream_id: Default::default(),
+            next_connection_id: Default::default(),
+            keypair: keypair2.clone(),
+            tx: event_tx2,
+            bandwidth_sink: bandwidth_sink.clone(),
+
+            protocols: HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx2,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                },
+            )]),
+        };
+        let transport_config2 = Config {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        };
+
+        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2).unwrap();
+        transport2.dial(ConnectionId::new(), listen_address).unwrap();
+
+        let (tx, mut from_transport2) = channel(64);
+        tokio::spawn(async move {
+            let event = transport2.next().await;
+            tx.send(event).await.unwrap();
+        });
+
+        // Reject connection.
+        let event = transport1.next().await.unwrap();
+        match event {
+            TransportEvent::PendingInboundConnection { connection_id } => {
+                transport1.reject_pending(connection_id).unwrap();
+            }
+            _ => panic!("unexpected event"),
+        }
+
+        let event = from_transport2.recv().await.unwrap();
+        assert!(std::matches!(
+            event,
+            Some(TransportEvent::DialFailure { .. })
         ));
     }
 
@@ -616,6 +800,7 @@ mod tests {
                     TransportEvent::DialFailure { .. } => {}
                     TransportEvent::ConnectionOpened { .. } => {}
                     TransportEvent::OpenFailure { .. } => {}
+                    TransportEvent::PendingInboundConnection { .. } => {}
                 }
             }
         });
@@ -660,7 +845,7 @@ mod tests {
 
         transport2.dial(ConnectionId::new(), address).unwrap();
 
-        // spawn the other conection in the background as it won't return anything
+        // spawn the other connection in the background as it won't return anything
         tokio::spawn(async move {
             loop {
                 let _ = event_rx1.recv().await;
