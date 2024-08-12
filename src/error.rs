@@ -145,6 +145,10 @@ pub enum ParseError {
     ProstDecodeError(prost::DecodeError),
     #[error("Failed to encode protobuf message: `{0:?}`")]
     ProstEncodeError(prost::EncodeError),
+    #[error("Unknown key type from protobuf message: `{0}`")]
+    UnknownKeyType(i32),
+    #[error("Unsupported key type from protobuf message: `{0}`")]
+    UnsupportedKeyType(i32),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -152,11 +156,13 @@ pub enum SubstreamError {
     #[error("Connection closed")]
     ConnectionClosed,
     #[error("yamux error: `{0}`")]
-    YamuxError(crate::yamux::ConnectionError),
+    YamuxError(crate::yamux::ConnectionError, Direction),
     #[error("Failed to read from substream, substream id `{0:?}`")]
     ReadFailure(Option<SubstreamId>),
     #[error("Failed to write to substream, substream id `{0:?}`")]
     WriteFailure(Option<SubstreamId>),
+    #[error("Negotiation error: `{0:?}`")]
+    NegotiationError(NegotiationError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -169,6 +175,16 @@ pub enum NegotiationError {
     ConnectionClosed,
     #[error("`PeerId` missing from Noise handshake")]
     PeerIdMissing,
+    #[error("Operation timed out")]
+    Timeout,
+    #[error("Parse error: `{0}`")]
+    ParseError(ParseError),
+    #[error("I/O error: `{0}`")]
+    IoError(ErrorKind),
+    #[error("Expected a different noise state")]
+    StateMissmatch,
+    #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]
+    PeerIdMismatch(PeerId, PeerId),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -191,6 +207,10 @@ pub enum DialError {
     AlreadyConnected,
     #[error("Peer doens't have any known addresses")]
     NoAddressAvailable(PeerId),
+    #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]
+    PeerIdMismatch(PeerId, PeerId),
+    #[error("Exceeded connection limits `{0:?}`")]
+    ConnectionLimit(ConnectionLimitsError),
 }
 
 impl From<MultihashGeneric<64>> for Error {
@@ -238,6 +258,54 @@ impl From<prost::DecodeError> for Error {
 impl From<prost::EncodeError> for Error {
     fn from(error: prost::EncodeError) -> Self {
         Error::ParseError(ParseError::ProstEncodeError(error))
+    }
+}
+
+impl From<prost::DecodeError> for ParseError {
+    fn from(error: prost::DecodeError) -> Self {
+        ParseError::ProstDecodeError(error)
+    }
+}
+
+impl From<prost::EncodeError> for ParseError {
+    fn from(error: prost::EncodeError) -> Self {
+        ParseError::ProstEncodeError(error)
+    }
+}
+
+impl From<NegotiationError> for SubstreamError {
+    fn from(error: NegotiationError) -> Self {
+        SubstreamError::NegotiationError(error)
+    }
+}
+
+impl From<prost::EncodeError> for NegotiationError {
+    fn from(error: prost::EncodeError) -> Self {
+        NegotiationError::ParseError(ParseError::ProstEncodeError(error))
+    }
+}
+
+impl From<prost::DecodeError> for NegotiationError {
+    fn from(error: prost::DecodeError) -> Self {
+        NegotiationError::ParseError(ParseError::ProstDecodeError(error))
+    }
+}
+
+impl From<snow::Error> for NegotiationError {
+    fn from(error: snow::Error) -> Self {
+        NegotiationError::SnowError(error)
+    }
+}
+
+impl From<io::Error> for NegotiationError {
+    fn from(error: io::Error) -> Self {
+        NegotiationError::IoError(error.kind())
+    }
+}
+
+impl From<ParseError> for NegotiationError {
+    fn from(error: ParseError) -> Self {
+        NegotiationError::ParseError(error)
     }
 }
 
