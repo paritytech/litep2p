@@ -20,7 +20,7 @@
 
 use crate::{
     codec::ProtocolCodec,
-    error::Error,
+    error::{Error, SubstreamError},
     protocol::{
         connection::{ConnectionHandle, Permit},
         Direction, TransportEvent,
@@ -131,7 +131,7 @@ pub enum InnerTransportEvent {
         substream: SubstreamId,
 
         /// Error that occurred when the substream was being opened.
-        error: Error,
+        error: SubstreamError,
     },
 }
 
@@ -312,7 +312,7 @@ impl ProtocolSet {
         &mut self,
         protocol: ProtocolName,
         substream: SubstreamId,
-        error: Error,
+        error: SubstreamError,
     ) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,

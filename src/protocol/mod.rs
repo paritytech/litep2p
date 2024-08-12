@@ -22,7 +22,7 @@
 
 use crate::{
     codec::ProtocolCodec,
-    error::Error,
+    error::{Error, SubstreamError},
     substream::Substream,
     transport::Endpoint,
     types::{protocol::ProtocolName, SubstreamId},
@@ -125,7 +125,7 @@ pub enum TransportEvent {
         substream: SubstreamId,
 
         /// Error that occurred when the substream was being opened.
-        error: Error,
+        error: SubstreamError,
     },
 }
 
