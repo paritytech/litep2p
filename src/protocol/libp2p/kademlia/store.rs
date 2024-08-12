@@ -427,12 +427,42 @@ mod tests {
     }
 
     #[test]
+    fn closest_providers_kept() {
+        let mut store = MemoryStore::with_config(MemoryStoreConfig {
+            max_providers_per_key: NonZeroUsize::new(10).unwrap(),
+            ..Default::default()
+        });
+        let key = Key::from(vec![1, 2, 3]);
+        let providers = (0..20)
+            .map(|_| ProviderRecord {
+                key: key.clone(),
+                provider: PeerId::random(),
+                addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
+                expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            })
+            .collect::<Vec<_>>();
+
+        providers.iter().for_each(|p| {
+            store.put_provider(p.clone());
+        });
+
+        let closest_providers = {
+            let mut providers = providers;
+            providers.sort_unstable_by_key(ProviderRecord::distance);
+            providers.truncate(10);
+            providers
+        };
+
+        assert_eq!(store.get_providers(&key).unwrap(), &closest_providers);
+    }
+
+    #[test]
     fn provider_record_expires() {
         let mut store = MemoryStore::new();
         let provider = ProviderRecord {
             key: Key::from(vec![1, 2, 3]),
             provider: PeerId::random(),
-            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10500u16))],
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
             expires: std::time::Instant::now() - std::time::Duration::from_secs(5),
         };
 
@@ -441,5 +471,93 @@ mod tests {
 
         store.put_provider(provider.clone());
         assert_eq!(store.get_providers(&provider.key), None);
+    }
+
+    #[test]
+    fn individual_provider_record_expires() {
+        let mut store = MemoryStore::new();
+        let key = Key::from(vec![1, 2, 3]);
+        let provider1 = ProviderRecord {
+            key: key.clone(),
+            provider: PeerId::random(),
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
+            expires: std::time::Instant::now() - std::time::Duration::from_secs(5),
+        };
+        let provider2 = ProviderRecord {
+            key: key.clone(),
+            provider: PeerId::random(),
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        assert!(provider1.is_expired(std::time::Instant::now()));
+
+        store.put_provider(provider1.clone());
+        store.put_provider(provider2.clone());
+
+        assert_eq!(store.get_providers(&key).unwrap(), &vec![provider2]);
+    }
+
+    #[test]
+    fn max_addresses_per_provider() {
+        let mut store = MemoryStore::with_config(MemoryStoreConfig {
+            max_provider_addresses: NonZeroUsize::new(2).unwrap(),
+            ..Default::default()
+        });
+        let key = Key::from(vec![1, 2, 3]);
+        let provider = ProviderRecord {
+            key: Key::from(vec![1, 2, 3]),
+            provider: PeerId::random(),
+            addresses: vec![
+                multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16)),
+                multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16)),
+                multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10002u16)),
+                multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10003u16)),
+                multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10004u16)),
+            ],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        store.put_provider(provider);
+
+        let got_providers = store.get_providers(&key).unwrap();
+        assert_eq!(got_providers.len(), 1);
+        assert_eq!(got_providers.first().unwrap().key, key);
+        assert_eq!(got_providers.first().unwrap().addresses.len(), 2);
+    }
+
+    #[test]
+    fn max_provider_keys() {
+        let mut store = MemoryStore::with_config(MemoryStoreConfig {
+            max_provider_keys: NonZeroUsize::new(2).unwrap(),
+            ..Default::default()
+        });
+
+        let provider1 = ProviderRecord {
+            key: Key::from(vec![1, 2, 3]),
+            provider: PeerId::random(),
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+        let provider2 = ProviderRecord {
+            key: Key::from(vec![4, 5, 6]),
+            provider: PeerId::random(),
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10002u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+        let provider3 = ProviderRecord {
+            key: Key::from(vec![7, 8, 9]),
+            provider: PeerId::random(),
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10003u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        assert!(store.put_provider(provider1.clone()));
+        assert!(store.put_provider(provider2.clone()));
+        assert!(!store.put_provider(provider3.clone()));
+
+        assert_eq!(store.get_providers(&provider1.key), Some(&vec![provider1]));
+        assert_eq!(store.get_providers(&provider2.key), Some(&vec![provider2]));
+        assert_eq!(store.get_providers(&provider3.key), None);
     }
 }
