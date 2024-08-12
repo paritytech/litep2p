@@ -20,7 +20,10 @@
 
 //! Shared socket listener between TCP and WebSocket.
 
-use crate::{error::AddressError, Error, PeerId};
+use crate::{
+    error::{AddressError, DnsError},
+    Error, PeerId,
+};
 
 use futures::Stream;
 use multiaddr::{Multiaddr, Protocol};
@@ -70,7 +73,7 @@ pub enum DnsType {
 
 impl AddressType {
     /// Resolve the address to a concrete IP.
-    pub async fn lookup_ip(self) -> crate::Result<SocketAddr> {
+    pub async fn lookup_ip(self) -> Result<SocketAddr, DnsError> {
         let (url, port, dns_type) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),
@@ -95,7 +98,7 @@ impl AddressType {
                         url
                     );
 
-                    return Err(Error::Other(format!("Failed to resolve DNS address {url}")));
+                    return Err(DnsError::ResolveError(url));
                 }
             };
 
@@ -109,10 +112,7 @@ impl AddressType {
                 "Multiaddr DNS type does not match IP version `{}`",
                 url
             );
-
-            return Err(Error::Other(format!(
-                "Miss-match in DNS address IP version {url}"
-            )));
+            return Err(DnsError::MismatchDnsVersion);
         };
 
         Ok(SocketAddr::new(ip, port))
