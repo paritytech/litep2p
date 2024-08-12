@@ -139,7 +139,7 @@ impl<T: Clone> Hash for Key<T> {
 }
 
 /// The raw bytes of a key in the DHT keyspace.
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct KeyBytes(GenericArray<u8, U32>);
 
 impl KeyBytes {
