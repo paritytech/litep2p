@@ -148,12 +148,11 @@ impl MemoryStore {
         // Make sure we have no more than `max_provider_addresses`.
         let provider_record = {
             let mut record = provider_record;
-            record.addresses.truncate(self.config.max_provider_addresses.into());
+            record.addresses.truncate(self.config.max_provider_addresses);
             record
         };
 
-        let can_insert_new_key =
-            self.provider_keys.len() < usize::from(self.config.max_provider_keys);
+        let can_insert_new_key = self.provider_keys.len() < self.config.max_provider_keys;
 
         match self.provider_keys.entry(provider_record.key.clone()) {
             Entry::Vacant(entry) =>
@@ -183,7 +182,7 @@ impl MemoryStore {
                     }
                     Err(i) => {
                         // `Err(i)` contains the insertion point.
-                        if i == usize::from(self.config.max_providers_per_key) {
+                        if i == self.config.max_providers_per_key {
                             // The provider won't be inserted, as it's further than all existing
                             // providers and we don't have space left.
                             false
@@ -216,14 +215,14 @@ pub struct MemoryStoreConfig {
     pub max_record_size_bytes: usize,
 
     /// Maximum number of provider keys this node stores.
-    pub max_provider_keys: NonZeroUsize,
+    pub max_provider_keys: usize,
 
     /// Maximum number of cached addresses per provider.
-    pub max_provider_addresses: NonZeroUsize,
+    pub max_provider_addresses: usize,
 
     /// Maximum number of providers per key. Only providers with peer IDs closest to the key are
     /// kept.
-    pub max_providers_per_key: NonZeroUsize,
+    pub max_providers_per_key: usize,
 }
 
 impl Default for MemoryStoreConfig {
@@ -231,9 +230,9 @@ impl Default for MemoryStoreConfig {
         Self {
             max_records: 1024,
             max_record_size_bytes: 65 * 1024,
-            max_provider_keys: NonZeroUsize::new(1024).expect("1024 > 0"),
-            max_provider_addresses: NonZeroUsize::new(30).expect("30 > 0"),
-            max_providers_per_key: NonZeroUsize::new(20).expect("20 > 0"),
+            max_provider_keys: 1024,
+            max_provider_addresses: 30,
+            max_providers_per_key: 20,
         }
     }
 }
@@ -407,7 +406,7 @@ mod tests {
     #[test]
     fn max_providers_per_key() {
         let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_providers_per_key: NonZeroUsize::new(10).unwrap(),
+            max_providers_per_key: 10,
             ..Default::default()
         });
         let key = Key::from(vec![1, 2, 3]);
@@ -429,7 +428,7 @@ mod tests {
     #[test]
     fn closest_providers_kept() {
         let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_providers_per_key: NonZeroUsize::new(10).unwrap(),
+            max_providers_per_key: 10,
             ..Default::default()
         });
         let key = Key::from(vec![1, 2, 3]);
@@ -501,7 +500,7 @@ mod tests {
     #[test]
     fn max_addresses_per_provider() {
         let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_provider_addresses: NonZeroUsize::new(2).unwrap(),
+            max_provider_addresses: 2,
             ..Default::default()
         });
         let key = Key::from(vec![1, 2, 3]);
@@ -529,7 +528,7 @@ mod tests {
     #[test]
     fn max_provider_keys() {
         let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_provider_keys: NonZeroUsize::new(2).unwrap(),
+            max_provider_keys: 2,
             ..Default::default()
         });
 
