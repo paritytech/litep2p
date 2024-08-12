@@ -24,7 +24,8 @@
 use crate::{
     config::Role,
     crypto::{ed25519::Keypair, PublicKey},
-    error, PeerId,
+    error::NegotiationError,
+    PeerId,
 };
 
 use bytes::{Buf, Bytes, BytesMut};
@@ -103,7 +104,7 @@ impl NoiseContext {
         keypair: snow::Keypair,
         id_keys: &Keypair,
         role: Role,
-    ) -> crate::Result<Self> {
+    ) -> Result<Self, NegotiationError> {
         let noise_payload = handshake_schema::NoiseHandshakePayload {
             identity_key: Some(PublicKey::Ed25519(id_keys.public()).to_protobuf_encoding()),
             identity_sig: Some(
@@ -123,7 +124,7 @@ impl NoiseContext {
         })
     }
 
-    pub fn new(keypair: &Keypair, role: Role) -> crate::Result<Self> {
+    pub fn new(keypair: &Keypair, role: Role) -> Result<Self, NegotiationError> {
         tracing::trace!(target: LOG_TARGET, ?role, "create new noise configuration");
 
         let builder: Builder<'_> = Builder::with_resolver(
@@ -190,7 +191,7 @@ impl NoiseContext {
     /// Get first message.
     ///
     /// Listener only sends one message (the payload)
-    pub fn first_message(&mut self, role: Role) -> crate::Result<Vec<u8>> {
+    pub fn first_message(&mut self, role: Role) -> Result<Vec<u8>, NegotiationError> {
         match role {
             Role::Dialer => {
                 tracing::trace!(target: LOG_TARGET, "get noise dialer first message");
@@ -198,9 +199,7 @@ impl NoiseContext {
                 let NoiseState::Handshake(ref mut noise) = self.noise else {
                     tracing::error!(target: LOG_TARGET, "invalid state to read the first handshake message");
                     debug_assert!(false);
-                    return Err(error::Error::Other(
-                        "Noise state missmatch: expected handshake".into(),
-                    ));
+                    return Err(NegotiationError::StateMissmatch);
                 };
 
                 let mut buffer = vec![0u8; 256];
@@ -220,15 +219,13 @@ impl NoiseContext {
     /// Get second message.
     ///
     /// Only the dialer sends the second message.
-    pub fn second_message(&mut self) -> crate::Result<Vec<u8>> {
+    pub fn second_message(&mut self) -> Result<Vec<u8>, NegotiationError> {
         tracing::trace!(target: LOG_TARGET, "get noise paylod message");
 
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             tracing::error!(target: LOG_TARGET, "invalid state to read the first handshake message");
             debug_assert!(false);
-            return Err(error::Error::Other(
-                "Noise state missmatch: expected handshake".into(),
-            ));
+            return Err(NegotiationError::StateMissmatch);
         };
 
         let mut buffer = vec![0u8; 2048];
@@ -246,7 +243,7 @@ impl NoiseContext {
     async fn read_handshake_message<T: AsyncRead + AsyncWrite + Unpin>(
         &mut self,
         io: &mut T,
-    ) -> crate::Result<Bytes> {
+    ) -> Result<Bytes, NegotiationError> {
         let mut size = BytesMut::zeroed(2);
         io.read_exact(&mut size).await?;
         let size = size.get_u16();
@@ -260,9 +257,7 @@ impl NoiseContext {
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             tracing::error!(target: LOG_TARGET, "invalid state to read handshake message");
             debug_assert!(false);
-            return Err(error::Error::Other(
-                "Noise state missmatch: expected handshake".into(),
-            ));
+            return Err(NegotiationError::StateMissmatch);
         };
 
         let nread = noise.read_message(&message, &mut out)?;
@@ -286,13 +281,10 @@ impl NoiseContext {
     }
 
     /// Convert Noise into transport mode.
-    fn into_transport(self) -> crate::Result<NoiseContext> {
+    fn into_transport(self) -> Result<NoiseContext, NegotiationError> {
         let transport = match self.noise {
             NoiseState::Handshake(noise) => noise.into_transport_mode()?,
-            NoiseState::Transport(_) =>
-                return Err(error::Error::Other(
-                    "Noise state missmatch: expected handshake".into(),
-                )),
+            NoiseState::Transport(_) => return Err(NegotiationError::StateMissmatch),
         };
 
         Ok(NoiseContext {
@@ -664,12 +656,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
 }
 
 /// Try to parse `PeerId` from received `NoiseHandshakePayload`
-fn parse_peer_id(buf: &[u8]) -> crate::Result<PeerId> {
+fn parse_peer_id(buf: &[u8]) -> Result<PeerId, NegotiationError> {
     match handshake_schema::NoiseHandshakePayload::decode(buf) {
         Ok(payload) => {
-            let public_key = PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
-                error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
-            )?)?;
+            let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
+
+            let public_key = PublicKey::from_protobuf_encoding(&identity)?;
             Ok(PeerId::from_public_key(&public_key))
         }
         Err(err) => Err(From::from(err)),
@@ -683,7 +675,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     role: Role,
     max_read_ahead_factor: usize,
     max_write_buffer_size: usize,
-) -> crate::Result<(NoiseSocket<S>, PeerId)> {
+) -> Result<(NoiseSocket<S>, PeerId), NegotiationError> {
     tracing::debug!(target: LOG_TARGET, ?role, "start noise handshake");
 
     let mut noise = NoiseContext::new(keypair, role)?;

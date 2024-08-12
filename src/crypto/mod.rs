@@ -21,7 +21,7 @@
 
 //! Crypto-related code.
 
-use crate::{error::*, peer_id::*};
+use crate::{error::ParseError, peer_id::*};
 
 pub mod ed25519;
 pub(crate) mod noise;
@@ -65,11 +65,10 @@ impl PublicKey {
 
     /// Decode a public key from a protobuf structure, e.g. read from storage
     /// or received from another node.
-    pub fn from_protobuf_encoding(bytes: &[u8]) -> crate::Result<PublicKey> {
+    pub fn from_protobuf_encoding(bytes: &[u8]) -> Result<PublicKey, ParseError> {
         use prost::Message;
 
-        let pubkey = keys_proto::PublicKey::decode(bytes)
-            .map_err(|error| Error::Other(format!("Invalid Protobuf: {error:?}")))?;
+        let pubkey = keys_proto::PublicKey::decode(bytes)?;
 
         pubkey.try_into()
     }
@@ -92,19 +91,16 @@ impl From<&PublicKey> for keys_proto::PublicKey {
 }
 
 impl TryFrom<keys_proto::PublicKey> for PublicKey {
-    type Error = Error;
+    type Error = ParseError;
 
     fn try_from(pubkey: keys_proto::PublicKey) -> Result<Self, Self::Error> {
         let key_type = keys_proto::KeyType::try_from(pubkey.r#type)
-            .map_err(|_| Error::Other(format!("Unknown key type: {}", pubkey.r#type)))?;
+            .map_err(|_| ParseError::UnknownKeyType(pubkey.r#type))?;
 
-        match key_type {
-            keys_proto::KeyType::Ed25519 =>
-                Ok(ed25519::PublicKey::try_from_bytes(&pubkey.data).map(PublicKey::Ed25519)?),
-            _ => Err(Error::Other(format!(
-                "Unsupported key type: {}",
-                key_type.as_str_name()
-            ))),
+        if key_type == keys_proto::KeyType::Ed25519 {
+            Ok(ed25519::PublicKey::try_from_bytes(&pubkey.data).map(PublicKey::Ed25519)?)
+        } else {
+            Err(ParseError::UnsupportedKeyType(key_type as i32))
         }
     }
 }
