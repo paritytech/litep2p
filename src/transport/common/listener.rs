@@ -185,7 +185,7 @@ pub trait GetSocketAddr {
     /// The `PeerId` is optional and may not be present.
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
-    ) -> crate::Result<(AddressType, Option<PeerId>)>;
+    ) -> Result<(AddressType, Option<PeerId>), AddressError>;
 
     /// Convert concrete `SocketAddr` to `Multiaddr`.
     fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr;
@@ -197,7 +197,7 @@ pub struct TcpAddress;
 impl GetSocketAddr for TcpAddress {
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
-    ) -> crate::Result<(AddressType, Option<PeerId>)> {
+    ) -> Result<(AddressType, Option<PeerId>), AddressError> {
         multiaddr_to_socket_address(address, SocketListenerType::Tcp)
     }
 
@@ -214,7 +214,7 @@ pub struct WebSocketAddress;
 impl GetSocketAddr for WebSocketAddress {
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
-    ) -> crate::Result<(AddressType, Option<PeerId>)> {
+    ) -> Result<(AddressType, Option<PeerId>), AddressError> {
         multiaddr_to_socket_address(address, SocketListenerType::WebSocket)
     }
 
@@ -352,7 +352,7 @@ enum SocketListenerType {
 fn multiaddr_to_socket_address(
     address: &Multiaddr,
     ty: SocketListenerType,
-) -> crate::Result<(AddressType, Option<PeerId>)> {
+) -> Result<(AddressType, Option<PeerId>), AddressError> {
     tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
     let mut iter = address.iter();
@@ -370,7 +370,7 @@ fn multiaddr_to_socket_address(
                     ?protocol,
                     "invalid transport protocol, expected `Tcp`",
                 );
-                Err(Error::AddressError(AddressError::InvalidProtocol))
+                Err(AddressError::InvalidProtocol)
             }
         };
 
@@ -384,7 +384,7 @@ fn multiaddr_to_socket_address(
                     ?protocol,
                     "invalid transport protocol, expected `Tcp`",
                 );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
+                return Err(AddressError::InvalidProtocol);
             }
         },
         Some(Protocol::Ip4(address)) => match iter.next() {
@@ -396,7 +396,7 @@ fn multiaddr_to_socket_address(
                     ?protocol,
                     "invalid transport protocol, expected `Tcp`",
                 );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
+                return Err(AddressError::InvalidProtocol);
             }
         },
         Some(Protocol::Dns(address)) => handle_dns_type(address.into(), DnsType::Dns, iter.next())?,
@@ -406,7 +406,7 @@ fn multiaddr_to_socket_address(
             handle_dns_type(address.into(), DnsType::Dns6, iter.next())?,
         protocol => {
             tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
-            return Err(Error::AddressError(AddressError::InvalidProtocol));
+            return Err(AddressError::InvalidProtocol);
         }
     };
 
@@ -423,14 +423,17 @@ fn multiaddr_to_socket_address(
                         ?protocol,
                         "invalid protocol, expected `Ws` or `Wss`"
                     );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                    return Err(AddressError::InvalidProtocol);
                 }
             };
         }
     }
 
     let maybe_peer = match iter.next() {
-        Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
+        Some(Protocol::P2p(multihash)) => Some(
+            PeerId::from_multihash(multihash)
+                .map_err(|hash| AddressError::InvalidMultihash(hash))?,
+        ),
         None => None,
         protocol => {
             tracing::error!(
@@ -438,7 +441,7 @@ fn multiaddr_to_socket_address(
                 ?protocol,
                 "invalid protocol, expected `P2p` or `None`"
             );
-            return Err(Error::AddressError(AddressError::InvalidProtocol));
+            return Err(AddressError::InvalidProtocol);
         }
     };
 
