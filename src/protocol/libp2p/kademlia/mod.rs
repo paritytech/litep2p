@@ -21,7 +21,7 @@
 //! [`/ipfs/kad/1.0.0`](https://github.com/libp2p/specs/blob/master/kad-dht/README.md) implementation.
 
 use crate::{
-    error::Error,
+    error::{Error, SubstreamError},
     protocol::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
@@ -492,7 +492,11 @@ impl Kademlia {
     }
 
     /// Failed to open substream to remote peer.
-    async fn on_substream_open_failure(&mut self, substream_id: SubstreamId, error: Error) {
+    async fn on_substream_open_failure(
+        &mut self,
+        substream_id: SubstreamId,
+        error: SubstreamError,
+    ) {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,

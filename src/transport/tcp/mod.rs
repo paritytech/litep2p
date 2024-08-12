@@ -23,7 +23,7 @@
 
 use crate::{
     config::Role,
-    error::Error,
+    error::{DialError, Error, NegotiationError},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
         manager::TransportHandle,
@@ -91,8 +91,9 @@ pub(crate) struct TcpTransport {
     pending_inbound_connections: HashMap<ConnectionId, PendingInboundConnection>,
 
     /// Pending opening connections.
-    pending_connections:
-        FuturesUnordered<BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, Error)>>>,
+    pending_connections: FuturesUnordered<
+        BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, NegotiationError)>>,
+    >,
 
     /// Pending raw, unnegotiated connections.
     pending_raw_connections: FuturesUnordered<
@@ -155,8 +156,9 @@ impl TcpTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
-    ) -> crate::Result<(Multiaddr, TcpStream)> {
+    ) -> Result<(Multiaddr, TcpStream), DialError> {
         let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
+
         let remote_address =
             match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
                 Err(_) => {
@@ -166,9 +168,9 @@ impl TcpTransport {
                         ?connection_open_timeout,
                         "failed to resolve address within timeout",
                     );
-                    return Err(Error::Timeout);
+                    return Err(DialError::Timeout);
                 }
-                Ok(Err(error)) => return Err(error),
+                Ok(Err(error)) => return Err(error.into()),
                 Ok(Ok(address)) => address,
             };
 
@@ -225,7 +227,7 @@ impl TcpTransport {
                     ?connection_open_timeout,
                     "failed to connect within timeout",
                 );
-                Err(Error::Timeout)
+                Err(DialError::Timeout)
             }
             Ok(Err(error)) => Err(error.into()),
             Ok(Ok((address, stream))) => {
@@ -301,7 +303,7 @@ impl Transport for TcpTransport {
             let (_, stream) =
                 TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout, nodelay)
                     .await
-                    .map_err(|error| (connection_id, error))?;
+                    .map_err(|error| (connection_id, error.into()))?;
 
             TcpConnection::open_connection(
                 connection_id,
@@ -463,7 +465,7 @@ impl Transport for TcpTransport {
             })
             .await
             {
-                Err(_) => Err((connection_id, Error::Timeout)),
+                Err(_) => Err((connection_id, NegotiationError::Timeout)),
                 Ok(Err(error)) => Err(error),
                 Ok(Ok(connection)) => Ok(connection),
             }
@@ -552,7 +554,7 @@ impl Stream for TcpTransport {
                         return Poll::Ready(Some(TransportEvent::DialFailure {
                             connection_id,
                             address,
-                            error,
+                            error: error.into(),
                         }));
                     }
                 }

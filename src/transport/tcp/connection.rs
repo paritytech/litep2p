@@ -249,7 +249,7 @@ impl TcpConnection {
         {
             Err(_) => {
                 tracing::trace!(target: LOG_TARGET, ?connection_id, "connection timed out during negotiation");
-                Err(Error::Timeout)
+                Err(NegotiationError::Timeout)
             }
             Ok(result) => result,
         }
@@ -522,7 +522,7 @@ impl TcpConnection {
                                 Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
                                     protocol: None,
                                     substream_id: None,
-                                    error,
+                                    error: SubstreamError::NegotiationError(error),
                                 }),
                                 Err(_) => Err(ConnectionError::Timeout {
                                     protocol: None,

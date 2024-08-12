@@ -48,15 +48,15 @@ pub enum Error {
     #[error("Protocol `{0}` not supported")]
     ProtocolNotSupported(String),
     #[error("Address error: `{0}`")]
-    AddressError(AddressError),
+    AddressError(#[from] AddressError),
     #[error("Parse error: `{0}`")]
     ParseError(ParseError),
     #[error("I/O error: `{0}`")]
     IoError(ErrorKind),
     #[error("Negotiation error: `{0}`")]
-    NegotiationError(NegotiationError),
+    NegotiationError(#[from] NegotiationError),
     #[error("Substream error: `{0}`")]
-    SubstreamError(SubstreamError),
+    SubstreamError(#[from] SubstreamError),
     #[error("Substream error: `{0}`")]
     NotificationError(NotificationError),
     #[error("Essential task closed")]
@@ -125,6 +125,8 @@ pub enum Error {
     ConnectionDoesntExist(ConnectionId),
     #[error("Exceeded connection limits `{0:?}`")]
     ConnectionLimit(ConnectionLimitsError),
+    #[error("Dial error: `{0}`")]
+    DialError(#[from] DialError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -135,6 +137,8 @@ pub enum AddressError {
     PeerIdMissing,
     #[error("Address not available")]
     AddressNotAvailable,
+    #[error("Invalid multihash: `{0:?}`")]
+    InvalidMultihash(Multihash),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -167,6 +171,8 @@ pub enum SubstreamError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum NegotiationError {
+    #[error("Dial error: `{0}`")]
+    DialError(#[from] DialError),
     #[error("multistream-select error: `{0:?}`")]
     MultistreamSelectError(crate::multistream_select::NegotiationError),
     #[error("multistream-select error: `{0:?}`")]
@@ -201,6 +207,14 @@ pub enum NotificationError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DialError {
+    #[error("Dial timed out")]
+    Timeout,
+    #[error("Address error: `{0}`")]
+    AddressError(#[from] AddressError),
+    #[error("Dns lookup error for `{0}`")]
+    DnsError(#[from] DnsError),
+    #[error("I/O error: `{0}`")]
+    IoError(ErrorKind),
     #[error("Tried to dial self")]
     TriedToDialSelf,
     #[error("Already connected to peer")]
@@ -213,6 +227,14 @@ pub enum DialError {
     ConnectionLimit(ConnectionLimitsError),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum DnsError {
+    #[error("Dns failed to resolve url `{0}`")]
+    ResolveError(String),
+    #[error("DNS type is different from the provided IP address")]
+    MismatchDnsVersion,
+}
+
 impl From<MultihashGeneric<64>> for Error {
     fn from(hash: MultihashGeneric<64>) -> Self {
         Error::ParseError(ParseError::InvalidMultihash(hash))
@@ -222,6 +244,12 @@ impl From<MultihashGeneric<64>> for Error {
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Error {
         Error::IoError(error.kind())
+    }
+}
+
+impl From<io::Error> for DialError {
+    fn from(error: io::Error) -> Self {
+        DialError::IoError(error.kind())
     }
 }
 
