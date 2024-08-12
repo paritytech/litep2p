@@ -144,6 +144,8 @@ impl MemoryStore {
     /// Try to add a provider for `key`. If there are already `max_providers_per_key` for
     /// this `key`, the new provider is only inserted if its closer to `key` than
     /// the furthest already inserted provider. The furthest provider is then discarded.
+    ///
+    /// Returns `true` if the provider was added, `false` otherwise.
     pub fn put_provider(&mut self, provider_record: ProviderRecord) -> bool {
         // Make sure we have no more than `max_provider_addresses`.
         let provider_record = {
