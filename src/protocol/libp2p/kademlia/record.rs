@@ -19,7 +19,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::PeerId;
+use crate::{
+    protocol::libp2p::kademlia::types::{Distance, Key as KademliaKey},
+    Multiaddr, PeerId,
+};
 
 use bytes::Bytes;
 use multihash::Multihash;
@@ -117,4 +120,35 @@ pub struct PeerRecord {
 
     /// The provided record.
     pub record: Record,
+}
+
+/// A record keeping information about a content provider.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ProviderRecord {
+    /// Key of the record.
+    pub key: Key,
+
+    /// Key of the provider, based on its peer ID.
+    pub provider: PeerId,
+
+    /// Cached addresses of the provider.
+    pub addresses: Vec<Multiaddr>,
+
+    /// The expiration time of the record. The provider records must always have the expiration
+    /// time.
+    pub expires: Instant,
+}
+
+impl ProviderRecord {
+    /// The distance from the provider's peer ID to the provided key.
+    pub fn distance(&self) -> Distance {
+        // Note that the record key is raw (opaque bytes). In order to calculate the distance from
+        // the provider's peer ID to this key we must first hash both.
+        KademliaKey::from(self.provider).distance(&KademliaKey::new(self.key.clone()))
+    }
+
+    /// Checks whether the record is expired w.r.t. the given `Instant`.
+    pub fn is_expired(&self, now: Instant) -> bool {
+        now >= self.expires
+    }
 }
