@@ -165,6 +165,7 @@ pub enum ParseError {
     /// This error can happen when:
     ///  - The received number of bytes is not equal to the expected number of bytes (32 bytes).
     ///  - The bytes are not a valid Ed25519 public key.
+    ///  - Length of the public key is not represented by 2 bytes (WebRTC specific).
     #[error("Invalid public key")]
     InvalidPublicKey,
 }

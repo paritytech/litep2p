@@ -24,7 +24,7 @@
 use crate::{
     config::Role,
     crypto::{ed25519::Keypair, PublicKey},
-    error::NegotiationError,
+    error::{NegotiationError, ParseError},
     PeerId,
 };
 
@@ -145,7 +145,7 @@ impl NoiseContext {
 
     /// Create new [`NoiseContext`] with prologue.
     #[cfg(feature = "webrtc")]
-    pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> crate::Result<Self> {
+    pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> Result<Self, NegotiationError> {
         let noise: Builder<'_> = Builder::with_resolver(
             NOISE_PARAMETERS.parse().expect("qed; Valid noise pattern"),
             Box::new(protocol::Resolver),
@@ -163,19 +163,20 @@ impl NoiseContext {
 
     /// Get remote public key from the received Noise payload.
     #[cfg(feature = "webrtc")]
-    pub fn get_remote_public_key(&mut self, reply: &[u8]) -> crate::Result<PublicKey> {
+    pub fn get_remote_public_key(&mut self, reply: &[u8]) -> Result<PublicKey, NegotiationError> {
         let (len_slice, reply) = reply.split_at(2);
-        let len = u16::from_be_bytes(len_slice.try_into().map_err(|_| error::Error::InvalidData)?)
-            as usize;
+        let len = u16::from_be_bytes(
+            len_slice
+                .try_into()
+                .map_err(|_| NegotiationError::ParseError(ParseError::InvalidPublicKey))?,
+        ) as usize;
 
         let mut buffer = vec![0u8; len];
 
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             tracing::error!(target: LOG_TARGET, "invalid state to read the second handshake message");
             debug_assert!(false);
-            return Err(error::Error::Other(
-                "Noise state missmatch: expected handshake".into(),
-            ));
+            return Err(NegotiationError::StateMissmatch);
         };
 
         let res = noise.read_message(reply, &mut buffer)?;
@@ -183,9 +184,8 @@ impl NoiseContext {
 
         let payload = handshake_schema::NoiseHandshakePayload::decode(buffer.as_slice())?;
 
-        PublicKey::from_protobuf_encoding(&payload.identity_key.ok_or(
-            error::Error::NegotiationError(error::NegotiationError::PeerIdMissing),
-        )?)
+        let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
+        PublicKey::from_protobuf_encoding(&identity).map_err(|err| err.into())
     }
 
     /// Get first message.
