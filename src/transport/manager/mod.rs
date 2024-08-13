@@ -51,6 +51,7 @@ use std::{
         Arc,
     },
     task::{Context, Poll},
+    time::Duration,
 };
 
 pub use handle::{TransportHandle, TransportManagerHandle};
@@ -322,6 +323,7 @@ impl TransportManager {
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
         codec: ProtocolCodec,
+        keep_alive_timeout: Duration,
     ) -> TransportService {
         assert!(!self.protocol_names.contains(&protocol));
 
@@ -337,6 +339,7 @@ impl TransportManager {
             fallback_names.clone(),
             self.next_substream_id.clone(),
             self.transport_manager_handle.clone(),
+            keep_alive_timeout,
         );
 
         self.protocols.insert(
@@ -1756,7 +1759,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        crypto::ed25519::Keypair, executor::DefaultExecutor, transport::dummy::DummyTransport,
+        crypto::ed25519::Keypair,
+        executor::DefaultExecutor,
+        transport::{dummy::DummyTransport, KEEP_ALIVE_TIMEOUT},
     };
     use std::{
         net::{Ipv4Addr, Ipv6Addr},
@@ -1793,11 +1798,13 @@ mod tests {
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
         );
     }
 
@@ -1818,6 +1825,7 @@ mod tests {
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1826,6 +1834,7 @@ mod tests {
                 ProtocolName::from("/notif/1"),
             ],
             ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
         );
     }
 
@@ -1849,6 +1858,7 @@ mod tests {
                 ProtocolName::from("/notif/1"),
             ],
             ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1857,6 +1867,7 @@ mod tests {
                 ProtocolName::from("/notif/1/new"),
             ],
             ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
         );
     }
 

@@ -122,8 +122,11 @@ pub struct TransportService {
     /// Next substream ID.
     next_substream_id: Arc<AtomicUsize>,
 
+    /// Close the connection if no substreams are open within this time frame.
+    keep_alive_timeout: Duration,
+
     /// Pending keep-alive timeouts.
-    keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
+    pending_keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
 }
 
 impl TransportService {
@@ -134,6 +137,7 @@ impl TransportService {
         fallback_names: Vec<ProtocolName>,
         next_substream_id: Arc<AtomicUsize>,
         transport_handle: TransportManagerHandle,
+        keep_alive_timeout: Duration,
     ) -> (Self, Sender<InnerTransportEvent>) {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -146,7 +150,8 @@ impl TransportService {
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
-                keep_alive_timeouts: FuturesUnordered::new(),
+                keep_alive_timeout: keep_alive_timeout,
+                pending_keep_alive_timeouts: FuturesUnordered::new(),
             },
             tx,
         )
@@ -168,6 +173,7 @@ impl TransportService {
             ?connection_id,
             "connection established",
         );
+        let keep_alive_timeout = self.keep_alive_timeout;
 
         match self.connections.get_mut(&peer) {
             Some(context) => match context.secondary {
@@ -182,8 +188,8 @@ impl TransportService {
                     None
                 }
                 None => {
-                    self.keep_alive_timeouts.push(Box::pin(async move {
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    self.pending_keep_alive_timeouts.push(Box::pin(async move {
+                        tokio::time::sleep(keep_alive_timeout).await;
                         (peer, connection_id)
                     }));
                     context.secondary = Some(handle);
@@ -193,8 +199,8 @@ impl TransportService {
             },
             None => {
                 self.connections.insert(peer, ConnectionContext::new(handle));
-                self.keep_alive_timeouts.push(Box::pin(async move {
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                self.pending_keep_alive_timeouts.push(Box::pin(async move {
+                    tokio::time::sleep(keep_alive_timeout).await;
                     (peer, connection_id)
                 }));
 
@@ -387,7 +393,7 @@ impl Stream for TransportService {
         }
 
         while let Poll::Ready(Some((peer, connection_id))) =
-            self.keep_alive_timeouts.poll_next_unpin(cx)
+            self.pending_keep_alive_timeouts.poll_next_unpin(cx)
         {
             if let Some(context) = self.connections.get_mut(&peer) {
                 tracing::trace!(
@@ -410,7 +416,10 @@ mod tests {
     use super::*;
     use crate::{
         protocol::TransportService,
-        transport::manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
+        transport::{
+            manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
+            KEEP_ALIVE_TIMEOUT,
+        },
     };
     use futures::StreamExt;
     use parking_lot::RwLock;
@@ -439,6 +448,7 @@ mod tests {
             Vec::new(),
             Arc::new(AtomicUsize::new(0usize)),
             handle,
+            KEEP_ALIVE_TIMEOUT,
         );
 
         (service, sender, cmd_rx)
@@ -780,7 +790,7 @@ mod tests {
         };
 
         // verify the first connection state is correct
-        assert_eq!(service.keep_alive_timeouts.len(), 1);
+        assert_eq!(service.pending_keep_alive_timeouts.len(), 1);
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
@@ -815,7 +825,7 @@ mod tests {
         // doesn't exist anymore
         //
         // the peer is removed because there is no connection to them
-        assert_eq!(service.keep_alive_timeouts.len(), 1);
+        assert_eq!(service.pending_keep_alive_timeouts.len(), 1);
         assert!(service.connections.get(&peer).is_none());
 
         // register new primary connection but verify that there are now two pending keep-alive
@@ -843,7 +853,7 @@ mod tests {
         };
 
         // verify the first connection state is correct
-        assert_eq!(service.keep_alive_timeouts.len(), 2);
+        assert_eq!(service.pending_keep_alive_timeouts.len(), 2);
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
