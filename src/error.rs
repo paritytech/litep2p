@@ -133,12 +133,16 @@ pub enum Error {
 pub enum AddressError {
     #[error("Invalid protocol")]
     InvalidProtocol,
+    #[error("Invalid URL")]
+    InvalidUrl,
     #[error("`PeerId` missing from the address")]
     PeerIdMissing,
     #[error("Address not available")]
     AddressNotAvailable,
     #[error("Invalid multihash: `{0:?}`")]
     InvalidMultihash(Multihash),
+    #[error("Transport not supported")]
+    TransportNotSupported(Multiaddr),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -199,6 +203,10 @@ pub enum NegotiationError {
     StateMissmatch,
     #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]
     PeerIdMismatch(PeerId, PeerId),
+    // TODO: Convert tokio_tungstenite::accept_async into `NegotiationError` for some cases (ie
+    // ConnectionClosed).
+    #[error("Other error occurred: `{0}`")]
+    Other(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -235,6 +243,10 @@ pub enum DialError {
     PeerIdMismatch(PeerId, PeerId),
     #[error("Exceeded connection limits `{0:?}`")]
     ConnectionLimit(ConnectionLimitsError),
+
+    #[cfg(feature = "websocket")]
+    #[error("WebSocket error: `{0}`")]
+    WebSocket(#[from] tokio_tungstenite::tungstenite::error::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -344,6 +356,12 @@ impl From<io::Error> for NegotiationError {
 impl From<ParseError> for NegotiationError {
     fn from(error: ParseError) -> Self {
         NegotiationError::ParseError(error)
+    }
+}
+
+impl From<MultihashGeneric<64>> for AddressError {
+    fn from(hash: MultihashGeneric<64>) -> Self {
+        AddressError::InvalidMultihash(hash)
     }
 }
 

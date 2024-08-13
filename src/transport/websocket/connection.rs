@@ -24,7 +24,7 @@ use crate::{
         ed25519::Keypair,
         noise::{self, NoiseSocket},
     },
-    error::Error,
+    error::{Error, NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
@@ -93,7 +93,7 @@ enum ConnectionError {
         substream_id: Option<SubstreamId>,
 
         /// Error.
-        error: Error,
+        error: SubstreamError,
     },
 }
 
@@ -195,13 +195,14 @@ impl WebSocketConnection {
         stream: S,
         role: &Role,
         protocols: Vec<&str>,
-    ) -> crate::Result<(Negotiated<S>, ProtocolName)> {
+    ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError> {
         tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
 
         let (protocol, socket) = match role {
-            Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await?,
-            Role::Listener => listener_select_proto(stream, protocols).await?,
-        };
+            Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
+            Role::Listener => listener_select_proto(stream, protocols).await,
+        }
+        .map_err(|error| NegotiationError::MultistreamSelectError(error))?;
 
         tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
 
@@ -219,7 +220,7 @@ impl WebSocketConnection {
         yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
-    ) -> crate::Result<NegotiatedConnection> {
+    ) -> Result<NegotiatedConnection, NegotiationError> {
         tracing::trace!(
             target: LOG_TARGET,
             ?address,
@@ -251,11 +252,13 @@ impl WebSocketConnection {
         yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
-    ) -> crate::Result<NegotiatedConnection> {
+    ) -> Result<NegotiatedConnection, NegotiationError> {
         let stream = MaybeTlsStream::Plain(stream);
 
         Self::negotiate_connection(
-            tokio_tungstenite::accept_async(stream).await?,
+            tokio_tungstenite::accept_async(stream)
+                .await
+                .map_err(|err| NegotiationError::Other(err.to_string()))?,
             None,
             Role::Listener,
             address,
@@ -279,7 +282,7 @@ impl WebSocketConnection {
         yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
-    ) -> crate::Result<NegotiatedConnection> {
+    ) -> Result<NegotiatedConnection, NegotiationError> {
         tracing::trace!(
             target: LOG_TARGET,
             ?connection_id,
@@ -310,13 +313,12 @@ impl WebSocketConnection {
 
         if let Some(dialed_peer) = dialed_peer {
             if peer != dialed_peer {
-                return Err(Error::PeerIdMismatch(dialed_peer, peer));
+                return Err(NegotiationError::PeerIdMismatch(dialed_peer, peer));
             }
         }
 
-        let stream: NoiseSocket<BufferedStream<_>> = stream;
-
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
+        let stream: NoiseSocket<BufferedStream<_>> = stream;
 
         // negotiate `yamux`
         let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"]).await?;
@@ -347,7 +349,7 @@ impl WebSocketConnection {
         permit: Permit,
         substream_id: SubstreamId,
         protocols: Vec<ProtocolName>,
-    ) -> crate::Result<NegotiatedSubstream> {
+    ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
@@ -379,7 +381,7 @@ impl WebSocketConnection {
         substream_id: SubstreamId,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
-    ) -> crate::Result<NegotiatedSubstream> {
+    ) -> Result<NegotiatedSubstream, SubstreamError> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
 
         let stream = match control.open_stream().await {
@@ -394,7 +396,10 @@ impl WebSocketConnection {
                     ?error,
                     "failed to open substream"
                 );
-                return Err(Error::YamuxError(Direction::Outbound(substream_id), error));
+                return Err(SubstreamError::YamuxError(
+                    error,
+                    Direction::Outbound(substream_id),
+                ));
             }
         };
 
@@ -441,7 +446,7 @@ impl WebSocketConnection {
                                 Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
                                     protocol: None,
                                     substream_id: None,
-                                    error,
+                                    error: SubstreamError::NegotiationError(error),
                                 }),
                                 Err(_) => Err(ConnectionError::Timeout {
                                     protocol: None,
@@ -481,7 +486,7 @@ impl WebSocketConnection {
 
                             let (protocol, substream_id, error) = match error {
                                 ConnectionError::Timeout { protocol, substream_id } => {
-                                    (protocol, substream_id, Error::Timeout)
+                                    (protocol, substream_id, SubstreamError::NegotiationError(NegotiationError::Timeout))
                                 }
                                 ConnectionError::FailedToNegotiate { protocol, substream_id, error } => {
                                     (protocol, substream_id, error)
