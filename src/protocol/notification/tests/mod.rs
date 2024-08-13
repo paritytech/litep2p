@@ -29,7 +29,10 @@ use crate::{
         },
         InnerTransportEvent, ProtocolCommand, TransportService,
     },
-    transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
+    transport::{
+        manager::{limits::ConnectionLimitsConfig, TransportManager},
+        KEEP_ALIVE_TIMEOUT,
+    },
     types::protocol::ProtocolName,
     BandwidthSink, PeerId,
 };
@@ -63,7 +66,7 @@ fn make_notification_protocol() -> (
         Vec::new(),
         std::sync::Arc::new(Default::default()),
         handle,
-        std::time::Duration::from_secs(5),
+        KEEP_ALIVE_TIMEOUT,
     );
     let (config, handle) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),

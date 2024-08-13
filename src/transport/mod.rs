@@ -47,6 +47,9 @@ pub(crate) const CONNECTION_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for opening a substream.
 pub(crate) const SUBSTREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Timeout for connection waiting new substreams.
+pub(crate) const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Maximum number of parallel dial attempts.
 pub(crate) const MAX_PARALLEL_DIALS: usize = 8;
 

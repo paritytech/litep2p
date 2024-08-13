@@ -30,7 +30,7 @@ use crate::{
     },
     transport::{
         manager::limits::ConnectionLimitsConfig, tcp::config::Config as TcpConfig,
-        MAX_PARALLEL_DIALS,
+        KEEP_ALIVE_TIMEOUT, MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
     PeerId,
@@ -156,7 +156,7 @@ impl ConfigBuilder {
             request_response_protocols: HashMap::new(),
             known_addresses: Vec::new(),
             connection_limits: ConnectionLimitsConfig::default(),
-            keep_alive_timeout: Duration::from_secs(5),
+            keep_alive_timeout: KEEP_ALIVE_TIMEOUT,
         }
     }
 
@@ -273,7 +273,7 @@ impl ConfigBuilder {
     }
 
     /// Set keep alive timeout for connections.
-    pub fn set_keep_alive_timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_keep_alive_timeout(mut self, timeout: Duration) -> Self {
         self.keep_alive_timeout = timeout;
         self
     }
