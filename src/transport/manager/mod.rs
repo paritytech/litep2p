@@ -1604,6 +1604,7 @@ impl TransportManager {
                             }
                         }
                         TransportEvent::ConnectionEstablished { peer, endpoint } => {
+                            self.opening_errors.remove(&endpoint.connection_id());
                             match self.on_connection_established(peer, &endpoint) {
                                 Err(error) => {
                                     tracing::debug!(
@@ -1656,6 +1657,8 @@ impl TransportManager {
                             }
                         }
                         TransportEvent::ConnectionOpened { connection_id, address } => {
+                            self.opening_errors.remove(&connection_id);
+
                             if let Err(error) = self.on_connection_opened(transport, connection_id, address) {
                                 tracing::debug!(
                                     target: LOG_TARGET,
@@ -1710,13 +1713,9 @@ impl TransportManager {
                                         };
                                     }
 
-                                    let _errors = self.opening_errors.remove(&connection_id).unwrap_or_default().extend(errors);
-
-                                    return Some(TransportEvent::DialFailure {
-                                        connection_id,
-                                        address: Multiaddr::empty(),
-                                        error: DialError::Timeout,
-                                    })
+                                    let mut grouped_errors = self.opening_errors.remove(&connection_id).unwrap_or_default();
+                                    grouped_errors.extend(errors);
+                                    return Some(TransportEvent::OpenFailure { connection_id, errors: grouped_errors });
                                 }
                                 Ok(None) => {
                                     tracing::trace!(

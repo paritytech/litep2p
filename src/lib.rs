@@ -113,6 +113,8 @@ pub enum Litep2pEvent {
     },
 
     /// Failed to dial peer.
+    ///
+    /// This error can originate from dialing a single peer address.
     DialFailure {
         /// Address of the peer.
         address: Multiaddr,
