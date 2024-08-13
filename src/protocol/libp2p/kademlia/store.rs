@@ -458,6 +458,94 @@ mod tests {
     }
 
     #[test]
+    fn furthest_provider_discarded() {
+        let mut store = MemoryStore::with_config(MemoryStoreConfig {
+            max_providers_per_key: 10,
+            ..Default::default()
+        });
+        let key = Key::from(vec![1, 2, 3]);
+        let providers = (0..11)
+            .map(|_| ProviderRecord {
+                key: key.clone(),
+                provider: PeerId::random(),
+                addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
+                expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            })
+            .collect::<Vec<_>>();
+
+        let sorted_providers = {
+            let mut providers = providers;
+            providers.sort_unstable_by_key(ProviderRecord::distance);
+            providers
+        };
+
+        // First 10 providers are inserted.
+        for i in 0..10 {
+            assert!(store.put_provider(sorted_providers[i].clone()));
+        }
+        assert_eq!(store.get_providers(&key).unwrap(), &sorted_providers[..10]);
+
+        // The fursests provider doesn't fit.
+        assert!(!store.put_provider(sorted_providers[10].clone()));
+        assert_eq!(store.get_providers(&key).unwrap(), &sorted_providers[..10]);
+    }
+
+    #[test]
+    fn update_provider_in_place() {
+        let mut store = MemoryStore::with_config(MemoryStoreConfig {
+            max_providers_per_key: 10,
+            ..Default::default()
+        });
+        let key = Key::from(vec![1, 2, 3]);
+        let peer_ids = (0..10).map(|_| PeerId::random()).collect::<Vec<_>>();
+        let peer_id0 = peer_ids[0];
+        let providers = peer_ids
+            .iter()
+            .map(|peer_id| ProviderRecord {
+                key: key.clone(),
+                provider: *peer_id,
+                addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
+                expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+            })
+            .collect::<Vec<_>>();
+
+        providers.iter().for_each(|p| {
+            store.put_provider(p.clone());
+        });
+
+        let sorted_providers = {
+            let mut providers = providers;
+            providers.sort_unstable_by_key(ProviderRecord::distance);
+            providers
+        };
+
+        assert_eq!(store.get_providers(&key).unwrap(), &sorted_providers);
+
+        let provider0_new = ProviderRecord {
+            key: key.clone(),
+            provider: peer_id0,
+            addresses: vec![multiaddr!(Ip4([192, 168, 0, 1]), Tcp(20000u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        // Provider is updated in place.
+        assert!(store.put_provider(provider0_new.clone()));
+
+        let providers_new = sorted_providers
+            .into_iter()
+            .map(|p| {
+                if p.provider == peer_id0 {
+                    provider0_new.clone()
+                } else {
+                    p
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(store.get_providers(&key).unwrap(), &providers_new);
+    }
+
+    #[test]
     fn provider_record_expires() {
         let mut store = MemoryStore::new();
         let provider = ProviderRecord {
