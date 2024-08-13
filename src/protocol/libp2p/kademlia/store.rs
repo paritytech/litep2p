@@ -72,6 +72,7 @@ impl MemoryStore {
 
         if is_expired {
             self.records.remove(key);
+
             None
         } else {
             self.records.get(key)
