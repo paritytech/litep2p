@@ -45,7 +45,7 @@ use crate::transport::websocket::config::Config as WebSocketConfig;
 
 use multiaddr::Multiaddr;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 /// Connection role.
 #[derive(Debug, Copy, Clone)]
@@ -121,6 +121,9 @@ pub struct ConfigBuilder {
 
     /// Connection limits config.
     connection_limits: ConnectionLimitsConfig,
+
+    /// Close the connection if no substreams are open within this time frame.
+    keep_alive_timeout: Duration,
 }
 
 impl Default for ConfigBuilder {
@@ -153,6 +156,7 @@ impl ConfigBuilder {
             request_response_protocols: HashMap::new(),
             known_addresses: Vec::new(),
             connection_limits: ConnectionLimitsConfig::default(),
+            keep_alive_timeout: Duration::from_secs(5),
         }
     }
 
@@ -268,6 +272,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set keep alive timeout for connections.
+    pub fn set_keep_alive_timeout(mut self, timeout: Duration) -> Self {
+        self.keep_alive_timeout = timeout;
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     pub fn build(mut self) -> Litep2pConfig {
         let keypair = match self.keypair {
@@ -296,6 +306,7 @@ impl ConfigBuilder {
             request_response_protocols: self.request_response_protocols,
             known_addresses: self.known_addresses,
             connection_limits: self.connection_limits,
+            keep_alive_timeout: self.keep_alive_timeout,
         }
     }
 }
@@ -355,4 +366,7 @@ pub struct Litep2pConfig {
 
     /// Connection limits config.
     pub(crate) connection_limits: ConnectionLimitsConfig,
+
+    /// Close the connection if no substreams are open within this time frame.
+    pub(crate) keep_alive_timeout: Duration,
 }

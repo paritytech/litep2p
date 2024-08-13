@@ -55,7 +55,7 @@ use multihash::Multihash;
 use transport::Endpoint;
 use types::ConnectionId;
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc};
 
 pub use bandwidth::BandwidthSink;
 pub use error::Error;
@@ -171,7 +171,7 @@ impl Litep2p {
                 protocol,
                 config.fallback_names.clone(),
                 config.codec,
-                Duration::from_secs(5),
+                litep2p_config.keep_alive_timeout,
             );
             let executor = Arc::clone(&litep2p_config.executor);
             litep2p_config.executor.run(Box::pin(async move {
@@ -191,7 +191,7 @@ impl Litep2p {
                 protocol,
                 config.fallback_names.clone(),
                 config.codec,
-                config.timeout,
+                litep2p_config.keep_alive_timeout,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 RequestResponseProtocol::new(service, config).run().await
@@ -206,7 +206,7 @@ impl Litep2p {
                 protocol_name,
                 Vec::new(),
                 protocol.codec(),
-                Duration::from_secs(5),
+                litep2p_config.keep_alive_timeout,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = protocol.run(service).await;
@@ -225,7 +225,7 @@ impl Litep2p {
                 ping_config.protocol.clone(),
                 Vec::new(),
                 ping_config.codec,
-                Duration::from_secs(5),
+                litep2p_config.keep_alive_timeout,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Ping::new(service, ping_config).run().await
@@ -248,7 +248,7 @@ impl Litep2p {
                 main_protocol.clone(),
                 fallback_names,
                 kademlia_config.codec,
-                Duration::from_secs(5),
+                litep2p_config.keep_alive_timeout,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = Kademlia::new(service, kademlia_config).run().await;
@@ -269,7 +269,7 @@ impl Litep2p {
                     identify_config.protocol.clone(),
                     Vec::new(),
                     identify_config.codec,
-                    Duration::from_secs(5),
+                    litep2p_config.keep_alive_timeout,
                 );
                 identify_config.public = Some(litep2p_config.keypair.public().into());
 
@@ -289,7 +289,7 @@ impl Litep2p {
                 bitswap_config.protocol.clone(),
                 Vec::new(),
                 bitswap_config.codec,
-                Duration::from_secs(5),
+                litep2p_config.keep_alive_timeout,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Bitswap::new(service, bitswap_config).run().await
