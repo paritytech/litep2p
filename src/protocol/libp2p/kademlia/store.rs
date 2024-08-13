@@ -163,13 +163,19 @@ impl MemoryStore {
 
                     true
                 } else {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        max_provider_keys = self.config.max_provider_keys,
+                        "discarding a provider record, because the provider key limit reached",
+                    );
+
                     false
                 },
             Entry::Occupied(mut entry) => {
                 let mut providers = entry.get_mut();
 
                 // Providers under every key are sorted by distance, with equal distances meaning
-                // peer IDs are equal.
+                // peer IDs (more strictly, their hashes) are equal.
                 let provider_position =
                     providers.binary_search_by(|p| p.distance().cmp(&provider_record.distance()));
 
@@ -185,8 +191,15 @@ impl MemoryStore {
                     Err(i) => {
                         // `Err(i)` contains the insertion point.
                         if i == self.config.max_providers_per_key {
-                            // The provider won't be inserted, as it's further than all existing
-                            // providers and we don't have space left.
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                key = ?provider_record.key,
+                                provider = ?provider_record.provider,
+                                max_providers_per_key = self.config.max_providers_per_key,
+                                "discarding a provider record, because it's further than \
+                                 existing `max_providers_per_key`",
+                            );
+
                             false
                         } else {
                             if providers.len() == usize::from(self.config.max_providers_per_key) {
