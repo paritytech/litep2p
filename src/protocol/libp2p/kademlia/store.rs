@@ -255,8 +255,6 @@ impl Default for MemoryStoreConfig {
 
 #[cfg(test)]
 mod tests {
-    use std::time;
-
     use super::*;
     use crate::PeerId;
     use multiaddr::{
