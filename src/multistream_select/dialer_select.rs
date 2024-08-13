@@ -22,7 +22,7 @@
 
 use crate::{
     codec::unsigned_varint::UnsignedVarint,
-    error::{self, Error},
+    error::{self, Error, ParseError},
     multistream_select::{
         protocol::{
             encode_multistream_message, HeaderLine, Message, MessageIO, Protocol, ProtocolError,
@@ -354,19 +354,23 @@ impl DialerState {
     }
 
     /// Register response to [`DialerState`].
-    pub fn register_response(&mut self, payload: Vec<u8>) -> crate::Result<HandshakeResult> {
+    pub fn register_response(
+        &mut self,
+        payload: Vec<u8>,
+    ) -> Result<HandshakeResult, crate::error::NegotiationError> {
         let Message::Protocols(protocols) =
-            Message::decode(payload.into()).map_err(|_| Error::InvalidData)?
+            Message::decode(payload.into()).map_err(|_| ParseError::InvalidData)?
         else {
-            return Err(Error::NegotiationError(
-                error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
+            return Err(crate::error::NegotiationError::MultistreamSelectError(
+                NegotiationError::Failed,
             ));
         };
 
         let mut protocol_iter = protocols.into_iter();
         loop {
             match (&self.state, protocol_iter.next()) {
-                (HandshakeState::WaitingResponse, None) => return Err(Error::InvalidState),
+                (HandshakeState::WaitingResponse, None) =>
+                    return Err(crate::error::NegotiationError::StateMissmatch),
                 (HandshakeState::WaitingResponse, Some(protocol)) => {
                     let header = Protocol::try_from(&b"/multistream/1.0.0"[..])
                         .expect("valid multitstream-select header");
@@ -374,10 +378,8 @@ impl DialerState {
                     if protocol == header {
                         self.state = HandshakeState::WaitingProtocol;
                     } else {
-                        return Err(Error::NegotiationError(
-                            error::NegotiationError::MultistreamSelectError(
-                                NegotiationError::Failed,
-                            ),
+                        return Err(crate::error::NegotiationError::MultistreamSelectError(
+                            NegotiationError::Failed,
                         ));
                     }
                 }
@@ -392,8 +394,8 @@ impl DialerState {
                         }
                     }
 
-                    return Err(Error::NegotiationError(
-                        error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
+                    return Err(crate::error::NegotiationError::MultistreamSelectError(
+                        NegotiationError::Failed,
                     ));
                 }
                 (HandshakeState::WaitingProtocol, None) => {

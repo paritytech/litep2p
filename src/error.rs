@@ -168,6 +168,11 @@ pub enum ParseError {
     ///  - Length of the public key is not represented by 2 bytes (WebRTC specific).
     #[error("Invalid public key")]
     InvalidPublicKey,
+    /// The provided date has an invalid format.
+    ///
+    /// This error is protocol specific.
+    #[error("Invalid data")]
+    InvalidData,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -200,8 +205,10 @@ pub enum NegotiationError {
     ParseError(ParseError),
     #[error("I/O error: `{0}`")]
     IoError(ErrorKind),
-    #[error("Expected a different noise state")]
+    #[error("Expected a different state")]
     StateMissmatch,
+    #[error("Protocol not supported")]
+    ProtocolNotSupported(String),
     #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]
     PeerIdMismatch(PeerId, PeerId),
 
@@ -377,6 +384,18 @@ impl From<io::Error> for NegotiationError {
 impl From<ParseError> for NegotiationError {
     fn from(error: ParseError) -> Self {
         NegotiationError::ParseError(error)
+    }
+}
+
+impl From<ParseError> for SubstreamError {
+    fn from(error: ParseError) -> Self {
+        SubstreamError::NegotiationError(NegotiationError::ParseError(error))
+    }
+}
+
+impl From<ParseError> for Error {
+    fn from(error: ParseError) -> Self {
+        Error::ParseError(error)
     }
 }
 

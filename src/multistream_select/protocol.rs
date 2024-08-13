@@ -435,6 +435,9 @@ pub enum ProtocolError {
 
     /// Too many protocols have been returned by the remote.
     TooManyProtocols,
+
+    /// The protocol is not supported.
+    ProtocolNotSupported,
 }
 
 impl From<io::Error> for ProtocolError {
@@ -474,6 +477,7 @@ impl fmt::Display for ProtocolError {
             ProtocolError::InvalidMessage => write!(fmt, "Received an invalid message."),
             ProtocolError::InvalidProtocol => write!(fmt, "A protocol (name) is invalid."),
             ProtocolError::TooManyProtocols => write!(fmt, "Too many protocols received."),
+            ProtocolError::ProtocolNotSupported => write!(fmt, "The protocol is not supported."),
         }
     }
 }
