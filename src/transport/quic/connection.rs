@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use crate::{
     config::Role,
-    error::Error,
+    error::{Error, NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
@@ -63,7 +63,7 @@ enum ConnectionError {
         substream_id: Option<SubstreamId>,
 
         /// Error.
-        error: Error,
+        error: SubstreamError,
     },
 }
 
@@ -138,13 +138,14 @@ impl QuicConnection {
         stream: S,
         role: &Role,
         protocols: Vec<&str>,
-    ) -> crate::Result<(Negotiated<S>, ProtocolName)> {
+    ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError> {
         tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
 
         let (protocol, socket) = match role {
-            Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await?,
-            Role::Listener => listener_select_proto(stream, protocols).await?,
-        };
+            Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
+            Role::Listener => listener_select_proto(stream, protocols).await,
+        }
+        .map_err(|error| NegotiationError::MultistreamSelectError(error))?;
 
         tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
 
@@ -158,12 +159,12 @@ impl QuicConnection {
         substream_id: SubstreamId,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
-    ) -> crate::Result<NegotiatedSubstream> {
+    ) -> Result<NegotiatedSubstream, SubstreamError> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
 
         let stream = match handle.open_bi().await {
             Ok((send_stream, recv_stream)) => NegotiatingSubstream::new(send_stream, recv_stream),
-            Err(error) => return Err(Error::Quinn(error)),
+            Err(error) => return Err(NegotiationError::Quinn(error).into()),
         };
 
         // TODO: protocols don't change after they've been initialized so this should be done only
@@ -200,7 +201,7 @@ impl QuicConnection {
         protocols: Vec<ProtocolName>,
         substream_id: SubstreamId,
         permit: Permit,
-    ) -> crate::Result<NegotiatedSubstream> {
+    ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
@@ -258,7 +259,7 @@ impl QuicConnection {
                                 Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
                                     protocol: None,
                                     substream_id: None,
-                                    error,
+                                    error: SubstreamError::NegotiationError(error),
                                 }),
                                 Err(_) => Err(ConnectionError::Timeout {
                                     protocol: None,
@@ -283,7 +284,7 @@ impl QuicConnection {
 
                             let (protocol, substream_id, error) = match error {
                                 ConnectionError::Timeout { protocol, substream_id } => {
-                                    (protocol, substream_id, Error::Timeout)
+                                    (protocol, substream_id, SubstreamError::NegotiationError(NegotiationError::Timeout))
                                 }
                                 ConnectionError::FailedToNegotiate { protocol, substream_id, error } => {
                                     (protocol, substream_id, error)

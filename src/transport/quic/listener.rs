@@ -20,7 +20,7 @@
 
 use crate::{
     crypto::{ed25519::Keypair, tls::make_server_config},
-    error::{AddressError, Error},
+    error::AddressError,
     PeerId,
 };
 
@@ -101,7 +101,9 @@ impl QuicListener {
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
-    pub fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
+    pub fn get_socket_address(
+        address: &Multiaddr,
+    ) -> Result<(SocketAddr, Option<PeerId>), AddressError> {
         tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
         let mut iter = address.iter();
@@ -114,7 +116,7 @@ impl QuicListener {
                         ?protocol,
                         "invalid transport protocol, expected `QuicV1`",
                     );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                    return Err(AddressError::InvalidProtocol);
                 }
             },
             Some(Protocol::Ip4(address)) => match iter.next() {
@@ -125,19 +127,19 @@ impl QuicListener {
                         ?protocol,
                         "invalid transport protocol, expected `QuicV1`",
                     );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                    return Err(AddressError::InvalidProtocol);
                 }
             },
             protocol => {
                 tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
+                return Err(AddressError::InvalidProtocol);
             }
         };
 
         // verify that quic exists
         match iter.next() {
             Some(Protocol::QuicV1) => {}
-            _ => return Err(Error::AddressError(AddressError::InvalidProtocol)),
+            _ => return Err(AddressError::InvalidProtocol),
         }
 
         let maybe_peer = match iter.next() {
@@ -149,7 +151,7 @@ impl QuicListener {
                     ?protocol,
                     "invalid protocol, expected `P2p` or `None`"
                 );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
+                return Err(AddressError::PeerIdMissing);
             }
         };
 

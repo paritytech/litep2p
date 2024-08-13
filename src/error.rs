@@ -203,6 +203,11 @@ pub enum NegotiationError {
     StateMissmatch,
     #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]
     PeerIdMismatch(PeerId, PeerId),
+
+    #[cfg(feature = "quic")]
+    #[error("Failed to negotiate QUIC: `{0}`")]
+    Quinn(quinn::ConnectionError),
+
     // TODO: Convert tokio_tungstenite::accept_async into `NegotiationError` for some cases (ie
     // ConnectionClosed).
     #[error("Other error occurred: `{0}`")]
@@ -247,6 +252,21 @@ pub enum DialError {
     #[cfg(feature = "websocket")]
     #[error("WebSocket error: `{0}`")]
     WebSocket(#[from] tokio_tungstenite::tungstenite::error::Error),
+
+    #[cfg(feature = "quic")]
+    #[error("QUIC error: `{0}`")]
+    Quic(#[from] QuicError),
+}
+
+#[cfg(feature = "quic")]
+#[derive(Debug, thiserror::Error)]
+pub enum QuicError {
+    #[error("Invalid certificate")]
+    InvalidCertificate,
+    #[error("Failed to negotiate QUIC: `{0}`")]
+    ConnectionError(#[from] quinn::ConnectionError),
+    #[error("Failed to connect to peer: `{0}`")]
+    ConnectError(#[from] quinn::ConnectError),
 }
 
 #[derive(Debug, thiserror::Error)]
