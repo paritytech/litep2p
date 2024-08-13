@@ -20,7 +20,7 @@
 
 //! Transport protocol implementations provided by [`Litep2p`](`crate::Litep2p`).
 
-use crate::{transport::manager::TransportHandle, types::ConnectionId, Error, PeerId};
+use crate::{error::DialError, transport::manager::TransportHandle, types::ConnectionId, PeerId};
 
 use futures::Stream;
 use multiaddr::Multiaddr;
@@ -156,13 +156,16 @@ pub(crate) enum TransportEvent {
         address: Multiaddr,
 
         /// Error.
-        error: Error,
+        error: DialError,
     },
 
     /// Open failure for an unnegotiated set of connections.
     OpenFailure {
         /// Connection ID.
         connection_id: ConnectionId,
+
+        /// Errors.
+        errors: Vec<(Multiaddr, DialError)>,
     },
 }
 

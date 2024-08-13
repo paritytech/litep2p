@@ -23,7 +23,7 @@
 
 use crate::{
     config::Role,
-    error::{DialError, Error, NegotiationError},
+    error::{DialError, Error},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
         manager::TransportHandle,
@@ -92,12 +92,18 @@ pub(crate) struct TcpTransport {
 
     /// Pending opening connections.
     pending_connections: FuturesUnordered<
-        BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, NegotiationError)>>,
+        BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, DialError)>>,
     >,
 
     /// Pending raw, unnegotiated connections.
     pending_raw_connections: FuturesUnordered<
-        BoxFuture<'static, Result<(ConnectionId, Multiaddr, TcpStream), ConnectionId>>,
+        BoxFuture<
+            'static,
+            Result<
+                (ConnectionId, Multiaddr, TcpStream),
+                (ConnectionId, Vec<(Multiaddr, DialError)>),
+            >,
+        >,
     >,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
@@ -146,7 +152,7 @@ impl TcpTransport {
                 substream_open_timeout,
             )
             .await
-            .map_err(|error| (connection_id, error))
+            .map_err(|error| (connection_id, error.into()))
         }));
     }
 
@@ -303,7 +309,7 @@ impl Transport for TcpTransport {
             let (_, stream) =
                 TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout, nodelay)
                     .await
-                    .map_err(|error| (connection_id, error.into()))?;
+                    .map_err(|error| (connection_id, error))?;
 
             TcpConnection::open_connection(
                 connection_id,
@@ -318,7 +324,7 @@ impl Transport for TcpTransport {
                 substream_open_timeout,
             )
             .await
-            .map_err(|error| (connection_id, error))
+            .map_err(|error| (connection_id, error.into()))
         }));
 
         Ok(())
@@ -385,6 +391,7 @@ impl Transport for TcpTransport {
         connection_id: ConnectionId,
         addresses: Vec<Multiaddr>,
     ) -> crate::Result<()> {
+        let num_addresses = addresses.len();
         let mut futures: FuturesUnordered<_> = addresses
             .into_iter()
             .map(|address| {
@@ -394,30 +401,35 @@ impl Transport for TcpTransport {
 
                 async move {
                     TcpTransport::dial_peer(
-                        address,
+                        address.clone(),
                         dial_addresses,
                         connection_open_timeout,
                         nodelay,
                     )
                     .await
+                    .map_err(|error| (address, error))
                 }
             })
             .collect();
 
         self.pending_raw_connections.push(Box::pin(async move {
+            let mut errors = Vec::with_capacity(num_addresses);
             while let Some(result) = futures.next().await {
                 match result {
                     Ok((address, stream)) => return Ok((connection_id, address, stream)),
-                    Err(error) => tracing::debug!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?error,
-                        "failed to open connection",
-                    ),
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?error,
+                            "failed to open connection",
+                        );
+                        errors.push(error)
+                    }
                 }
             }
 
-            Err(connection_id)
+            Err((connection_id, errors))
         }));
 
         Ok(())
@@ -461,11 +473,11 @@ impl Transport for TcpTransport {
                     substream_open_timeout,
                 )
                 .await
-                .map_err(|error| (connection_id, error))
+                .map_err(|error| (connection_id, error.into()))
             })
             .await
             {
-                Err(_) => Err((connection_id, NegotiationError::Timeout)),
+                Err(_) => Err((connection_id, DialError::Timeout)),
                 Ok(Err(error)) => Err(error),
                 Ok(Ok(connection)) => Ok(connection),
             }
@@ -530,9 +542,12 @@ impl Stream for TcpTransport {
                         }));
                     }
                 }
-                Err(connection_id) =>
+                Err((connection_id, errors)) =>
                     if !self.canceled.remove(&connection_id) {
-                        return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
+                        return Poll::Ready(Some(TransportEvent::OpenFailure {
+                            connection_id,
+                            errors,
+                        }));
                     },
             }
         }

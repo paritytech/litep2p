@@ -149,10 +149,20 @@ pub enum ParseError {
     ProstDecodeError(prost::DecodeError),
     #[error("Failed to encode protobuf message: `{0:?}`")]
     ProstEncodeError(prost::EncodeError),
+    /// The protobuf message contains an unexpected key type.
+    ///
+    /// This error can happen when:
+    ///  - The provided key type is not recognized.
+    ///  - The provided key type is recognized but not supported.
     #[error("Unknown key type from protobuf message: `{0}`")]
     UnknownKeyType(i32),
-    #[error("Unsupported key type from protobuf message: `{0}`")]
-    UnsupportedKeyType(i32),
+    /// The public key bytes are invalid and cannot be parsed.
+    ///
+    /// This error can happen when:
+    ///  - The received number of bytes is not equal to the expected number of bytes (32 bytes).
+    ///  - The bytes are not a valid Ed25519 public key.
+    #[error("Invalid public key")]
+    InvalidPublicKey,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -171,8 +181,6 @@ pub enum SubstreamError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum NegotiationError {
-    #[error("Dial error: `{0}`")]
-    DialError(#[from] DialError),
     #[error("multistream-select error: `{0:?}`")]
     MultistreamSelectError(crate::multistream_select::NegotiationError),
     #[error("multistream-select error: `{0:?}`")]
@@ -213,6 +221,8 @@ pub enum DialError {
     AddressError(#[from] AddressError),
     #[error("Dns lookup error for `{0}`")]
     DnsError(#[from] DnsError),
+    #[error("Negotiation error: `{0}`")]
+    NegotiationError(#[from] NegotiationError),
     #[error("I/O error: `{0}`")]
     IoError(ErrorKind),
     #[error("Tried to dial self")]

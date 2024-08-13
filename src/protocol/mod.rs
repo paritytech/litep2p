@@ -22,7 +22,7 @@
 
 use crate::{
     codec::ProtocolCodec,
-    error::{Error, SubstreamError},
+    error::SubstreamError,
     substream::Substream,
     transport::Endpoint,
     types::{protocol::ProtocolName, SubstreamId},

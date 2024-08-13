@@ -22,7 +22,7 @@
 
 use crate::{
     error::{AddressError, DnsError},
-    Error, PeerId,
+    PeerId,
 };
 
 use futures::Stream;

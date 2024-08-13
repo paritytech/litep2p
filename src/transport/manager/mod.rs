@@ -21,7 +21,7 @@
 use crate::{
     codec::ProtocolCodec,
     crypto::ed25519::Keypair,
-    error::{AddressError, Error},
+    error::{AddressError, DialError, Error},
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
     transport::{
@@ -247,6 +247,9 @@ pub struct TransportManager {
 
     /// Connection limits.
     connection_limits: limits::ConnectionLimits,
+
+    /// Opening connections errors.
+    opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
 }
 
 impl TransportManager {
@@ -291,6 +294,7 @@ impl TransportManager {
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
                 connection_limits: limits::ConnectionLimits::new(connection_limits_config),
+                opening_errors: HashMap::new(),
             },
             handle,
         )
@@ -1661,7 +1665,7 @@ impl TransportManager {
                                 );
                             }
                         }
-                        TransportEvent::OpenFailure { connection_id } => {
+                        TransportEvent::OpenFailure { connection_id, errors } => {
                             match self.on_open_failure(transport, connection_id) {
                                 Err(error) => tracing::debug!(
                                     target: LOG_TARGET,
@@ -1706,13 +1710,23 @@ impl TransportManager {
                                         };
                                     }
 
+                                    let _errors = self.opening_errors.remove(&connection_id).unwrap_or_default().extend(errors);
+
                                     return Some(TransportEvent::DialFailure {
                                         connection_id,
                                         address: Multiaddr::empty(),
-                                        error: Error::Unknown,
+                                        error: DialError::Timeout,
                                     })
                                 }
-                                Ok(None) => {}
+                                Ok(None) => {
+                                    tracing::trace!(
+                                        target: LOG_TARGET,
+                                        ?connection_id,
+                                        "open failure, but not the last transport",
+                                    );
+
+                                    self.opening_errors.entry(connection_id).or_insert(Default::default()).extend(errors);
+                                }
                             }
                         },
                         TransportEvent::PendingInboundConnection { connection_id } => {
