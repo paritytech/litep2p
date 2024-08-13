@@ -60,8 +60,30 @@ pub enum KademliaMessage {
         /// Record.
         record: Option<Record>,
 
-        /// Peers closest to key.
+        /// Peers closer to the key.
         peers: Vec<KademliaPeer>,
+    },
+
+    /// `ADD_PROVIDER` message.
+    AddProvider {
+        /// Key.
+        key: RecordKey,
+
+        /// Peers, providing the data for `key`. Must contain exactly one peer matching the sender
+        /// of the message.
+        providers: Vec<KademliaPeer>,
+    },
+
+    /// `GET_PROVIDERS` message.
+    GetProviders {
+        /// Key.
+        key: RecordKey,
+
+        /// Peers closer to the key.
+        peers: Vec<KademliaPeer>,
+
+        /// Peers, providing the data for `key`.
+        providers: Vec<KademliaPeer>,
     },
 }
 
