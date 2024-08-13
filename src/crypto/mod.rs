@@ -100,7 +100,7 @@ impl TryFrom<keys_proto::PublicKey> for PublicKey {
         if key_type == keys_proto::KeyType::Ed25519 {
             Ok(ed25519::PublicKey::try_from_bytes(&pubkey.data).map(PublicKey::Ed25519)?)
         } else {
-            Err(ParseError::UnsupportedKeyType(key_type as i32))
+            Err(ParseError::UnknownKeyType(key_type as i32))
         }
     }
 }
