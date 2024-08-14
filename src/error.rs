@@ -187,6 +187,12 @@ pub enum ParseError {
 pub enum SubstreamError {
     #[error("Connection closed")]
     ConnectionClosed,
+    #[error("Connection channel clogged")]
+    ChannelClogged,
+    #[error("Connection to peer does not exist: `{0}`")]
+    PeerDoesNotExist(PeerId),
+    #[error("I/O error: `{0}`")]
+    IoError(ErrorKind),
     #[error("yamux error: `{0}`")]
     YamuxError(crate::yamux::ConnectionError, Direction),
     #[error("Failed to read from substream, substream id `{0:?}`")]
@@ -309,6 +315,12 @@ impl From<MultihashGeneric<64>> for Error {
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Error {
         Error::IoError(error.kind())
+    }
+}
+
+impl From<io::Error> for SubstreamError {
+    fn from(error: io::Error) -> SubstreamError {
+        SubstreamError::IoError(error.kind())
     }
 }
 

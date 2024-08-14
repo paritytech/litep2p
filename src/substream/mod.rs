@@ -160,7 +160,7 @@ macro_rules! check_size {
     ($max_size:expr, $size:expr) => {{
         if let Some(max_size) = $max_size {
             if $size > max_size {
-                return Err(Error::IoError(ErrorKind::PermissionDenied));
+                return Err(SubstreamError::IoError(ErrorKind::PermissionDenied).into());
             }
         }
     }};
@@ -549,7 +549,7 @@ fn read_payload_size(buffer: &[u8]) -> Result<(usize, usize), ReadError> {
 }
 
 impl Stream for Substream {
-    type Item = crate::Result<BytesMut>;
+    type Item = Result<BytesMut, SubstreamError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = Pin::into_inner(self);
@@ -653,14 +653,20 @@ impl Stream for Substream {
                                         match read_payload_size(&this.size_vec[..this.offset]) {
                                             Err(ReadError::NotEnoughBytes) => continue,
                                             Err(_) =>
-                                                return Poll::Ready(Some(Err(Error::InvalidData))),
+                                                return Poll::Ready(Some(Err(
+                                                    SubstreamError::ReadFailure(Some(
+                                                        this.substream_id,
+                                                    )),
+                                                ))),
                                             Ok((size, num_bytes)) => {
                                                 debug_assert_eq!(num_bytes, this.offset);
 
                                                 if let Some(max_size) = max_size {
                                                     if size > max_size {
                                                         return Poll::Ready(Some(Err(
-                                                            Error::InvalidData,
+                                                            SubstreamError::ReadFailure(Some(
+                                                                this.substream_id,
+                                                            )),
                                                         )));
                                                     }
                                                 }
@@ -684,7 +690,7 @@ impl Stream for Substream {
 
 // TODO: this code can definitely be optimized
 impl Sink<Bytes> for Substream {
-    type Error = Error;
+    type Error = SubstreamError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         // `MockSubstream` implements `Sink` so calls to `poll_ready()` must be delegated
@@ -712,7 +718,7 @@ impl Sink<Bytes> for Substream {
         match self.codec {
             ProtocolCodec::Identity(payload_size) => {
                 if item.len() != payload_size {
-                    return Err(Error::IoError(ErrorKind::PermissionDenied));
+                    return Err(SubstreamError::IoError(ErrorKind::PermissionDenied));
                 }
 
                 self.pending_out_bytes += item.len();
@@ -784,7 +790,7 @@ impl<K: Hash + Unpin + fmt::Debug + PartialEq + Eq + Copy> SubstreamSetKey for K
 pub struct SubstreamSet<K, S>
 where
     K: SubstreamSetKey,
-    S: Stream<Item = crate::Result<BytesMut>> + Unpin,
+    S: Stream<Item = Result<BytesMut, SubstreamError>> + Unpin,
 {
     substreams: HashMap<K, S>,
 }
@@ -792,7 +798,7 @@ where
 impl<K, S> SubstreamSet<K, S>
 where
     K: SubstreamSetKey,
-    S: Stream<Item = crate::Result<BytesMut>> + Unpin,
+    S: Stream<Item = Result<BytesMut, SubstreamError>> + Unpin,
 {
     /// Create new [`SubstreamSet`].
     pub fn new() -> Self {
@@ -839,7 +845,7 @@ where
 impl<K, S> Stream for SubstreamSet<K, S>
 where
     K: SubstreamSetKey,
-    S: Stream<Item = crate::Result<BytesMut>> + Unpin,
+    S: Stream<Item = Result<BytesMut, SubstreamError>> + Unpin,
 {
     type Item = (K, <S as Stream>::Item);
 
@@ -852,10 +858,7 @@ where
                 Poll::Pending => continue,
                 Poll::Ready(Some(data)) => return Poll::Ready(Some((*key, data))),
                 Poll::Ready(None) =>
-                    return Poll::Ready(Some((
-                        *key,
-                        Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
-                    ))),
+                    return Poll::Ready(Some((*key, Err(SubstreamError::ConnectionClosed)))),
             }
         }
 
