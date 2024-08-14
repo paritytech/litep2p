@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::Error,
+    error::{Error, SubstreamError},
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -310,12 +310,15 @@ impl TransportService {
     ///
     /// Call fails if there is no connection open to `peer` or the channel towards
     /// the connection is clogged.
-    pub fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
+    pub fn open_substream(&mut self, peer: PeerId) -> Result<SubstreamId, SubstreamError> {
         // always prefer the primary connection
-        let connection =
-            &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?.primary;
+        let connection = &mut self
+            .connections
+            .get_mut(&peer)
+            .ok_or(SubstreamError::PeerDoesNotExist(peer))?
+            .primary;
 
-        let permit = connection.try_get_permit().ok_or(Error::ConnectionClosed)?;
+        let permit = connection.try_get_permit().ok_or(SubstreamError::ConnectionClosed)?;
         let substream_id =
             SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
 
