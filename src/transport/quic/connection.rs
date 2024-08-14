@@ -164,7 +164,7 @@ impl QuicConnection {
 
         let stream = match handle.open_bi().await {
             Ok((send_stream, recv_stream)) => NegotiatingSubstream::new(send_stream, recv_stream),
-            Err(error) => return Err(NegotiationError::Quinn(error).into()),
+            Err(error) => return Err(NegotiationError::Quic(error.into()).into()),
         };
 
         // TODO: protocols don't change after they've been initialized so this should be done only

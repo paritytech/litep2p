@@ -166,28 +166,22 @@ impl WebSocketTransport {
     fn multiaddr_into_url(address: Multiaddr) -> Result<(Url, PeerId), AddressError> {
         let mut protocol_stack = address.iter();
 
-        let dial_address = match protocol_stack
-            .next()
-            .ok_or_else(|| AddressError::TransportNotSupported(address.clone()))?
-        {
+        let dial_address = match protocol_stack.next().ok_or(AddressError::InvalidProtocol)? {
             Protocol::Ip4(address) => address.to_string(),
             Protocol::Ip6(address) => format!("[{address}]"),
             Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) =>
                 address.to_string(),
 
-            _ => return Err(AddressError::TransportNotSupported(address)),
+            _ => return Err(AddressError::InvalidProtocol),
         };
 
-        let url = match protocol_stack
-            .next()
-            .ok_or_else(|| AddressError::TransportNotSupported(address.clone()))?
-        {
+        let url = match protocol_stack.next().ok_or(AddressError::InvalidProtocol)? {
             Protocol::Tcp(port) => match protocol_stack.next() {
                 Some(Protocol::Ws(_)) => format!("ws://{dial_address}:{port}/"),
                 Some(Protocol::Wss(_)) => format!("wss://{dial_address}:{port}/"),
-                _ => return Err(AddressError::TransportNotSupported(address.clone())),
+                _ => return Err(AddressError::InvalidProtocol),
             },
-            _ => return Err(AddressError::TransportNotSupported(address)),
+            _ => return Err(AddressError::InvalidProtocol),
         };
 
         let peer = match protocol_stack.next() {
@@ -259,13 +253,13 @@ impl WebSocketTransport {
                 Ok(()) => {}
                 Err(error) if error.raw_os_error() == Some(libc::EINPROGRESS) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(err) => return Err(DialError::IoError(err.kind())),
+                Err(err) => return Err(DialError::from(err)),
             }
 
             let stream = TcpStream::try_from(Into::<std::net::TcpStream>::into(socket))?;
             stream.writable().await?;
             if let Some(e) = stream.take_error()? {
-                return Err(DialError::IoError(e.kind()));
+                return Err(DialError::from(e));
             }
 
             Ok((

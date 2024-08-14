@@ -369,9 +369,6 @@ async fn connection_timeout(transport: Transport, address: Multiaddr) {
     match error {
         DialError::Timeout => {}
         DialError::NegotiationError(NegotiationError::Timeout) => {}
-        DialError::Quic(litep2p::error::QuicError::ConnectionError(
-            quinn::ConnectionError::TimedOut,
-        )) => {}
         _ => panic!("unexpected error {error:?}"),
     }
 }

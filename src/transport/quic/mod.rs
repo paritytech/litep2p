@@ -125,13 +125,13 @@ impl QuicTransport {
         self.pending_connections.push(Box::pin(async move {
             let connection = match connection.await {
                 Ok(connection) => connection,
-                Err(error) => return (connection_id, Err(DialError::Quic(error.into()))),
+                Err(error) => return (connection_id, Err(DialError::from(error))),
             };
 
             let Some(peer) = Self::extract_peer_id(&connection) else {
                 return (
                     connection_id,
-                    Err(DialError::Quic(QuicError::InvalidCertificate)),
+                    Err(crate::error::NegotiationError::Quic(QuicError::InvalidCertificate).into()),
                 );
             };
 
@@ -271,13 +271,13 @@ impl Transport for QuicTransport {
         self.pending_connections.push(Box::pin(async move {
             let connection = match connection.await {
                 Ok(connection) => connection,
-                Err(error) => return (connection_id, Err(DialError::Quic(error.into()))),
+                Err(error) => return (connection_id, Err(DialError::from(error))),
             };
 
             let Some(peer) = Self::extract_peer_id(&connection) else {
                 return (
                     connection_id,
-                    Err(DialError::Quic(QuicError::InvalidCertificate)),
+                    Err(crate::error::NegotiationError::Quic(QuicError::InvalidCertificate).into()),
                 );
             };
 
@@ -380,21 +380,24 @@ impl Transport for QuicTransport {
                     let client = match Endpoint::client(client_listen_address) {
                         Ok(client) => client,
                         Err(error) => {
-                            return Err(DialError::IoError(error.kind()));
+                            return Err(DialError::from(error));
                         }
                     };
                     let connection = match client.connect_with(client_config, socket_address, "l") {
                         Ok(connection) => connection,
-                        Err(error) => return Err(DialError::Quic(error.into())),
+                        Err(error) => return Err(DialError::from(error)),
                     };
 
                     let connection = match connection.await {
                         Ok(connection) => connection,
-                        Err(error) => return Err(DialError::Quic(error.into())),
+                        Err(error) => return Err(DialError::from(error)),
                     };
 
                     let Some(peer) = Self::extract_peer_id(&connection) else {
-                        return Err(DialError::Quic(QuicError::InvalidCertificate));
+                        return Err(crate::error::NegotiationError::Quic(
+                            QuicError::InvalidCertificate,
+                        )
+                        .into());
                     };
 
                     Ok(NegotiatedConnection { peer, connection })

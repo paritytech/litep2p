@@ -202,7 +202,7 @@ impl WebSocketConnection {
             Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
             Role::Listener => listener_select_proto(stream, protocols).await,
         }
-        .map_err(|error| NegotiationError::MultistreamSelectError(error))?;
+        .map_err(NegotiationError::MultistreamSelectError)?;
 
         tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
 
@@ -258,7 +258,7 @@ impl WebSocketConnection {
         Self::negotiate_connection(
             tokio_tungstenite::accept_async(stream)
                 .await
-                .map_err(|err| NegotiationError::Other(err.to_string()))?,
+                .map_err(NegotiationError::WebSocket)?,
             None,
             Role::Listener,
             address,
