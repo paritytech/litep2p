@@ -21,7 +21,7 @@
 use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
-    error::Error,
+    error::{DialError, Error, NegotiationError},
     protocol::libp2p::ping::{Config as PingConfig, PingEvent},
     transport::tcp::config::Config as TcpConfig,
     Litep2p, Litep2pEvent, PeerId,
@@ -366,7 +366,14 @@ async fn connection_timeout(transport: Transport, address: Multiaddr) {
 
     assert_eq!(dial_address, address);
     println!("{error:?}");
-    assert!(std::matches!(error, Error::Timeout));
+    match error {
+        DialError::Timeout => {}
+        DialError::NegotiationError(NegotiationError::Timeout) => {}
+        DialError::Quic(litep2p::error::QuicError::ConnectionError(
+            quinn::ConnectionError::TimedOut,
+        )) => {}
+        _ => panic!("unexpected error {error:?}"),
+    }
 }
 
 #[cfg(feature = "quic")]

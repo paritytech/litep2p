@@ -428,18 +428,6 @@ mod tests {
 
     #[tokio::test]
     async fn try_from_errors() {
-        tracing::trace!("{:?}", NotificationError::InvalidState);
-        tracing::trace!("{:?}", DialError::AlreadyConnected);
-        tracing::trace!(
-            "{:?}",
-            SubstreamError::YamuxError(crate::yamux::ConnectionError::Closed)
-        );
-        tracing::trace!("{:?}", AddressError::PeerIdMissing);
-        tracing::trace!(
-            "{:?}",
-            ParseError::InvalidMultihash(Multihash::from(PeerId::random()))
-        );
-
         let (tx, rx) = channel(1);
         drop(rx);
 

@@ -104,7 +104,7 @@ impl Transport for DummyTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{transport::Endpoint, Error, PeerId};
+    use crate::{error::DialError, transport::Endpoint, PeerId};
     use futures::StreamExt;
 
     #[tokio::test]
@@ -114,7 +114,7 @@ mod tests {
         transport.inject_event(TransportEvent::DialFailure {
             connection_id: ConnectionId::from(1338usize),
             address: Multiaddr::empty(),
-            error: Error::Unknown,
+            error: DialError::Timeout,
         });
 
         let peer = PeerId::random();

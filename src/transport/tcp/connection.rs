@@ -718,11 +718,11 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::ProtocolError(
                     crate::multistream_select::ProtocolError::InvalidMessage,
                 ),
-            ))) => {}
+            )) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -760,11 +760,11 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::ProtocolError(
                     crate::multistream_select::ProtocolError::InvalidMessage,
                 ),
-            ))) => {}
+            )) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -813,9 +813,9 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::Failed,
-            ))) => {}
+            )) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -857,9 +857,9 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::Failed,
-            ))) => {}
+            )) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -904,7 +904,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -955,7 +955,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -1001,7 +1001,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -1041,7 +1041,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -1096,9 +1096,9 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::Failed,
-            ))) => {}
+            )) => {}
             Err(error) => panic!("{error:?}"),
         }
     }
@@ -1156,9 +1156,9 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::Failed,
-            ))) => {}
+            )) => {}
             Err(error) => panic!("{error:?}"),
         }
     }
@@ -1209,7 +1209,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -1266,7 +1266,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }

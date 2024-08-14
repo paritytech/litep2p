@@ -917,7 +917,7 @@ mod tests {
 
         assert!(!transport.pending_dials.is_empty());
         transport.pending_connections.push(Box::pin(async move {
-            Err((ConnectionId::from(0usize), Error::Unknown))
+            Err((ConnectionId::from(0usize), DialError::Timeout))
         }));
 
         assert!(std::matches!(

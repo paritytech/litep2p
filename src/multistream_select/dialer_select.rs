@@ -818,9 +818,7 @@ mod tests {
             DialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
 
         match dialer_state.register_response(bytes.freeze().to_vec()) {
-            Err(Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
-                NegotiationError::Failed,
-            ))) => {}
+            Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
             event => panic!("invalid event: {event:?}"),
         }
     }
@@ -839,9 +837,7 @@ mod tests {
             DialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
 
         match dialer_state.register_response(bytes.freeze().to_vec()) {
-            Err(Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
-                NegotiationError::Failed,
-            ))) => {}
+            Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
             event => panic!("invalid event: {event:?}"),
         }
     }
