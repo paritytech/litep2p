@@ -176,7 +176,7 @@ impl NoiseContext {
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             tracing::error!(target: LOG_TARGET, "invalid state to read the second handshake message");
             debug_assert!(false);
-            return Err(NegotiationError::StateMissmatch);
+            return Err(NegotiationError::StateMismatch);
         };
 
         let res = noise.read_message(reply, &mut buffer)?;
@@ -199,7 +199,7 @@ impl NoiseContext {
                 let NoiseState::Handshake(ref mut noise) = self.noise else {
                     tracing::error!(target: LOG_TARGET, "invalid state to read the first handshake message");
                     debug_assert!(false);
-                    return Err(NegotiationError::StateMissmatch);
+                    return Err(NegotiationError::StateMismatch);
                 };
 
                 let mut buffer = vec![0u8; 256];
@@ -225,7 +225,7 @@ impl NoiseContext {
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             tracing::error!(target: LOG_TARGET, "invalid state to read the first handshake message");
             debug_assert!(false);
-            return Err(NegotiationError::StateMissmatch);
+            return Err(NegotiationError::StateMismatch);
         };
 
         let mut buffer = vec![0u8; 2048];
@@ -257,7 +257,7 @@ impl NoiseContext {
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             tracing::error!(target: LOG_TARGET, "invalid state to read handshake message");
             debug_assert!(false);
-            return Err(NegotiationError::StateMissmatch);
+            return Err(NegotiationError::StateMismatch);
         };
 
         let nread = noise.read_message(&message, &mut out)?;
@@ -284,7 +284,7 @@ impl NoiseContext {
     fn into_transport(self) -> Result<NoiseContext, NegotiationError> {
         let transport = match self.noise {
             NoiseState::Handshake(noise) => noise.into_transport_mode()?,
-            NoiseState::Transport(_) => return Err(NegotiationError::StateMissmatch),
+            NoiseState::Transport(_) => return Err(NegotiationError::StateMismatch),
         };
 
         Ok(NoiseContext {

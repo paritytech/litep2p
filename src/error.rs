@@ -220,7 +220,7 @@ pub enum NegotiationError {
     IoError(ErrorKind),
     /// Expected a different state during the negotiation process.
     #[error("Expected a different state")]
-    StateMissmatch,
+    StateMismatch,
     /// The noise handshake provided a different peer ID than the one expected in the dialing
     /// address.
     #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]

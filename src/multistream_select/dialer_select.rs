@@ -370,7 +370,7 @@ impl DialerState {
         loop {
             match (&self.state, protocol_iter.next()) {
                 (HandshakeState::WaitingResponse, None) =>
-                    return Err(crate::error::NegotiationError::StateMissmatch),
+                    return Err(crate::error::NegotiationError::StateMismatch),
                 (HandshakeState::WaitingResponse, Some(protocol)) => {
                     let header = Protocol::try_from(&b"/multistream/1.0.0"[..])
                         .expect("valid multitstream-select header");
