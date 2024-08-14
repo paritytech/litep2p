@@ -86,10 +86,18 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
 
 [features]
-custom_sc_network = []
+# Enable all transports by default.
+default = ["websocket", "quic", "webrtc"]
+
+# Enable QUIC support.
 quic = ["dep:webpki", "dep:quinn"]
+# Enable WebRTC support.
 webrtc = ["dep:str0m"]
+# Enable WebSocket support.
 websocket = ["dep:tokio-tungstenite"]
+
+# Testing feature.
+custom_sc_network = []
 
 [profile.release]
 debug = true
