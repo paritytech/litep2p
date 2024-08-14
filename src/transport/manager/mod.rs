@@ -1772,6 +1772,7 @@ mod tests {
         crypto::ed25519::Keypair, executor::DefaultExecutor, transport::dummy::DummyTransport,
     };
     use std::{
+        borrow::Cow,
         net::{Ipv4Addr, Ipv6Addr},
         sync::Arc,
     };
@@ -4068,5 +4069,111 @@ mod tests {
             assert!(!peer_context.addresses.contains(&dial_address));
             assert!(!peer_context.addresses.contains(&second_address));
         }
+    }
+
+    #[tokio::test]
+    async fn opening_errors_are_reported() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut manager, _handle) = TransportManager::new(
+            Keypair::generate(),
+            HashSet::new(),
+            BandwidthSink::new(),
+            8usize,
+            ConnectionLimitsConfig::default(),
+        );
+        let peer = PeerId::random();
+        let connection_id = ConnectionId::from(0);
+
+        // Setup TCP transport.
+        let dial_address_tcp = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+        let transport = Box::new({
+            let mut transport = DummyTransport::new();
+            transport.inject_event(TransportEvent::OpenFailure {
+                connection_id,
+                errors: vec![(dial_address_tcp.clone(), DialError::Timeout)],
+            });
+            transport
+        });
+        manager.register_transport(SupportedTransport::Tcp, transport);
+        manager.add_known_address(
+            peer,
+            vec![Multiaddr::empty()
+                .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 5)))
+                .with(Protocol::Tcp(8888))
+                .with(Protocol::P2p(Multihash::from(peer)))]
+            .into_iter(),
+        );
+
+        // Setup WebSockets transport.
+        let dial_address_ws = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8889))
+            .with(Protocol::Ws(Cow::Borrowed("/")))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        let transport = Box::new({
+            let mut transport = DummyTransport::new();
+            transport.inject_event(TransportEvent::OpenFailure {
+                connection_id,
+                errors: vec![(dial_address_ws.clone(), DialError::Timeout)],
+            });
+            transport
+        });
+        manager.register_transport(SupportedTransport::WebSocket, transport);
+        manager.add_known_address(
+            peer,
+            vec![Multiaddr::empty()
+                .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 5)))
+                .with(Protocol::Tcp(8889))
+                .with(Protocol::Ws(Cow::Borrowed("/")))
+                .with(Protocol::P2p(
+                    Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+                ))]
+            .into_iter(),
+        );
+
+        // Dial the peer on both transports.
+        assert!(manager.dial(peer).await.is_ok());
+        assert!(!manager.pending_connections.is_empty());
+
+        {
+            let peers = manager.peers.read();
+
+            match peers.get(&peer) {
+                Some(PeerContext {
+                    state: PeerState::Opening { .. },
+                    ..
+                }) => {}
+                state => panic!("invalid state for peer: {state:?}"),
+            }
+        }
+
+        match manager.next().await.unwrap() {
+            TransportEvent::OpenFailure {
+                connection_id,
+                errors,
+            } => {
+                assert_eq!(connection_id, ConnectionId::from(0));
+                assert_eq!(errors.len(), 2);
+                let tcp = errors.iter().find(|(addr, _)| addr == &dial_address_tcp).unwrap();
+                assert!(std::matches!(tcp.1, DialError::Timeout));
+
+                let ws = errors.iter().find(|(addr, _)| addr == &dial_address_ws).unwrap();
+                assert!(std::matches!(ws.1, DialError::Timeout));
+            }
+            event => panic!("invalid event: {event:?}"),
+        }
+        assert!(manager.pending_connections.is_empty());
+        assert!(manager.opening_errors.is_empty());
     }
 }
