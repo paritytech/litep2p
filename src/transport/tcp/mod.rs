@@ -569,7 +569,7 @@ impl Stream for TcpTransport {
                         return Poll::Ready(Some(TransportEvent::DialFailure {
                             connection_id,
                             address,
-                            error: error.into(),
+                            error,
                         }));
                     }
                 }

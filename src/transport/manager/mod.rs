@@ -1724,7 +1724,7 @@ impl TransportManager {
                                         "open failure, but not the last transport",
                                     );
 
-                                    self.opening_errors.entry(connection_id).or_insert(Default::default()).extend(errors);
+                                    self.opening_errors.entry(connection_id).or_default().extend(errors);
                                 }
                             }
                         },

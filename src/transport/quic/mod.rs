@@ -356,7 +356,7 @@ impl Transport for QuicTransport {
 
                 let future = async move {
                     let (socket_address, peer) = QuicListener::get_socket_address(&address)
-                        .map_err(|err| DialError::AddressError(err))?;
+                        .map_err(DialError::AddressError)?;
                     let peer =
                         peer.ok_or_else(|| DialError::AddressError(AddressError::PeerIdMissing))?;
 

@@ -145,7 +145,7 @@ impl QuicConnection {
             Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
             Role::Listener => listener_select_proto(stream, protocols).await,
         }
-        .map_err(|error| NegotiationError::MultistreamSelectError(error))?;
+        .map_err(NegotiationError::MultistreamSelectError)?;
 
         tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
 
