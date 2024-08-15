@@ -292,6 +292,37 @@ impl KademliaMessage {
                             .collect(),
                     })
                 }
+                // ADD_PROVIDER
+                2 => {
+                    let key = message.key.into();
+                    let providers = message
+                        .provider_peers
+                        .iter()
+                        .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .collect();
+
+                    Some(Self::AddProvider { key, providers })
+                }
+                // GET_PROVIDERS
+                3 => {
+                    let key = message.key.into();
+                    let peers = message
+                        .closer_peers
+                        .iter()
+                        .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .collect();
+                    let providers = message
+                        .provider_peers
+                        .iter()
+                        .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .collect();
+
+                    Some(Self::GetProviders {
+                        key,
+                        peers,
+                        providers,
+                    })
+                }
                 message => {
                     tracing::warn!(target: LOG_TARGET, ?message, "unhandled message");
                     None
