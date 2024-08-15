@@ -874,7 +874,10 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
-        transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
+        transport::{
+            manager::{limits::ConnectionLimitsConfig, TransportManager},
+            KEEP_ALIVE_TIMEOUT,
+        },
         types::protocol::ProtocolName,
         BandwidthSink,
     };
@@ -902,6 +905,7 @@ mod tests {
             Vec::new(),
             Default::default(),
             handle,
+            KEEP_ALIVE_TIMEOUT,
         );
         let (event_tx, event_rx) = channel(64);
         let (_cmd_tx, cmd_rx) = channel(64);
