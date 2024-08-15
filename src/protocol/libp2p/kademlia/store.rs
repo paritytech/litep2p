@@ -183,9 +183,7 @@ impl MemoryStore {
                 match provider_position {
                     Ok(i) => {
                         // Update the provider in place.
-                        let existing_provider =
-                            providers.get_mut(i).expect("index was found in the vector; qed");
-                        *existing_provider = provider_record;
+                        providers[i] = provider_record;
 
                         true
                     }
