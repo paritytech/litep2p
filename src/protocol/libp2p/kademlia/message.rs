@@ -294,7 +294,7 @@ impl KademliaMessage {
                 }
                 // ADD_PROVIDER
                 2 => {
-                    let key = message.key.into();
+                    let key = message.key.into(); // TODO: check for empty key.
                     let providers = message
                         .provider_peers
                         .iter()
@@ -305,7 +305,7 @@ impl KademliaMessage {
                 }
                 // GET_PROVIDERS
                 3 => {
-                    let key = message.key.into();
+                    let key = message.key.into(); // TODO: key is optional.
                     let peers = message
                         .closer_peers
                         .iter()
@@ -323,8 +323,8 @@ impl KademliaMessage {
                         providers,
                     })
                 }
-                message => {
-                    tracing::warn!(target: LOG_TARGET, ?message, "unhandled message");
+                message_type => {
+                    tracing::warn!(target: LOG_TARGET, ?message_type, "unhandled message");
                     None
                 }
             },
