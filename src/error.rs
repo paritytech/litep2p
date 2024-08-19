@@ -125,6 +125,8 @@ pub enum Error {
     ConnectionDoesntExist(ConnectionId),
     #[error("Exceeded connection limits `{0:?}`")]
     ConnectionLimit(ConnectionLimitsError),
+    #[error("Failed to dial peer immediately")]
+    ProtocolDialError(#[from] ProtocolDialError),
 }
 
 /// Error type for address parsing.
@@ -276,6 +278,28 @@ pub enum DialError {
     /// An error occurred during the negotiation process.
     #[error("Negotiation error: `{0}`")]
     NegotiationError(#[from] NegotiationError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProtocolDialError {
+    /// The provided address is not a valid multiaddress.
+    #[error("`PeerId` missing from the address")]
+    PeerIdMissing,
+    /// The peer ID provided in the address is the same as the local peer ID.
+    #[error("Tried to dial self")]
+    TriedToDialSelf,
+    /// Cannot dial an already connected peer.
+    #[error("Already connected to peer")]
+    AlreadyConnected,
+    /// Cannot dial a peer that does not have any address available.
+    #[error("No address available for peer")]
+    NoAddressAvailable,
+    /// The essential task was closed.
+    #[error("TaskClosed")]
+    TaskClosed,
+    /// The channel is clogged.
+    #[error("Connection channel clogged")]
+    ChannelClogged,
 }
 
 /// Error during the QUIC transport negotiation.

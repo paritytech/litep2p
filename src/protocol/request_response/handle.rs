@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    error::{ProtocolDialError, SubstreamError},
     types::{protocol::ProtocolName, RequestId},
     Error, PeerId,
 };
@@ -42,11 +43,23 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::request-response::handle";
 
+#[derive(Debug)]
+pub enum RejectReason {
+    /// Substream error.
+    SubstreamOpenError(SubstreamError),
+
+    /// The connection closed before the request was processed.
+    ConnectionClosed,
+
+    /// Dial failed.
+    DialFailed(Option<ProtocolDialError>),
+}
+
 /// Request-response error.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum RequestResponseError {
     /// Request was rejected.
-    Rejected,
+    Rejected(RejectReason),
 
     /// Request was canceled by the local node.
     Canceled,
@@ -141,7 +154,7 @@ impl From<InnerRequestResponseEvent> for RequestResponseEvent {
 }
 
 /// Request-response events.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum RequestResponseEvent {
     /// Request received from remote
     RequestReceived {

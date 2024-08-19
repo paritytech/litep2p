@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::{Error, SubstreamError},
+    error::{Error, ProtocolDialError, SubstreamError},
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -273,7 +273,7 @@ impl TransportService {
     /// Dial `peer` using `PeerId`.
     ///
     /// Call fails if `Litep2p` doesn't have a known address for the peer.
-    pub fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
+    pub fn dial(&mut self, peer: &PeerId) -> Result<(), ProtocolDialError> {
         self.transport_handle.dial(peer)
     }
 
@@ -285,7 +285,7 @@ impl TransportService {
     /// Calling this function is only necessary for those addresses that are discovered out-of-band
     /// since `Litep2p` internally keeps track of all peer addresses it has learned through user
     /// calling this function, Kademlia peer discoveries and `Identify` responses.
-    pub fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
+    pub fn dial_address(&mut self, address: Multiaddr) -> Result<(), ProtocolDialError> {
         self.transport_handle.dial_address(address)
     }
 
