@@ -82,6 +82,10 @@ impl IdentifyPublicAddresses {
 
     /// Add public address.
     pub fn add(&self, address: Multiaddr) {
+        if address.is_empty() {
+            return;
+        }
+
         self.inner.write().insert(address);
     }
 
@@ -102,7 +106,9 @@ impl IdentifyPublicAddresses {
 
     /// Extend public addresses.
     pub fn extend(&self, addresses: impl IntoIterator<Item = Multiaddr>) {
-        self.inner.write().extend(addresses);
+        self.inner
+            .write()
+            .extend(addresses.into_iter().filter(|address| !address.is_empty()));
     }
 }
 
@@ -457,6 +463,77 @@ impl Identify {
                     }
                     Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
                     None => return,
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::ConfigBuilder, transport::tcp::config::Config as TcpConfig, Litep2p};
+    use multiaddr::Multiaddr;
+
+    fn create_litep2p() -> (
+        Litep2p,
+        IdentifyPublicAddresses,
+        Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>,
+    ) {
+        let (identify_config, pub_addr, identify) = Config::new(
+            "1.0.0".to_string(),
+            Some("litep2p/1.0.0".to_string()),
+            vec![Multiaddr::empty()],
+        );
+
+        let config = ConfigBuilder::new()
+            .with_tcp(TcpConfig {
+                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+                ..Default::default()
+            })
+            .with_libp2p_identify(identify_config)
+            .build();
+
+        (Litep2p::new(config).unwrap(), pub_addr, identify)
+    }
+
+    #[tokio::test]
+    async fn update_identify_addresses() {
+        // Create two instances of litep2p
+        let (mut litep2p1, addr1, mut event_stream1) = create_litep2p();
+        let (mut litep2p2, _addr2, mut event_stream2) = create_litep2p();
+
+        let multiaddr: Multiaddr = "/ip6/::9/tcp/111".parse().unwrap();
+        // Litep2p1 is now listening on the new address.
+        addr1.add(multiaddr.clone());
+
+        // Dial `litep2p1`
+        litep2p2
+            .dial_address(litep2p1.listen_addresses().next().unwrap().clone())
+            .await
+            .unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = litep2p1.next_event() => {}
+                    _event = event_stream1.next() => {}
+                }
+            }
+        });
+
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {}
+                event = event_stream2.next() => match event {
+                    Some(IdentifyEvent::PeerIdentified {
+                        listen_addresses,
+                        ..
+                    }) => {
+                        assert!(listen_addresses.iter().any(|address| address == &multiaddr));
+                        break;
+                    }
+                    _ => {}
                 }
             }
         }

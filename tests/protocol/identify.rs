@@ -65,7 +65,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (identify_config1, mut identify_event_stream1) = Config::new(
+    let (identify_config1, _, mut identify_event_stream1) = Config::new(
         "/proto/1".to_string(),
         Some("agent v1".to_string()),
         Vec::new(),
@@ -75,7 +75,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
         .with_libp2p_identify(identify_config1);
     let config1 = add_transport(config_builder1, transport1).build();
 
-    let (identify_config2, mut identify_event_stream2) = Config::new(
+    let (identify_config2, _, mut identify_event_stream2) = Config::new(
         "/proto/2".to_string(),
         Some("agent v2".to_string()),
         Vec::new(),
@@ -193,7 +193,7 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
         .with_libp2p_ping(ping_config);
     let config1 = add_transport(config_builder1, transport1).build();
 
-    let (identify_config2, mut identify_event_stream2) =
+    let (identify_config2, _, mut identify_event_stream2) =
         Config::new("litep2p".to_string(), None, Vec::new());
     let config_builder2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())

@@ -71,7 +71,7 @@ fn initialize_litep2p() -> (
 ) {
     let keypair = Keypair::generate();
     let (ping_config, ping_event_stream) = PingConfig::default();
-    let (identify_config, identify_event_stream) =
+    let (identify_config, _, identify_event_stream) =
         IdentifyConfig::new("proto v1".to_string(), None, Vec::new());
 
     let litep2p = Litep2p::new(
