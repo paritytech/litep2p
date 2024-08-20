@@ -76,8 +76,8 @@ pub enum KademliaMessage {
 
     /// `GET_PROVIDERS` message.
     GetProviders {
-        /// Key.
-        key: RecordKey,
+        /// Key. `None` in response.
+        key: Option<RecordKey>,
 
         /// Peers closer to the key.
         peers: Vec<KademliaPeer>,
@@ -294,7 +294,7 @@ impl KademliaMessage {
                 }
                 // ADD_PROVIDER
                 2 => {
-                    let key = message.key.into(); // TODO: check for empty key.
+                    let key = (!message.key.is_empty()).then_some(message.key.into())?;
                     let providers = message
                         .provider_peers
                         .iter()
@@ -305,7 +305,7 @@ impl KademliaMessage {
                 }
                 // GET_PROVIDERS
                 3 => {
-                    let key = message.key.into(); // TODO: key is optional.
+                    let key = (!message.key.is_empty()).then_some(message.key.into());
                     let peers = message
                         .closer_peers
                         .iter()
