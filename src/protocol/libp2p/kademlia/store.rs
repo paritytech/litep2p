@@ -175,8 +175,9 @@ impl MemoryStore {
             Entry::Occupied(mut entry) => {
                 let mut providers = entry.get_mut();
 
-                // Providers under every key are sorted by distance, with equal distances meaning
-                // peer IDs (more strictly, their hashes) are equal.
+                // Providers under every key are sorted by distance from the provided key, with
+                // equal distances meaning peer IDs (more strictly, their hashes)
+                // are equal.
                 let provider_position =
                     providers.binary_search_by(|p| p.distance().cmp(&provider_record.distance()));
 

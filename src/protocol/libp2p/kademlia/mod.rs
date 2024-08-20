@@ -487,7 +487,7 @@ impl Kademlia {
                         target: LOG_TARGET,
                         ?peer,
                         ?message,
-                        "both query and record key missing, unable to handle message",
+                        "unable to handle `GET_RECORD` request with empty key",
                     ),
                 }
             }
@@ -525,6 +525,61 @@ impl Kademlia {
                             "ignoring `ADD_PROVIDER` message with `n` != 1 providers"
                         )
                     }
+                }
+            }
+            ref message @ KademliaMessage::GetProviders {
+                ref key,
+                ref peers,
+                ref providers,
+            } => {
+                match (query_id, key) {
+                    (Some(query_id), key) => {
+                        // Note: key is not required, but can be non-empty. We just ignore it here.
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            query = ?query_id,
+                            ?key,
+                            ?peers,
+                            ?providers,
+                            "handle `GET_PROVIDERS` response",
+                        );
+
+                        // update routing table and inform user about the update
+                        self.update_routing_table(peers).await;
+
+                        self.engine.register_response(query_id, peer, message.clone());
+                    }
+                    (None, Some(key)) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?key,
+                            "handle `GET_PROVIDERS` request",
+                        );
+
+                        let providers = self.store.get_providers(key);
+                        // TODO: if local peer is among the providers, update its `ProviderRecord`
+                        //       to have up-to-date addresses.
+                        //       Requires https://github.com/paritytech/litep2p/issues/211.
+
+                        let closer_peers = self
+                            .routing_table
+                            .closest(Key::from(key.to_vec()), self.replication_factor);
+
+                        let message = KademliaMessage::get_providers_response(
+                            key.clone(),
+                            providers,
+                            &closer_peers,
+                        );
+                        self.executor.send_message(peer, message.into(), substream);
+                    }
+                    (None, None) => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?message,
+                        "unable to handle `GET_PROVIDERS` request with empty key",
+                    ),
                 }
             }
         }
@@ -959,6 +1014,7 @@ mod tests {
             update_mode: RoutingTableUpdateMode::Automatic,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: Duration::from_secs(36 * 60 * 60),
+            provider_ttl: Duration::from_secs(48 * 60 * 60),
             event_tx,
             cmd_rx,
         };
