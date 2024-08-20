@@ -125,7 +125,7 @@ impl MemoryStore {
     /// Try to get providers from local store for `key`.
     ///
     /// Returns a non-empty list of providers, if any.
-    pub fn get_providers(&mut self, key: &Key) -> Option<&Vec<ProviderRecord>> {
+    pub fn get_providers(&mut self, key: &Key) -> Vec<ProviderRecord> {
         let drop = self.provider_keys.get_mut(key).map_or(false, |providers| {
             let now = std::time::Instant::now();
             providers.retain(|p| !p.is_expired(now));
@@ -136,9 +136,9 @@ impl MemoryStore {
         if drop {
             self.provider_keys.remove(key);
 
-            None
+            Vec::default()
         } else {
-            self.provider_keys.get(key)
+            self.provider_keys.get(key).cloned().unwrap_or_else(|| Vec::default())
         }
     }
 
@@ -360,7 +360,7 @@ mod tests {
         };
 
         store.put_provider(provider.clone());
-        assert_eq!(store.get_providers(&provider.key).unwrap(), &vec![provider]);
+        assert_eq!(store.get_providers(&provider.key), vec![provider]);
     }
 
     #[test]
@@ -383,7 +383,7 @@ mod tests {
         store.put_provider(provider1.clone());
         store.put_provider(provider2.clone());
 
-        let got_providers = store.get_providers(&key).unwrap();
+        let got_providers = store.get_providers(&key);
         assert_eq!(got_providers.len(), 2);
         assert!(got_providers.contains(&provider1));
         assert!(got_providers.contains(&provider2));
@@ -412,7 +412,7 @@ mod tests {
             providers
         };
 
-        assert_eq!(store.get_providers(&key).unwrap(), &sorted_providers);
+        assert_eq!(store.get_providers(&key), sorted_providers);
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
         providers.iter().for_each(|p| {
             store.put_provider(p.clone());
         });
-        assert_eq!(store.get_providers(&key).unwrap().len(), 10);
+        assert_eq!(store.get_providers(&key).len(), 10);
     }
 
     #[test]
@@ -464,7 +464,7 @@ mod tests {
             providers
         };
 
-        assert_eq!(store.get_providers(&key).unwrap(), &closest_providers);
+        assert_eq!(store.get_providers(&key), closest_providers);
     }
 
     #[test]
@@ -493,11 +493,11 @@ mod tests {
         for i in 0..10 {
             assert!(store.put_provider(sorted_providers[i].clone()));
         }
-        assert_eq!(store.get_providers(&key).unwrap(), &sorted_providers[..10]);
+        assert_eq!(store.get_providers(&key), sorted_providers[..10]);
 
-        // The fursests provider doesn't fit.
+        // The furthests provider doesn't fit.
         assert!(!store.put_provider(sorted_providers[10].clone()));
-        assert_eq!(store.get_providers(&key).unwrap(), &sorted_providers[..10]);
+        assert_eq!(store.get_providers(&key), sorted_providers[..10]);
     }
 
     #[test]
@@ -529,7 +529,7 @@ mod tests {
             providers
         };
 
-        assert_eq!(store.get_providers(&key).unwrap(), &sorted_providers);
+        assert_eq!(store.get_providers(&key), sorted_providers);
 
         let provider0_new = ProviderRecord {
             key: key.clone(),
@@ -552,7 +552,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(store.get_providers(&key).unwrap(), &providers_new);
+        assert_eq!(store.get_providers(&key), providers_new);
     }
 
     #[test]
@@ -569,7 +569,7 @@ mod tests {
         assert!(provider.is_expired(std::time::Instant::now()));
 
         store.put_provider(provider.clone());
-        assert_eq!(store.get_providers(&provider.key), None);
+        assert!(store.get_providers(&provider.key).is_empty());
     }
 
     #[test]
@@ -594,7 +594,7 @@ mod tests {
         store.put_provider(provider1.clone());
         store.put_provider(provider2.clone());
 
-        assert_eq!(store.get_providers(&key).unwrap(), &vec![provider2]);
+        assert_eq!(store.get_providers(&key), vec![provider2]);
     }
 
     #[test]
@@ -619,7 +619,7 @@ mod tests {
 
         store.put_provider(provider);
 
-        let got_providers = store.get_providers(&key).unwrap();
+        let got_providers = store.get_providers(&key);
         assert_eq!(got_providers.len(), 1);
         assert_eq!(got_providers.first().unwrap().key, key);
         assert_eq!(got_providers.first().unwrap().addresses.len(), 2);
@@ -655,8 +655,8 @@ mod tests {
         assert!(store.put_provider(provider2.clone()));
         assert!(!store.put_provider(provider3.clone()));
 
-        assert_eq!(store.get_providers(&provider1.key), Some(&vec![provider1]));
-        assert_eq!(store.get_providers(&provider2.key), Some(&vec![provider2]));
-        assert_eq!(store.get_providers(&provider3.key), None);
+        assert_eq!(store.get_providers(&provider1.key), vec![provider1]);
+        assert_eq!(store.get_providers(&provider2.key), vec![provider2]);
+        assert_eq!(store.get_providers(&provider3.key), vec![]);
     }
 }
