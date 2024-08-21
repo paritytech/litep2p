@@ -381,8 +381,11 @@ impl WebRtcConnection {
             "handle opening outbound substream",
         );
 
-        let rtc_message = WebRtcMessage::decode(&data)?;
-        let message = rtc_message.payload.ok_or(ParseError::InvalidData)?;
+        let rtc_message = WebRtcMessage::decode(&data)
+            .map_err(|err| SubstreamError::NegotiationError(err.into()))?;
+        let message = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
+            ParseError::InvalidData.into(),
+        ))?;
 
         let HandshakeResult::Succeeded(protocol) = dialer_state.register_response(message)? else {
             tracing::trace!(

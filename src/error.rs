@@ -157,10 +157,10 @@ pub enum ParseError {
     InvalidMultihash(Multihash),
     /// The provided probuf message cannot be decoded.
     #[error("Failed to decode protobuf message: `{0:?}`")]
-    ProstDecodeError(prost::DecodeError),
+    ProstDecodeError(#[from] prost::DecodeError),
     /// The provided protobuf message cannot be encoded.
     #[error("Failed to encode protobuf message: `{0:?}`")]
-    ProstEncodeError(prost::EncodeError),
+    ProstEncodeError(#[from] prost::EncodeError),
     /// The protobuf message contains an unexpected key type.
     ///
     /// This error can happen when:
@@ -194,7 +194,7 @@ pub enum SubstreamError {
     #[error("Failed to write to substream, substream id `{0:?}`")]
     WriteFailure(Option<SubstreamId>),
     #[error("Negotiation error: `{0:?}`")]
-    NegotiationError(NegotiationError),
+    NegotiationError(#[from] NegotiationError),
 }
 
 /// Error during the negotiation phase.
@@ -202,10 +202,10 @@ pub enum SubstreamError {
 pub enum NegotiationError {
     /// Error occurred during the multistream-select phase of the negotiation.
     #[error("multistream-select error: `{0:?}`")]
-    MultistreamSelectError(crate::multistream_select::NegotiationError),
+    MultistreamSelectError(#[from] crate::multistream_select::NegotiationError),
     /// Error occurred during the Noise handshake negotiation.
     #[error("multistream-select error: `{0:?}`")]
-    SnowError(snow::Error),
+    SnowError(#[from] snow::Error),
     /// The peer ID was not provided by the noise handshake.
     #[error("`PeerId` missing from Noise handshake")]
     PeerIdMissing,
@@ -214,7 +214,7 @@ pub enum NegotiationError {
     Timeout,
     /// The message provided over the wire has an invalid format or is unsupported.
     #[error("Parse error: `{0}`")]
-    ParseError(ParseError),
+    ParseError(#[from] ParseError),
     /// An I/O error occurred during the negotiation process.
     #[error("I/O error: `{0}`")]
     IoError(ErrorKind),
@@ -354,57 +354,9 @@ impl From<prost::EncodeError> for Error {
     }
 }
 
-impl From<prost::DecodeError> for ParseError {
-    fn from(error: prost::DecodeError) -> Self {
-        ParseError::ProstDecodeError(error)
-    }
-}
-
-impl From<prost::EncodeError> for ParseError {
-    fn from(error: prost::EncodeError) -> Self {
-        ParseError::ProstEncodeError(error)
-    }
-}
-
-impl From<NegotiationError> for SubstreamError {
-    fn from(error: NegotiationError) -> Self {
-        SubstreamError::NegotiationError(error)
-    }
-}
-
-impl From<prost::EncodeError> for NegotiationError {
-    fn from(error: prost::EncodeError) -> Self {
-        NegotiationError::ParseError(ParseError::ProstEncodeError(error))
-    }
-}
-
-impl From<prost::DecodeError> for NegotiationError {
-    fn from(error: prost::DecodeError) -> Self {
-        NegotiationError::ParseError(ParseError::ProstDecodeError(error))
-    }
-}
-
-impl From<snow::Error> for NegotiationError {
-    fn from(error: snow::Error) -> Self {
-        NegotiationError::SnowError(error)
-    }
-}
-
 impl From<io::Error> for NegotiationError {
     fn from(error: io::Error) -> Self {
         NegotiationError::IoError(error.kind())
-    }
-}
-
-impl From<ParseError> for NegotiationError {
-    fn from(error: ParseError) -> Self {
-        NegotiationError::ParseError(error)
-    }
-}
-
-impl From<ParseError> for SubstreamError {
-    fn from(error: ParseError) -> Self {
-        SubstreamError::NegotiationError(NegotiationError::ParseError(error))
     }
 }
 

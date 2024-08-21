@@ -426,7 +426,7 @@ where
 pub enum ProtocolError {
     /// I/O error.
     #[error("I/O error: `{0}`")]
-    IoError(io::Error),
+    IoError(#[from] io::Error),
 
     /// Received an invalid message from the remote.
     #[error("Received an invalid message from the remote.")]
@@ -443,12 +443,6 @@ pub enum ProtocolError {
     /// The protocol is not supported.
     #[error("The protocol is not supported.")]
     ProtocolNotSupported,
-}
-
-impl From<io::Error> for ProtocolError {
-    fn from(err: io::Error) -> ProtocolError {
-        ProtocolError::IoError(err)
-    }
 }
 
 impl From<ProtocolError> for io::Error {

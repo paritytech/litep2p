@@ -24,7 +24,7 @@
 use crate::{
     config::Role,
     crypto::{ed25519::Keypair, PublicKey},
-    error::NegotiationError,
+    error::{NegotiationError, ParseError},
     PeerId,
 };
 
@@ -114,7 +114,7 @@ impl NoiseContext {
         };
 
         let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-        noise_payload.encode(&mut payload)?;
+        noise_payload.encode(&mut payload).map_err(|err| ParseError::from(err))?;
 
         Ok(Self {
             noise: NoiseState::Handshake(noise),
@@ -182,7 +182,8 @@ impl NoiseContext {
         let res = noise.read_message(reply, &mut buffer)?;
         buffer.truncate(res);
 
-        let payload = handshake_schema::NoiseHandshakePayload::decode(buffer.as_slice())?;
+        let payload = handshake_schema::NoiseHandshakePayload::decode(buffer.as_slice())
+            .map_err(|err| NegotiationError::ParseError(err.into()))?;
 
         let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
         PublicKey::from_protobuf_encoding(&identity).map_err(|err| err.into())
@@ -664,7 +665,7 @@ fn parse_peer_id(buf: &[u8]) -> Result<PeerId, NegotiationError> {
             let public_key = PublicKey::from_protobuf_encoding(&identity)?;
             Ok(PeerId::from_public_key(&public_key))
         }
-        Err(err) => Err(From::from(err)),
+        Err(err) => Err(ParseError::from(err).into()),
     }
 }
 
