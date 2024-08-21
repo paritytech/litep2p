@@ -317,8 +317,8 @@ impl WebSocketConnection {
             }
         }
 
-        tracing::trace!(target: LOG_TARGET, "noise handshake done");
         let stream: NoiseSocket<BufferedStream<_>> = stream;
+        tracing::trace!(target: LOG_TARGET, "noise handshake done");
 
         // negotiate `yamux`
         let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"]).await?;
