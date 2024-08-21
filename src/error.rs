@@ -297,7 +297,7 @@ pub enum DnsError {
     ///
     /// For example, DNSv4 was expected but DNSv6 was provided.
     #[error("DNS type is different from the provided IP address")]
-    MismatchDnsVersion,
+    IpVersionMismatch,
 }
 
 impl From<MultihashGeneric<64>> for Error {

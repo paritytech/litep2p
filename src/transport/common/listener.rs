@@ -112,7 +112,7 @@ impl AddressType {
                 "Multiaddr DNS type does not match IP version `{}`",
                 url
             );
-            return Err(DnsError::MismatchDnsVersion);
+            return Err(DnsError::IpVersionMismatch);
         };
 
         Ok(SocketAddr::new(ip, port))
