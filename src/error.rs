@@ -134,7 +134,7 @@ pub enum AddressError {
     ///
     /// For example, this can happen when the address used the UDP protocol but
     /// the handling transport only allows TCP connections.
-    #[error("Invalid protocol")]
+    #[error("Invalid address for protocol")]
     InvalidProtocol,
     /// The provided address is not a valid URL.
     #[error("Invalid URL")]
