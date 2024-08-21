@@ -614,8 +614,7 @@ impl Stream for WebSocketTransport {
                             error,
                         }));
                     } else {
-                        tracing::debug!(target: LOG_TARGET, ?error, ?connection_id, "Pending dial for connection ID not found");
-                        debug_assert!(false);
+                        tracing::debug!(target: LOG_TARGET, ?error, ?connection_id, "Pending inbound connection failed");
                     }
                 }
             }
