@@ -152,9 +152,6 @@ pub enum AddressError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    /// Cannot parse the multihash from the provided bytes.
-    #[error("Invalid multihash: `{0:?}`")]
-    InvalidMultihash(Multihash),
     /// The provided probuf message cannot be decoded.
     #[error("Failed to decode protobuf message: `{0:?}`")]
     ProstDecodeError(#[from] prost::DecodeError),
@@ -302,7 +299,7 @@ pub enum DnsError {
 
 impl From<MultihashGeneric<64>> for Error {
     fn from(hash: MultihashGeneric<64>) -> Self {
-        Error::ParseError(ParseError::InvalidMultihash(hash))
+        Error::AddressError(AddressError::InvalidMultihash(hash))
     }
 }
 
