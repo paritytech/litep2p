@@ -266,7 +266,7 @@ impl WebSocketTransport {
                 address,
                 tokio_tungstenite::client_async_tls(url, stream)
                     .await
-                    .map_err(|err| NegotiationError::WebSocket(err))?
+                    .map_err(NegotiationError::WebSocket)?
                     .0,
             ))
         };

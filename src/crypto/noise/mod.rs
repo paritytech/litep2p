@@ -114,7 +114,7 @@ impl NoiseContext {
         };
 
         let mut payload = Vec::with_capacity(noise_payload.encoded_len());
-        noise_payload.encode(&mut payload).map_err(|err| ParseError::from(err))?;
+        noise_payload.encode(&mut payload).map_err(ParseError::from)?;
 
         Ok(Self {
             noise: NoiseState::Handshake(noise),
