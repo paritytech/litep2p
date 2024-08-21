@@ -50,6 +50,7 @@ use crate::transport::webrtc::WebRtcTransport;
 #[cfg(feature = "websocket")]
 use crate::transport::websocket::WebSocketTransport;
 
+use error::DialError;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use transport::Endpoint;
@@ -112,12 +113,22 @@ pub enum Litep2pEvent {
     },
 
     /// Failed to dial peer.
+    ///
+    /// This error can originate from dialing a single peer address.
     DialFailure {
         /// Address of the peer.
         address: Multiaddr,
 
         /// Dial error.
-        error: Error,
+        error: DialError,
+    },
+
+    /// A list of multiple dial failures.
+    ListDialFailures {
+        /// List of errors.
+        ///
+        /// Depending on the transport, the address might be different for each error.
+        errors: Vec<(Multiaddr, DialError)>,
     },
 }
 
@@ -489,6 +500,10 @@ impl Litep2p {
                     }),
                 TransportEvent::DialFailure { address, error, .. } =>
                     return Some(Litep2pEvent::DialFailure { address, error }),
+
+                TransportEvent::OpenFailure { errors, .. } => {
+                    return Some(Litep2pEvent::ListDialFailures { errors });
+                }
                 _ => {}
             }
         }

@@ -21,7 +21,7 @@
 //! Request-response protocol implementation.
 
 use crate::{
-    error::{Error, NegotiationError},
+    error::{Error, NegotiationError, SubstreamError},
     multistream_select::NegotiationError::Failed as MultistreamFailed,
     protocol::{
         request_response::handle::{InnerRequestResponseEvent, RequestResponseCommand},
@@ -623,7 +623,7 @@ impl RequestResponseProtocol {
     async fn on_substream_open_failure(
         &mut self,
         substream: SubstreamId,
-        error: Error,
+        error: SubstreamError,
     ) -> crate::Result<()> {
         let Some(RequestContext {
             request_id, peer, ..
@@ -660,7 +660,7 @@ impl RequestResponseProtocol {
                 peer,
                 request_id,
                 error: match error {
-                    Error::NegotiationError(NegotiationError::MultistreamSelectError(
+                    SubstreamError::NegotiationError(NegotiationError::MultistreamSelectError(
                         MultistreamFailed,
                     )) => RequestResponseError::UnsupportedProtocol,
                     _ => RequestResponseError::Rejected,
