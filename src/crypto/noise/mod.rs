@@ -24,7 +24,7 @@
 use crate::{
     config::Role,
     crypto::{ed25519::Keypair, PublicKey},
-    error::{NegotiationError, ParseError},
+    error::NegotiationError,
     PeerId,
 };
 

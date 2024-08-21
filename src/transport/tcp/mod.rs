@@ -571,6 +571,9 @@ impl Stream for TcpTransport {
                             address,
                             error,
                         }));
+                    } else {
+                        tracing::debug!(target: LOG_TARGET, ?error, ?connection_id, "Pending dial for connection ID not found");
+                        debug_assert!(false);
                     }
                 }
             }
