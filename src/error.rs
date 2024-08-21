@@ -265,7 +265,7 @@ pub enum DialError {
     ///
     /// The address provided may be valid, however it failed to resolve to a concrete IP address.
     /// This error may be recoverable.
-    #[error("Dns lookup error for `{0}`")]
+    #[error("DNS lookup error for `{0}`")]
     DnsError(#[from] DnsError),
     /// An error occurred during the negotiation process.
     #[error("Negotiation error: `{0}`")]
