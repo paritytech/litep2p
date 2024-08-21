@@ -291,7 +291,7 @@ pub enum QuicError {
 #[derive(Debug, thiserror::Error)]
 pub enum DnsError {
     /// The DNS resolution failed to resolve the provided URL.
-    #[error("Dns failed to resolve url `{0}`")]
+    #[error("DNS failed to resolve url `{0}`")]
     ResolveError(String),
     /// The DNS expected a different IP address version.
     ///
