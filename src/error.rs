@@ -139,7 +139,7 @@ pub enum AddressError {
     /// The provided address is not a valid URL.
     #[error("Invalid URL")]
     InvalidUrl,
-    /// The provided address is not a valid multiaddress.
+    /// The provided address does not include a peer ID.
     #[error("`PeerId` missing from the address")]
     PeerIdMissing,
     /// No address is available for the provided peer ID.
