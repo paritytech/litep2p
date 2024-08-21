@@ -22,7 +22,7 @@
 
 use crate::{
     config::Role,
-    error::{AddressError, Error},
+    error::{AddressError, Error, NegotiationError},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, WebSocketAddress},
         manager::TransportHandle,
@@ -264,7 +264,10 @@ impl WebSocketTransport {
 
             Ok((
                 address,
-                tokio_tungstenite::client_async_tls(url, stream).await?.0,
+                tokio_tungstenite::client_async_tls(url, stream)
+                    .await
+                    .map_err(|err| NegotiationError::WebSocket(err))?
+                    .0,
             ))
         };
 

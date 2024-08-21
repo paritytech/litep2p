@@ -399,13 +399,6 @@ impl From<quinn::ConnectError> for DialError {
     }
 }
 
-#[cfg(feature = "websocket")]
-impl From<tokio_tungstenite::tungstenite::error::Error> for DialError {
-    fn from(error: tokio_tungstenite::tungstenite::error::Error) -> Self {
-        DialError::NegotiationError(NegotiationError::WebSocket(error))
-    }
-}
-
 impl From<ConnectionLimitsError> for Error {
     fn from(error: ConnectionLimitsError) -> Self {
         Error::ConnectionLimit(error)

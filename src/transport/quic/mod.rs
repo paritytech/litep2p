@@ -24,7 +24,7 @@
 
 use crate::{
     crypto::tls::make_client_config,
-    error::{AddressError, DialError, Error, QuicError},
+    error::{AddressError, DialError, Error, NegotiationError, QuicError},
     transport::{
         manager::TransportHandle,
         quic::{config::Config as QuicConfig, connection::QuicConnection, listener::QuicListener},
