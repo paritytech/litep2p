@@ -29,7 +29,10 @@ use crate::{
         InnerTransportEvent, SubstreamError, TransportService,
     },
     substream::Substream,
-    transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
+    transport::{
+        manager::{limits::ConnectionLimitsConfig, TransportManager},
+        KEEP_ALIVE_TIMEOUT,
+    },
     types::{RequestId, SubstreamId},
     BandwidthSink, Error, PeerId, ProtocolName,
 };
@@ -61,6 +64,7 @@ fn protocol() -> (
         Vec::new(),
         std::sync::Arc::new(Default::default()),
         handle,
+        KEEP_ALIVE_TIMEOUT,
     );
     let (config, handle) =
         ConfigBuilder::new(ProtocolName::from("/req/1")).with_max_size(1024).build();
