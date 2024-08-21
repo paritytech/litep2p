@@ -146,8 +146,8 @@ pub enum AddressError {
     #[error("Address not available")]
     AddressNotAvailable,
     /// The provided address contains an invalid multihash.
-    #[error("Invalid multihash: `{0:?}`")]
-    InvalidMultihash(Multihash),
+    #[error("Multihash does not contain a valid peer ID : `{0:?}`")]
+    InvalidPeerId(Multihash),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -299,7 +299,7 @@ pub enum DnsError {
 
 impl From<MultihashGeneric<64>> for Error {
     fn from(hash: MultihashGeneric<64>) -> Self {
-        Error::AddressError(AddressError::InvalidMultihash(hash))
+        Error::AddressError(AddressError::InvalidPeerId(hash))
     }
 }
 
@@ -365,7 +365,7 @@ impl From<ParseError> for Error {
 
 impl From<MultihashGeneric<64>> for AddressError {
     fn from(hash: MultihashGeneric<64>) -> Self {
-        AddressError::InvalidMultihash(hash)
+        AddressError::InvalidPeerId(hash)
     }
 }
 

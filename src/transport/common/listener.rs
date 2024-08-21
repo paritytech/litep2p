@@ -431,7 +431,7 @@ fn multiaddr_to_socket_address(
 
     let maybe_peer = match iter.next() {
         Some(Protocol::P2p(multihash)) =>
-            Some(PeerId::from_multihash(multihash).map_err(AddressError::InvalidMultihash)?),
+            Some(PeerId::from_multihash(multihash).map_err(AddressError::InvalidPeerId)?),
         None => None,
         protocol => {
             tracing::error!(
