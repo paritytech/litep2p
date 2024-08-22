@@ -22,7 +22,7 @@
 
 use crate::{
     config::Role,
-    error::{AddressError, Error},
+    error::{AddressError, Error, NegotiationError},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, WebSocketAddress},
         manager::TransportHandle,
@@ -33,7 +33,7 @@ use crate::{
         Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
-    PeerId,
+    DialError, PeerId,
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
@@ -59,24 +59,6 @@ mod stream;
 mod substream;
 
 pub mod config;
-
-#[derive(Debug)]
-pub(super) struct WebSocketError {
-    /// Error.
-    error: Error,
-
-    /// Connection ID.
-    connection_id: Option<ConnectionId>,
-}
-
-impl WebSocketError {
-    pub fn new(error: Error, connection_id: Option<ConnectionId>) -> Self {
-        Self {
-            error,
-            connection_id,
-        }
-    }
-}
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::websocket";
@@ -110,8 +92,9 @@ pub(crate) struct WebSocketTransport {
     pending_inbound_connections: HashMap<ConnectionId, PendingInboundConnection>,
 
     /// Pending connections.
-    pending_connections:
-        FuturesUnordered<BoxFuture<'static, Result<NegotiatedConnection, WebSocketError>>>,
+    pending_connections: FuturesUnordered<
+        BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, DialError)>>,
+    >,
 
     /// Pending raw, unnegotiated connections.
     pending_raw_connections: FuturesUnordered<
@@ -123,7 +106,7 @@ pub(crate) struct WebSocketTransport {
                     Multiaddr,
                     WebSocketStream<MaybeTlsStream<TcpStream>>,
                 ),
-                ConnectionId,
+                (ConnectionId, Vec<(Multiaddr, DialError)>),
             >,
         >,
     >,
@@ -168,11 +151,11 @@ impl WebSocketTransport {
                     max_write_buffer_size,
                 )
                 .await
-                .map_err(|error| WebSocketError::new(error, None))
+                .map_err(|error| (connection_id, error.into()))
             })
             .await
             {
-                Err(_) => Err(WebSocketError::new(Error::Timeout, None)),
+                Err(_) => Err((connection_id, DialError::Timeout)),
                 Ok(Err(error)) => Err(error),
                 Ok(Ok(result)) => Ok(result),
             }
@@ -180,31 +163,25 @@ impl WebSocketTransport {
     }
 
     /// Convert `Multiaddr` into `url::Url`
-    fn multiaddr_into_url(address: Multiaddr) -> crate::Result<(Url, PeerId)> {
+    fn multiaddr_into_url(address: Multiaddr) -> Result<(Url, PeerId), AddressError> {
         let mut protocol_stack = address.iter();
 
-        let dial_address = match protocol_stack
-            .next()
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-        {
+        let dial_address = match protocol_stack.next().ok_or(AddressError::InvalidProtocol)? {
             Protocol::Ip4(address) => address.to_string(),
             Protocol::Ip6(address) => format!("[{address}]"),
             Protocol::Dns(address) | Protocol::Dns4(address) | Protocol::Dns6(address) =>
                 address.to_string(),
 
-            _ => return Err(Error::TransportNotSupported(address)),
+            _ => return Err(AddressError::InvalidProtocol),
         };
 
-        let url = match protocol_stack
-            .next()
-            .ok_or_else(|| Error::TransportNotSupported(address.clone()))?
-        {
+        let url = match protocol_stack.next().ok_or(AddressError::InvalidProtocol)? {
             Protocol::Tcp(port) => match protocol_stack.next() {
                 Some(Protocol::Ws(_)) => format!("ws://{dial_address}:{port}/"),
                 Some(Protocol::Wss(_)) => format!("wss://{dial_address}:{port}/"),
-                _ => return Err(Error::TransportNotSupported(address.clone())),
+                _ => return Err(AddressError::InvalidProtocol),
             },
-            _ => return Err(Error::TransportNotSupported(address)),
+            _ => return Err(AddressError::InvalidProtocol),
         };
 
         let peer = match protocol_stack.next() {
@@ -215,13 +192,15 @@ impl WebSocketTransport {
                     ?protocol,
                     "invalid protocol, expected `Protocol::Ws`/`Protocol::Wss`",
                 );
-                return Err(Error::AddressError(AddressError::PeerIdMissing));
+                return Err(AddressError::PeerIdMissing);
             }
         };
 
         tracing::trace!(target: LOG_TARGET, ?url, "parse address");
 
-        url::Url::parse(&url).map(|url| (url, peer)).map_err(|_| Error::InvalidData)
+        url::Url::parse(&url)
+            .map(|url| (url, peer))
+            .map_err(|_| AddressError::InvalidUrl)
     }
 
     /// Dial remote peer over `address`.
@@ -230,14 +209,14 @@ impl WebSocketTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
-    ) -> crate::Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>)> {
+    ) -> Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>), DialError> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
 
         let (socket_address, _) = WebSocketAddress::multiaddr_to_socket_address(&address)?;
         let remote_address =
             match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
-                Err(_) => return Err(Error::Timeout),
-                Ok(Err(error)) => return Err(error),
+                Err(_) => return Err(DialError::Timeout),
+                Ok(Err(error)) => return Err(error.into()),
                 Ok(Ok(address)) => address,
             };
 
@@ -274,27 +253,26 @@ impl WebSocketTransport {
                 Ok(()) => {}
                 Err(error) if error.raw_os_error() == Some(libc::EINPROGRESS) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(error) => return Err(Error::Other(error.to_string())),
+                Err(err) => return Err(DialError::from(err)),
             }
 
-            let stream = TcpStream::try_from(Into::<std::net::TcpStream>::into(socket))
-                .map_err(|error| Error::Other(error.to_string()))?;
-            stream.writable().await.map_err(|error| Error::Other(error.to_string()))?;
-
-            if let Some(error) =
-                stream.take_error().map_err(|error| Error::Other(error.to_string()))?
-            {
-                return Err(Error::Other(error.to_string()));
+            let stream = TcpStream::try_from(Into::<std::net::TcpStream>::into(socket))?;
+            stream.writable().await?;
+            if let Some(e) = stream.take_error()? {
+                return Err(DialError::from(e));
             }
 
             Ok((
                 address,
-                tokio_tungstenite::client_async_tls(url, stream).await?.0,
+                tokio_tungstenite::client_async_tls(url, stream)
+                    .await
+                    .map_err(NegotiationError::WebSocket)?
+                    .0,
             ))
         };
 
         match tokio::time::timeout(connection_open_timeout, future).await {
-            Err(_) => Err(Error::Timeout),
+            Err(_) => Err(DialError::Timeout),
             Ok(Err(error)) => Err(error),
             Ok(Ok((address, stream))) => Ok((address, stream)),
         }
@@ -366,7 +344,7 @@ impl Transport for WebSocketTransport {
                 nodelay,
             )
             .await
-            .map_err(|error| WebSocketError::new(error, Some(connection_id)))?;
+            .map_err(|error| (connection_id, error))?;
 
             WebSocketConnection::open_connection(
                 connection_id,
@@ -380,12 +358,12 @@ impl Transport for WebSocketTransport {
                 max_write_buffer_size,
             )
             .await
-            .map_err(|error| WebSocketError::new(error, Some(connection_id)))
+            .map_err(|error| (connection_id, error.into()))
         };
 
         self.pending_connections.push(Box::pin(async move {
             match tokio::time::timeout(connection_open_timeout, future).await {
-                Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection_id))),
+                Err(_) => Err((connection_id, DialError::Timeout)),
                 Ok(Err(error)) => Err(error),
                 Ok(Ok(result)) => Ok(result),
             }
@@ -459,6 +437,7 @@ impl Transport for WebSocketTransport {
         connection_id: ConnectionId,
         addresses: Vec<Multiaddr>,
     ) -> crate::Result<()> {
+        let num_addresses = addresses.len();
         let mut futures: FuturesUnordered<_> = addresses
             .into_iter()
             .map(|address| {
@@ -468,30 +447,36 @@ impl Transport for WebSocketTransport {
 
                 async move {
                     WebSocketTransport::dial_peer(
-                        address,
+                        address.clone(),
                         dial_addresses,
                         connection_open_timeout,
                         nodelay,
                     )
                     .await
+                    .map_err(|error| (address, error))
                 }
             })
             .collect();
 
         self.pending_raw_connections.push(Box::pin(async move {
+            let mut errors = Vec::with_capacity(num_addresses);
+
             while let Some(result) = futures.next().await {
                 match result {
                     Ok((address, stream)) => return Ok((connection_id, address, stream)),
-                    Err(error) => tracing::debug!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?error,
-                        "failed to open connection",
-                    ),
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?error,
+                            "failed to open connection",
+                        );
+                        errors.push(error)
+                    }
                 }
             }
 
-            Err(connection_id)
+            Err((connection_id, errors))
         }));
 
         Ok(())
@@ -536,11 +521,11 @@ impl Transport for WebSocketTransport {
                     max_write_buffer_size,
                 )
                 .await
-                .map_err(|error| WebSocketError::new(error, Some(connection_id)))
+                .map_err(|error| (connection_id, error.into()))
             })
             .await
             {
-                Err(_) => Err(WebSocketError::new(Error::Timeout, Some(connection_id))),
+                Err(_) => Err((connection_id, DialError::Timeout)),
                 Ok(Err(error)) => Err(error),
                 Ok(Ok(connection)) => Ok(connection),
             }
@@ -599,9 +584,12 @@ impl Stream for WebSocketTransport {
                         }));
                     }
                 }
-                Err(connection_id) =>
+                Err((connection_id, errors)) =>
                     if !self.canceled.remove(&connection_id) {
-                        return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
+                        return Poll::Ready(Some(TransportEvent::OpenFailure {
+                            connection_id,
+                            errors,
+                        }));
                     },
             }
         }
@@ -618,22 +606,17 @@ impl Stream for WebSocketTransport {
                         endpoint,
                     }));
                 }
-                Err(error) => match error.connection_id {
-                    Some(connection_id) => match self.pending_dials.remove(&connection_id) {
-                        Some(address) =>
-                            return Poll::Ready(Some(TransportEvent::DialFailure {
-                                connection_id,
-                                address,
-                                error: error.error,
-                            })),
-                        None => {
-                            tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
-                        }
-                    },
-                    None => {
-                        tracing::debug!(target: LOG_TARGET, ?error, "failed to establish connection")
+                Err((connection_id, error)) => {
+                    if let Some(address) = self.pending_dials.remove(&connection_id) {
+                        return Poll::Ready(Some(TransportEvent::DialFailure {
+                            connection_id,
+                            address,
+                            error,
+                        }));
+                    } else {
+                        tracing::debug!(target: LOG_TARGET, ?error, ?connection_id, "Pending inbound connection failed");
                     }
-                },
+                }
             }
         }
 

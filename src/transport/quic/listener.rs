@@ -20,7 +20,7 @@
 
 use crate::{
     crypto::{ed25519::Keypair, tls::make_server_config},
-    error::{AddressError, Error},
+    error::AddressError,
     PeerId,
 };
 
@@ -101,7 +101,9 @@ impl QuicListener {
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
-    pub fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
+    pub fn get_socket_address(
+        address: &Multiaddr,
+    ) -> Result<(SocketAddr, Option<PeerId>), AddressError> {
         tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
         let mut iter = address.iter();
@@ -114,7 +116,7 @@ impl QuicListener {
                         ?protocol,
                         "invalid transport protocol, expected `QuicV1`",
                     );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                    return Err(AddressError::InvalidProtocol);
                 }
             },
             Some(Protocol::Ip4(address)) => match iter.next() {
@@ -125,19 +127,19 @@ impl QuicListener {
                         ?protocol,
                         "invalid transport protocol, expected `QuicV1`",
                     );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                    return Err(AddressError::InvalidProtocol);
                 }
             },
             protocol => {
                 tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
+                return Err(AddressError::InvalidProtocol);
             }
         };
 
         // verify that quic exists
         match iter.next() {
             Some(Protocol::QuicV1) => {}
-            _ => return Err(Error::AddressError(AddressError::InvalidProtocol)),
+            _ => return Err(AddressError::InvalidProtocol),
         }
 
         let maybe_peer = match iter.next() {
@@ -149,7 +151,7 @@ impl QuicListener {
                     ?protocol,
                     "invalid protocol, expected `P2p` or `None`"
                 );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
+                return Err(AddressError::PeerIdMissing);
             }
         };
 
@@ -268,12 +270,10 @@ mod tests {
         let crypto_config =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
         let client_config = ClientConfig::new(crypto_config);
-        let client = Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0))
-            .map_err(|error| Error::Other(error.to_string()))
-            .unwrap();
+        let client =
+            Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)).unwrap();
         let connection = client
             .connect_with(client_config, format!("[::1]:{port}").parse().unwrap(), "l")
-            .map_err(|error| Error::Other(error.to_string()))
             .unwrap();
 
         let (res1, res2) = tokio::join!(
@@ -318,31 +318,27 @@ mod tests {
         let crypto_config1 =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
         let client_config1 = ClientConfig::new(crypto_config1);
-        let client1 = Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0))
-            .map_err(|error| Error::Other(error.to_string()))
-            .unwrap();
+        let client1 =
+            Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)).unwrap();
         let connection1 = client1
             .connect_with(
                 client_config1,
                 format!("[::1]:{port1}").parse().unwrap(),
                 "l",
             )
-            .map_err(|error| Error::Other(error.to_string()))
             .unwrap();
 
         let crypto_config2 =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
         let client_config2 = ClientConfig::new(crypto_config2);
-        let client2 = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
-            .map_err(|error| Error::Other(error.to_string()))
-            .unwrap();
+        let client2 =
+            Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)).unwrap();
         let connection2 = client2
             .connect_with(
                 client_config2,
                 format!("127.0.0.1:{port2}").parse().unwrap(),
                 "l",
             )
-            .map_err(|error| Error::Other(error.to_string()))
             .unwrap();
 
         tokio::spawn(async move {
@@ -391,31 +387,27 @@ mod tests {
         let crypto_config1 =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
         let client_config1 = ClientConfig::new(crypto_config1);
-        let client1 = Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0))
-            .map_err(|error| Error::Other(error.to_string()))
-            .unwrap();
+        let client1 =
+            Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)).unwrap();
         let connection1 = client1
             .connect_with(
                 client_config1,
                 format!("[::1]:{port}").parse().unwrap(),
                 "l",
             )
-            .map_err(|error| Error::Other(error.to_string()))
             .unwrap();
 
         let crypto_config2 =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
         let client_config2 = ClientConfig::new(crypto_config2);
-        let client2 = Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0))
-            .map_err(|error| Error::Other(error.to_string()))
-            .unwrap();
+        let client2 =
+            Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)).unwrap();
         let connection2 = client2
             .connect_with(
                 client_config2,
                 format!("[::1]:{port}").parse().unwrap(),
                 "l",
             )
-            .map_err(|error| Error::Other(error.to_string()))
             .unwrap();
 
         tokio::spawn(async move {

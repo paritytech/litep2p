@@ -24,7 +24,7 @@
 
 use crate::{
     crypto::tls::make_client_config,
-    error::{AddressError, Error},
+    error::{AddressError, DialError, Error, QuicError},
     transport::{
         manager::TransportHandle,
         quic::{config::Config as QuicConfig, connection::QuicConnection, listener::QuicListener},
@@ -84,15 +84,22 @@ pub(crate) struct QuicTransport {
     pending_inbound_connections: HashMap<ConnectionId, Connecting>,
 
     /// Pending connections.
-    pending_connections:
-        FuturesUnordered<BoxFuture<'static, (ConnectionId, Result<NegotiatedConnection, Error>)>>,
+    pending_connections: FuturesUnordered<
+        BoxFuture<'static, (ConnectionId, Result<NegotiatedConnection, DialError>)>,
+    >,
 
     /// Negotiated connections waiting for validation.
     pending_open: HashMap<ConnectionId, (NegotiatedConnection, Litep2pEndpoint)>,
 
     /// Pending raw, unnegotiated connections.
     pending_raw_connections: FuturesUnordered<
-        BoxFuture<'static, Result<(ConnectionId, Multiaddr, NegotiatedConnection), ConnectionId>>,
+        BoxFuture<
+            'static,
+            Result<
+                (ConnectionId, Multiaddr, NegotiatedConnection),
+                (ConnectionId, Vec<(Multiaddr, DialError)>),
+            >,
+        >,
     >,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
@@ -118,11 +125,14 @@ impl QuicTransport {
         self.pending_connections.push(Box::pin(async move {
             let connection = match connection.await {
                 Ok(connection) => connection,
-                Err(error) => return (connection_id, Err(error.into())),
+                Err(error) => return (connection_id, Err(DialError::from(error))),
             };
 
             let Some(peer) = Self::extract_peer_id(&connection) else {
-                return (connection_id, Err(Error::InvalidCertificate));
+                return (
+                    connection_id,
+                    Err(crate::error::NegotiationError::Quic(QuicError::InvalidCertificate).into()),
+                );
             };
 
             (connection_id, Ok(NegotiatedConnection { peer, connection }))
@@ -133,7 +143,7 @@ impl QuicTransport {
     fn on_connection_established(
         &mut self,
         connection_id: ConnectionId,
-        result: crate::Result<NegotiatedConnection>,
+        result: Result<NegotiatedConnection, DialError>,
     ) -> Option<TransportEvent> {
         tracing::debug!(target: LOG_TARGET, ?connection_id, success = result.is_ok(), "connection established");
 
@@ -257,14 +267,18 @@ impl Transport for QuicTransport {
         );
 
         self.pending_dials.insert(connection_id, address);
+
         self.pending_connections.push(Box::pin(async move {
             let connection = match connection.await {
                 Ok(connection) => connection,
-                Err(error) => return (connection_id, Err(error.into())),
+                Err(error) => return (connection_id, Err(DialError::from(error))),
             };
 
             let Some(peer) = Self::extract_peer_id(&connection) else {
-                return (connection_id, Err(Error::InvalidCertificate));
+                return (
+                    connection_id,
+                    Err(crate::error::NegotiationError::Quic(QuicError::InvalidCertificate).into()),
+                );
             };
 
             (connection_id, Ok(NegotiatedConnection { peer, connection }))
@@ -332,21 +346,19 @@ impl Transport for QuicTransport {
         connection_id: ConnectionId,
         addresses: Vec<Multiaddr>,
     ) -> crate::Result<()> {
+        let num_addresses = addresses.len();
         let mut futures: FuturesUnordered<_> = addresses
             .into_iter()
             .map(|address| {
                 let keypair = self.context.keypair.clone();
                 let connection_open_timeout = self.config.connection_open_timeout;
+                let addr = address.clone();
 
-                async move {
-                    let Ok((socket_address, Some(peer))) =
-                        QuicListener::get_socket_address(&address)
-                    else {
-                        return (
-                            connection_id,
-                            Err(Error::AddressError(AddressError::PeerIdMissing)),
-                        );
-                    };
+                let future = async move {
+                    let (socket_address, peer) = QuicListener::get_socket_address(&address)
+                        .map_err(DialError::AddressError)?;
+                    let peer =
+                        peer.ok_or_else(|| DialError::AddressError(AddressError::PeerIdMissing))?;
 
                     let crypto_config =
                         Arc::new(make_client_config(&keypair, Some(peer)).expect("to succeed"));
@@ -362,59 +374,58 @@ impl Transport for QuicTransport {
                             SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
                         Some(Protocol::Ip4(_)) =>
                             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-                        _ =>
-                            return (
-                                connection_id,
-                                Err(Error::AddressError(AddressError::InvalidProtocol)),
-                            ),
+                        _ => return Err(AddressError::InvalidProtocol.into()),
                     };
 
                     let client = match Endpoint::client(client_listen_address) {
                         Ok(client) => client,
                         Err(error) => {
-                            return (connection_id, Err(Error::Other(error.to_string())));
+                            return Err(DialError::from(error));
                         }
                     };
                     let connection = match client.connect_with(client_config, socket_address, "l") {
                         Ok(connection) => connection,
-                        Err(error) => {
-                            return (connection_id, Err(Error::Other(error.to_string())));
-                        }
+                        Err(error) => return Err(DialError::from(error)),
                     };
 
                     let connection = match connection.await {
                         Ok(connection) => connection,
-                        Err(error) => return (connection_id, Err(error.into())),
+                        Err(error) => return Err(DialError::from(error)),
                     };
 
                     let Some(peer) = Self::extract_peer_id(&connection) else {
-                        return (connection_id, Err(Error::InvalidCertificate));
+                        return Err(crate::error::NegotiationError::Quic(
+                            QuicError::InvalidCertificate,
+                        )
+                        .into());
                     };
 
-                    (
-                        connection_id,
-                        Ok((address, NegotiatedConnection { peer, connection })),
-                    )
-                }
+                    Ok(NegotiatedConnection { peer, connection })
+                };
+
+                async move { future.await.map(|ok| (addr.clone(), ok)).map_err(|err| (addr, err)) }
             })
             .collect();
 
         self.pending_raw_connections.push(Box::pin(async move {
-            while let Some(result) = futures.next().await {
-                let (connection_id, result) = result;
+            let mut errors = Vec::with_capacity(num_addresses);
 
+            while let Some(result) = futures.next().await {
                 match result {
                     Ok((address, connection)) => return Ok((connection_id, address, connection)),
-                    Err(error) => tracing::debug!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?error,
-                        "failed to open connection",
-                    ),
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?error,
+                            "failed to open connection",
+                        );
+                        errors.push(error)
+                    }
                 }
             }
 
-            Err(connection_id)
+            Err((connection_id, errors))
         }));
 
         Ok(())
@@ -478,9 +489,12 @@ impl Stream for QuicTransport {
                         }));
                     }
                 }
-                Err(connection_id) =>
+                Err((connection_id, errors)) =>
                     if !self.canceled.remove(&connection_id) {
-                        return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
+                        return Poll::Ready(Some(TransportEvent::OpenFailure {
+                            connection_id,
+                            errors,
+                        }));
                     },
             }
         }

@@ -422,25 +422,27 @@ where
 }
 
 /// A protocol error.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
     /// I/O error.
-    IoError(io::Error),
+    #[error("I/O error: `{0}`")]
+    IoError(#[from] io::Error),
 
     /// Received an invalid message from the remote.
+    #[error("Received an invalid message from the remote.")]
     InvalidMessage,
 
     /// A protocol (name) is invalid.
+    #[error("A protocol (name) is invalid.")]
     InvalidProtocol,
 
     /// Too many protocols have been returned by the remote.
+    #[error("Too many protocols have been returned by the remote.")]
     TooManyProtocols,
-}
 
-impl From<io::Error> for ProtocolError {
-    fn from(err: io::Error) -> ProtocolError {
-        ProtocolError::IoError(err)
-    }
+    /// The protocol is not supported.
+    #[error("The protocol is not supported.")]
+    ProtocolNotSupported,
 }
 
 impl From<ProtocolError> for io::Error {
@@ -455,25 +457,5 @@ impl From<ProtocolError> for io::Error {
 impl From<uvi::decode::Error> for ProtocolError {
     fn from(err: uvi::decode::Error) -> ProtocolError {
         Self::from(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
-    }
-}
-
-impl Error for ProtocolError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match *self {
-            ProtocolError::IoError(ref err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for ProtocolError {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        match self {
-            ProtocolError::IoError(e) => write!(fmt, "I/O error: {e}"),
-            ProtocolError::InvalidMessage => write!(fmt, "Received an invalid message."),
-            ProtocolError::InvalidProtocol => write!(fmt, "A protocol (name) is invalid."),
-            ProtocolError::TooManyProtocols => write!(fmt, "Too many protocols received."),
-        }
     }
 }

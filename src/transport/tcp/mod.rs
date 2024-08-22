@@ -23,7 +23,7 @@
 
 use crate::{
     config::Role,
-    error::Error,
+    error::{DialError, Error},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
         manager::TransportHandle,
@@ -91,12 +91,19 @@ pub(crate) struct TcpTransport {
     pending_inbound_connections: HashMap<ConnectionId, PendingInboundConnection>,
 
     /// Pending opening connections.
-    pending_connections:
-        FuturesUnordered<BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, Error)>>>,
+    pending_connections: FuturesUnordered<
+        BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, DialError)>>,
+    >,
 
     /// Pending raw, unnegotiated connections.
     pending_raw_connections: FuturesUnordered<
-        BoxFuture<'static, Result<(ConnectionId, Multiaddr, TcpStream), ConnectionId>>,
+        BoxFuture<
+            'static,
+            Result<
+                (ConnectionId, Multiaddr, TcpStream),
+                (ConnectionId, Vec<(Multiaddr, DialError)>),
+            >,
+        >,
     >,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
@@ -145,7 +152,7 @@ impl TcpTransport {
                 substream_open_timeout,
             )
             .await
-            .map_err(|error| (connection_id, error))
+            .map_err(|error| (connection_id, error.into()))
         }));
     }
 
@@ -155,8 +162,9 @@ impl TcpTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
-    ) -> crate::Result<(Multiaddr, TcpStream)> {
+    ) -> Result<(Multiaddr, TcpStream), DialError> {
         let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
+
         let remote_address =
             match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
                 Err(_) => {
@@ -166,9 +174,9 @@ impl TcpTransport {
                         ?connection_open_timeout,
                         "failed to resolve address within timeout",
                     );
-                    return Err(Error::Timeout);
+                    return Err(DialError::Timeout);
                 }
-                Ok(Err(error)) => return Err(error),
+                Ok(Err(error)) => return Err(error.into()),
                 Ok(Ok(address)) => address,
             };
 
@@ -225,7 +233,7 @@ impl TcpTransport {
                     ?connection_open_timeout,
                     "failed to connect within timeout",
                 );
-                Err(Error::Timeout)
+                Err(DialError::Timeout)
             }
             Ok(Err(error)) => Err(error.into()),
             Ok(Ok((address, stream))) => {
@@ -316,7 +324,7 @@ impl Transport for TcpTransport {
                 substream_open_timeout,
             )
             .await
-            .map_err(|error| (connection_id, error))
+            .map_err(|error| (connection_id, error.into()))
         }));
 
         Ok(())
@@ -383,6 +391,7 @@ impl Transport for TcpTransport {
         connection_id: ConnectionId,
         addresses: Vec<Multiaddr>,
     ) -> crate::Result<()> {
+        let num_addresses = addresses.len();
         let mut futures: FuturesUnordered<_> = addresses
             .into_iter()
             .map(|address| {
@@ -392,30 +401,35 @@ impl Transport for TcpTransport {
 
                 async move {
                     TcpTransport::dial_peer(
-                        address,
+                        address.clone(),
                         dial_addresses,
                         connection_open_timeout,
                         nodelay,
                     )
                     .await
+                    .map_err(|error| (address, error))
                 }
             })
             .collect();
 
         self.pending_raw_connections.push(Box::pin(async move {
+            let mut errors = Vec::with_capacity(num_addresses);
             while let Some(result) = futures.next().await {
                 match result {
                     Ok((address, stream)) => return Ok((connection_id, address, stream)),
-                    Err(error) => tracing::debug!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?error,
-                        "failed to open connection",
-                    ),
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?error,
+                            "failed to open connection",
+                        );
+                        errors.push(error)
+                    }
                 }
             }
 
-            Err(connection_id)
+            Err((connection_id, errors))
         }));
 
         Ok(())
@@ -459,11 +473,11 @@ impl Transport for TcpTransport {
                     substream_open_timeout,
                 )
                 .await
-                .map_err(|error| (connection_id, error))
+                .map_err(|error| (connection_id, error.into()))
             })
             .await
             {
-                Err(_) => Err((connection_id, Error::Timeout)),
+                Err(_) => Err((connection_id, DialError::Timeout)),
                 Ok(Err(error)) => Err(error),
                 Ok(Ok(connection)) => Ok(connection),
             }
@@ -528,9 +542,12 @@ impl Stream for TcpTransport {
                         }));
                     }
                 }
-                Err(connection_id) =>
+                Err((connection_id, errors)) =>
                     if !self.canceled.remove(&connection_id) {
-                        return Poll::Ready(Some(TransportEvent::OpenFailure { connection_id }));
+                        return Poll::Ready(Some(TransportEvent::OpenFailure {
+                            connection_id,
+                            errors,
+                        }));
                     },
             }
         }
@@ -554,6 +571,8 @@ impl Stream for TcpTransport {
                             address,
                             error,
                         }));
+                    } else {
+                        tracing::debug!(target: LOG_TARGET, ?error, ?connection_id, "Pending inbound connection failed");
                     }
                 }
             }
@@ -900,7 +919,7 @@ mod tests {
 
         assert!(!transport.pending_dials.is_empty());
         transport.pending_connections.push(Box::pin(async move {
-            Err((ConnectionId::from(0usize), Error::Unknown))
+            Err((ConnectionId::from(0usize), DialError::Timeout))
         }));
 
         assert!(std::matches!(

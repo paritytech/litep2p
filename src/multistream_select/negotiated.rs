@@ -350,19 +350,15 @@ where
 }
 
 /// Error that can happen when negotiating a protocol with the remote.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum NegotiationError {
     /// A protocol error occurred during the negotiation.
-    ProtocolError(ProtocolError),
+    #[error("A protocol error occurred during the negotiation: `{0:?}`")]
+    ProtocolError(#[from] ProtocolError),
 
     /// Protocol negotiation failed because no protocol could be agreed upon.
+    #[error("Protocol negotiation failed.")]
     Failed,
-}
-
-impl From<ProtocolError> for NegotiationError {
-    fn from(err: ProtocolError) -> NegotiationError {
-        NegotiationError::ProtocolError(err)
-    }
 }
 
 impl From<io::Error> for NegotiationError {
@@ -377,24 +373,5 @@ impl From<NegotiationError> for io::Error {
             return e.into();
         }
         io::Error::new(io::ErrorKind::Other, err)
-    }
-}
-
-impl Error for NegotiationError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            NegotiationError::ProtocolError(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for NegotiationError {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        match self {
-            NegotiationError::ProtocolError(p) =>
-                fmt.write_fmt(format_args!("Protocol error: {p}")),
-            NegotiationError::Failed => fmt.write_str("Protocol negotiation failed."),
-        }
     }
 }
