@@ -34,7 +34,10 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use std::{collections::HashMap, time::Duration};
 
 /// Default TTL for the records.
-const DEFAULT_TTL: u64 = 36 * 60 * 60;
+const DEFAULT_TTL: Duration = Duration::from_secs(36 * 60 * 60);
+
+/// Default provider record TTL.
+const DEFAULT_PROVIDER_TTL: Duration = Duration::from_secs(48 * 60 * 60);
 
 /// Protocol name.
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
@@ -65,8 +68,11 @@ pub struct Config {
     /// Incoming records validation mode.
     pub(super) validation_mode: IncomingRecordValidationMode,
 
-    /// Default record TTl.
+    /// Default record TTL.
     pub(super) record_ttl: Duration,
+
+    /// Provider record TTL.
+    pub(super) provider_ttl: Duration,
 
     /// TX channel for sending events to `KademliaHandle`.
     pub(super) event_tx: Sender<KademliaEvent>,
@@ -83,6 +89,7 @@ impl Config {
         update_mode: RoutingTableUpdateMode,
         validation_mode: IncomingRecordValidationMode,
         record_ttl: Duration,
+        provider_ttl: Duration,
     ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -98,6 +105,7 @@ impl Config {
                 update_mode,
                 validation_mode,
                 record_ttl,
+                provider_ttl,
                 codec: ProtocolCodec::UnsignedVarint(None),
                 replication_factor,
                 known_peers,
@@ -116,7 +124,8 @@ impl Config {
             Vec::new(),
             RoutingTableUpdateMode::Automatic,
             IncomingRecordValidationMode::Automatic,
-            Duration::from_secs(DEFAULT_TTL),
+            DEFAULT_TTL,
+            DEFAULT_PROVIDER_TTL,
         )
     }
 }
@@ -141,6 +150,9 @@ pub struct ConfigBuilder {
 
     /// Default TTL for the records.
     pub(super) record_ttl: Duration,
+
+    /// Default TTL for the provider records.
+    pub(super) provider_ttl: Duration,
 }
 
 impl Default for ConfigBuilder {
@@ -158,7 +170,8 @@ impl ConfigBuilder {
             protocol_names: Vec::new(),
             update_mode: RoutingTableUpdateMode::Automatic,
             validation_mode: IncomingRecordValidationMode::Automatic,
-            record_ttl: Duration::from_secs(DEFAULT_TTL),
+            record_ttl: DEFAULT_TTL,
+            provider_ttl: DEFAULT_PROVIDER_TTL,
         }
     }
 
@@ -211,6 +224,14 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set default TTL for the provider records. Recommended value is 2 * (refresh interval) + 20%.
+    ///
+    /// If unspecified, the default TTL is 48 hours.
+    pub fn with_provider_record_ttl(mut self, provider_record_ttl: Duration) -> Self {
+        self.provider_ttl = provider_record_ttl;
+        self
+    }
+
     /// Build Kademlia [`Config`].
     pub fn build(self) -> (Config, KademliaHandle) {
         Config::new(
@@ -220,6 +241,7 @@ impl ConfigBuilder {
             self.update_mode,
             self.validation_mode,
             self.record_ttl,
+            self.provider_ttl,
         )
     }
 }
