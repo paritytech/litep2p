@@ -25,7 +25,7 @@ use crate::{
             find_node::{FindNodeConfig, FindNodeContext},
             get_record::{GetRecordConfig, GetRecordContext},
         },
-        record::{Key as RecordKey, Record},
+        record::{Key as RecordKey, ProviderRecord, Record},
         types::{KademliaPeer, Key},
         PeerRecord, Quorum,
     },
@@ -45,8 +45,6 @@ mod get_record;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
 
-// TODO: store record key instead of the actual record
-
 /// Type representing a query ID.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct QueryId(pub usize);
@@ -56,7 +54,7 @@ pub struct QueryId(pub usize);
 enum QueryType {
     /// `FIND_NODE` query.
     FindNode {
-        /// Context for the `FIND_NODE` query
+        /// Context for the `FIND_NODE` query.
         context: FindNodeContext<PeerId>,
     },
 
@@ -65,7 +63,7 @@ enum QueryType {
         /// Record that needs to be stored.
         record: Record,
 
-        /// Context for the `FIND_NODE` query
+        /// Context for the `FIND_NODE` query.
         context: FindNodeContext<RecordKey>,
     },
 
@@ -82,6 +80,15 @@ enum QueryType {
     GetRecord {
         /// Context for the `GET_VALUE` query.
         context: GetRecordContext,
+    },
+
+    /// `ADD_PROVIDER` query.
+    AddProvider {
+        /// Provider record that need to be stored.
+        provider: ProviderRecord,
+
+        /// Context for the `FIND_NODE` query.
+        context: FindNodeConfig<RecordKey>,
     },
 }
 
@@ -131,7 +138,6 @@ pub enum QueryAction {
         records: Vec<PeerRecord>,
     },
 
-    // TODO: remove
     /// Query succeeded.
     QuerySucceeded {
         /// ID of the query that succeeded.

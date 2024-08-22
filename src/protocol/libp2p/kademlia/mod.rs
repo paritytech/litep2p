@@ -791,7 +791,11 @@ impl Kademlia {
                 event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         if let Err(error) = self.on_connection_established(peer) {
-                            tracing::debug!(target: LOG_TARGET, ?error, "failed to handle established connection");
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to handle established connection",
+                            );
                         }
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
@@ -801,7 +805,10 @@ impl Kademlia {
                         match direction {
                             Direction::Inbound => self.on_inbound_substream(peer, substream).await,
                             Direction::Outbound(substream_id) => {
-                                if let Err(error) = self.on_outbound_substream(peer, substream_id, substream).await {
+                                if let Err(error) = self
+                                    .on_outbound_substream(peer, substream_id, substream)
+                                    .await
+                                {
                                     tracing::debug!(
                                         target: LOG_TARGET,
                                         ?peer,
@@ -816,7 +823,8 @@ impl Kademlia {
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error).await;
                     }
-                    Some(TransportEvent::DialFailure { peer, address }) => self.on_dial_failure(peer, address),
+                    Some(TransportEvent::DialFailure { peer, address }) =>
+                        self.on_dial_failure(peer, address),
                     None => return Err(Error::EssentialTaskClosed),
                 },
                 context = self.executor.next() => {
@@ -824,14 +832,32 @@ impl Kademlia {
 
                     match result {
                         QueryResult::SendSuccess { substream } => {
-                            tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "message sent to peer");
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                query = ?query_id,
+                                "message sent to peer",
+                            );
                             let _ = substream.close().await;
                         }
                         QueryResult::ReadSuccess { substream, message } => {
-                            tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "message read from peer");
+                            tracing::trace!(target: LOG_TARGET,
+                                ?peer,
+                                query = ?query_id,
+                                "message read from peer",
+                            );
 
-                            if let Err(error) = self.on_message_received(peer, query_id, message, substream).await {
-                                tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to process message");
+                            if let Err(error) = self.on_message_received(
+                                peer,
+                                query_id,
+                                message,
+                                substream
+                            ).await {
+                                tracing::debug!(target: LOG_TARGET,
+                                    ?peer,
+                                    ?error,
+                                    "failed to process message",
+                                );
                             }
                         }
                         QueryResult::SubstreamClosed | QueryResult::Timeout => {
@@ -850,22 +876,36 @@ impl Kademlia {
                 command = self.cmd_rx.recv() => {
                     match command {
                         Some(KademliaCommand::FindNode { peer, query_id }) => {
-                            tracing::debug!(target: LOG_TARGET, ?peer, query = ?query_id, "starting `FIND_NODE` query");
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                query = ?query_id,
+                                "starting `FIND_NODE` query",
+                            );
 
                             self.engine.start_find_node(
                                 query_id,
                                 peer,
-                                self.routing_table.closest(Key::from(peer), self.replication_factor).into()
+                                self.routing_table
+                                    .closest(Key::from(peer), self.replication_factor)
+                                    .into()
                             );
                         }
                         Some(KademliaCommand::PutRecord { mut record, query_id }) => {
-                            tracing::debug!(target: LOG_TARGET, query = ?query_id, key = ?record.key, "store record to DHT");
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                query = ?query_id,
+                                key = ?record.key,
+                                "store record to DHT",
+                            );
 
                             // For `PUT_VALUE` requests originating locally we are always the publisher.
                             record.publisher = Some(self.local_key.clone().into_preimage());
 
                             // Make sure TTL is set.
-                            record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+                            record.expires = record
+                                .expires
+                                .or_else(|| Some(Instant::now() + self.record_ttl));
 
                             let key = Key::new(record.key.clone());
 
@@ -877,11 +917,23 @@ impl Kademlia {
                                 self.routing_table.closest(key, self.replication_factor).into(),
                             );
                         }
-                        Some(KademliaCommand::PutRecordToPeers { mut record, query_id, peers, update_local_store }) => {
-                            tracing::debug!(target: LOG_TARGET, query = ?query_id, key = ?record.key, "store record to DHT to specified peers");
+                        Some(KademliaCommand::PutRecordToPeers {
+                            mut record,
+                            query_id,
+                            peers,
+                            update_local_store,
+                        }) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                query = ?query_id,
+                                key = ?record.key,
+                                "store record to DHT to specified peers",
+                            );
 
                             // Make sure TTL is set.
-                            record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+                            record.expires = record
+                                .expires
+                                .or_else(|| Some(Instant::now() + self.record_ttl));
 
                             if update_local_store {
                                 self.store.put(record.clone());
@@ -895,7 +947,8 @@ impl Kademlia {
 
                                 match self.routing_table.entry(Key::from(peer)) {
                                     KBucketEntry::Occupied(entry) => Some(entry.clone()),
-                                    KBucketEntry::Vacant(entry) if !entry.addresses.is_empty() => Some(entry.clone()),
+                                    KBucketEntry::Vacant(entry) if !entry.addresses.is_empty() =>
+                                        Some(entry.clone()),
                                     _ => None,
                                 }
                             }).collect();
@@ -904,6 +957,36 @@ impl Kademlia {
                                 query_id,
                                 record,
                                 peers,
+                            );
+                        }
+                        Some(KademliaCommand::StartProviding {
+                            key,
+                            public_addresses,
+                            query_id
+                        }) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                query = ?query_id,
+                                ?key,
+                                ?public_addresses,
+                                "register as content provider"
+                            );
+
+                            let provider = ProviderRecord {
+                                key: key.clone(),
+                                provider: self.service.local_peer_id,
+                                addresses: public_addresses,
+                                expires: Instant::now() + self.provider_ttl,
+                            };
+
+                            self.store.put_provider(provider);
+
+                            self.engine.start_add_provider(
+                                query_id,
+                                provider,
+                                self.routing_table
+                                    .closest(Key::new(key), self.replication_factor)
+                                    .into(),
                             );
                         }
                         Some(KademliaCommand::GetRecord { key, quorum, query_id }) => {
