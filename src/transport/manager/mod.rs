@@ -1776,8 +1776,9 @@ mod tests {
         executor::DefaultExecutor,
         transport::{dummy::DummyTransport, KEEP_ALIVE_TIMEOUT},
     };
+    #[cfg(feature = "websocket")]
+    use std::borrow::Cow;
     use std::{
-        borrow::Cow,
         net::{Ipv4Addr, Ipv6Addr},
         sync::Arc,
     };
@@ -4082,6 +4083,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "websocket")]
     #[tokio::test]
     async fn opening_errors_are_reported() {
         let _ = tracing_subscriber::fmt()
