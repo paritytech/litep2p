@@ -83,13 +83,16 @@ mod schema {
 }
 
 /// Peer action.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum PeerAction {
     /// Send `FIND_NODE` message to peer.
     SendFindNode(QueryId),
 
     /// Send `PUT_VALUE` message to peer.
     SendPutValue(Bytes),
+
+    /// Send `ADD_PROVIDER` message to peer.
+    SendAddProvider(Bytes),
 }
 
 /// Peer context.
@@ -335,7 +338,12 @@ impl Kademlia {
                 }
             }
             Some(PeerAction::SendPutValue(message)) => {
-                tracing::trace!(target: LOG_TARGET, ?peer, "send `PUT_VALUE` response");
+                tracing::trace!(target: LOG_TARGET, ?peer, "send `PUT_VALUE` message");
+
+                self.executor.send_message(peer, message, substream);
+            }
+            Some(PeerAction::SendAddProvider(message)) => {
+                tracing::trace!(target: LOG_TARGET, ?peer, "send `ADD_PROVIDER` message");
 
                 self.executor.send_message(peer, message, substream);
             }
@@ -755,6 +763,52 @@ impl Kademlia {
 
                 Ok(())
             }
+            QueryAction::AddProviderToFoundNodes { provider, peers } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    provided_key = ?provider.key,
+                    num_peers = ?peers.len(),
+                    "add provider record to found peers",
+                );
+
+                let provided_key = provider.key.clone();
+                let message = KademliaMessage::add_provider(provider);
+                let peer_action = PeerAction::SendAddProvider(message);
+
+                for peer in peers {
+                    match self.service.open_substream(peer.peer) {
+                        Ok(substream_id) => {
+                            self.pending_substreams.insert(substream_id, peer.peer);
+                            self.peers
+                                .entry(peer.peer)
+                                .or_default()
+                                .pending_actions
+                                .insert(substream_id, peer_action.clone());
+                        }
+                        Err(_) => match self.service.dial(&peer.peer) {
+                            Ok(_) => match self.pending_dials.entry(peer.peer) {
+                                Entry::Occupied(entry) => {
+                                    entry.into_mut().push(peer_action.clone());
+                                }
+                                Entry::Vacant(entry) => {
+                                    entry.insert(vec![peer_action.clone()]);
+                                }
+                            },
+                            Err(error) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?provided_key,
+                                    ?error,
+                                    "failed to dial peer",
+                                )
+                            }
+                        },
+                    }
+                }
+
+                Ok(())
+            }
             QueryAction::GetRecordQueryDone { query_id, records } => {
                 let _ = self
                     .event_tx
@@ -979,7 +1033,7 @@ impl Kademlia {
                                 expires: Instant::now() + self.provider_ttl,
                             };
 
-                            self.store.put_provider(provider);
+                            self.store.put_provider(provider.clone());
 
                             self.engine.start_add_provider(
                                 query_id,

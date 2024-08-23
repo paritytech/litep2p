@@ -88,7 +88,7 @@ enum QueryType {
         provider: ProviderRecord,
 
         /// Context for the `FIND_NODE` query.
-        context: FindNodeConfig<RecordKey>,
+        context: FindNodeContext<RecordKey>,
     },
 }
 
@@ -126,6 +126,15 @@ pub enum QueryAction {
         record: Record,
 
         /// Peers for whom the `PUT_VALUE` must be sent to.
+        peers: Vec<KademliaPeer>,
+    },
+
+    /// Add the provider record to nodes closest to the target key.
+    AddProviderToFoundNodes {
+        /// Provider record.
+        provider: ProviderRecord,
+
+        /// Peers for whom the `ADD_PROVIDER` must be sent to.
         peers: Vec<KademliaPeer>,
     },
 
@@ -314,6 +323,41 @@ impl QueryEngine {
         query_id
     }
 
+    /// Start `ADD_PROVIDER` query.
+    pub fn start_add_provider(
+        &mut self,
+        query_id: QueryId,
+        provider: ProviderRecord,
+        candidates: VecDeque<KademliaPeer>,
+    ) -> QueryId {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            ?provider,
+            num_peers = ?candidates.len(),
+            "start `ADD_PROVIDER` query",
+        );
+
+        let target = Key::new(provider.key.clone());
+        let config = FindNodeConfig {
+            local_peer_id: self.local_peer_id,
+            replication_factor: self.replication_factor,
+            parallelism_factor: self.parallelism_factor,
+            query: query_id,
+            target,
+        };
+
+        self.queries.insert(
+            query_id,
+            QueryType::AddProvider {
+                provider,
+                context: FindNodeContext::new(config, candidates),
+            },
+        );
+
+        query_id
+    }
+
     /// Register response failure from a queried peer.
     pub fn register_response_failure(&mut self, query: QueryId, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response failure");
@@ -332,6 +376,9 @@ impl QueryEngine {
                 context.register_response_failure(peer);
             }
             Some(QueryType::GetRecord { context }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::AddProvider { context, .. }) => {
                 context.register_response_failure(peer);
             }
         }
@@ -369,6 +416,12 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
+            Some(QueryType::AddProvider { context, .. }) => match message {
+                KademliaMessage::FindNode { peers, .. } => {
+                    context.register_response(peer, peers);
+                }
+                _ => unreachable!(),
+            },
         }
     }
 
@@ -385,6 +438,7 @@ impl QueryEngine {
             Some(QueryType::PutRecord { context, .. }) => context.next_peer_action(peer),
             Some(QueryType::PutRecordToPeers { context, .. }) => context.next_peer_action(peer),
             Some(QueryType::GetRecord { context }) => context.next_peer_action(peer),
+            Some(QueryType::AddProvider { context, .. }) => context.next_peer_action(peer),
         }
     }
 
@@ -409,6 +463,10 @@ impl QueryEngine {
                 query_id: context.config.query,
                 records: context.found_records(),
             },
+            QueryType::AddProvider { provider, context } => QueryAction::AddProviderToFoundNodes {
+                provider,
+                peers: context.responses.into_values().collect::<Vec<_>>(),
+            },
         }
     }
 
@@ -428,6 +486,7 @@ impl QueryEngine {
                 QueryType::PutRecord { context, .. } => context.next_action(),
                 QueryType::PutRecordToPeers { context, .. } => context.next_action(),
                 QueryType::GetRecord { context } => context.next_action(),
+                QueryType::AddProvider { context, .. } => context.next_action(),
             };
 
             match action {
