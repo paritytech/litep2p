@@ -34,6 +34,9 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_node";
 
+/// Default timeout for a peer to respond to a query.
+const DEFAULT_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The configuration needed to instantiate a new [`FindNodeContext`].
 #[derive(Debug, Clone)]
 pub struct FindNodeConfig<T: Clone + Into<Vec<u8>>> {
@@ -63,7 +66,7 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     kad_message: Bytes,
 
     /// Peers from whom the `QueryEngine` is waiting to hear a response.
-    pub pending: HashMap<PeerId, KademliaPeer>,
+    pub pending: HashMap<PeerId, (KademliaPeer, std::time::Instant)>,
 
     /// Queried candidates.
     ///
@@ -76,6 +79,18 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
 
     /// Responses.
     pub responses: BTreeMap<Distance, KademliaPeer>,
+
+    /// The timeout after which the pending request is no longer
+    /// counting towards the parallelism factor.
+    ///
+    /// This is used to prevent the query from getting stuck when a peer
+    /// is slow or fails to respond in due time.
+    peer_timeout: std::time::Duration,
+    /// The number of pending responses that count towards the parallelism factor.
+    ///
+    /// These represent the number of peers added to the `Self::pending` minus the number of peers
+    /// that have failed to respond within the `Self::peer_timeout`
+    pending_responses: usize,
 }
 
 impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
@@ -98,27 +113,32 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             pending: HashMap::new(),
             queried: HashSet::new(),
             responses: BTreeMap::new(),
+
+            peer_timeout: DEFAULT_PEER_TIMEOUT,
+            pending_responses: 0,
         }
     }
 
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
-        let Some(peer) = self.pending.remove(&peer) else {
-            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist");
+        let Some((peer, instant)) = self.pending.remove(&peer) else {
+            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist during response failure");
             return;
         };
+
+        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "peer failed to respond");
 
         self.queried.insert(peer.peer);
     }
 
     /// Register `FIND_NODE` response from `peer`.
     pub fn register_response(&mut self, peer: PeerId, peers: Vec<KademliaPeer>) {
-        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer");
-
-        let Some(peer) = self.pending.remove(&peer) else {
+        let Some((peer, instant)) = self.pending.remove(&peer) else {
             tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer but didn't expect it");
             return;
         };
+
+        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "received response from peer");
 
         // calculate distance for `peer` from target and insert it if
         //  a) the map doesn't have 20 responses
@@ -189,7 +209,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         let peer = candidate.peer;
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "current candidate");
-        self.pending.insert(candidate.peer, candidate.clone());
+        self.pending.insert(candidate.peer, (candidate, std::time::Instant::now()));
 
         Some(QueryAction::SendMessage {
             query: self.config.query,
