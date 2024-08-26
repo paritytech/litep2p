@@ -25,7 +25,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 
 use std::{
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
     time::Duration,
 };
 
@@ -74,6 +74,9 @@ pub struct QueryContext {
 pub struct QueryExecutor {
     /// Pending futures.
     futures: FuturesUnordered<BoxFuture<'static, QueryContext>>,
+
+    /// Wake up the task when new futures (messages) are inserted.
+    waker: Option<Waker>,
 }
 
 impl QueryExecutor {
@@ -81,11 +84,20 @@ impl QueryExecutor {
     pub fn new() -> Self {
         Self {
             futures: FuturesUnordered::new(),
+            waker: None,
         }
+    }
+
+    /// Wake up the currently saved waker. This ensures the query executor is polled
+    /// again after new futures are inserted.
+    fn wake_up(&mut self) {
+        self.waker.take().map(|waker| waker.wake());
     }
 
     /// Send message to remote peer.
     pub fn send_message(&mut self, peer: PeerId, message: Bytes, mut substream: Substream) {
+        self.wake_up();
+
         self.futures.push(Box::pin(async move {
             match substream.send_framed(message).await {
                 Ok(_) => QueryContext {
@@ -109,6 +121,8 @@ impl QueryExecutor {
         query_id: Option<QueryId>,
         mut substream: Substream,
     ) {
+        self.wake_up();
+
         self.futures.push(Box::pin(async move {
             match tokio::time::timeout(READ_TIMEOUT, substream.next()).await {
                 Err(_) => QueryContext {
@@ -138,6 +152,8 @@ impl QueryExecutor {
         message: Bytes,
         mut substream: Substream,
     ) {
+        self.wake_up();
+
         self.futures.push(Box::pin(async move {
             if let Err(_) = substream.send_framed(message).await {
                 let _ = substream.close().await;
@@ -173,10 +189,19 @@ impl Stream for QueryExecutor {
     type Item = QueryContext;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.futures.is_empty() {
-            true => Poll::Pending,
-            false => self.futures.poll_next_unpin(cx),
+        if self.futures.is_empty() {
+            // We must save the current waker to wake up the task when new futures are inserted.
+            //
+            // Otherwise, simply returning `Poll::Pending` here would cause the task to never be
+            // woken up again.
+            //
+            // We were previously relying on some other task from the `loop tokio::select!` to
+            // finish.
+            self.waker = Some(cx.waker().clone());
+            return Poll::Pending;
         }
+
+        self.futures.poll_next_unpin(cx)
     }
 }
 
