@@ -386,7 +386,7 @@ impl Substream {
     /// # Panics
     ///
     /// Panics if no codec is provided.
-    pub async fn send_framed(&mut self, mut bytes: Bytes) -> crate::Result<()> {
+    pub async fn send_framed(&mut self, bytes: Bytes) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
@@ -406,18 +406,14 @@ impl Substream {
                 ProtocolCodec::UnsignedVarint(max_size) => {
                     check_size!(max_size, bytes.len());
 
+                    // Write the length of the frame.
                     let mut buffer = [0u8; 10];
-                    let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
-                    let mut offset = 0;
+                    let encoded_len =
+                        unsigned_varint::encode::usize(bytes.len(), &mut buffer).len();
+                    substream.write_all(&buffer[..encoded_len]).await?;
 
-                    while offset < len.len() {
-                        offset += substream.write(&len[offset..]).await?;
-                    }
-
-                    while bytes.has_remaining() {
-                        let nwritten = substream.write(&bytes).await?;
-                        bytes.advance(nwritten);
-                    }
+                    // Write the frame.
+                    substream.write_all(bytes.as_ref()).await?;
 
                     substream.flush().await.map_err(From::from)
                 }
