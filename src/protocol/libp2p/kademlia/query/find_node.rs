@@ -378,6 +378,64 @@ mod tests {
     }
 
     #[test]
+    fn fulfill_parallelism_with_timeout_optimization() {
+        let config = FindNodeConfig {
+            parallelism_factor: 3,
+            ..default_config()
+        };
+
+        let in_peers_set = (0..4).map(|_| PeerId::random()).collect::<HashSet<_>>();
+        let in_peers = in_peers_set.iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = FindNodeContext::new(config, in_peers);
+        // Test overwrite.
+        context.peer_timeout = std::time::Duration::from_secs(1);
+
+        for num in 0..3 {
+            let event = context.next_action().unwrap();
+            match event {
+                QueryAction::SendMessage { query, peer, .. } => {
+                    assert_eq!(query, QueryId(0));
+                    // Added as pending.
+                    assert_eq!(context.pending.len(), num + 1);
+                    assert!(context.pending.contains_key(&peer));
+
+                    // Check the peer is the one provided.
+                    assert!(in_peers_set.contains(&peer));
+                }
+                _ => panic!("Unexpected event"),
+            }
+        }
+
+        // Fulfilled parallelism.
+        assert!(context.next_action().is_none());
+
+        // Sleep more than 1 second.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // The pending responses are reset only on the next query action.
+        assert_eq!(context.pending_responses, 3);
+        assert_eq!(context.pending.len(), 3);
+
+        // This allows other peers to be queried.
+        let event = context.next_action().unwrap();
+        match event {
+            QueryAction::SendMessage { query, peer, .. } => {
+                assert_eq!(query, QueryId(0));
+                // Added as pending.
+                assert_eq!(context.pending.len(), 4);
+                assert!(context.pending.contains_key(&peer));
+
+                // Check the peer is the one provided.
+                assert!(in_peers_set.contains(&peer));
+            }
+            _ => panic!("Unexpected event"),
+        }
+
+        assert_eq!(context.pending_responses, 1);
+        assert_eq!(context.pending.len(), 4);
+    }
+
+    #[test]
     fn completes_when_responses() {
         let config = FindNodeConfig {
             parallelism_factor: 3,
