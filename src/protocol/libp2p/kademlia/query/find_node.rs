@@ -210,6 +210,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "current candidate");
         self.pending.insert(candidate.peer, (candidate, std::time::Instant::now()));
+        self.pending_responses = self.pending_responses.saturating_add(1);
 
         Some(QueryAction::SendMessage {
             query: self.config.query,
@@ -241,9 +242,22 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             };
         }
 
+        for (peer, instant) in self.pending.values() {
+            if instant.elapsed() > self.peer_timeout {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    query = ?self.config.query,
+                    ?peer,
+                    elapsed = ?instant.elapsed(),
+                    "peer no longer counting towards parallelism factor"
+                );
+                self.pending_responses = self.pending_responses.saturating_sub(1);
+            }
+        }
+
         // At this point, we either have pending responses or candidates to query; and we need more
         // results. Ensure we do not exceed the parallelism factor.
-        if self.pending.len() == self.config.parallelism_factor {
+        if self.pending_responses == self.config.parallelism_factor {
             return None;
         }
 
