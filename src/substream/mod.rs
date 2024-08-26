@@ -375,6 +375,7 @@ impl Substream {
         io.flush().await.map_err(From::from)
     }
 
+    /// Send unsigned varint payload to remote peer.
     async fn send_unsigned_varint_payload<T: AsyncWrite + Unpin>(
         io: &mut T,
         bytes: Bytes,
