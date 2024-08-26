@@ -125,6 +125,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist during response failure");
             return;
         };
+        self.pending_responses = self.pending_responses.saturating_sub(1);
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "peer failed to respond");
 
@@ -137,6 +138,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer but didn't expect it");
             return;
         };
+        self.pending_responses = self.pending_responses.saturating_sub(1);
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "received response from peer");
 
