@@ -369,7 +369,10 @@ impl Substream {
 
         io.write_all(&payload)
             .await
-            .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
+            .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))?;
+
+        // Flush the stream.
+        io.flush().await.map_err(From::from)
     }
 
     async fn send_unsigned_varint_payload<T: AsyncWrite + Unpin>(
