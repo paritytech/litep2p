@@ -407,7 +407,7 @@ impl Substream {
                     check_size!(max_size, bytes.len());
 
                     // Write the length of the frame.
-                    let mut buffer = [0u8; 10];
+                    let mut buffer = unsigned_varint::encode::usize_buffer();
                     let encoded_len =
                         unsigned_varint::encode::usize(bytes.len(), &mut buffer).len();
                     substream.write_all(&buffer[..encoded_len]).await?;
@@ -426,7 +426,7 @@ impl Substream {
                 ProtocolCodec::UnsignedVarint(max_size) => {
                     check_size!(max_size, bytes.len());
 
-                    let mut buffer = [0u8; 10];
+                    let mut buffer = unsigned_varint::encode::usize_buffer();
                     let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
                     let mut offset = 0;
 
@@ -450,7 +450,7 @@ impl Substream {
                 ProtocolCodec::UnsignedVarint(max_size) => {
                     check_size!(max_size, bytes.len());
 
-                    let mut buffer = [0u8; 10];
+                    let mut buffer = unsigned_varint::encode::usize_buffer();
                     let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
                     let len = BytesMut::from(len);
 
@@ -465,7 +465,7 @@ impl Substream {
                 ProtocolCodec::UnsignedVarint(max_size) => {
                     check_size!(max_size, bytes.len());
 
-                    let mut buffer = [0u8; 10];
+                    let mut buffer = unsigned_varint::encode::usize_buffer();
                     let len = unsigned_varint::encode::usize(bytes.len(), &mut buffer);
                     let mut offset = 0;
 
@@ -718,7 +718,7 @@ impl Sink<Bytes> for Substream {
                 check_size!(max_size, item.len());
 
                 let len = {
-                    let mut buffer = [0u8; 10];
+                    let mut buffer = unsigned_varint::encode::usize_buffer();
                     let len = unsigned_varint::encode::usize(item.len(), &mut buffer);
                     BytesMut::from(len)
                 };
