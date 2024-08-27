@@ -24,8 +24,9 @@ use bytes::{Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 
 use std::{
+    future::Future,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
     time::Duration,
 };
 
@@ -70,17 +71,64 @@ pub struct QueryContext {
     pub result: QueryResult,
 }
 
+/// Wrapper around [`FuturesUnordered`] that wakes a task up automatically.
+#[derive(Default)]
+pub struct FuturesStream<F> {
+    futures: FuturesUnordered<F>,
+    waker: Option<Waker>,
+}
+
+impl<F> FuturesStream<F> {
+    /// Create new [`FuturesStream`].
+    pub fn new() -> Self {
+        Self {
+            futures: FuturesUnordered::new(),
+            waker: None,
+        }
+    }
+
+    /// Push a future for processing.
+    pub fn push(&mut self, future: F) {
+        self.futures.push(future);
+
+        if let Some(waker) = self.waker.take() {
+            waker.wake();
+        }
+    }
+}
+
+impl<F: Future> Stream for FuturesStream<F> {
+    type Item = <F as Future>::Output;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let Poll::Ready(Some(result)) = self.futures.poll_next_unpin(cx) else {
+            // We must save the current waker to wake up the task when new futures are inserted.
+            //
+            // Otherwise, simply returning `Poll::Pending` here would cause the task to never be
+            // woken up again.
+            //
+            // We were previously relying on some other task from the `loop tokio::select!` to
+            // finish.
+            self.waker = Some(cx.waker().clone());
+
+            return Poll::Pending;
+        };
+
+        Poll::Ready(Some(result))
+    }
+}
+
 /// Query executor.
 pub struct QueryExecutor {
     /// Pending futures.
-    futures: FuturesUnordered<BoxFuture<'static, QueryContext>>,
+    futures: FuturesStream<BoxFuture<'static, QueryContext>>,
 }
 
 impl QueryExecutor {
     /// Create new [`QueryExecutor`]
     pub fn new() -> Self {
         Self {
-            futures: FuturesUnordered::new(),
+            futures: FuturesStream::new(),
         }
     }
 
@@ -173,10 +221,7 @@ impl Stream for QueryExecutor {
     type Item = QueryContext;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.futures.is_empty() {
-            true => Poll::Pending,
-            false => self.futures.poll_next_unpin(cx),
-        }
+        self.futures.poll_next_unpin(cx)
     }
 }
 
