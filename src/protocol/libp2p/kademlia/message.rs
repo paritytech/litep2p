@@ -193,7 +193,6 @@ impl KademliaMessage {
     }
 
     /// Create `GET_PROVIDERS` request for `key`.
-    #[allow(unused)]
     pub fn get_providers_request(key: RecordKey) -> Vec<u8> {
         let message = schema::kademlia::Message {
             key: key.to_vec(),

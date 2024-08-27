@@ -1088,13 +1088,22 @@ impl Kademlia {
                                     self.engine.start_get_record(
                                         query_id,
                                         key.clone(),
-                                        self.routing_table.closest(Key::new(key.clone()), self.replication_factor).into(),
+                                        self.routing_table.closest(Key::new(key), self.replication_factor).into(),
                                         quorum,
                                         if record.is_some() { 1 } else { 0 },
                                     );
                                 }
                             }
 
+                        }
+                        Some(KademliaCommand::GetProviders { key, query_id}) => {
+                            tracing::debug!(target: LOG_TARGET, ?key, "get providers from DHT");
+
+                            self.engine.start_get_providers(
+                                query_id,
+                                key.clone(),
+                                self.routing_table.closest(Key::new(key), self.replication_factor),
+                            );
                         }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
                             tracing::trace!(

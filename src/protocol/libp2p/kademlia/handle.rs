@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{PeerRecord, QueryId, Record, RecordKey},
+    protocol::libp2p::kademlia::{KademliaPeer, PeerRecord, QueryId, Record, RecordKey},
     PeerId,
 };
 
@@ -133,6 +133,15 @@ pub(crate) enum KademliaCommand {
         query_id_tx: oneshot::Sender<QueryId>,
     },
 
+    /// Get providers from DHT.
+    GetProviders {
+        /// Provided key.
+        key: RecordKey,
+
+        /// Query ID for the query.
+        query_id: QueryId,
+    },
+
     /// Register as a content provider for `key`.
     StartProviding {
         /// Provided key.
@@ -187,6 +196,17 @@ pub enum KademliaEvent {
 
         /// Found records.
         records: RecordsType,
+    },
+
+    /// `GET_PROVIDERS` query succeeded.
+    GetProvidersSuccess {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Found providers with cached addresses.
+        // TODO: return only `max_providers_per_key` providers from the peers closest to the
+        // provided key.
+        providers: Vec<KademliaPeer>,
     },
 
     /// `PUT_VALUE` query succeeded.
@@ -332,6 +352,14 @@ impl KademliaHandle {
             .map_err(|_| ())?;
 
         query_id_rx.await.map_err(|_| ())
+    }
+
+    /// Get providers from DHT.
+    pub async fn get_providers(&mut self, key: RecordKey) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::GetProviders { key, query_id }).await;
+
+        query_id
     }
 
     /// Store the record in the local store. Used in combination with
