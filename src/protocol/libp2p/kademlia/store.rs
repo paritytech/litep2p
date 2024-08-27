@@ -21,8 +21,12 @@
 //! Memory store implementation for Kademlia.
 
 #![allow(unused)]
-use crate::protocol::libp2p::kademlia::record::{Key, ProviderRecord, Record};
+use crate::{
+    protocol::libp2p::kademlia::record::{Key, ProviderRecord, Record},
+    PeerId,
+};
 
+use futures::{future::BoxFuture, stream::FuturesUnordered};
 use std::{
     collections::{hash_map::Entry, HashMap},
     num::NonZeroUsize,
@@ -36,30 +40,42 @@ pub enum MemoryStoreEvent {}
 
 /// Memory store.
 pub struct MemoryStore {
+    /// Local peer ID. Used to track local providers.
+    local_peer_id: PeerId,
+    /// Configuration.
+    config: MemoryStoreConfig,
     /// Records.
     records: HashMap<Key, Record>,
     /// Provider records.
     provider_keys: HashMap<Key, Vec<ProviderRecord>>,
-    /// Configuration.
-    config: MemoryStoreConfig,
+    /// Local providers.
+    local_providers: HashMap<Key, ProviderRecord>,
+    /// Futures to signal it's time to republish a local provider.
+    pending_provider_republish: FuturesUnordered<BoxFuture<'static, Key>>,
 }
 
 impl MemoryStore {
     /// Create new [`MemoryStore`].
-    pub fn new() -> Self {
+    pub fn new(local_peer_id: PeerId) -> Self {
         Self {
+            local_peer_id,
+            config: MemoryStoreConfig::default(),
             records: HashMap::new(),
             provider_keys: HashMap::new(),
-            config: MemoryStoreConfig::default(),
+            local_providers: HashMap::new(),
+            pending_provider_republish: FuturesUnordered::new(),
         }
     }
 
     /// Create new [`MemoryStore`] with the provided configuration.
-    pub fn with_config(config: MemoryStoreConfig) -> Self {
+    pub fn with_config(local_peer_id: PeerId, config: MemoryStoreConfig) -> Self {
         Self {
+            local_peer_id,
+            config,
             records: HashMap::new(),
             provider_keys: HashMap::new(),
-            config,
+            local_providers: HashMap::new(),
+            pending_provider_republish: FuturesUnordered::new(),
         }
     }
 
@@ -263,7 +279,7 @@ mod tests {
 
     #[test]
     fn put_get_record() {
-        let mut store = MemoryStore::new();
+        let mut store = MemoryStore::new(PeerId::random());
         let key = Key::from(vec![1, 2, 3]);
         let record = Record::new(key.clone(), vec![4, 5, 6]);
 
@@ -273,11 +289,14 @@ mod tests {
 
     #[test]
     fn max_records() {
-        let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_records: 1,
-            max_record_size_bytes: 1024,
-            ..Default::default()
-        });
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                max_records: 1,
+                max_record_size_bytes: 1024,
+                ..Default::default()
+            },
+        );
 
         let key1 = Key::from(vec![1, 2, 3]);
         let key2 = Key::from(vec![4, 5, 6]);
@@ -293,7 +312,7 @@ mod tests {
 
     #[test]
     fn expired_record_removed() {
-        let mut store = MemoryStore::new();
+        let mut store = MemoryStore::new(PeerId::random());
         let key = Key::from(vec![1, 2, 3]);
         let record = Record {
             key: key.clone(),
@@ -310,7 +329,7 @@ mod tests {
 
     #[test]
     fn new_record_overwrites() {
-        let mut store = MemoryStore::new();
+        let mut store = MemoryStore::new(PeerId::random());
         let key = Key::from(vec![1, 2, 3]);
         let record1 = Record {
             key: key.clone(),
@@ -334,11 +353,14 @@ mod tests {
 
     #[test]
     fn max_record_size() {
-        let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_records: 1024,
-            max_record_size_bytes: 2,
-            ..Default::default()
-        });
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                max_records: 1024,
+                max_record_size_bytes: 2,
+                ..Default::default()
+            },
+        );
 
         let key = Key::from(vec![1, 2, 3]);
         let record = Record::new(key.clone(), vec![4, 5]);
@@ -352,7 +374,7 @@ mod tests {
 
     #[test]
     fn put_get_provider() {
-        let mut store = MemoryStore::new();
+        let mut store = MemoryStore::new(PeerId::random());
         let provider = ProviderRecord {
             key: Key::from(vec![1, 2, 3]),
             provider: PeerId::random(),
@@ -366,7 +388,7 @@ mod tests {
 
     #[test]
     fn multiple_providers_per_key() {
-        let mut store = MemoryStore::new();
+        let mut store = MemoryStore::new(PeerId::random());
         let key = Key::from(vec![1, 2, 3]);
         let provider1 = ProviderRecord {
             key: key.clone(),
@@ -392,7 +414,7 @@ mod tests {
 
     #[test]
     fn providers_sorted_by_distance() {
-        let mut store = MemoryStore::new();
+        let mut store = MemoryStore::new(PeerId::random());
         let key = Key::from(vec![1, 2, 3]);
         let providers = (0..10)
             .map(|_| ProviderRecord {
@@ -418,10 +440,13 @@ mod tests {
 
     #[test]
     fn max_providers_per_key() {
-        let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_providers_per_key: 10,
-            ..Default::default()
-        });
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                max_providers_per_key: 10,
+                ..Default::default()
+            },
+        );
         let key = Key::from(vec![1, 2, 3]);
         let providers = (0..20)
             .map(|_| ProviderRecord {
@@ -440,10 +465,13 @@ mod tests {
 
     #[test]
     fn closest_providers_kept() {
-        let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_providers_per_key: 10,
-            ..Default::default()
-        });
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                max_providers_per_key: 10,
+                ..Default::default()
+            },
+        );
         let key = Key::from(vec![1, 2, 3]);
         let providers = (0..20)
             .map(|_| ProviderRecord {
@@ -470,10 +498,13 @@ mod tests {
 
     #[test]
     fn furthest_provider_discarded() {
-        let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_providers_per_key: 10,
-            ..Default::default()
-        });
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                max_providers_per_key: 10,
+                ..Default::default()
+            },
+        );
         let key = Key::from(vec![1, 2, 3]);
         let providers = (0..11)
             .map(|_| ProviderRecord {
@@ -503,10 +534,13 @@ mod tests {
 
     #[test]
     fn update_provider_in_place() {
-        let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_providers_per_key: 10,
-            ..Default::default()
-        });
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                max_providers_per_key: 10,
+                ..Default::default()
+            },
+        );
         let key = Key::from(vec![1, 2, 3]);
         let peer_ids = (0..10).map(|_| PeerId::random()).collect::<Vec<_>>();
         let peer_id0 = peer_ids[0];
@@ -558,7 +592,7 @@ mod tests {
 
     #[test]
     fn provider_record_expires() {
-        let mut store = MemoryStore::new();
+        let mut store = MemoryStore::new(PeerId::random());
         let provider = ProviderRecord {
             key: Key::from(vec![1, 2, 3]),
             provider: PeerId::random(),
@@ -575,7 +609,7 @@ mod tests {
 
     #[test]
     fn individual_provider_record_expires() {
-        let mut store = MemoryStore::new();
+        let mut store = MemoryStore::new(PeerId::random());
         let key = Key::from(vec![1, 2, 3]);
         let provider1 = ProviderRecord {
             key: key.clone(),
@@ -600,10 +634,13 @@ mod tests {
 
     #[test]
     fn max_addresses_per_provider() {
-        let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_provider_addresses: 2,
-            ..Default::default()
-        });
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                max_provider_addresses: 2,
+                ..Default::default()
+            },
+        );
         let key = Key::from(vec![1, 2, 3]);
         let provider = ProviderRecord {
             key: Key::from(vec![1, 2, 3]),
@@ -628,10 +665,13 @@ mod tests {
 
     #[test]
     fn max_provider_keys() {
-        let mut store = MemoryStore::with_config(MemoryStoreConfig {
-            max_provider_keys: 2,
-            ..Default::default()
-        });
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                max_provider_keys: 2,
+                ..Default::default()
+            },
+        );
 
         let provider1 = ProviderRecord {
             key: Key::from(vec![1, 2, 3]),
@@ -660,4 +700,6 @@ mod tests {
         assert_eq!(store.get_providers(&provider2.key), vec![provider2]);
         assert_eq!(store.get_providers(&provider3.key), vec![]);
     }
+
+    // TODO: test local providers.
 }
