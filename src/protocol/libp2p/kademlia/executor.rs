@@ -79,6 +79,14 @@ pub struct FuturesStream<F> {
 }
 
 impl<F> FuturesStream<F> {
+    /// Create new [`FuturesStream`].
+    pub fn new() -> Self {
+        Self {
+            futures: FuturesUnordered::new(),
+            waker: None,
+        }
+    }
+
     /// Push a future for processing.
     pub fn push(&mut self, future: F) {
         self.futures.push(future);
@@ -87,11 +95,6 @@ impl<F> FuturesStream<F> {
             waker.wake();
         }
     }
-
-    /// The number of futures in the stream.
-    pub fn len(&self) -> usize {
-        self.futures.len()
-    }
 }
 
 impl<F: Future> Stream for FuturesStream<F> {
@@ -99,6 +102,13 @@ impl<F: Future> Stream for FuturesStream<F> {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let Poll::Ready(Some(result)) = self.futures.poll_next_unpin(cx) else {
+            // We must save the current waker to wake up the task when new futures are inserted.
+            //
+            // Otherwise, simply returning `Poll::Pending` here would cause the task to never be
+            // woken up again.
+            //
+            // We were previously relying on some other task from the `loop tokio::select!` to
+            // finish.
             self.waker = Some(cx.waker().clone());
 
             return Poll::Pending;
@@ -111,31 +121,19 @@ impl<F: Future> Stream for FuturesStream<F> {
 /// Query executor.
 pub struct QueryExecutor {
     /// Pending futures.
-    futures: FuturesUnordered<BoxFuture<'static, QueryContext>>,
-
-    /// Wake up the task when new futures (messages) are inserted.
-    waker: Option<Waker>,
+    futures: FuturesStream<BoxFuture<'static, QueryContext>>,
 }
 
 impl QueryExecutor {
     /// Create new [`QueryExecutor`]
     pub fn new() -> Self {
         Self {
-            futures: FuturesUnordered::new(),
-            waker: None,
+            futures: FuturesStream::new(),
         }
-    }
-
-    /// Wake up the currently saved waker. This ensures the query executor is polled
-    /// again after new futures are inserted.
-    fn wake_up(&mut self) {
-        self.waker.take().map(|waker| waker.wake());
     }
 
     /// Send message to remote peer.
     pub fn send_message(&mut self, peer: PeerId, message: Bytes, mut substream: Substream) {
-        self.wake_up();
-
         self.futures.push(Box::pin(async move {
             match substream.send_framed(message).await {
                 Ok(_) => QueryContext {
@@ -159,8 +157,6 @@ impl QueryExecutor {
         query_id: Option<QueryId>,
         mut substream: Substream,
     ) {
-        self.wake_up();
-
         self.futures.push(Box::pin(async move {
             match tokio::time::timeout(READ_TIMEOUT, substream.next()).await {
                 Err(_) => QueryContext {
@@ -190,8 +186,6 @@ impl QueryExecutor {
         message: Bytes,
         mut substream: Substream,
     ) {
-        self.wake_up();
-
         self.futures.push(Box::pin(async move {
             if let Err(_) = substream.send_framed(message).await {
                 let _ = substream.close().await;
@@ -227,18 +221,6 @@ impl Stream for QueryExecutor {
     type Item = QueryContext;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.futures.is_empty() {
-            // We must save the current waker to wake up the task when new futures are inserted.
-            //
-            // Otherwise, simply returning `Poll::Pending` here would cause the task to never be
-            // woken up again.
-            //
-            // We were previously relying on some other task from the `loop tokio::select!` to
-            // finish.
-            self.waker = Some(cx.waker().clone());
-            return Poll::Pending;
-        }
-
         self.futures.poll_next_unpin(cx)
     }
 }
