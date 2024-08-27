@@ -645,45 +645,49 @@ impl Kademlia {
     /// Handle next query action.
     async fn on_query_action(&mut self, action: QueryAction) -> Result<(), (QueryId, PeerId)> {
         match action {
-            QueryAction::SendMessage { query, peer, .. } => match self.service.open_substream(peer)
-            {
-                Err(_) => {
-                    tracing::trace!(target: LOG_TARGET, ?query, ?peer, "dial peer");
+            QueryAction::SendMessage { query, peer, .. } => loop {
+                match self.service.open_substream(peer) {
+                    Err(_) => {
+                        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "dial peer");
 
-                    match self.service.dial(&peer) {
-                        Ok(_) => match self.pending_dials.entry(peer) {
-                            Entry::Occupied(entry) => {
-                                entry.into_mut().push(PeerAction::SendFindNode(query));
+                        match self.service.dial(&peer) {
+                            Ok(_) => match self.pending_dials.entry(peer) {
+                                Entry::Occupied(entry) => {
+                                    entry.into_mut().push(PeerAction::SendFindNode(query));
+                                }
+                                Entry::Vacant(entry) => {
+                                    entry.insert(vec![PeerAction::SendFindNode(query)]);
+                                }
+                            },
+                            Err(Error::AlreadyConnected) => {
+                                continue;
                             }
-                            Entry::Vacant(entry) => {
-                                entry.insert(vec![PeerAction::SendFindNode(query)]);
+                            Err(error) => {
+                                tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?error, "failed to dial peer");
+                                self.engine.register_response_failure(query, peer);
                             }
-                        },
-                        Err(error) => {
-                            tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?error, "failed to dial peer");
-                            self.engine.register_response_failure(query, peer);
                         }
+
+                        return Ok(());
                     }
+                    Ok(substream_id) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?query,
+                            ?peer,
+                            ?substream_id,
+                            "open outbound substream for peer"
+                        );
 
-                    Ok(())
-                }
-                Ok(substream_id) => {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?query,
-                        ?peer,
-                        ?substream_id,
-                        "open outbound substream for peer"
-                    );
+                        self.pending_substreams.insert(substream_id, peer);
+                        self.peers
+                            .entry(peer)
+                            .or_default()
+                            .pending_actions
+                            .insert(substream_id, PeerAction::SendFindNode(query));
 
-                    self.pending_substreams.insert(substream_id, peer);
-                    self.peers
-                        .entry(peer)
-                        .or_default()
-                        .pending_actions
-                        .insert(substream_id, PeerAction::SendFindNode(query));
-
-                    Ok(())
+                        return Ok(());
+                    }
                 }
             },
             QueryAction::FindNodeQuerySucceeded {
