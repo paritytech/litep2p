@@ -922,7 +922,7 @@ impl Kademlia {
                                         key.clone(),
                                         self.routing_table.closest(Key::new(key.clone()), self.replication_factor).into(),
                                         quorum,
-                                        if record.is_some() { 1 } else { 0 },
+                                        record.cloned(),
                                     );
                                 }
                             }
