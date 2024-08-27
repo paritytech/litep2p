@@ -4897,9 +4897,9 @@ dependencies = [
 
 [[package]]
 name = "sctp-proto"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6220f78bb44c15f326b0596113305f6101097a18755d53727a575c97e09fb24"
+checksum = "d4dea4fe3384a24652f065296ac333c810dfd0c5b39b98a2214762c16aaadc3c"
 dependencies = [
  "bytes",
  "crc",
@@ -5021,18 +5021,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha-1"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5058ada175748e33390e40e872bd0fe59a19f265d0158daa551c5a88a76009c"
-dependencies = [
- "cfg-if",
- "cpufeatures",
- "digest 0.10.7",
- "sha1-asm",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5041,6 +5029,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest 0.10.7",
+ "sha1-asm",
 ]
 
 [[package]]
@@ -5196,7 +5185,7 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.5",
- "sha-1 0.9.8",
+ "sha-1",
 ]
 
 [[package]]
@@ -5802,20 +5791,21 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "str0m"
-version = "0.5.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6706347e49b13373f7ddfafad47df7583ed52083d6fc8a594eb2c80497ef959d"
+checksum = "aeeb83aa09efda552b6d7e93a81c60ec66e6f87c230af9139f2901a8df2dda76"
 dependencies = [
  "combine",
  "crc",
  "fastrand",
  "hmac 0.12.1",
+ "libc",
  "once_cell",
  "openssl",
  "openssl-sys",
  "sctp-proto",
  "serde",
- "sha-1 0.10.1",
+ "sha1",
  "thiserror",
  "tracing",
 ]
