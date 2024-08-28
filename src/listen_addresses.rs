@@ -35,36 +35,22 @@ pub struct ListenAddresses {
 }
 
 impl ListenAddresses {
-    /// Creates new [`ListenAddresses`] from the inner set.
-    pub(crate) fn from_inner(
-        inner: Arc<RwLock<HashSet<Multiaddr>>>,
-        local_peer_id: PeerId,
-    ) -> Self {
+    /// Creates new [`ListenAddresses`] from the given peer ID.
+    pub(crate) fn new(local_peer_id: PeerId) -> Self {
         Self {
-            inner,
+            inner: Arc::new(RwLock::new(HashSet::new())),
             local_peer_id,
         }
     }
 
     /// Add a public address to the list of listen addresses.
     ///
-    /// The address must contain the local peer ID, otherwise it will be added.
+    /// The address must contain the local peer ID, otherwise the address will be modified to
+    /// include the local peer ID.
     ///
     /// Returns true if the address was added, false if it was already present.
-    pub fn register_listen_address(&self, mut address: Multiaddr) -> Result<bool, Multiaddr> {
-        if address.is_empty() {
-            return Err(address);
-        }
-
-        // Verify the peer ID from the address corresponds to the local peer ID.
-        if let Some(peer_id) = PeerId::try_from_multiaddr(&address) {
-            if peer_id != self.local_peer_id {
-                return Err(address);
-            }
-        } else {
-            address.push(Protocol::P2p(self.local_peer_id.into()));
-        }
-
+    pub fn register_listen_address(&self, address: Multiaddr) -> Result<bool, Multiaddr> {
+        let address = self.add_local_peer(address)?;
         Ok(self.inner.write().insert(address))
     }
 
@@ -74,6 +60,8 @@ impl ListenAddresses {
     }
 
     /// Returns `true` if the set contains the given address.
+    ///
+    /// The address must contain the local peer ID.
     pub fn contains(&self, address: &Multiaddr) -> bool {
         self.inner.read().contains(address)
     }
@@ -106,7 +94,7 @@ impl ListenAddresses {
     pub fn extend(&self, addresses: impl IntoIterator<Item = Multiaddr>) {
         self.inner
             .write()
-            .extend(addresses.into_iter().filter(|address| !address.is_empty()));
+            .extend(addresses.into_iter().filter_map(|address| self.add_local_peer(address).ok()));
     }
 
     /// Returns the number of listen addresses.
@@ -117,6 +105,24 @@ impl ListenAddresses {
     /// Returns `true` if the set of listen addresses is empty.
     pub fn is_empty(&self) -> bool {
         self.inner.read().is_empty()
+    }
+
+    /// Modify the provided address to contain the local peer ID.
+    fn add_local_peer(&self, mut address: Multiaddr) -> Result<Multiaddr, Multiaddr> {
+        if address.is_empty() {
+            return Err(address);
+        }
+
+        // Verify the peer ID from the address corresponds to the local peer ID.
+        if let Some(peer_id) = PeerId::try_from_multiaddr(&address) {
+            if peer_id != self.local_peer_id {
+                return Err(address);
+            }
+        } else {
+            address.push(Protocol::P2p(self.local_peer_id.into()));
+        }
+
+        Ok(address)
     }
 }
 
@@ -142,7 +148,7 @@ mod tests {
     #[test]
     fn add_remove_contains() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::from_inner(Default::default(), peer_id);
+        let addresses = ListenAddresses::new(peer_id);
         let address = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
         let peer_address = Multiaddr::from_str("/dns/domain1.com/tcp/30333")
             .unwrap()
@@ -164,66 +170,63 @@ mod tests {
     #[test]
     fn get_addresses() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::from_inner(Default::default(), peer_id);
-        let address1 = Multiaddr::from_str(
-            "/dns/domain1.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
-        )
-        .unwrap();
-        let address2 = Multiaddr::from_str(
+        let addresses = ListenAddresses::new(peer_id);
+        let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
+        let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333").unwrap();
+        // Addresses different than the local peer ID are ignored.
+        let address3 = Multiaddr::from_str(
             "/dns/domain2.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
         )
         .unwrap();
 
         assert!(addresses.register_listen_address(address1.clone()).unwrap());
         assert!(addresses.register_listen_address(address2.clone()).unwrap());
+        addresses.register_listen_address(address3.clone()).unwrap_err();
 
         let addresses = addresses.get_addresses();
         assert_eq!(addresses.len(), 2);
-        assert!(addresses.contains(&address1));
-        assert!(addresses.contains(&address2));
+        assert!(addresses.contains(&address1.with(Protocol::P2p(peer_id.into()))));
+        assert!(addresses.contains(&address2.with(Protocol::P2p(peer_id.into()))));
     }
 
     #[test]
     fn locked() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::from_inner(Default::default(), peer_id);
-        let address1 = Multiaddr::from_str(
-            "/dns/domain1.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
-        )
-        .unwrap();
+        let addresses = ListenAddresses::new(peer_id);
+        let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
         let address2 = Multiaddr::from_str(
             "/dns/domain2.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
         )
         .unwrap();
 
         assert!(addresses.register_listen_address(address1.clone()).unwrap());
-        assert!(addresses.register_listen_address(address2.clone()).unwrap());
+        addresses.register_listen_address(address2.clone()).unwrap_err();
 
         let addresses = addresses.locked();
         let addresses = addresses.iter().map(|address| address.to_vec()).collect::<Vec<_>>();
-        assert_eq!(addresses.len(), 2);
-        assert!(addresses.contains(&address1.to_vec()));
-        assert!(addresses.contains(&address2.to_vec()));
+        assert_eq!(addresses.len(), 1);
+        assert!(addresses.contains(&address1.with(Protocol::P2p(peer_id.into())).to_vec()));
     }
 
     #[test]
     fn extend() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::from_inner(Default::default(), peer_id);
-        let address1 = Multiaddr::from_str(
-            "/dns/domain1.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
-        )
-        .unwrap();
-        let address2 = Multiaddr::from_str(
+        let addresses = ListenAddresses::new(peer_id);
+        let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
+        let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333")
+            .unwrap()
+            .with(Protocol::P2p(peer_id.into()));
+        // Addresses different than the local peer ID are ignored.
+        let address3 = Multiaddr::from_str(
             "/dns/domain2.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
         )
         .unwrap();
 
-        addresses.extend(vec![address1.clone(), address2.clone()]);
+        addresses.extend(vec![address1.clone(), address2.clone(), address3]);
 
         let addresses = addresses.get_addresses();
         assert_eq!(addresses.len(), 2);
-        assert!(addresses.contains(&address1));
+        assert!(addresses.contains(&address1.with(Protocol::P2p(peer_id.into()))));
         assert!(addresses.contains(&address2));
     }
 }

@@ -414,11 +414,12 @@ impl Identify {
 mod tests {
     use super::*;
     use crate::{config::ConfigBuilder, transport::tcp::config::Config as TcpConfig, Litep2p};
-    use multiaddr::Multiaddr;
+    use multiaddr::{Multiaddr, Protocol};
 
     fn create_litep2p() -> (
         Litep2p,
         Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>,
+        PeerId,
     ) {
         let (identify_config, identify) = Config::new(
             "1.0.0".to_string(),
@@ -426,7 +427,10 @@ mod tests {
             vec![Multiaddr::empty()],
         );
 
+        let keypair = crate::crypto::ed25519::Keypair::generate();
+        let peer = PeerId::from_public_key(&crate::crypto::PublicKey::Ed25519(keypair.public()));
         let config = ConfigBuilder::new()
+            .with_keypair(keypair)
             .with_tcp(TcpConfig {
                 listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
                 ..Default::default()
@@ -434,26 +438,25 @@ mod tests {
             .with_libp2p_identify(identify_config)
             .build();
 
-        (Litep2p::new(config).unwrap(), identify)
+        (Litep2p::new(config).unwrap(), identify, peer)
     }
 
     #[tokio::test]
     async fn update_identify_addresses() {
         // Create two instances of litep2p
-        let (mut litep2p1, mut event_stream1) = create_litep2p();
-        let (mut litep2p2, mut event_stream2) = create_litep2p();
+        let (mut litep2p1, mut event_stream1, peer1) = create_litep2p();
+        let (mut litep2p2, mut event_stream2, _peer2) = create_litep2p();
+        let litep2p1_address =
+            litep2p1.listen_addresses().get_addresses().into_iter().next().unwrap();
 
         let multiaddr: Multiaddr = "/ip6/::9/tcp/111".parse().unwrap();
         // Litep2p1 is now reporting the new address.
         assert!(litep2p1.listen_addresses().register_listen_address(multiaddr.clone()).unwrap());
 
-        let litep2p1_address =
-            litep2p1.listen_addresses().get_addresses().into_iter().next().unwrap();
-
-        println!(" listen_addresses: {:?}", litep2p1_address);
-
         // Dial `litep2p1`
         litep2p2.dial_address(litep2p1_address).await.unwrap();
+
+        let expected_multiaddr = multiaddr.with(Protocol::P2p(peer1.into()));
 
         tokio::spawn(async move {
             loop {
@@ -473,7 +476,7 @@ mod tests {
                         ..
                     }) => {
                         println!(" listen_addresses: {:?}", listen_addresses);
-                        assert!(listen_addresses.iter().any(|address| address == &multiaddr));
+                        assert!(listen_addresses.iter().any(|address| address == &expected_multiaddr));
                         break;
                     }
                     _ => {}

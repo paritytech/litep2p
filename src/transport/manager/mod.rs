@@ -40,7 +40,6 @@ use crate::{
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -218,7 +217,7 @@ pub struct TransportManager {
     protocol_names: HashSet<ProtocolName>,
 
     /// Listen addresses.
-    listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
+    listen_addresses: ListenAddresses,
 
     /// Next connection ID.
     next_connection_id: Arc<AtomicUsize>,
@@ -265,13 +264,13 @@ impl TransportManager {
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let listen_addresses = Arc::new(RwLock::new(HashSet::new()));
+        let listen_addresses = ListenAddresses::new(local_peer_id);
         let handle = TransportManagerHandle::new(
             local_peer_id,
             peers.clone(),
             cmd_tx,
             supported_transports,
-            Arc::clone(&listen_addresses),
+            listen_addresses.clone(),
         );
 
         (
@@ -380,19 +379,14 @@ impl TransportManager {
 
     /// Get listen addresses.
     pub(crate) fn listen_addresses(&self) -> ListenAddresses {
-        ListenAddresses::from_inner(self.listen_addresses.clone(), self.local_peer_id)
+        self.listen_addresses.clone()
     }
 
     /// Register local listen address.
     pub fn register_listen_address(&mut self, address: Multiaddr) {
-        assert!(!address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))));
-
-        let mut listen_addresses = self.listen_addresses.write();
-
-        listen_addresses.insert(address.clone());
-        listen_addresses.insert(address.with(Protocol::P2p(
-            Multihash::from_bytes(&self.local_peer_id.to_bytes()).unwrap(),
-        )));
+        if let Err(address) = self.listen_addresses.register_listen_address(address) {
+            tracing::warn!(target: LOG_TARGET, ?address, "failed to register listen address");
+        }
     }
 
     /// Add one or more known addresses for `peer`.
@@ -482,7 +476,7 @@ impl TransportManager {
         }
 
         for record in records.values() {
-            if self.listen_addresses.read().contains(record.as_ref()) {
+            if self.listen_addresses.contains(record.as_ref()) {
                 tracing::warn!(
                     target: LOG_TARGET,
                     ?peer,
@@ -584,7 +578,7 @@ impl TransportManager {
         let mut record = AddressRecord::from_multiaddr(address)
             .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
 
-        if self.listen_addresses.read().contains(record.as_ref()) {
+        if self.listen_addresses.contains(record.as_ref()) {
             return Err(Error::TriedToDialSelf);
         }
 
@@ -1762,6 +1756,8 @@ impl TransportManager {
 #[cfg(test)]
 mod tests {
     use limits::ConnectionLimitsConfig;
+
+    use multihash::Multihash;
 
     use super::*;
     use crate::{

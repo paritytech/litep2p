@@ -452,7 +452,7 @@ impl Litep2p {
     /// Add one ore more known addresses for peer.
     ///
     /// Return value denotes how many addresses were added for the peer.
-    // Addresses belonging to disabled/unsupported transports will be ignored.
+    /// Addresses belonging to disabled/unsupported transports will be ignored.
     pub fn add_known_address(
         &mut self,
         peer: PeerId,

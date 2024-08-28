@@ -77,7 +77,7 @@ pub struct TransportManagerHandle {
     supported_transport: HashSet<SupportedTransport>,
 
     /// Local listen addresess.
-    listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
+    listen_addresses: ListenAddresses,
 }
 
 impl TransportManagerHandle {
@@ -87,7 +87,7 @@ impl TransportManagerHandle {
         peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
         cmd_tx: Sender<InnerTransportManagerCommand>,
         supported_transport: HashSet<SupportedTransport>,
-        listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
+        listen_addresses: ListenAddresses,
     ) -> Self {
         Self {
             peers,
@@ -105,7 +105,7 @@ impl TransportManagerHandle {
 
     /// Get listen addresses.
     pub(crate) fn listen_addresses(&self) -> ListenAddresses {
-        ListenAddresses::from_inner(self.listen_addresses.clone(), self.local_peer_id)
+        self.listen_addresses.clone()
     }
 
     /// Check if `address` is supported by one of the enabled transports.
@@ -157,7 +157,8 @@ impl TransportManagerHandle {
             .take_while(|protocol| !std::matches!(protocol, Protocol::P2p(_)))
             .collect();
 
-        self.listen_addresses.read().contains(&address)
+        self.listen_addresses
+            .contains(&address.with(Protocol::P2p(self.local_peer_id.into())))
     }
 
     /// Add one or more known addresses for peer.
@@ -327,13 +328,14 @@ mod tests {
     ) {
         let (cmd_tx, cmd_rx) = channel(64);
 
+        let local_peer_id = PeerId::random();
         (
             TransportManagerHandle {
-                local_peer_id: PeerId::random(),
+                local_peer_id,
                 cmd_tx,
                 peers: Default::default(),
                 supported_transport: HashSet::new(),
-                listen_addresses: Default::default(),
+                listen_addresses: ListenAddresses::new(local_peer_id),
             },
             cmd_rx,
         )
@@ -593,21 +595,20 @@ mod tests {
     fn is_local_address() {
         let (cmd_tx, _cmd_rx) = channel(64);
 
+        let local_peer_id = PeerId::random();
+        let first_addr: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
+        let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
+
+        let listen_addresses = ListenAddresses::new(local_peer_id);
+        listen_addresses.extend([first_addr.clone(), second_addr.clone()]);
+        println!("{:?}", listen_addresses);
+
         let handle = TransportManagerHandle {
-            local_peer_id: PeerId::random(),
+            local_peer_id,
             cmd_tx,
             peers: Default::default(),
             supported_transport: HashSet::new(),
-            listen_addresses: Arc::new(RwLock::new(HashSet::from_iter([
-                "/ip6/::1/tcp/8888".parse().expect("valid multiaddress"),
-                "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress"),
-                "/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                    .parse()
-                    .expect("valid multiaddress"),
-                "/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                    .parse()
-                    .expect("valid multiaddress"),
-            ]))),
+            listen_addresses,
         };
 
         // local addresses
