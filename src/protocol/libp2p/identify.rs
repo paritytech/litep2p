@@ -24,6 +24,7 @@ use crate::{
     codec::ProtocolCodec,
     crypto::PublicKey,
     error::{Error, SubstreamError},
+    listen_addresses::ListenAddresses,
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     transport::Endpoint,
@@ -33,14 +34,12 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::Multiaddr;
-use parking_lot::RwLock;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
     time::Duration,
 };
 
@@ -64,54 +63,6 @@ mod identify_schema {
     include!(concat!(env!("OUT_DIR"), "/identify.rs"));
 }
 
-/// Set of the public addresses of the local node.
-///
-/// These addresses are reported to the identify protocol.
-#[derive(Debug, Clone)]
-pub struct IdentifyPublicAddresses {
-    inner: Arc<RwLock<HashSet<Multiaddr>>>,
-}
-
-impl IdentifyPublicAddresses {
-    /// Create new [`IdentifyPublicAddresses`].
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(HashSet::new())),
-        }
-    }
-
-    /// Add public address.
-    pub fn add(&self, address: Multiaddr) {
-        if address.is_empty() {
-            return;
-        }
-
-        self.inner.write().insert(address);
-    }
-
-    /// Remove public address.
-    pub fn remove(&self, address: &Multiaddr) {
-        self.inner.write().remove(address);
-    }
-
-    /// Get public addresses.
-    pub fn get_addresses(&self) -> Vec<Multiaddr> {
-        self.inner.read().iter().cloned().collect()
-    }
-
-    /// Get public addresses in the identify raw format.
-    fn get_raw_addresses(&self) -> Vec<Vec<u8>> {
-        self.inner.read().iter().map(|address| address.to_vec()).collect()
-    }
-
-    /// Extend public addresses.
-    pub fn extend(&self, addresses: impl IntoIterator<Item = Multiaddr>) {
-        self.inner
-            .write()
-            .extend(addresses.into_iter().filter(|address| !address.is_empty()));
-    }
-}
-
 /// Identify configuration.
 pub struct Config {
     /// Protocol name.
@@ -130,7 +81,7 @@ pub struct Config {
     pub(crate) protocols: Vec<ProtocolName>,
 
     /// Public addresses.
-    pub(crate) public_addresses: IdentifyPublicAddresses,
+    pub(crate) public_addresses: Vec<Multiaddr>,
 
     /// Protocol version.
     pub(crate) protocol_version: String,
@@ -148,27 +99,20 @@ impl Config {
         protocol_version: String,
         user_agent: Option<String>,
         public_addresses: Vec<Multiaddr>,
-    ) -> (
-        Self,
-        IdentifyPublicAddresses,
-        Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>,
-    ) {
+    ) -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
-        let identify_public_addresses = IdentifyPublicAddresses::new();
-        identify_public_addresses.extend(public_addresses);
 
         (
             Self {
                 tx_event,
                 public: None,
-                public_addresses: identify_public_addresses.clone(),
+                public_addresses,
                 protocol_version,
                 user_agent,
                 codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
                 protocols: Vec::new(),
                 protocol: ProtocolName::from(PROTOCOL_NAME),
             },
-            identify_public_addresses,
             Box::new(ReceiverStream::new(rx_event)),
         )
     }
@@ -240,7 +184,7 @@ pub(crate) struct Identify {
     user_agent: String,
 
     /// Public addresses.
-    listen_addresses: IdentifyPublicAddresses,
+    listen_addresses: ListenAddresses,
 
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,
@@ -257,18 +201,15 @@ pub(crate) struct Identify {
 
 impl Identify {
     /// Create new [`Identify`] protocol.
-    pub(crate) fn new(
-        service: TransportService,
-        config: Config,
-        listen_addresses: Vec<Multiaddr>,
-    ) -> Self {
-        config.public_addresses.extend(listen_addresses);
+    pub(crate) fn new(service: TransportService, config: Config) -> Self {
+        let listen_addresses = service.listen_addresses();
+        listen_addresses.extend(config.public_addresses.into_iter());
 
         Self {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            listen_addresses: config.public_addresses,
+            listen_addresses,
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
@@ -328,7 +269,7 @@ impl Identify {
             protocol_version: Some(self.protocol_version.clone()),
             agent_version: Some(self.user_agent.clone()),
             public_key: Some(self.public.to_protobuf_encoding()),
-            listen_addrs: self.listen_addresses.get_raw_addresses(),
+            listen_addrs: self.listen_addresses.locked().iter().map(|addr| addr.to_vec()).collect(),
             observed_addr,
             protocols: self.protocols.clone(),
         };
