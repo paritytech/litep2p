@@ -27,19 +27,25 @@ use parking_lot::RwLock;
 ///
 /// These addresses are reported to the identify protocol.
 #[derive(Debug, Clone)]
-pub struct IdentifyPublicAddresses {
+pub struct ListenAddresses {
     inner: Arc<RwLock<HashSet<Multiaddr>>>,
 }
 
-impl IdentifyPublicAddresses {
-    /// Create new [`IdentifyPublicAddresses`].
+impl ListenAddresses {
+    /// Create new [`ListenAddresses`].
     fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
-    /// Add public address.
+    /// Add a public address to the list of listen addresses.
+    ///
+    /// # Note
+    ///
+    /// Users must ensure that the address is public.
+    ///
+    /// Empty addresses are ignored.
     pub fn add(&self, address: Multiaddr) {
         if address.is_empty() {
             return;
@@ -53,12 +59,17 @@ impl IdentifyPublicAddresses {
         self.inner.write().remove(address);
     }
 
+    /// Returns `true` if the set contains the given address.
+    pub fn contains(&self, address: &Multiaddr) -> bool {
+        self.inner.read().contains(address)
+    }
+
     /// Get public addresses.
     pub fn get_addresses(&self) -> Vec<Multiaddr> {
         self.inner.read().iter().cloned().collect()
     }
 
-    /// Get public addresses in the identify raw format.
+    /// Get public addresses in the raw (bytes) format.
     fn get_raw_addresses(&self) -> Vec<Vec<u8>> {
         self.inner.read().iter().map(|address| address.to_vec()).collect()
     }
@@ -68,5 +79,68 @@ impl IdentifyPublicAddresses {
         self.inner
             .write()
             .extend(addresses.into_iter().filter(|address| !address.is_empty()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn add_remove_contains() {
+        let addresses = ListenAddresses::new();
+        let address = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
+
+        assert!(!addresses.contains(&address));
+        addresses.add(address.clone());
+        assert!(addresses.contains(&address));
+
+        addresses.remove(&address);
+        assert!(!addresses.contains(&address));
+    }
+
+    #[test]
+    fn get_addresses() {
+        let addresses = ListenAddresses::new();
+        let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
+        let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333").unwrap();
+
+        addresses.add(address1.clone());
+        addresses.add(address2.clone());
+
+        let addresses = addresses.get_addresses();
+        assert_eq!(addresses.len(), 2);
+        assert!(addresses.contains(&address1));
+        assert!(addresses.contains(&address2));
+    }
+
+    #[test]
+    fn get_raw_addresses() {
+        let addresses = ListenAddresses::new();
+        let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
+        let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333").unwrap();
+
+        addresses.add(address1.clone());
+        addresses.add(address2.clone());
+
+        let addresses = addresses.get_raw_addresses();
+        assert_eq!(addresses.len(), 2);
+        assert!(addresses.contains(&address1.to_vec()));
+        assert!(addresses.contains(&address2.to_vec()));
+    }
+
+    #[test]
+    fn extend() {
+        let addresses = ListenAddresses::new();
+        let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
+        let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333").unwrap();
+
+        addresses.extend(vec![address1.clone(), address2.clone()]);
+
+        let addresses = addresses.get_addresses();
+        assert_eq!(addresses.len(), 2);
+        assert!(addresses.contains(&address1));
+        assert!(addresses.contains(&address2));
     }
 }
