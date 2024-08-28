@@ -58,7 +58,7 @@ async fn webrtc_test() {
         .build();
 
     let mut litep2p = Litep2p::new(config).unwrap();
-    let address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     tracing::info!("listen address: {address:?}");
 

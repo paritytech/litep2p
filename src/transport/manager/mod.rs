@@ -380,7 +380,7 @@ impl TransportManager {
 
     /// Get listen addresses.
     pub(crate) fn listen_addresses(&self) -> ListenAddresses {
-        ListenAddresses::from_inner(self.listen_addresses.clone())
+        ListenAddresses::from_inner(self.listen_addresses.clone(), self.local_peer_id)
     }
 
     /// Register local listen address.

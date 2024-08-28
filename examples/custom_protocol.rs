@@ -277,7 +277,7 @@ async fn main() {
     let (mut litep2p2, mut handle2) = make_litep2p();
 
     let peer2 = *litep2p2.local_peer_id();
-    let listen_address = litep2p2.listen_addresses().next().unwrap().clone();
+    let listen_address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
     litep2p1.add_known_address(peer2, std::iter::once(listen_address));
 
     tokio::spawn(async move {

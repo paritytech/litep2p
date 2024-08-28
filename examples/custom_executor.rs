@@ -122,7 +122,7 @@ async fn main() {
 
     // dial `litep2p1`
     litep2p2
-        .dial_address(litep2p1.listen_addresses().next().unwrap().clone())
+        .dial_address(litep2p1.listen_addresses().get_addresses().get(0).unwrap().clone())
         .await
         .unwrap();
 

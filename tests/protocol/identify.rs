@@ -65,7 +65,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let (identify_config1, _, mut identify_event_stream1) = Config::new(
+    let (identify_config1, mut identify_event_stream1) = Config::new(
         "/proto/1".to_string(),
         Some("agent v1".to_string()),
         Vec::new(),
@@ -75,7 +75,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
         .with_libp2p_identify(identify_config1);
     let config1 = add_transport(config_builder1, transport1).build();
 
-    let (identify_config2, _, mut identify_event_stream2) = Config::new(
+    let (identify_config2, mut identify_event_stream2) = Config::new(
         "/proto/2".to_string(),
         Some("agent v2".to_string()),
         Vec::new(),
@@ -88,8 +88,8 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
-    let address1 = litep2p1.listen_addresses().next().unwrap().clone();
-    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+    let address1 = litep2p1.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address2 = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     tracing::info!("listen address of peer1: {address1}");
     tracing::info!("listen address of peer2: {address2}");
@@ -193,7 +193,7 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
         .with_libp2p_ping(ping_config);
     let config1 = add_transport(config_builder1, transport1).build();
 
-    let (identify_config2, _, mut identify_event_stream2) =
+    let (identify_config2, mut identify_event_stream2) =
         Config::new("litep2p".to_string(), None, Vec::new());
     let config_builder2 = ConfigBuilder::new()
         .with_keypair(Keypair::generate())
@@ -202,7 +202,7 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    let address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     litep2p1.dial_address(address).await.unwrap();
 

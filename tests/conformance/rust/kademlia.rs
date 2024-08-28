@@ -119,7 +119,7 @@ async fn find_node() {
 
     let mut libp2p = initialize_libp2p();
     let (mut litep2p, mut kad_handle) = initialize_litep2p();
-    let address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     for i in 0..addresses.len() {
         libp2p.dial(addresses[i].clone()).unwrap();
@@ -223,7 +223,7 @@ async fn put_record() {
 
     let mut libp2p = initialize_libp2p();
     let (mut litep2p, mut kad_handle) = initialize_litep2p();
-    let address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     for i in 0..addresses.len() {
         libp2p.dial(addresses[i].clone()).unwrap();
@@ -335,7 +335,7 @@ async fn get_record() {
 
     let mut libp2p = initialize_libp2p();
     let (mut litep2p, mut kad_handle) = initialize_litep2p();
-    let address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     for i in 0..addresses.len() {
         libp2p.dial(addresses[i].clone()).unwrap();

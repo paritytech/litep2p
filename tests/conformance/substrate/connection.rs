@@ -110,7 +110,7 @@ async fn substrate_keep_alive_timeout() {
     let (mut libp2p, _peer_store_handle) = initialize_libp2p(1u32, 1u32);
     let (mut litep2p, mut handle) = initialize_litep2p().await;
 
-    let address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut libp2p_connection_open = false;

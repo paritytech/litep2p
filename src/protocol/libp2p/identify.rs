@@ -418,10 +418,9 @@ mod tests {
 
     fn create_litep2p() -> (
         Litep2p,
-        IdentifyPublicAddresses,
         Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>,
     ) {
-        let (identify_config, pub_addr, identify) = Config::new(
+        let (identify_config, identify) = Config::new(
             "1.0.0".to_string(),
             Some("litep2p/1.0.0".to_string()),
             vec![Multiaddr::empty()],
@@ -435,24 +434,26 @@ mod tests {
             .with_libp2p_identify(identify_config)
             .build();
 
-        (Litep2p::new(config).unwrap(), pub_addr, identify)
+        (Litep2p::new(config).unwrap(), identify)
     }
 
     #[tokio::test]
     async fn update_identify_addresses() {
         // Create two instances of litep2p
-        let (mut litep2p1, addr1, mut event_stream1) = create_litep2p();
-        let (mut litep2p2, _addr2, mut event_stream2) = create_litep2p();
+        let (mut litep2p1, mut event_stream1) = create_litep2p();
+        let (mut litep2p2, mut event_stream2) = create_litep2p();
 
         let multiaddr: Multiaddr = "/ip6/::9/tcp/111".parse().unwrap();
-        // Litep2p1 is now listening on the new address.
-        addr1.add(multiaddr.clone());
+        // Litep2p1 is now reporting the new address.
+        assert!(litep2p1.listen_addresses().register_listen_address(multiaddr.clone()).unwrap());
+
+        let litep2p1_address =
+            litep2p1.listen_addresses().get_addresses().into_iter().next().unwrap();
+
+        println!(" listen_addresses: {:?}", litep2p1_address);
 
         // Dial `litep2p1`
-        litep2p2
-            .dial_address(litep2p1.listen_addresses().next().unwrap().clone())
-            .await
-            .unwrap();
+        litep2p2.dial_address(litep2p1_address).await.unwrap();
 
         tokio::spawn(async move {
             loop {
@@ -471,6 +472,7 @@ mod tests {
                         listen_addresses,
                         ..
                     }) => {
+                        println!(" listen_addresses: {:?}", listen_addresses);
                         assert!(listen_addresses.iter().any(|address| address == &multiaddr));
                         break;
                     }

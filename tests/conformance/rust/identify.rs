@@ -71,7 +71,7 @@ fn initialize_litep2p() -> (
 ) {
     let keypair = Keypair::generate();
     let (ping_config, ping_event_stream) = PingConfig::default();
-    let (identify_config, _, identify_event_stream) =
+    let (identify_config, identify_event_stream) =
         IdentifyConfig::new("proto v1".to_string(), None, Vec::new());
 
     let litep2p = Litep2p::new(
@@ -119,7 +119,7 @@ async fn identify_works() {
 
     let mut libp2p = initialize_libp2p();
     let (mut litep2p, _ping_event_stream, mut identify_event_stream) = initialize_litep2p();
-    let address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     libp2p.dial(address).unwrap();
 

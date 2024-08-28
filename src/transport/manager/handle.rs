@@ -105,7 +105,7 @@ impl TransportManagerHandle {
 
     /// Get listen addresses.
     pub(crate) fn listen_addresses(&self) -> ListenAddresses {
-        ListenAddresses::from_inner(self.listen_addresses.clone())
+        ListenAddresses::from_inner(self.listen_addresses.clone(), self.local_peer_id)
     }
 
     /// Check if `address` is supported by one of the enabled transports.
