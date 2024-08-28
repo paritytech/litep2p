@@ -23,37 +23,54 @@ use std::{collections::HashSet, sync::Arc};
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
 
+use crate::PeerId;
+
 /// Set of the public addresses of the local node.
 ///
 /// These addresses are reported to the identify protocol.
 #[derive(Debug, Clone)]
 pub struct ListenAddresses {
     inner: Arc<RwLock<HashSet<Multiaddr>>>,
+    local_peer_id: PeerId,
 }
 
 impl ListenAddresses {
     /// Creates new [`ListenAddresses`] from the inner set.
-    pub(crate) fn from_inner(inner: Arc<RwLock<HashSet<Multiaddr>>>) -> Self {
-        Self { inner }
+    pub(crate) fn from_inner(
+        inner: Arc<RwLock<HashSet<Multiaddr>>>,
+        local_peer_id: PeerId,
+    ) -> Self {
+        Self {
+            inner,
+            local_peer_id,
+        }
     }
 
     /// Add a public address to the list of listen addresses.
     ///
-    /// # Note
+    /// The address must contain the local peer ID, otherwise it will be added.
     ///
-    /// Users must ensure that the address is public.
-    ///
-    /// Empty addresses are ignored.
-    pub fn register_listen_address(&self, address: Multiaddr) {
-        if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
-            return;
+    /// Returns true if the address was added, false if it was already present.
+    pub fn register_listen_address(&self, mut address: Multiaddr) -> Result<bool, Multiaddr> {
+        if address.is_empty() {
+            return Err(address);
         }
-        self.inner.write().insert(address);
+
+        // Verify the peer ID from the address corresponds to the local peer ID.
+        if let Some(peer_id) = PeerId::try_from_multiaddr(&address) {
+            if peer_id != self.local_peer_id {
+                return Err(address);
+            }
+        } else {
+            address.push(Protocol::P2p(self.local_peer_id.into()));
+        }
+
+        Ok(self.inner.write().insert(address))
     }
 
     /// Remove public address.
-    pub fn remove(&self, address: &Multiaddr) {
-        self.inner.write().remove(address);
+    pub fn remove(&self, address: &Multiaddr) -> bool {
+        self.inner.write().remove(address)
     }
 
     /// Returns `true` if the set contains the given address.
@@ -124,25 +141,41 @@ mod tests {
 
     #[test]
     fn add_remove_contains() {
-        let addresses = ListenAddresses::new();
+        let peer_id = PeerId::random();
+        let addresses = ListenAddresses::from_inner(Default::default(), peer_id);
         let address = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
+        let peer_address = Multiaddr::from_str("/dns/domain1.com/tcp/30333")
+            .unwrap()
+            .with(Protocol::P2p(peer_id.into()));
 
         assert!(!addresses.contains(&address));
-        addresses.add(address.clone());
-        assert!(addresses.contains(&address));
 
-        addresses.remove(&address);
+        assert!(addresses.register_listen_address(address.clone()).unwrap());
+        // Adding the address a second time returns Ok(false).
+        assert!(!addresses.register_listen_address(address.clone()).unwrap());
+
         assert!(!addresses.contains(&address));
+        assert!(addresses.contains(&peer_address));
+
+        addresses.remove(&peer_address);
+        assert!(!addresses.contains(&peer_address));
     }
 
     #[test]
     fn get_addresses() {
-        let addresses = ListenAddresses::new();
-        let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
-        let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333").unwrap();
+        let peer_id = PeerId::random();
+        let addresses = ListenAddresses::from_inner(Default::default(), peer_id);
+        let address1 = Multiaddr::from_str(
+            "/dns/domain1.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
+        )
+        .unwrap();
+        let address2 = Multiaddr::from_str(
+            "/dns/domain2.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
+        )
+        .unwrap();
 
-        addresses.add(address1.clone());
-        addresses.add(address2.clone());
+        assert!(addresses.register_listen_address(address1.clone()).unwrap());
+        assert!(addresses.register_listen_address(address2.clone()).unwrap());
 
         let addresses = addresses.get_addresses();
         assert_eq!(addresses.len(), 2);
@@ -152,12 +185,19 @@ mod tests {
 
     #[test]
     fn locked() {
-        let addresses = ListenAddresses::new();
-        let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
-        let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333").unwrap();
+        let peer_id = PeerId::random();
+        let addresses = ListenAddresses::from_inner(Default::default(), peer_id);
+        let address1 = Multiaddr::from_str(
+            "/dns/domain1.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
+        )
+        .unwrap();
+        let address2 = Multiaddr::from_str(
+            "/dns/domain2.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
+        )
+        .unwrap();
 
-        addresses.add(address1.clone());
-        addresses.add(address2.clone());
+        assert!(addresses.register_listen_address(address1.clone()).unwrap());
+        assert!(addresses.register_listen_address(address2.clone()).unwrap());
 
         let addresses = addresses.locked();
         let addresses = addresses.iter().map(|address| address.to_vec()).collect::<Vec<_>>();
@@ -168,9 +208,16 @@ mod tests {
 
     #[test]
     fn extend() {
-        let addresses = ListenAddresses::new();
-        let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
-        let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333").unwrap();
+        let peer_id = PeerId::random();
+        let addresses = ListenAddresses::from_inner(Default::default(), peer_id);
+        let address1 = Multiaddr::from_str(
+            "/dns/domain1.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
+        )
+        .unwrap();
+        let address2 = Multiaddr::from_str(
+            "/dns/domain2.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
+        )
+        .unwrap();
 
         addresses.extend(vec![address1.clone(), address2.clone()]);
 
