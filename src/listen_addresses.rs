@@ -20,7 +20,7 @@
 
 use std::{collections::HashSet, sync::Arc};
 
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
 
 /// Set of the public addresses of the local node.
@@ -44,11 +44,10 @@ impl ListenAddresses {
     /// Users must ensure that the address is public.
     ///
     /// Empty addresses are ignored.
-    pub fn add(&self, address: Multiaddr) {
-        if address.is_empty() {
+    pub fn register_listen_address(&self, address: Multiaddr) {
+        if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
             return;
         }
-
         self.inner.write().insert(address);
     }
 
