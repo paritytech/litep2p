@@ -22,7 +22,10 @@
 
 #![allow(unused)]
 use crate::{
-    protocol::libp2p::kademlia::record::{Key, ProviderRecord, Record},
+    protocol::libp2p::kademlia::{
+        config::DEFAULT_PROVIDER_REFRESH_INTERVAL,
+        record::{Key, ProviderRecord, Record},
+    },
     PeerId,
 };
 
@@ -30,6 +33,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered};
 use std::{
     collections::{hash_map::Entry, HashMap},
     num::NonZeroUsize,
+    time::Duration,
 };
 
 /// Logging target for the file.
@@ -254,6 +258,9 @@ pub struct MemoryStoreConfig {
     /// Maximum number of providers per key. Only providers with peer IDs closest to the key are
     /// kept.
     pub max_providers_per_key: usize,
+
+    /// Local providers republish interval.
+    pub provider_refresh_interval: Duration,
 }
 
 impl Default for MemoryStoreConfig {
@@ -264,6 +271,7 @@ impl Default for MemoryStoreConfig {
             max_provider_keys: 1024,
             max_provider_addresses: 30,
             max_providers_per_key: 20,
+            provider_refresh_interval: DEFAULT_PROVIDER_REFRESH_INTERVAL,
         }
     }
 }
