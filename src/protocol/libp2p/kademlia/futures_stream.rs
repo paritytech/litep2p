@@ -27,6 +27,8 @@ use std::{
 };
 
 /// Wrapper around [`FuturesUnordered`] that wakes a task up automatically.
+/// The [`Stream`] implemented by [`FuturesStream`] never terminates and can be
+/// polled when contains no futures.
 #[derive(Default)]
 pub struct FuturesStream<F> {
     futures: FuturesUnordered<F>,

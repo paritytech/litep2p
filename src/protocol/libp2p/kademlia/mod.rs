@@ -31,7 +31,7 @@ use crate::{
             query::{QueryAction, QueryEngine},
             record::ProviderRecord,
             routing_table::RoutingTable,
-            store::{MemoryStore, MemoryStoreConfig},
+            store::{MemoryStore, MemoryStoreAction, MemoryStoreConfig},
             types::{ConnectionType, KademliaPeer, Key},
         },
         Direction, TransportEvent, TransportService,
@@ -935,7 +935,7 @@ impl Kademlia {
                             self.disconnect_peer(peer, query_id).await;
                         }
                     }
-                }
+                },
                 command = self.cmd_rx.recv() => {
                     match command {
                         Some(KademliaCommand::FindNode { peer, query_id }) => {
@@ -1107,6 +1107,31 @@ impl Kademlia {
                         None => return Err(Error::EssentialTaskClosed),
                     }
                 },
+                action = self.store.next_action() => match action {
+                    Some(MemoryStoreAction::RefreshProvider { mut provider }) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            key = ?provider.key,
+                            "republishing local provider",
+                        );
+
+                        // Make sure to roll expiration time.
+                        provider.expires = Instant::now() + self.provider_ttl;
+
+                        self.store.put_provider(provider.clone());
+
+
+                        todo!("obtain a query ID and start query");
+                        // self.engine.start_add_provider(
+                        //     query_id,
+                        //     provider,
+                        //     self.routing_table
+                        //         .closest(Key::new(provider.key), self.replication_factor)
+                        //         .into(),
+                        // );
+                    }
+                    None => {}
+                }
             }
         }
     }

@@ -24,12 +24,13 @@
 use crate::{
     protocol::libp2p::kademlia::{
         config::DEFAULT_PROVIDER_REFRESH_INTERVAL,
+        futures_stream::FuturesStream,
         record::{Key, ProviderRecord, Record},
     },
     PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered};
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use std::{
     collections::{hash_map::Entry, HashMap},
     num::NonZeroUsize,
@@ -40,7 +41,9 @@ use std::{
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::store";
 
 /// Memory store events.
-pub enum MemoryStoreEvent {}
+pub enum MemoryStoreAction {
+    RefreshProvider { provider: ProviderRecord },
+}
 
 /// Memory store.
 pub struct MemoryStore {
@@ -55,7 +58,7 @@ pub struct MemoryStore {
     /// Local providers.
     local_providers: HashMap<Key, ProviderRecord>,
     /// Futures to signal it's time to republish a local provider.
-    pending_provider_republish: FuturesUnordered<BoxFuture<'static, Key>>,
+    pending_provider_refresh: FuturesStream<BoxFuture<'static, Key>>,
 }
 
 impl MemoryStore {
@@ -67,7 +70,7 @@ impl MemoryStore {
             records: HashMap::new(),
             provider_keys: HashMap::new(),
             local_providers: HashMap::new(),
-            pending_provider_republish: FuturesUnordered::new(),
+            pending_provider_refresh: FuturesStream::new(),
         }
     }
 
@@ -79,7 +82,7 @@ impl MemoryStore {
             records: HashMap::new(),
             provider_keys: HashMap::new(),
             local_providers: HashMap::new(),
-            pending_provider_republish: FuturesUnordered::new(),
+            pending_provider_refresh: FuturesStream::new(),
         }
     }
 
@@ -204,9 +207,7 @@ impl MemoryStore {
                 match provider_position {
                     Ok(i) => {
                         // Update the provider in place.
-                        providers[i] = provider_record;
-
-                        true
+                        providers[i] = provider_record.clone();
                     }
                     Err(i) => {
                         // `Err(i)` contains the insertion point.
@@ -220,25 +221,59 @@ impl MemoryStore {
                                  existing `max_providers_per_key`",
                             );
 
-                            false
+                            return false;
                         } else {
                             if providers.len() == usize::from(self.config.max_providers_per_key) {
                                 providers.pop();
                             }
 
-                            providers.insert(i, provider_record);
-
-                            true
+                            providers.insert(i, provider_record.clone());
                         }
                     }
                 }
+
+                if provider_record.provider == self.local_peer_id {
+                    // We must make sure to refresh the local provider.
+                    let key = provider_record.key.clone();
+                    let refresh_interval = self.config.provider_refresh_interval;
+                    self.local_providers.insert(key.clone(), provider_record);
+                    self.pending_provider_refresh.push(Box::pin(async move {
+                        tokio::time::sleep(refresh_interval).await;
+                        key
+                    }));
+                }
+
+                true
             }
         }
     }
 
-    /// Poll next event from the store.
-    async fn next_event() -> Option<MemoryStoreEvent> {
-        None
+    /// Poll next action from the store.
+    pub async fn next_action(&mut self) -> Option<MemoryStoreAction> {
+        // [`FuturesStream`] never terminates, so `map()` below is always triggered.
+        self.pending_provider_refresh
+            .next()
+            .await
+            .map(|key| {
+                if let Some(provider) = self.local_providers.get(&key).cloned() {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?key,
+                        "refresh provider"
+                    );
+
+                    Some(MemoryStoreAction::RefreshProvider { provider })
+                } else {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?key,
+                        "it's time to refresh a provider, but we do not provide this key anymore",
+                    );
+
+                    None
+                }
+            })
+            .flatten()
     }
 }
 
