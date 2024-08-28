@@ -32,8 +32,8 @@ pub struct ListenAddresses {
 }
 
 impl ListenAddresses {
-    /// Create new [`ListenAddresses`].
-    fn new() -> Self {
+    /// Creates new [`ListenAddresses`].
+    pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashSet::new())),
         }
@@ -64,14 +64,28 @@ impl ListenAddresses {
         self.inner.read().contains(address)
     }
 
-    /// Get public addresses.
+    /// Returns a vector of the available listen addresses.
     pub fn get_addresses(&self) -> Vec<Multiaddr> {
         self.inner.read().iter().cloned().collect()
     }
 
-    /// Get public addresses in the raw (bytes) format.
-    fn get_raw_addresses(&self) -> Vec<Vec<u8>> {
-        self.inner.read().iter().map(|address| address.to_vec()).collect()
+    /// Returns an immutable reference to the set of listen addresses.
+    ///
+    /// This method can be used when `get_addresses` is not sufficient.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use litep2p::listen_addresses::ListenAddresses;
+    /// #
+    /// # fn listen_addresses(addresses: ListenAddresses) {
+    ///   let string_addresses = addresses.locked().iter().map(|address| address.to_string()).collect::<Vec<_>>();
+    /// # }
+    /// ```
+    pub fn locked(&self) -> LockedListenAddresses {
+        LockedListenAddresses {
+            inner: self.inner.read(),
+        }
     }
 
     /// Extend public addresses.
@@ -79,6 +93,20 @@ impl ListenAddresses {
         self.inner
             .write()
             .extend(addresses.into_iter().filter(|address| !address.is_empty()));
+    }
+}
+
+/// A short lived instance of the locked listen addresses.
+pub struct LockedListenAddresses<'a> {
+    inner: parking_lot::RwLockReadGuard<'a, HashSet<Multiaddr>>,
+}
+
+impl<'a> LockedListenAddresses<'a> {
+    /// Iterate over the listen addresses.
+    ///
+    /// This exposes all the functionality of the standard iterator.
+    pub fn iter(&self) -> impl Iterator<Item = &Multiaddr> {
+        self.inner.iter()
     }
 }
 
@@ -116,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn get_raw_addresses() {
+    fn locked() {
         let addresses = ListenAddresses::new();
         let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
         let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333").unwrap();
@@ -124,7 +152,8 @@ mod tests {
         addresses.add(address1.clone());
         addresses.add(address2.clone());
 
-        let addresses = addresses.get_raw_addresses();
+        let addresses = addresses.locked();
+        let addresses = addresses.iter().map(|address| address.to_vec()).collect::<Vec<_>>();
         assert_eq!(addresses.len(), 2);
         assert!(addresses.contains(&address1.to_vec()));
         assert!(addresses.contains(&address2.to_vec()));
