@@ -27,7 +27,14 @@ use crate::PeerId;
 
 /// Set of the public addresses of the local node.
 ///
-/// These addresses are reported to the identify protocol.
+/// The format of the addresses stored in the set contain the local peer ID.
+/// This requirement is enforced by the [`ListenAddresses::register_listen_address`] method,
+/// that will add the local peer ID to the address if it is missing.
+///
+/// # Note
+///
+/// - The addresses are reported to the identify protocol and are used to establish connections.
+/// - Users must ensure that the addresses are reachable from the network.
 #[derive(Debug, Clone)]
 pub struct ListenAddresses {
     inner: Arc<RwLock<HashSet<Multiaddr>>>,
