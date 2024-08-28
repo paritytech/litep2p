@@ -69,6 +69,7 @@ pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod executor;
+pub mod listen_addresses;
 pub mod protocol;
 pub mod substream;
 pub mod transport;
