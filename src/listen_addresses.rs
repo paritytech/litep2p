@@ -91,6 +91,16 @@ impl ListenAddresses {
             .write()
             .extend(addresses.into_iter().filter(|address| !address.is_empty()));
     }
+
+    /// Returns the number of listen addresses.
+    pub fn len(&self) -> usize {
+        self.inner.read().len()
+    }
+
+    /// Returns `true` if the set of listen addresses is empty.
+    pub fn is_empty(&self) -> bool {
+        self.inner.read().is_empty()
+    }
 }
 
 /// A short lived instance of the locked listen addresses.
