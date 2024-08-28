@@ -33,10 +33,15 @@ pub struct ListenAddresses {
 
 impl ListenAddresses {
     /// Creates new [`ListenAddresses`].
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashSet::new())),
         }
+    }
+
+    /// Creates new [`ListenAddresses`] from the inner set.
+    pub(crate) fn from_inner(inner: Arc<RwLock<HashSet<Multiaddr>>>) -> Self {
+        Self { inner }
     }
 
     /// Add a public address to the list of listen addresses.

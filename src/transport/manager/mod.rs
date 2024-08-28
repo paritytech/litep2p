@@ -23,6 +23,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     executor::Executor,
+    listen_addresses::ListenAddresses,
     protocol::{InnerTransportEvent, TransportService},
     transport::{
         manager::{
@@ -375,6 +376,11 @@ impl TransportManager {
 
         self.transports.register_transport(name, transport);
         self.transport_manager_handle.register_transport(name);
+    }
+
+    /// Get listen addresses.
+    pub(crate) fn listen_addresses(&self) -> ListenAddresses {
+        ListenAddresses::from_inner(self.listen_addresses.clone())
     }
 
     /// Register local listen address.

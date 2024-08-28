@@ -20,6 +20,7 @@
 
 use crate::{
     error::Error,
+    listen_addresses::ListenAddresses,
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -155,6 +156,11 @@ impl TransportService {
             },
             tx,
         )
+    }
+
+    /// Get the listen address of litep2p.
+    pub fn listen_addresses(&self) -> ListenAddresses {
+        self.transport_handle.listen_addresses()
     }
 
     /// Handle connection established event.

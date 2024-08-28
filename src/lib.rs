@@ -30,6 +30,7 @@
 
 use crate::{
     config::Litep2pConfig,
+    listen_addresses::ListenAddresses,
     protocol::{
         libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
         mdns::Mdns,
@@ -128,7 +129,7 @@ pub struct Litep2p {
     local_peer_id: PeerId,
 
     /// Listen addresses.
-    listen_addresses: Vec<Multiaddr>,
+    listen_addresses: ListenAddresses,
 
     /// Transport manager.
     transport_manager: TransportManager,
@@ -399,7 +400,7 @@ impl Litep2p {
         Ok(Self {
             local_peer_id,
             bandwidth_sink,
-            listen_addresses,
+            listen_addresses: transport_manager.listen_addresses(),
             transport_manager,
         })
     }
@@ -440,9 +441,9 @@ impl Litep2p {
         &self.local_peer_id
     }
 
-    /// Get listen address of litep2p.
-    pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
-        self.listen_addresses.iter()
+    /// Get the listen address of litep2p.
+    pub fn listen_addresses(&self) -> ListenAddresses {
+        self.listen_addresses.clone()
     }
 
     /// Get handle to bandwidth sink.

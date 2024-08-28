@@ -22,6 +22,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     executor::Executor,
+    listen_addresses::ListenAddresses,
     protocol::ProtocolSet,
     transport::manager::{
         address::{AddressRecord, AddressStore},
@@ -100,6 +101,11 @@ impl TransportManagerHandle {
     /// Register new transport to [`TransportManagerHandle`].
     pub(crate) fn register_transport(&mut self, transport: SupportedTransport) {
         self.supported_transport.insert(transport);
+    }
+
+    /// Get listen addresses.
+    pub(crate) fn listen_addresses(&self) -> ListenAddresses {
+        ListenAddresses::from_inner(self.listen_addresses.clone())
     }
 
     /// Check if `address` is supported by one of the enabled transports.
