@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    error::{ImmediateDialError, SubstreamError},
     types::{protocol::ProtocolName, RequestId},
     Error, PeerId,
 };
@@ -43,10 +44,10 @@ use std::{
 const LOG_TARGET: &str = "litep2p::request-response::handle";
 
 /// Request-response error.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum RequestResponseError {
     /// Request was rejected.
-    Rejected,
+    Rejected(RejectReason),
 
     /// Request was canceled by the local node.
     Canceled,
@@ -62,6 +63,22 @@ pub enum RequestResponseError {
 
     /// Protocol not supported.
     UnsupportedProtocol,
+}
+
+/// The reason why a request was rejected.
+#[derive(Debug)]
+pub enum RejectReason {
+    /// Substream error.
+    SubstreamOpenError(SubstreamError),
+
+    /// The connection closed before the request was processed.
+    ConnectionClosed,
+
+    /// Dial failed.
+    ///
+    /// Contains an optional error that occurred before the dial was attempted
+    /// over the network.
+    DialFailed(Option<ImmediateDialError>),
 }
 
 /// Request-response events.
