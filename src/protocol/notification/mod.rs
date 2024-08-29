@@ -1175,7 +1175,7 @@ impl NotificationProtocol {
                                 )
                                 .await;
 
-                            Err(error)
+                            Err(error.into())
                         }
                     },
                     // here the state is one of `OutboundState::{OutboundInitiated, Negotiating,
