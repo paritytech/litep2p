@@ -1139,15 +1139,15 @@ impl Kademlia {
 
                         self.store.put_provider(provider.clone());
 
-
-                        todo!("obtain a query ID and start query");
-                        // self.engine.start_add_provider(
-                        //     query_id,
-                        //     provider,
-                        //     self.routing_table
-                        //         .closest(Key::new(provider.key), self.replication_factor)
-                        //         .into(),
-                        // );
+                        let key = provider.key.clone();
+                        let query_id = self.next_query_id();
+                        self.engine.start_add_provider(
+                            query_id,
+                            provider,
+                            self.routing_table
+                                .closest(Key::new(key), self.replication_factor)
+                                .into(),
+                        );
                     }
                     None => {}
                 }
