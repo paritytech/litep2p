@@ -152,13 +152,7 @@ impl TransportManagerHandle {
 
     /// Check if the address is a local listen address and if so, discard it.
     fn is_local_address(&self, address: &Multiaddr) -> bool {
-        let address: Multiaddr = address
-            .iter()
-            .take_while(|protocol| !std::matches!(protocol, Protocol::P2p(_)))
-            .collect();
-
-        self.listen_addresses
-            .contains(&address.with(Protocol::P2p(self.local_peer_id.into())))
+        self.listen_addresses.contains_partial(&address)
     }
 
     /// Add one or more known addresses for peer.

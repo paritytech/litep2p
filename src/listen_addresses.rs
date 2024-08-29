@@ -61,16 +61,34 @@ impl ListenAddresses {
         Ok(self.inner.write().insert(address))
     }
 
-    /// Remove public address.
+    /// Remove the exact public address.
+    ///
+    /// The provided address must contain the local peer ID.
     pub fn remove(&self, address: &Multiaddr) -> bool {
         self.inner.write().remove(address)
     }
 
-    /// Returns `true` if the set contains the given address.
+    /// Similar to [`ListenAddresses::remove`], but removes the address ignoring the peer ID.
+    pub fn remove_partial(&self, address: &Multiaddr) -> bool {
+        self.inner.write().remove(&self.replace_local_peer(address.clone()))
+    }
+
+    /// Returns `true` if the set contains the exact address.
     ///
-    /// The address must contain the local peer ID.
+    /// The provided address must contain the local peer ID.
+    ///
+    /// If you want to check if the address is a local listen address, use
+    /// [`ListenAddresses::contains_partial`].
     pub fn contains(&self, address: &Multiaddr) -> bool {
         self.inner.read().contains(address)
+    }
+
+    /// Similar to [`ListenAddresses::contains`], but checks if the address ignoring the peer ID
+    /// is a local listen address.
+    ///
+    /// If you want to match the exact address, use [`ListenAddresses::contains`].
+    pub fn contains_partial(&self, address: &Multiaddr) -> bool {
+        self.inner.read().contains(&self.replace_local_peer(address.clone()))
     }
 
     /// Returns a vector of the available listen addresses.
@@ -112,6 +130,19 @@ impl ListenAddresses {
     /// Returns `true` if the set of listen addresses is empty.
     pub fn is_empty(&self) -> bool {
         self.inner.read().is_empty()
+    }
+
+    /// Modify the provided address to contain the local peer ID.
+    ///
+    /// This method replaces any existing peer ID with the local peer ID.
+    fn replace_local_peer(&self, address: Multiaddr) -> Multiaddr {
+        let mut address: Multiaddr = address
+            .iter()
+            .take_while(|protocol| !std::matches!(protocol, Protocol::P2p(_)))
+            .collect();
+        address.push(Protocol::P2p(self.local_peer_id.into()));
+
+        address
     }
 
     /// Modify the provided address to contain the local peer ID.
@@ -235,5 +266,44 @@ mod tests {
         assert_eq!(addresses.len(), 2);
         assert!(addresses.contains(&address1.with(Protocol::P2p(peer_id.into()))));
         assert!(addresses.contains(&address2));
+    }
+
+    #[test]
+    fn contains_partial() {
+        let peer_id = PeerId::random();
+        let addresses = ListenAddresses::new(peer_id);
+        let address = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
+        let peer_address = Multiaddr::from_str("/dns/domain1.com/tcp/30333")
+            .unwrap()
+            .with(Protocol::P2p(peer_id.into()));
+
+        assert!(!addresses.contains_partial(&peer_address));
+        assert!(!addresses.contains_partial(&address));
+
+        addresses.register_listen_address(peer_address.clone()).unwrap();
+        assert!(addresses.contains_partial(&address));
+        assert!(addresses.contains_partial(&peer_address));
+
+        assert!(!addresses.contains(&address));
+        assert!(addresses.contains(&peer_address));
+    }
+
+    #[test]
+    fn remove_partial() {
+        let peer_id = PeerId::random();
+        let addresses = ListenAddresses::new(peer_id);
+        let address = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
+        let peer_address = Multiaddr::from_str("/dns/domain1.com/tcp/30333")
+            .unwrap()
+            .with(Protocol::P2p(peer_id.into()));
+
+        addresses.register_listen_address(peer_address.clone()).unwrap();
+        assert!(addresses.contains(&peer_address));
+
+        assert!(addresses.remove_partial(&address));
+        assert!(!addresses.contains(&peer_address));
+
+        // Already removed.
+        assert!(!addresses.remove(&peer_address));
     }
 }
