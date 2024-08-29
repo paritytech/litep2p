@@ -158,7 +158,7 @@ impl From<InnerRequestResponseEvent> for RequestResponseEvent {
 }
 
 /// Request-response events.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum RequestResponseEvent {
     /// Request received from remote
     RequestReceived {

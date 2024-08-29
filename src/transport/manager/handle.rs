@@ -20,7 +20,7 @@
 
 use crate::{
     crypto::ed25519::Keypair,
-    error::{AddressError, Error},
+    error::ImmediateDialError,
     executor::Executor,
     protocol::ProtocolSet,
     transport::manager::{
@@ -216,9 +216,9 @@ impl TransportManagerHandle {
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
-    pub fn dial(&self, peer: &PeerId) -> crate::Result<()> {
+    pub fn dial(&self, peer: &PeerId) -> Result<(), ImmediateDialError> {
         if peer == &self.local_peer_id {
-            return Err(Error::TriedToDialSelf);
+            return Err(ImmediateDialError::TriedToDialSelf);
         }
 
         {
@@ -226,14 +226,14 @@ impl TransportManagerHandle {
                 Some(PeerContext {
                     state: PeerState::Connected { .. },
                     ..
-                }) => return Err(Error::AlreadyConnected),
+                }) => return Err(ImmediateDialError::AlreadyConnected),
                 Some(PeerContext {
                     state: PeerState::Disconnected { dial_record },
                     addresses,
                     ..
                 }) => {
                     if addresses.is_empty() {
-                        return Err(Error::NoAddressAvailable(*peer));
+                        return Err(ImmediateDialError::NoAddressAvailable);
                     }
 
                     // peer is already being dialed, don't dial again until the first dial concluded
@@ -251,31 +251,31 @@ impl TransportManagerHandle {
                     state: PeerState::Dialing { .. } | PeerState::Opening { .. },
                     ..
                 }) => return Ok(()),
-                None => return Err(Error::PeerDoesntExist(*peer)),
+                None => return Err(ImmediateDialError::NoAddressAvailable),
             }
         }
 
         self.cmd_tx
             .try_send(InnerTransportManagerCommand::DialPeer { peer: *peer })
             .map_err(|error| match error {
-                TrySendError::Full(_) => Error::ChannelClogged,
-                TrySendError::Closed(_) => Error::EssentialTaskClosed,
+                TrySendError::Full(_) => ImmediateDialError::ChannelClogged,
+                TrySendError::Closed(_) => ImmediateDialError::TaskClosed,
             })
     }
 
     /// Dial peer using `Multiaddr`.
     ///
     /// Returns an error if address it not valid.
-    pub fn dial_address(&self, address: Multiaddr) -> crate::Result<()> {
+    pub fn dial_address(&self, address: Multiaddr) -> Result<(), ImmediateDialError> {
         if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
-            return Err(Error::AddressError(AddressError::PeerIdMissing));
+            return Err(ImmediateDialError::PeerIdMissing);
         }
 
         self.cmd_tx
             .try_send(InnerTransportManagerCommand::DialAddress { address })
             .map_err(|error| match error {
-                TrySendError::Full(_) => Error::ChannelClogged,
-                TrySendError::Closed(_) => Error::EssentialTaskClosed,
+                TrySendError::Full(_) => ImmediateDialError::ChannelClogged,
+                TrySendError::Closed(_) => ImmediateDialError::TaskClosed,
             })
     }
 }

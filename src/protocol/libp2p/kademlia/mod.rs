@@ -816,7 +816,7 @@ impl Kademlia {
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error).await;
                     }
-                    Some(TransportEvent::DialFailure { peer, address }) => self.on_dial_failure(peer, address),
+                    Some(TransportEvent::DialFailure { peer, address, .. }) => self.on_dial_failure(peer, address),
                     None => return Err(Error::EssentialTaskClosed),
                 },
                 context = self.executor.next() => {
