@@ -125,6 +125,8 @@ pub enum Error {
     ConnectionDoesntExist(ConnectionId),
     #[error("Exceeded connection limits `{0:?}`")]
     ConnectionLimit(ConnectionLimitsError),
+    #[error("Failed to dial peer immediately")]
+    ImmediateDialError(#[from] ImmediateDialError),
 }
 
 /// Error type for address parsing.
@@ -246,7 +248,8 @@ pub enum NotificationError {
 
 /// The error type for dialing a peer.
 ///
-/// This error is reported via the litep2p events.
+/// This error is reported via the litep2p events after performing
+/// a network dialing operation.
 #[derive(Debug, thiserror::Error)]
 pub enum DialError {
     /// The dialing operation timed out.
@@ -267,6 +270,29 @@ pub enum DialError {
     /// An error occurred during the negotiation process.
     #[error("Negotiation error: `{0}`")]
     NegotiationError(#[from] NegotiationError),
+}
+
+/// Dialing resulted in an immediate error before performing any network operations.
+#[derive(Debug, thiserror::Error)]
+pub enum ImmediateDialError {
+    /// The provided address does not include a peer ID.
+    #[error("`PeerId` missing from the address")]
+    PeerIdMissing,
+    /// The peer ID provided in the address is the same as the local peer ID.
+    #[error("Tried to dial self")]
+    TriedToDialSelf,
+    /// Cannot dial an already connected peer.
+    #[error("Already connected to peer")]
+    AlreadyConnected,
+    /// Cannot dial a peer that does not have any address available.
+    #[error("No address available for peer")]
+    NoAddressAvailable,
+    /// The essential task was closed.
+    #[error("TaskClosed")]
+    TaskClosed,
+    /// The channel is clogged.
+    #[error("Connection channel clogged")]
+    ChannelClogged,
 }
 
 /// Error during the QUIC transport negotiation.
