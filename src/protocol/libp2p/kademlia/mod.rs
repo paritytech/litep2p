@@ -166,6 +166,9 @@ pub(crate) struct Kademlia {
 
     /// Query executor.
     executor: QueryExecutor,
+
+    /// Next query ID.
+    next_query_id: usize,
 }
 
 impl Kademlia {
@@ -207,6 +210,7 @@ impl Kademlia {
             provider_ttl: config.provider_ttl,
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
+            next_query_id: 0usize,
         }
     }
 
@@ -938,7 +942,10 @@ impl Kademlia {
                 },
                 command = self.cmd_rx.recv() => {
                     match command {
-                        Some(KademliaCommand::FindNode { peer, query_id }) => {
+                        Some(KademliaCommand::FindNode { peer, query_id_tx }) => {
+                            let query_id = self.next_query_id();
+                            let _ = query_id_tx.send(query_id);
+
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
@@ -954,7 +961,10 @@ impl Kademlia {
                                     .into()
                             );
                         }
-                        Some(KademliaCommand::PutRecord { mut record, query_id }) => {
+                        Some(KademliaCommand::PutRecord { mut record, query_id_tx }) => {
+                            let query_id = self.next_query_id();
+                            let _ = query_id_tx.send(query_id);
+
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 query = ?query_id,
@@ -982,10 +992,13 @@ impl Kademlia {
                         }
                         Some(KademliaCommand::PutRecordToPeers {
                             mut record,
-                            query_id,
+                            query_id_tx,
                             peers,
                             update_local_store,
                         }) => {
+                            let query_id = self.next_query_id();
+                            let _ = query_id_tx.send(query_id);
+
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 query = ?query_id,
@@ -1025,8 +1038,11 @@ impl Kademlia {
                         Some(KademliaCommand::StartProviding {
                             key,
                             public_addresses,
-                            query_id
+                            query_id_tx
                         }) => {
+                            let query_id = self.next_query_id();
+                            let _ = query_id_tx.send(query_id);
+
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 query = ?query_id,
@@ -1052,7 +1068,10 @@ impl Kademlia {
                                     .into(),
                             );
                         }
-                        Some(KademliaCommand::GetRecord { key, quorum, query_id }) => {
+                        Some(KademliaCommand::GetRecord { key, quorum, query_id_tx }) => {
+                            let query_id = self.next_query_id();
+                            let _ = query_id_tx.send(query_id);
+
                             tracing::debug!(target: LOG_TARGET, ?key, "get record from DHT");
 
                             match (self.store.get(&key), quorum) {
@@ -1134,6 +1153,14 @@ impl Kademlia {
                 }
             }
         }
+    }
+
+    /// Allocate next query ID.
+    fn next_query_id(&mut self) -> QueryId {
+        let query_id = self.next_query_id;
+        self.next_query_id += 1;
+
+        QueryId(query_id)
     }
 }
 
