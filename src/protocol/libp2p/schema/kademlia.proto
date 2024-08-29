@@ -85,6 +85,6 @@ message Message {
 	repeated Peer closerPeers = 8;
 
 	// Used to return Providers
-	// GET_VALUE, ADD_PROVIDER, GET_PROVIDERS
+	// ADD_PROVIDER, GET_PROVIDERS
 	repeated Peer providerPeers = 9;
 }

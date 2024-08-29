@@ -24,7 +24,7 @@ use crate::{
         ed25519::Keypair,
         noise::{self, NoiseSocket},
     },
-    error::{Error, NegotiationError},
+    error::{Error, NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
@@ -101,7 +101,7 @@ enum ConnectionError {
         substream_id: Option<SubstreamId>,
 
         /// Error.
-        error: Error,
+        error: SubstreamError,
     },
 }
 
@@ -222,7 +222,7 @@ impl TcpConnection {
         max_write_buffer_size: usize,
         connection_open_timeout: Duration,
         substream_open_timeout: Duration,
-    ) -> crate::Result<NegotiatedConnection> {
+    ) -> Result<NegotiatedConnection, NegotiationError> {
         tracing::debug!(
             target: LOG_TARGET,
             ?address,
@@ -249,7 +249,7 @@ impl TcpConnection {
         {
             Err(_) => {
                 tracing::trace!(target: LOG_TARGET, ?connection_id, "connection timed out during negotiation");
-                Err(Error::Timeout)
+                Err(NegotiationError::Timeout)
             }
             Ok(result) => result,
         }
@@ -263,7 +263,7 @@ impl TcpConnection {
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
         open_timeout: Duration,
-    ) -> crate::Result<NegotiatedSubstream> {
+    ) -> Result<NegotiatedSubstream, SubstreamError> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
 
         let stream = match control.open_stream().await {
@@ -278,7 +278,10 @@ impl TcpConnection {
                     ?error,
                     "failed to open substream"
                 );
-                return Err(Error::YamuxError(Direction::Outbound(substream_id), error));
+                return Err(SubstreamError::YamuxError(
+                    error,
+                    Direction::Outbound(substream_id),
+                ));
             }
         };
 
@@ -311,7 +314,7 @@ impl TcpConnection {
         max_write_buffer_size: usize,
         connection_open_timeout: Duration,
         substream_open_timeout: Duration,
-    ) -> crate::Result<NegotiatedConnection> {
+    ) -> Result<NegotiatedConnection, NegotiationError> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
         match tokio::time::timeout(connection_open_timeout, async move {
@@ -331,7 +334,7 @@ impl TcpConnection {
         })
         .await
         {
-            Err(_) => Err(Error::Timeout),
+            Err(_) => Err(NegotiationError::Timeout),
             Ok(result) => result,
         }
     }
@@ -343,7 +346,7 @@ impl TcpConnection {
         substream_id: SubstreamId,
         protocols: Vec<ProtocolName>,
         open_timeout: Duration,
-    ) -> crate::Result<NegotiatedSubstream> {
+    ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
@@ -375,7 +378,7 @@ impl TcpConnection {
         role: &Role,
         protocols: Vec<&str>,
         substream_open_timeout: Duration,
-    ) -> crate::Result<(Negotiated<S>, ProtocolName)> {
+    ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError> {
         tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
 
         match tokio::time::timeout(substream_open_timeout, async move {
@@ -386,10 +389,8 @@ impl TcpConnection {
         })
         .await
         {
-            Err(_) => Err(Error::Timeout),
-            Ok(Err(error)) => Err(Error::NegotiationError(
-                NegotiationError::MultistreamSelectError(error),
-            )),
+            Err(_) => Err(NegotiationError::Timeout),
+            Ok(Err(error)) => Err(NegotiationError::MultistreamSelectError(error)),
             Ok(Ok((protocol, socket))) => {
                 tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
 
@@ -410,7 +411,7 @@ impl TcpConnection {
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
         substream_open_timeout: Duration,
-    ) -> crate::Result<NegotiatedConnection> {
+    ) -> Result<NegotiatedConnection, NegotiationError> {
         tracing::trace!(
             target: LOG_TARGET,
             ?role,
@@ -442,7 +443,7 @@ impl TcpConnection {
         if let Some(dialed_peer) = dialed_peer {
             if dialed_peer != peer {
                 tracing::debug!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer id mismatch");
-                return Err(Error::PeerIdMismatch(dialed_peer, peer));
+                return Err(NegotiationError::PeerIdMismatch(dialed_peer, peer));
             }
         }
 
@@ -521,7 +522,7 @@ impl TcpConnection {
                                 Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
                                     protocol: None,
                                     substream_id: None,
-                                    error,
+                                    error: SubstreamError::NegotiationError(error),
                                 }),
                                 Err(_) => Err(ConnectionError::Timeout {
                                     protocol: None,
@@ -561,7 +562,7 @@ impl TcpConnection {
 
                             let (protocol, substream_id, error) = match error {
                                 ConnectionError::Timeout { protocol, substream_id } => {
-                                    (protocol, substream_id, Error::Timeout)
+                                    (protocol, substream_id, SubstreamError::NegotiationError(NegotiationError::Timeout))
                                 }
                                 ConnectionError::FailedToNegotiate { protocol, substream_id, error } => {
                                     (protocol, substream_id, error)
@@ -717,11 +718,11 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::ProtocolError(
                     crate::multistream_select::ProtocolError::InvalidMessage,
                 ),
-            ))) => {}
+            )) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -759,11 +760,11 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::ProtocolError(
                     crate::multistream_select::ProtocolError::InvalidMessage,
                 ),
-            ))) => {}
+            )) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -812,9 +813,9 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::Failed,
-            ))) => {}
+            )) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -856,9 +857,9 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::Failed,
-            ))) => {}
+            )) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -903,7 +904,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -954,7 +955,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -1000,7 +1001,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -1040,7 +1041,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -1095,9 +1096,9 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::Failed,
-            ))) => {}
+            )) => {}
             Err(error) => panic!("{error:?}"),
         }
     }
@@ -1155,9 +1156,9 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::NegotiationError(NegotiationError::MultistreamSelectError(
+            Err(NegotiationError::MultistreamSelectError(
                 crate::multistream_select::NegotiationError::Failed,
-            ))) => {}
+            )) => {}
             Err(error) => panic!("{error:?}"),
         }
     }
@@ -1208,7 +1209,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
@@ -1265,7 +1266,7 @@ mod tests {
         .await
         {
             Ok(_) => panic!("connection was supposed to fail"),
-            Err(Error::Timeout) => {}
+            Err(NegotiationError::Timeout) => {}
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }

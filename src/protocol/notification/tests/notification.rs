@@ -31,7 +31,7 @@ use crate::{
             ConnectionState, InboundState, NotificationProtocol, OutboundState, PeerContext,
             PeerState, ValidationResult,
         },
-        InnerTransportEvent, ProtocolCommand,
+        InnerTransportEvent, ProtocolCommand, SubstreamError,
     },
     substream::Substream,
     transport::Endpoint,
@@ -225,7 +225,9 @@ async fn substream_open_failure_for_unknown_substream() {
 
     let (mut notif, _handle, _sender, _tx) = make_notification_protocol();
 
-    notif.on_substream_open_failure(SubstreamId::new(), Error::Unknown).await;
+    notif
+        .on_substream_open_failure(SubstreamId::new(), SubstreamError::ConnectionClosed)
+        .await;
 }
 
 #[tokio::test]
@@ -313,7 +315,9 @@ async fn substream_open_failure_for_unknown_peer() {
     let substream_id = SubstreamId::from(1337usize);
 
     notif.pending_outbound.insert(substream_id, peer);
-    notif.on_substream_open_failure(substream_id, Error::Unknown).await;
+    notif
+        .on_substream_open_failure(substream_id, SubstreamError::ConnectionClosed)
+        .await;
 }
 
 #[tokio::test]
@@ -895,7 +899,10 @@ async fn open_failure_reported_once() {
     notif.pending_outbound.insert(SubstreamId::from(1337usize), peer);
 
     notif
-        .on_substream_open_failure(SubstreamId::from(1337usize), Error::Unknown)
+        .on_substream_open_failure(
+            SubstreamId::from(1337usize),
+            SubstreamError::ConnectionClosed,
+        )
         .await;
 
     match handle.next().await {

@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{codec::unsigned_varint::UnsignedVarint, error::Error, transport::webrtc::schema};
+use crate::{codec::unsigned_varint::UnsignedVarint, error::ParseError, transport::webrtc::schema};
 
 use prost::Message;
 use tokio_util::codec::{Decoder, Encoder};
@@ -72,18 +72,21 @@ impl WebRtcMessage {
     }
 
     /// Decode payload into [`WebRtcMessage`].
-    pub fn decode(payload: &[u8]) -> crate::Result<Self> {
+    pub fn decode(payload: &[u8]) -> Result<Self, ParseError> {
         // TODO: set correct size
         let mut codec = UnsignedVarint::new(None);
         let mut data = bytes::BytesMut::from(payload);
-        let result = codec.decode(&mut data)?.ok_or(Error::InvalidData)?;
+        let result = codec
+            .decode(&mut data)
+            .map_err(|_| ParseError::InvalidData)?
+            .ok_or(ParseError::InvalidData)?;
 
         match schema::webrtc::Message::decode(result) {
             Ok(message) => Ok(Self {
                 payload: message.message,
                 flags: message.flag,
             }),
-            Err(_) => Err(Error::InvalidData),
+            Err(_) => Err(ParseError::InvalidData),
         }
     }
 }

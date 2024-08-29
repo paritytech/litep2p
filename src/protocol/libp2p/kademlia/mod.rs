@@ -21,7 +21,7 @@
 //! [`/ipfs/kad/1.0.0`](https://github.com/libp2p/specs/blob/master/kad-dht/README.md) implementation.
 
 use crate::{
-    error::Error,
+    error::{Error, SubstreamError},
     protocol::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
@@ -29,6 +29,7 @@ use crate::{
             handle::KademliaCommand,
             message::KademliaMessage,
             query::{QueryAction, QueryEngine},
+            record::ProviderRecord,
             routing_table::RoutingTable,
             store::MemoryStore,
             types::{ConnectionType, KademliaPeer, Key},
@@ -153,6 +154,9 @@ pub(crate) struct Kademlia {
     /// Default record TTL.
     record_ttl: Duration,
 
+    /// Provider record TTL.
+    provider_ttl: Duration,
+
     /// Query engine.
     engine: QueryEngine,
 
@@ -188,6 +192,7 @@ impl Kademlia {
             update_mode: config.update_mode,
             validation_mode: config.validation_mode,
             record_ttl: config.record_ttl,
+            provider_ttl: config.provider_ttl,
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
         }
@@ -482,7 +487,98 @@ impl Kademlia {
                         target: LOG_TARGET,
                         ?peer,
                         ?message,
-                        "both query and record key missing, unable to handle message",
+                        "unable to handle `GET_RECORD` request with empty key",
+                    ),
+                }
+            }
+            KademliaMessage::AddProvider { key, providers } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?key,
+                    ?providers,
+                    "handle `ADD_PROVIDER` message",
+                );
+
+                match (providers.len(), providers.first()) {
+                    (1, Some(provider)) =>
+                        if provider.peer == peer {
+                            self.store.put_provider(ProviderRecord {
+                                key,
+                                provider: peer,
+                                addresses: provider.addresses.clone(),
+                                expires: Instant::now() + self.provider_ttl,
+                            });
+                        } else {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                publisher = ?peer,
+                                provider = ?provider.peer,
+                                "ignoring `ADD_PROVIDER` message with `publisher` != `provider`"
+                            )
+                        },
+                    (n, _) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            publisher = ?peer,
+                            ?n,
+                            "ignoring `ADD_PROVIDER` message with `n` != 1 providers"
+                        )
+                    }
+                }
+            }
+            ref message @ KademliaMessage::GetProviders {
+                ref key,
+                ref peers,
+                ref providers,
+            } => {
+                match (query_id, key) {
+                    (Some(query_id), key) => {
+                        // Note: key is not required, but can be non-empty. We just ignore it here.
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            query = ?query_id,
+                            ?key,
+                            ?peers,
+                            ?providers,
+                            "handle `GET_PROVIDERS` response",
+                        );
+
+                        // update routing table and inform user about the update
+                        self.update_routing_table(peers).await;
+
+                        self.engine.register_response(query_id, peer, message.clone());
+                    }
+                    (None, Some(key)) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?key,
+                            "handle `GET_PROVIDERS` request",
+                        );
+
+                        let providers = self.store.get_providers(key);
+                        // TODO: if local peer is among the providers, update its `ProviderRecord`
+                        //       to have up-to-date addresses.
+                        //       Requires https://github.com/paritytech/litep2p/issues/211.
+
+                        let closer_peers = self
+                            .routing_table
+                            .closest(Key::from(key.to_vec()), self.replication_factor);
+
+                        let message = KademliaMessage::get_providers_response(
+                            key.clone(),
+                            providers,
+                            &closer_peers,
+                        );
+                        self.executor.send_message(peer, message.into(), substream);
+                    }
+                    (None, None) => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?message,
+                        "unable to handle `GET_PROVIDERS` request with empty key",
                     ),
                 }
             }
@@ -492,7 +588,11 @@ impl Kademlia {
     }
 
     /// Failed to open substream to remote peer.
-    async fn on_substream_open_failure(&mut self, substream_id: SubstreamId, error: Error) {
+    async fn on_substream_open_failure(
+        &mut self,
+        substream_id: SubstreamId,
+        error: SubstreamError,
+    ) {
         tracing::trace!(
             target: LOG_TARGET,
             ?substream_id,
@@ -918,6 +1018,7 @@ mod tests {
             update_mode: RoutingTableUpdateMode::Automatic,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: Duration::from_secs(36 * 60 * 60),
+            provider_ttl: Duration::from_secs(48 * 60 * 60),
             event_tx,
             cmd_rx,
         };

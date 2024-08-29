@@ -20,9 +20,9 @@
 
 use crate::{
     protocol::libp2p::kademlia::{
-        record::{Key as RecordKey, Record},
+        record::{Key as RecordKey, ProviderRecord, Record},
         schema,
-        types::KademliaPeer,
+        types::{ConnectionType, KademliaPeer},
     },
     PeerId,
 };
@@ -60,8 +60,30 @@ pub enum KademliaMessage {
         /// Record.
         record: Option<Record>,
 
-        /// Peers closest to key.
+        /// Peers closer to the key.
         peers: Vec<KademliaPeer>,
+    },
+
+    /// `ADD_PROVIDER` message.
+    AddProvider {
+        /// Key.
+        key: RecordKey,
+
+        /// Peers, providing the data for `key`. Must contain exactly one peer matching the sender
+        /// of the message.
+        providers: Vec<KademliaPeer>,
+    },
+
+    /// `GET_PROVIDERS` message.
+    GetProviders {
+        /// Key. `None` in response.
+        key: Option<RecordKey>,
+
+        /// Peers closer to the key.
+        peers: Vec<KademliaPeer>,
+
+        /// Peers, providing the data for `key`.
+        providers: Vec<KademliaPeer>,
     },
 }
 
@@ -149,10 +171,84 @@ impl KademliaMessage {
         buf
     }
 
+    /// Create `ADD_PROVIDER` message with `provider`.
+    #[allow(unused)]
+    pub fn add_provider(provider: ProviderRecord) -> Vec<u8> {
+        let peer = KademliaPeer::new(
+            provider.provider,
+            provider.addresses,
+            ConnectionType::CanConnect, // ignored by message recipient
+        );
+        let message = schema::kademlia::Message {
+            key: provider.key.clone().to_vec(),
+            cluster_level_raw: 10,
+            r#type: schema::kademlia::MessageType::AddProvider.into(),
+            provider_peers: std::iter::once((&peer).into()).collect(),
+            ..Default::default()
+        };
+
+        let mut buf = Vec::with_capacity(message.encoded_len());
+        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
+
+        buf
+    }
+
+    /// Create `GET_PROVIDERS` request for `key`.
+    #[allow(unused)]
+    pub fn get_providers_request(key: RecordKey) -> Vec<u8> {
+        let message = schema::kademlia::Message {
+            key: key.to_vec(),
+            cluster_level_raw: 10,
+            r#type: schema::kademlia::MessageType::GetProviders.into(),
+            ..Default::default()
+        };
+
+        let mut buf = Vec::with_capacity(message.encoded_len());
+        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
+
+        buf
+    }
+
+    /// Create `GET_PROVIDERS` response.
+    pub fn get_providers_response(
+        key: RecordKey,
+        providers: Vec<ProviderRecord>,
+        closer_peers: &[KademliaPeer],
+    ) -> Vec<u8> {
+        debug_assert!(providers.iter().all(|p| p.key == key));
+
+        let provider_peers = providers
+            .into_iter()
+            .map(|p| {
+                KademliaPeer::new(
+                    p.provider,
+                    p.addresses,
+                    ConnectionType::CanConnect, // ignored by recipient
+                )
+            })
+            .map(|p| (&p).into())
+            .collect();
+
+        let message = schema::kademlia::Message {
+            key: key.to_vec(),
+            cluster_level_raw: 10,
+            r#type: schema::kademlia::MessageType::GetProviders.into(),
+            closer_peers: closer_peers.iter().map(Into::into).collect(),
+            provider_peers,
+            ..Default::default()
+        };
+
+        let mut buf = Vec::with_capacity(message.encoded_len());
+        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
+
+        buf
+    }
+
     /// Get [`KademliaMessage`] from bytes.
     pub fn from_bytes(bytes: BytesMut) -> Option<Self> {
         match schema::kademlia::Message::decode(bytes) {
             Ok(message) => match message.r#type {
+                // FIND_NODE
                 4 => {
                     let peers = message
                         .closer_peers
@@ -165,6 +261,7 @@ impl KademliaMessage {
                         peers,
                     })
                 }
+                // PUT_VALUE
                 0 => {
                     let record = message.record?;
 
@@ -172,6 +269,7 @@ impl KademliaMessage {
                         record: record_from_schema(record)?,
                     })
                 }
+                // GET_VALUE
                 1 => {
                     let key = match message.key.is_empty() {
                         true => message.record.as_ref().and_then(|record| {
@@ -196,8 +294,39 @@ impl KademliaMessage {
                             .collect(),
                     })
                 }
-                message => {
-                    tracing::warn!(target: LOG_TARGET, ?message, "unhandled message");
+                // ADD_PROVIDER
+                2 => {
+                    let key = (!message.key.is_empty()).then_some(message.key.into())?;
+                    let providers = message
+                        .provider_peers
+                        .iter()
+                        .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .collect();
+
+                    Some(Self::AddProvider { key, providers })
+                }
+                // GET_PROVIDERS
+                3 => {
+                    let key = (!message.key.is_empty()).then_some(message.key.into());
+                    let peers = message
+                        .closer_peers
+                        .iter()
+                        .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .collect();
+                    let providers = message
+                        .provider_peers
+                        .iter()
+                        .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .collect();
+
+                    Some(Self::GetProviders {
+                        key,
+                        peers,
+                        providers,
+                    })
+                }
+                message_type => {
+                    tracing::warn!(target: LOG_TARGET, ?message_type, "unhandled message");
                     None
                 }
             },

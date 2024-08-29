@@ -21,7 +21,10 @@
 
 //! Ed25519 keys.
 
-use crate::{error::Error, PeerId};
+use crate::{
+    error::{Error, ParseError},
+    PeerId,
+};
 
 use ed25519_dalek::{self as ed25519, Signer as _, Verifier as _};
 use std::fmt;
@@ -131,11 +134,13 @@ impl PublicKey {
 
     /// Try to parse a public key from a byte array containing the actual key as produced by
     /// `to_bytes`.
-    pub fn try_from_bytes(k: &[u8]) -> crate::Result<PublicKey> {
-        let k = <[u8; 32]>::try_from(k)
-            .map_err(|e| Error::Other(format!("Failed to parse ed25519 public key: {e}")))?;
+    pub fn try_from_bytes(k: &[u8]) -> Result<PublicKey, ParseError> {
+        let k = <[u8; 32]>::try_from(k).map_err(|_| ParseError::InvalidPublicKey)?;
+
+        // The error type of the verifying key is deliberately opaque as to avoid side-channel
+        // leakage. We can't provide a more specific error type here.
         ed25519::VerifyingKey::from_bytes(&k)
-            .map_err(|e| Error::Other(format!("Failed to parse ed25519 public key: {e}")))
+            .map_err(|_| ParseError::InvalidPublicKey)
             .map(PublicKey)
     }
 

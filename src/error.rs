@@ -48,15 +48,15 @@ pub enum Error {
     #[error("Protocol `{0}` not supported")]
     ProtocolNotSupported(String),
     #[error("Address error: `{0}`")]
-    AddressError(AddressError),
+    AddressError(#[from] AddressError),
     #[error("Parse error: `{0}`")]
     ParseError(ParseError),
     #[error("I/O error: `{0}`")]
     IoError(ErrorKind),
     #[error("Negotiation error: `{0}`")]
-    NegotiationError(NegotiationError),
+    NegotiationError(#[from] NegotiationError),
     #[error("Substream error: `{0}`")]
-    SubstreamError(SubstreamError),
+    SubstreamError(#[from] SubstreamError),
     #[error("Substream error: `{0}`")]
     NotificationError(NotificationError),
     #[error("Essential task closed")]
@@ -127,24 +127,57 @@ pub enum Error {
     ConnectionLimit(ConnectionLimitsError),
 }
 
+/// Error type for address parsing.
 #[derive(Debug, thiserror::Error)]
 pub enum AddressError {
-    #[error("Invalid protocol")]
+    /// The provided address does not correspond to the transport protocol.
+    ///
+    /// For example, this can happen when the address used the UDP protocol but
+    /// the handling transport only allows TCP connections.
+    #[error("Invalid address for protocol")]
     InvalidProtocol,
+    /// The provided address is not a valid URL.
+    #[error("Invalid URL")]
+    InvalidUrl,
+    /// The provided address does not include a peer ID.
     #[error("`PeerId` missing from the address")]
     PeerIdMissing,
+    /// No address is available for the provided peer ID.
     #[error("Address not available")]
     AddressNotAvailable,
+    /// The provided address contains an invalid multihash.
+    #[error("Multihash does not contain a valid peer ID : `{0:?}`")]
+    InvalidPeerId(Multihash),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[error("Invalid multihash: `{0:?}`")]
-    InvalidMultihash(Multihash),
+    /// The provided probuf message cannot be decoded.
     #[error("Failed to decode protobuf message: `{0:?}`")]
-    ProstDecodeError(prost::DecodeError),
+    ProstDecodeError(#[from] prost::DecodeError),
+    /// The provided protobuf message cannot be encoded.
     #[error("Failed to encode protobuf message: `{0:?}`")]
-    ProstEncodeError(prost::EncodeError),
+    ProstEncodeError(#[from] prost::EncodeError),
+    /// The protobuf message contains an unexpected key type.
+    ///
+    /// This error can happen when:
+    ///  - The provided key type is not recognized.
+    ///  - The provided key type is recognized but not supported.
+    #[error("Unknown key type from protobuf message: `{0}`")]
+    UnknownKeyType(i32),
+    /// The public key bytes are invalid and cannot be parsed.
+    ///
+    /// This error can happen when:
+    ///  - The received number of bytes is not equal to the expected number of bytes (32 bytes).
+    ///  - The bytes are not a valid Ed25519 public key.
+    ///  - Length of the public key is not represented by 2 bytes (WebRTC specific).
+    #[error("Invalid public key")]
+    InvalidPublicKey,
+    /// The provided date has an invalid format.
+    ///
+    /// This error is protocol specific.
+    #[error("Invalid data")]
+    InvalidData,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -152,23 +185,51 @@ pub enum SubstreamError {
     #[error("Connection closed")]
     ConnectionClosed,
     #[error("yamux error: `{0}`")]
-    YamuxError(crate::yamux::ConnectionError),
+    YamuxError(crate::yamux::ConnectionError, Direction),
     #[error("Failed to read from substream, substream id `{0:?}`")]
     ReadFailure(Option<SubstreamId>),
     #[error("Failed to write to substream, substream id `{0:?}`")]
     WriteFailure(Option<SubstreamId>),
+    #[error("Negotiation error: `{0:?}`")]
+    NegotiationError(#[from] NegotiationError),
 }
 
+/// Error during the negotiation phase.
 #[derive(Debug, thiserror::Error)]
 pub enum NegotiationError {
+    /// Error occurred during the multistream-select phase of the negotiation.
     #[error("multistream-select error: `{0:?}`")]
-    MultistreamSelectError(crate::multistream_select::NegotiationError),
+    MultistreamSelectError(#[from] crate::multistream_select::NegotiationError),
+    /// Error occurred during the Noise handshake negotiation.
     #[error("multistream-select error: `{0:?}`")]
-    SnowError(snow::Error),
-    #[error("Connection closed while negotiating")]
-    ConnectionClosed,
+    SnowError(#[from] snow::Error),
+    /// The peer ID was not provided by the noise handshake.
     #[error("`PeerId` missing from Noise handshake")]
     PeerIdMissing,
+    /// The negotiation operation timed out.
+    #[error("Operation timed out")]
+    Timeout,
+    /// The message provided over the wire has an invalid format or is unsupported.
+    #[error("Parse error: `{0}`")]
+    ParseError(#[from] ParseError),
+    /// An I/O error occurred during the negotiation process.
+    #[error("I/O error: `{0}`")]
+    IoError(ErrorKind),
+    /// Expected a different state during the negotiation process.
+    #[error("Expected a different state")]
+    StateMismatch,
+    /// The noise handshake provided a different peer ID than the one expected in the dialing
+    /// address.
+    #[error("Peer ID mismatch: expected `{0}`, got `{1}`")]
+    PeerIdMismatch(PeerId, PeerId),
+    /// Error specific to the QUIC transport.
+    #[cfg(feature = "quic")]
+    #[error("QUIC error: `{0}`")]
+    Quic(#[from] QuicError),
+    /// Error specific to the WebSocket transport.
+    #[cfg(feature = "websocket")]
+    #[error("WebSocket error: `{0}`")]
+    WebSocket(#[from] tokio_tungstenite::tungstenite::error::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -183,25 +244,74 @@ pub enum NotificationError {
     NotificationStreamClosed(PeerId),
 }
 
+/// The error type for dialing a peer.
+///
+/// This error is reported via the litep2p events.
 #[derive(Debug, thiserror::Error)]
 pub enum DialError {
-    #[error("Tried to dial self")]
-    TriedToDialSelf,
-    #[error("Already connected to peer")]
-    AlreadyConnected,
-    #[error("Peer doens't have any known addresses")]
-    NoAddressAvailable(PeerId),
+    /// The dialing operation timed out.
+    ///
+    /// This error indicates that the `connection_open_timeout` from the protocol configuration
+    /// was exceeded.
+    #[error("Dial timed out")]
+    Timeout,
+    /// The provided address for dialing is invalid.
+    #[error("Address error: `{0}`")]
+    AddressError(#[from] AddressError),
+    /// An error occurred during DNS lookup operation.
+    ///
+    /// The address provided may be valid, however it failed to resolve to a concrete IP address.
+    /// This error may be recoverable.
+    #[error("DNS lookup error for `{0}`")]
+    DnsError(#[from] DnsError),
+    /// An error occurred during the negotiation process.
+    #[error("Negotiation error: `{0}`")]
+    NegotiationError(#[from] NegotiationError),
+}
+
+/// Error during the QUIC transport negotiation.
+#[cfg(feature = "quic")]
+#[derive(Debug, thiserror::Error)]
+pub enum QuicError {
+    /// The provided certificate is invalid.
+    #[error("Invalid certificate")]
+    InvalidCertificate,
+    /// The connection was lost.
+    #[error("Failed to negotiate QUIC: `{0}`")]
+    ConnectionError(#[from] quinn::ConnectionError),
+    /// The connection could not be established.
+    #[error("Failed to connect to peer: `{0}`")]
+    ConnectError(#[from] quinn::ConnectError),
+}
+
+/// Error during DNS resolution.
+#[derive(Debug, thiserror::Error)]
+pub enum DnsError {
+    /// The DNS resolution failed to resolve the provided URL.
+    #[error("DNS failed to resolve url `{0}`")]
+    ResolveError(String),
+    /// The DNS expected a different IP address version.
+    ///
+    /// For example, DNSv4 was expected but DNSv6 was provided.
+    #[error("DNS type is different from the provided IP address")]
+    IpVersionMismatch,
 }
 
 impl From<MultihashGeneric<64>> for Error {
     fn from(hash: MultihashGeneric<64>) -> Self {
-        Error::ParseError(ParseError::InvalidMultihash(hash))
+        Error::AddressError(AddressError::InvalidPeerId(hash))
     }
 }
 
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Error {
         Error::IoError(error.kind())
+    }
+}
+
+impl From<io::Error> for DialError {
+    fn from(error: io::Error) -> Self {
+        DialError::NegotiationError(NegotiationError::IoError(error.kind()))
     }
 }
 
@@ -241,6 +351,24 @@ impl From<prost::EncodeError> for Error {
     }
 }
 
+impl From<io::Error> for NegotiationError {
+    fn from(error: io::Error) -> Self {
+        NegotiationError::IoError(error.kind())
+    }
+}
+
+impl From<ParseError> for Error {
+    fn from(error: ParseError) -> Self {
+        Error::ParseError(error)
+    }
+}
+
+impl From<MultihashGeneric<64>> for AddressError {
+    fn from(hash: MultihashGeneric<64>) -> Self {
+        AddressError::InvalidPeerId(hash)
+    }
+}
+
 #[cfg(feature = "quic")]
 impl From<quinn::ConnectionError> for Error {
     fn from(error: quinn::ConnectionError) -> Self {
@@ -248,6 +376,23 @@ impl From<quinn::ConnectionError> for Error {
             quinn::ConnectionError::TimedOut => Error::Timeout,
             error => Error::Quinn(error),
         }
+    }
+}
+
+#[cfg(feature = "quic")]
+impl From<quinn::ConnectionError> for DialError {
+    fn from(error: quinn::ConnectionError) -> Self {
+        match error {
+            quinn::ConnectionError::TimedOut => DialError::Timeout,
+            error => DialError::NegotiationError(NegotiationError::Quic(error.into())),
+        }
+    }
+}
+
+#[cfg(feature = "quic")]
+impl From<quinn::ConnectError> for DialError {
+    fn from(error: quinn::ConnectError) -> Self {
+        DialError::NegotiationError(NegotiationError::Quic(error.into()))
     }
 }
 
@@ -264,18 +409,6 @@ mod tests {
 
     #[tokio::test]
     async fn try_from_errors() {
-        tracing::trace!("{:?}", NotificationError::InvalidState);
-        tracing::trace!("{:?}", DialError::AlreadyConnected);
-        tracing::trace!(
-            "{:?}",
-            SubstreamError::YamuxError(crate::yamux::ConnectionError::Closed)
-        );
-        tracing::trace!("{:?}", AddressError::PeerIdMissing);
-        tracing::trace!(
-            "{:?}",
-            ParseError::InvalidMultihash(Multihash::from(PeerId::random()))
-        );
-
         let (tx, rx) = channel(1);
         drop(rx);
 

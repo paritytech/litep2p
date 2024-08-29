@@ -20,17 +20,20 @@
 
 //! Shared socket listener between TCP and WebSocket.
 
-use crate::{error::AddressError, Error, PeerId};
+use crate::{
+    error::{AddressError, DnsError},
+    PeerId,
+};
 
 use futures::Stream;
+use hickory_resolver::{
+    config::{ResolverConfig, ResolverOpts},
+    TokioAsyncResolver,
+};
 use multiaddr::{Multiaddr, Protocol};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
 
 use std::{
     io,
@@ -70,7 +73,7 @@ pub enum DnsType {
 
 impl AddressType {
     /// Resolve the address to a concrete IP.
-    pub async fn lookup_ip(self) -> crate::Result<SocketAddr> {
+    pub async fn lookup_ip(self) -> Result<SocketAddr, DnsError> {
         let (url, port, dns_type) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),
@@ -95,7 +98,7 @@ impl AddressType {
                         url
                     );
 
-                    return Err(Error::Other(format!("Failed to resolve DNS address {url}")));
+                    return Err(DnsError::ResolveError(url));
                 }
             };
 
@@ -109,10 +112,7 @@ impl AddressType {
                 "Multiaddr DNS type does not match IP version `{}`",
                 url
             );
-
-            return Err(Error::Other(format!(
-                "Miss-match in DNS address IP version {url}"
-            )));
+            return Err(DnsError::IpVersionMismatch);
         };
 
         Ok(SocketAddr::new(ip, port))
@@ -185,7 +185,7 @@ pub trait GetSocketAddr {
     /// The `PeerId` is optional and may not be present.
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
-    ) -> crate::Result<(AddressType, Option<PeerId>)>;
+    ) -> Result<(AddressType, Option<PeerId>), AddressError>;
 
     /// Convert concrete `SocketAddr` to `Multiaddr`.
     fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr;
@@ -197,7 +197,7 @@ pub struct TcpAddress;
 impl GetSocketAddr for TcpAddress {
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
-    ) -> crate::Result<(AddressType, Option<PeerId>)> {
+    ) -> Result<(AddressType, Option<PeerId>), AddressError> {
         multiaddr_to_socket_address(address, SocketListenerType::Tcp)
     }
 
@@ -214,7 +214,7 @@ pub struct WebSocketAddress;
 impl GetSocketAddr for WebSocketAddress {
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
-    ) -> crate::Result<(AddressType, Option<PeerId>)> {
+    ) -> Result<(AddressType, Option<PeerId>), AddressError> {
         multiaddr_to_socket_address(address, SocketListenerType::WebSocket)
     }
 
@@ -352,7 +352,7 @@ enum SocketListenerType {
 fn multiaddr_to_socket_address(
     address: &Multiaddr,
     ty: SocketListenerType,
-) -> crate::Result<(AddressType, Option<PeerId>)> {
+) -> Result<(AddressType, Option<PeerId>), AddressError> {
     tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
     let mut iter = address.iter();
@@ -370,7 +370,7 @@ fn multiaddr_to_socket_address(
                     ?protocol,
                     "invalid transport protocol, expected `Tcp`",
                 );
-                Err(Error::AddressError(AddressError::InvalidProtocol))
+                Err(AddressError::InvalidProtocol)
             }
         };
 
@@ -384,7 +384,7 @@ fn multiaddr_to_socket_address(
                     ?protocol,
                     "invalid transport protocol, expected `Tcp`",
                 );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
+                return Err(AddressError::InvalidProtocol);
             }
         },
         Some(Protocol::Ip4(address)) => match iter.next() {
@@ -396,7 +396,7 @@ fn multiaddr_to_socket_address(
                     ?protocol,
                     "invalid transport protocol, expected `Tcp`",
                 );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
+                return Err(AddressError::InvalidProtocol);
             }
         },
         Some(Protocol::Dns(address)) => handle_dns_type(address.into(), DnsType::Dns, iter.next())?,
@@ -406,7 +406,7 @@ fn multiaddr_to_socket_address(
             handle_dns_type(address.into(), DnsType::Dns6, iter.next())?,
         protocol => {
             tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
-            return Err(Error::AddressError(AddressError::InvalidProtocol));
+            return Err(AddressError::InvalidProtocol);
         }
     };
 
@@ -423,14 +423,15 @@ fn multiaddr_to_socket_address(
                         ?protocol,
                         "invalid protocol, expected `Ws` or `Wss`"
                     );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
+                    return Err(AddressError::InvalidProtocol);
                 }
             };
         }
     }
 
     let maybe_peer = match iter.next() {
-        Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
+        Some(Protocol::P2p(multihash)) =>
+            Some(PeerId::from_multihash(multihash).map_err(AddressError::InvalidPeerId)?),
         None => None,
         protocol => {
             tracing::error!(
@@ -438,7 +439,7 @@ fn multiaddr_to_socket_address(
                 ?protocol,
                 "invalid protocol, expected `P2p` or `None`"
             );
-            return Err(Error::AddressError(AddressError::InvalidProtocol));
+            return Err(AddressError::InvalidProtocol);
         }
     };
 

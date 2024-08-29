@@ -20,7 +20,10 @@
 
 use crate::{
     codec::ProtocolCodec,
-    error::Error,
+    error::{Error, NegotiationError, SubstreamError},
+    multistream_select::{
+        NegotiationError as MultiStreamNegotiationError, ProtocolError as MultiStreamProtocolError,
+    },
     protocol::{
         connection::{ConnectionHandle, Permit},
         Direction, TransportEvent,
@@ -131,7 +134,7 @@ pub enum InnerTransportEvent {
         substream: SubstreamId,
 
         /// Error that occurred when the substream was being opened.
-        error: Error,
+        error: SubstreamError,
     },
 }
 
@@ -274,7 +277,7 @@ impl ProtocolSet {
         protocol: ProtocolName,
         direction: Direction,
         substream: Substream,
-    ) -> crate::Result<()> {
+    ) -> Result<(), SubstreamError> {
         tracing::debug!(target: LOG_TARGET, %protocol, ?peer, ?direction, "substream opened");
 
         let (protocol, fallback) = match self.fallback_names.get(&protocol) {
@@ -282,19 +285,28 @@ impl ProtocolSet {
             None => (protocol, None),
         };
 
-        self.protocols
-            .get_mut(&protocol)
-            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
+        let Some(protocol_context) = self.protocols.get(&protocol) else {
+            return Err(NegotiationError::MultistreamSelectError(
+                MultiStreamNegotiationError::ProtocolError(
+                    MultiStreamProtocolError::ProtocolNotSupported,
+                ),
+            )
+            .into());
+        };
+
+        let event = InnerTransportEvent::SubstreamOpened {
+            peer,
+            protocol: protocol.clone(),
+            fallback,
+            direction,
+            substream,
+        };
+
+        protocol_context
             .tx
-            .send(InnerTransportEvent::SubstreamOpened {
-                peer,
-                protocol: protocol.clone(),
-                fallback,
-                direction,
-                substream,
-            })
+            .send(event)
             .await
-            .map_err(From::from)
+            .map_err(|_| SubstreamError::ConnectionClosed)
     }
 
     /// Get codec used by the protocol.
@@ -312,7 +324,7 @@ impl ProtocolSet {
         &mut self,
         protocol: ProtocolName,
         substream: SubstreamId,
-        error: Error,
+        error: SubstreamError,
     ) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,

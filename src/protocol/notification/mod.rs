@@ -21,7 +21,7 @@
 //! Notification protocol implementation.
 
 use crate::{
-    error::Error,
+    error::{Error, SubstreamError},
     executor::Executor,
     protocol::{
         self,
@@ -813,7 +813,11 @@ impl NotificationProtocol {
     ///
     /// If the substream was initiated by the local node, it must be reported that the substream
     /// failed to open. Otherwise the peer state can silently be converted to `Closed`.
-    async fn on_substream_open_failure(&mut self, substream_id: SubstreamId, error: Error) {
+    async fn on_substream_open_failure(
+        &mut self,
+        substream_id: SubstreamId,
+        error: SubstreamError,
+    ) {
         tracing::debug!(
             target: LOG_TARGET,
             protocol = %self.protocol,

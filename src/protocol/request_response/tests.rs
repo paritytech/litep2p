@@ -26,7 +26,7 @@ use crate::{
             ConfigBuilder, DialOptions, RequestResponseError, RequestResponseEvent,
             RequestResponseHandle, RequestResponseProtocol,
         },
-        InnerTransportEvent, TransportService,
+        InnerTransportEvent, SubstreamError, TransportService,
     },
     substream::Substream,
     transport::{
@@ -138,7 +138,10 @@ async fn unknown_substream_open_failure() {
     let (mut protocol, _handle, _manager, _tx) = protocol();
 
     match protocol
-        .on_substream_open_failure(SubstreamId::from(1338usize), Error::Unknown)
+        .on_substream_open_failure(
+            SubstreamId::from(1338usize),
+            SubstreamError::ConnectionClosed,
+        )
         .await
     {
         Err(Error::InvalidState) => {}

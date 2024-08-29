@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::Error,
+    error::{Error, ParseError, SubstreamError},
     multistream_select::{listener_negotiate, DialerState, HandshakeResult, ListenerSelectResult},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream,
@@ -349,6 +349,7 @@ impl WebRtcConnection {
             .report_substream_open(self.peer, protocol.clone(), Direction::Inbound, substream)
             .await
             .map(|_| (substream_id, handle, permit))
+            .map_err(Into::into)
     }
 
     /// Handle data received to an opening outbound channel.
@@ -372,7 +373,7 @@ impl WebRtcConnection {
         data: Vec<u8>,
         mut dialer_state: DialerState,
         context: ChannelContext,
-    ) -> crate::Result<Option<(SubstreamId, SubstreamHandle, Permit)>> {
+    ) -> Result<Option<(SubstreamId, SubstreamHandle, Permit)>, SubstreamError> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
@@ -380,7 +381,12 @@ impl WebRtcConnection {
             "handle opening outbound substream",
         );
 
-        let message = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
+        let rtc_message = WebRtcMessage::decode(&data)
+            .map_err(|err| SubstreamError::NegotiationError(err.into()))?;
+        let message = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
+            ParseError::InvalidData.into(),
+        ))?;
+
         let HandshakeResult::Succeeded(protocol) = dialer_state.register_response(message)? else {
             tracing::trace!(
                 target: LOG_TARGET,

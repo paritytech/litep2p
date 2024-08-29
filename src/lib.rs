@@ -30,6 +30,7 @@
 
 use crate::{
     config::Litep2pConfig,
+    error::DialError,
     listen_addresses::ListenAddresses,
     protocol::{
         libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
@@ -113,12 +114,22 @@ pub enum Litep2pEvent {
     },
 
     /// Failed to dial peer.
+    ///
+    /// This error can originate from dialing a single peer address.
     DialFailure {
         /// Address of the peer.
         address: Multiaddr,
 
         /// Dial error.
-        error: Error,
+        error: DialError,
+    },
+
+    /// A list of multiple dial failures.
+    ListDialFailures {
+        /// List of errors.
+        ///
+        /// Depending on the transport, the address might be different for each error.
+        errors: Vec<(Multiaddr, DialError)>,
     },
 }
 
@@ -479,6 +490,10 @@ impl Litep2p {
                     }),
                 TransportEvent::DialFailure { address, error, .. } =>
                     return Some(Litep2pEvent::DialFailure { address, error }),
+
+                TransportEvent::OpenFailure { errors, .. } => {
+                    return Some(Litep2pEvent::ListDialFailures { errors });
+                }
                 _ => {}
             }
         }
