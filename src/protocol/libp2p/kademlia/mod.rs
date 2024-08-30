@@ -975,7 +975,8 @@ impl Kademlia {
                                 "store record to DHT",
                             );
 
-                            // For `PUT_VALUE` requests originating locally we are always the publisher.
+                            // For `PUT_VALUE` requests originating locally we are always the
+                            // publisher.
                             record.publisher = Some(self.local_key.clone().into_preimage());
 
                             // Make sure TTL is set.
@@ -1081,14 +1082,19 @@ impl Kademlia {
                                 (Some(record), Quorum::One) => {
                                     let _ = self
                                         .event_tx
-                                        .send(KademliaEvent::GetRecordSuccess { query_id, records: RecordsType::LocalStore(record.clone()) })
+                                        .send(KademliaEvent::GetRecordSuccess {
+                                            query_id,
+                                            records: RecordsType::LocalStore(record.clone()),
+                                        })
                                         .await;
                                 }
                                 (record, _) => {
                                     self.engine.start_get_record(
                                         query_id,
                                         key.clone(),
-                                        self.routing_table.closest(Key::new(key), self.replication_factor).into(),
+                                        self.routing_table
+                                            .closest(Key::new(key), self.replication_factor)
+                                            .into(),
                                         quorum,
                                         if record.is_some() { 1 } else { 0 },
                                     );
@@ -1105,7 +1111,9 @@ impl Kademlia {
                             // self.engine.start_get_providers(
                             //     query_id,
                             //     key.clone(),
-                            //     self.routing_table.closest(Key::new(key), self.replication_factor),
+                            //     self.routing_table
+                            //         .closest(Key::new(key), self.replication_factor)
+                            //         .into(),
                             // );
                         }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
@@ -1121,7 +1129,10 @@ impl Kademlia {
                                 addresses.clone(),
                                 self.peers
                                     .get(&peer)
-                                    .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
+                                    .map_or(
+                                        ConnectionType::NotConnected,
+                                        |_| ConnectionType::Connected,
+                                    ),
                             );
                             self.service.add_known_address(&peer, addresses.into_iter());
 
@@ -1134,7 +1145,8 @@ impl Kademlia {
                             );
 
                             // Make sure TTL is set.
-                            record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+                            record.expires =
+                                record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
 
                             self.store.put(record);
                         }
