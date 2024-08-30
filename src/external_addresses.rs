@@ -28,7 +28,7 @@ use crate::PeerId;
 /// Set of the public addresses of the local node.
 ///
 /// The format of the addresses stored in the set contain the local peer ID.
-/// This requirement is enforced by the [`ListenAddresses::register_listen_address`] method,
+/// This requirement is enforced by the [`ExternalAddresses::register_listen_address`] method,
 /// that will add the local peer ID to the address if it is missing.
 ///
 /// # Note
@@ -36,13 +36,13 @@ use crate::PeerId;
 /// - The addresses are reported to the identify protocol and are used to establish connections.
 /// - Users must ensure that the addresses are reachable from the network.
 #[derive(Debug, Clone)]
-pub struct ListenAddresses {
+pub struct ExternalAddresses {
     inner: Arc<RwLock<HashSet<Multiaddr>>>,
     local_peer_id: PeerId,
 }
 
-impl ListenAddresses {
-    /// Creates new [`ListenAddresses`] from the given peer ID.
+impl ExternalAddresses {
+    /// Creates new [`ExternalAddresses`] from the given peer ID.
     pub(crate) fn new(local_peer_id: PeerId) -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashSet::new())),
@@ -68,7 +68,7 @@ impl ListenAddresses {
         self.inner.write().remove(address)
     }
 
-    /// Similar to [`ListenAddresses::remove`], but removes the address ignoring the peer ID.
+    /// Similar to [`ExternalAddresses::remove`], but removes the address ignoring the peer ID.
     pub fn remove_partial(&self, address: &Multiaddr) -> bool {
         self.inner.write().remove(&self.replace_local_peer(address.clone()))
     }
@@ -78,15 +78,15 @@ impl ListenAddresses {
     /// The provided address must contain the local peer ID.
     ///
     /// If you want to check if the address is a local listen address, use
-    /// [`ListenAddresses::contains_partial`].
+    /// [`ExternalAddresses::contains_partial`].
     pub fn contains(&self, address: &Multiaddr) -> bool {
         self.inner.read().contains(address)
     }
 
-    /// Similar to [`ListenAddresses::contains`], but checks if the address ignoring the peer ID
+    /// Similar to [`ExternalAddresses::contains`], but checks if the address ignoring the peer ID
     /// is a local listen address.
     ///
-    /// If you want to match the exact address, use [`ListenAddresses::contains`].
+    /// If you want to match the exact address, use [`ExternalAddresses::contains`].
     pub fn contains_partial(&self, address: &Multiaddr) -> bool {
         self.inner.read().contains(&self.replace_local_peer(address.clone()))
     }
@@ -103,14 +103,14 @@ impl ListenAddresses {
     /// # Example
     ///
     /// ```rust
-    /// # use litep2p::listen_addresses::ListenAddresses;
+    /// # use litep2p::listen_addresses::ExternalAddresses;
     /// #
-    /// # fn listen_addresses(addresses: ListenAddresses) {
+    /// # fn external_addresses(addresses: ExternalAddresses) {
     ///   let string_addresses = addresses.locked().iter().map(|address| address.to_string()).collect::<Vec<_>>();
     /// # }
     /// ```
-    pub fn locked(&self) -> LockedListenAddresses {
-        LockedListenAddresses {
+    pub fn locked(&self) -> LockedExternalAddresses {
+        LockedExternalAddresses {
             inner: self.inner.read(),
         }
     }
@@ -165,11 +165,11 @@ impl ListenAddresses {
 }
 
 /// A short lived instance of the locked listen addresses.
-pub struct LockedListenAddresses<'a> {
+pub struct LockedExternalAddresses<'a> {
     inner: parking_lot::RwLockReadGuard<'a, HashSet<Multiaddr>>,
 }
 
-impl<'a> LockedListenAddresses<'a> {
+impl<'a> LockedExternalAddresses<'a> {
     /// Iterate over the listen addresses.
     ///
     /// This exposes all the functionality of the standard iterator.
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn add_remove_contains() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::new(peer_id);
+        let addresses = ExternalAddresses::new(peer_id);
         let address = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
         let peer_address = Multiaddr::from_str("/dns/domain1.com/tcp/30333")
             .unwrap()
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn get_addresses() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::new(peer_id);
+        let addresses = ExternalAddresses::new(peer_id);
         let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
         let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333").unwrap();
         // Addresses different than the local peer ID are ignored.
@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn locked() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::new(peer_id);
+        let addresses = ExternalAddresses::new(peer_id);
         let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
         let address2 = Multiaddr::from_str(
             "/dns/domain2.com/tcp/30333/p2p/12D3KooWSueCPH3puP2PcvqPJdNaDNF3jMZjtJtDiSy35pWrbt5h",
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn extend() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::new(peer_id);
+        let addresses = ExternalAddresses::new(peer_id);
         let address1 = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
         let address2 = Multiaddr::from_str("/dns/domain2.com/tcp/30333")
             .unwrap()
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn contains_partial() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::new(peer_id);
+        let addresses = ExternalAddresses::new(peer_id);
         let address = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
         let peer_address = Multiaddr::from_str("/dns/domain1.com/tcp/30333")
             .unwrap()
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn remove_partial() {
         let peer_id = PeerId::random();
-        let addresses = ListenAddresses::new(peer_id);
+        let addresses = ExternalAddresses::new(peer_id);
         let address = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap();
         let peer_address = Multiaddr::from_str("/dns/domain1.com/tcp/30333")
             .unwrap()

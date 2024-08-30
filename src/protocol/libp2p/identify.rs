@@ -24,7 +24,7 @@ use crate::{
     codec::ProtocolCodec,
     crypto::PublicKey,
     error::{Error, SubstreamError},
-    listen_addresses::ListenAddresses,
+    external_addresses::ExternalAddresses,
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     transport::Endpoint,
@@ -184,7 +184,7 @@ pub(crate) struct Identify {
     user_agent: String,
 
     /// Public addresses.
-    listen_addresses: ListenAddresses,
+    listen_addresses: ExternalAddresses,
 
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,

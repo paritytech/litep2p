@@ -22,7 +22,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     executor::Executor,
-    listen_addresses::ListenAddresses,
+    external_addresses::ExternalAddresses,
     protocol::ProtocolSet,
     transport::manager::{
         address::{AddressRecord, AddressStore},
@@ -77,7 +77,7 @@ pub struct TransportManagerHandle {
     supported_transport: HashSet<SupportedTransport>,
 
     /// Local listen addresess.
-    listen_addresses: ListenAddresses,
+    listen_addresses: ExternalAddresses,
 }
 
 impl TransportManagerHandle {
@@ -87,7 +87,7 @@ impl TransportManagerHandle {
         peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
         cmd_tx: Sender<InnerTransportManagerCommand>,
         supported_transport: HashSet<SupportedTransport>,
-        listen_addresses: ListenAddresses,
+        listen_addresses: ExternalAddresses,
     ) -> Self {
         Self {
             peers,
@@ -104,7 +104,7 @@ impl TransportManagerHandle {
     }
 
     /// Get listen addresses.
-    pub(crate) fn listen_addresses(&self) -> ListenAddresses {
+    pub(crate) fn external_addresses(&self) -> ExternalAddresses {
         self.listen_addresses.clone()
     }
 
@@ -329,7 +329,7 @@ mod tests {
                 cmd_tx,
                 peers: Default::default(),
                 supported_transport: HashSet::new(),
-                listen_addresses: ListenAddresses::new(local_peer_id),
+                listen_addresses: ExternalAddresses::new(local_peer_id),
             },
             cmd_rx,
         )
@@ -593,7 +593,7 @@ mod tests {
         let first_addr: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
         let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
 
-        let listen_addresses = ListenAddresses::new(local_peer_id);
+        let listen_addresses = ExternalAddresses::new(local_peer_id);
         listen_addresses.extend([first_addr.clone(), second_addr.clone()]);
         println!("{:?}", listen_addresses);
 

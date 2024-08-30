@@ -31,7 +31,7 @@
 use crate::{
     config::Litep2pConfig,
     error::DialError,
-    listen_addresses::ListenAddresses,
+    external_addresses::ExternalAddresses,
     protocol::{
         libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
         mdns::Mdns,
@@ -70,7 +70,7 @@ pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod executor;
-pub mod listen_addresses;
+pub mod external_addresses;
 pub mod protocol;
 pub mod substream;
 pub mod transport;
@@ -139,7 +139,7 @@ pub struct Litep2p {
     local_peer_id: PeerId,
 
     /// Listen addresses.
-    listen_addresses: ListenAddresses,
+    listen_addresses: ExternalAddresses,
 
     /// Transport manager.
     transport_manager: TransportManager,
@@ -441,7 +441,7 @@ impl Litep2p {
     }
 
     /// Get the listen address of litep2p.
-    pub fn listen_addresses(&self) -> ListenAddresses {
+    pub fn external_addresses(&self) -> ExternalAddresses {
         self.listen_addresses.clone()
     }
 

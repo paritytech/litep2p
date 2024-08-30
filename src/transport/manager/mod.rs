@@ -23,7 +23,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, DialError, Error},
     executor::Executor,
-    listen_addresses::ListenAddresses,
+    external_addresses::ExternalAddresses,
     protocol::{InnerTransportEvent, TransportService},
     transport::{
         manager::{
@@ -217,7 +217,7 @@ pub struct TransportManager {
     protocol_names: HashSet<ProtocolName>,
 
     /// Listen addresses.
-    listen_addresses: ListenAddresses,
+    listen_addresses: ExternalAddresses,
 
     /// Next connection ID.
     next_connection_id: Arc<AtomicUsize>,
@@ -267,7 +267,7 @@ impl TransportManager {
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let listen_addresses = ListenAddresses::new(local_peer_id);
+        let listen_addresses = ExternalAddresses::new(local_peer_id);
         let handle = TransportManagerHandle::new(
             local_peer_id,
             peers.clone(),
@@ -382,7 +382,7 @@ impl TransportManager {
     }
 
     /// Get listen addresses.
-    pub(crate) fn listen_addresses(&self) -> ListenAddresses {
+    pub(crate) fn external_addresses(&self) -> ExternalAddresses {
         self.listen_addresses.clone()
     }
 
