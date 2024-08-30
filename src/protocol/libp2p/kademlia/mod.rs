@@ -1096,14 +1096,17 @@ impl Kademlia {
                             }
 
                         }
-                        Some(KademliaCommand::GetProviders { key, query_id}) => {
+                        Some(KademliaCommand::GetProviders { key, query_id_tx }) => {
+                            let query_id = self.next_query_id();
+                            let _ = query_id_tx.send(query_id);
+
                             tracing::debug!(target: LOG_TARGET, ?key, "get providers from DHT");
 
-                            self.engine.start_get_providers(
-                                query_id,
-                                key.clone(),
-                                self.routing_table.closest(Key::new(key), self.replication_factor),
-                            );
+                            // self.engine.start_get_providers(
+                            //     query_id,
+                            //     key.clone(),
+                            //     self.routing_table.closest(Key::new(key), self.replication_factor),
+                            // );
                         }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
                             tracing::trace!(

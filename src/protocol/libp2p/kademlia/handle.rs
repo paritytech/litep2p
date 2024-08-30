@@ -139,7 +139,7 @@ pub(crate) enum KademliaCommand {
         key: RecordKey,
 
         /// Query ID for the query.
-        query_id: QueryId,
+        query_id_tx: oneshot::Sender<QueryId>,
     },
 
     /// Register as a content provider for `key`.
@@ -298,6 +298,8 @@ impl KademliaHandle {
     }
 
     /// Store record to DHT to the given peers.
+    ///
+    /// Returns [`Err`] only if [`super::Kademlia`] is terminating.
     pub async fn put_record_to_peers(
         &mut self,
         record: Record,
@@ -319,6 +321,8 @@ impl KademliaHandle {
     }
 
     /// Get record from DHT.
+    ///
+    /// Returns [`Err`] only if [`super::Kademlia`] is terminating.
     pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) -> Result<QueryId, ()> {
         let (query_id_tx, query_id_rx) = oneshot::channel();
         self.cmd_tx
@@ -336,6 +340,7 @@ impl KademliaHandle {
     /// Register as a content provider on the DHT.
     ///
     /// Register the local peer ID & its `public_addresses` as a provider for a given `key`.
+    /// Returns [`Err`] only if [`super::Kademlia`] is terminating.
     pub async fn start_providing(
         &mut self,
         key: RecordKey,
@@ -355,11 +360,16 @@ impl KademliaHandle {
     }
 
     /// Get providers from DHT.
-    pub async fn get_providers(&mut self, key: RecordKey) -> QueryId {
-        let query_id = self.next_query_id();
-        let _ = self.cmd_tx.send(KademliaCommand::GetProviders { key, query_id }).await;
+    ///
+    /// Returns [`Err`] only if [`super::Kademlia`] is terminating.
+    pub async fn get_providers(&mut self, key: RecordKey) -> Result<QueryId, ()> {
+        let (query_id_tx, query_id_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(KademliaCommand::GetProviders { key, query_id_tx })
+            .await
+            .map_err(|_| ())?;
 
-        query_id
+        query_id_rx.await.map_err(|_| ())
     }
 
     /// Store the record in the local store. Used in combination with
