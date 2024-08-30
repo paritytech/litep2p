@@ -102,7 +102,7 @@ impl ConnectionContext {
 #[derive(Debug)]
 pub struct TransportService {
     /// Local peer ID.
-    pub(crate) local_peer_id: PeerId,
+    local_peer_id: PeerId,
 
     /// Protocol.
     protocol: ProtocolName,
@@ -361,6 +361,11 @@ impl TransportService {
         }
 
         connection.primary.force_close()
+    }
+
+    /// Get local peer ID.
+    pub fn local_peer_id(&self) -> PeerId {
+        self.local_peer_id
     }
 }
 

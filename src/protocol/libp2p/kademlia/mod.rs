@@ -167,8 +167,8 @@ pub(crate) struct Kademlia {
 impl Kademlia {
     /// Create new [`Kademlia`].
     pub(crate) fn new(mut service: TransportService, config: Config) -> Self {
-        let local_peer_id = service.local_peer_id;
-        let local_key = Key::from(service.local_peer_id);
+        let local_peer_id = service.local_peer_id();
+        let local_key = Key::from(service.local_peer_id());
         let mut routing_table = RoutingTable::new(local_key.clone());
 
         for (peer, addresses) in config.known_peers {
@@ -357,7 +357,7 @@ impl Kademlia {
     /// the mode was set to manual.
     async fn update_routing_table(&mut self, peers: &[KademliaPeer]) {
         let peers: Vec<_> =
-            peers.iter().filter(|peer| peer.peer != self.service.local_peer_id).collect();
+            peers.iter().filter(|peer| peer.peer != self.service.local_peer_id()).collect();
 
         // inform user about the routing table update, regardless of what the routing table update
         // mode is
@@ -889,7 +889,7 @@ impl Kademlia {
 
                             // Put the record to the specified peers.
                             let peers = peers.into_iter().filter_map(|peer| {
-                                if peer == self.service.local_peer_id {
+                                if peer == self.service.local_peer_id() {
                                     return None;
                                 }
 
