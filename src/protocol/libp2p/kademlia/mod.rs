@@ -654,7 +654,7 @@ impl Kademlia {
                 self.pending_substreams.insert(substream_id, peer);
                 self.peers.entry(peer).or_default().pending_actions.insert(substream_id, action);
 
-                return Ok(());
+                Ok(())
             }
             Err(err) => {
                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?err, "Failed to open substream. Dialing peer");
@@ -662,32 +662,32 @@ impl Kademlia {
                 match self.service.dial(&peer) {
                     Ok(()) => {
                         self.pending_dials.entry(peer).or_default().push(action);
-                        return Ok(());
+                        Ok(())
                     }
 
                     // Already connected is a recoverable error.
-                    Err(Error::AlreadyConnected) => (),
+                    Err(Error::AlreadyConnected) => {
+                        // Dial returned `Error::AlreadyConnected`, retry opening the substream.
+                        match self.service.open_substream(peer) {
+                            Ok(substream_id) => {
+                                self.pending_substreams.insert(substream_id, peer);
+                                self.peers
+                                    .entry(peer)
+                                    .or_default()
+                                    .pending_actions
+                                    .insert(substream_id, action);
+                                Ok(())
+                            }
+                            Err(err) => {
+                                tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?err, "Failed to open substream a second time");
+                                Err(err)
+                            }
+                        }
+                    }
 
                     Err(error) => {
                         tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?error, "Failed to dial peer");
-                        return Err(error);
-                    }
-                };
-
-                // Dial returned `Error::AlreadyConnected`, retry opening the substream.
-                match self.service.open_substream(peer) {
-                    Ok(substream_id) => {
-                        self.pending_substreams.insert(substream_id, peer);
-                        self.peers
-                            .entry(peer)
-                            .or_default()
-                            .pending_actions
-                            .insert(substream_id, action);
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?err, "Failed to open substream a second time");
-                        return Err(err);
+                        Err(error)
                     }
                 }
             }
