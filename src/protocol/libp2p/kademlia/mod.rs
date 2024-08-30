@@ -1031,7 +1031,7 @@ impl Kademlia {
 
                             let provider = ProviderRecord {
                                 key: key.clone(),
-                                provider: self.service.local_peer_id,
+                                provider: self.service.local_peer_id(),
                                 addresses: public_addresses,
                                 expires: Instant::now() + self.provider_ttl,
                             };
