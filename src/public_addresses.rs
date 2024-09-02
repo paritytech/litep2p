@@ -28,7 +28,7 @@ use crate::PeerId;
 /// Set of the public addresses of the local node.
 ///
 /// The format of the addresses stored in the set contain the local peer ID.
-/// This requirement is enforced by the [`PublicAddresses::register_listen_address`] method,
+/// This requirement is enforced by the [`PublicAddresses::add_public_address`] method,
 /// that will add the local peer ID to the address if it is missing.
 ///
 /// # Note

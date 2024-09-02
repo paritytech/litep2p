@@ -204,7 +204,7 @@ impl Identify {
     pub(crate) fn new(service: TransportService, config: Config) -> Self {
         let listen_addresses = service.public_addresses();
 
-        let local_peer_id = service.local_peer_id;
+        let local_peer_id = service.local_peer_id();
         let filtered_public_addr = config.public_addresses.into_iter().filter_map(|address| {
             if address.is_empty() {
                 return None;
