@@ -189,7 +189,7 @@ async fn inbound_substream_error() {
     substream
         .expect_poll_next()
         .times(1)
-        .return_once(|_| Poll::Ready(Some(Err(SubstreamError::Unknown))));
+        .return_once(|_| Poll::Ready(Some(Err(SubstreamError::ConnectionClosed))));
 
     // register inbound substream from peer
     protocol

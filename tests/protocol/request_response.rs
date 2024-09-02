@@ -22,8 +22,8 @@ use litep2p::{
     config::ConfigBuilder as Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::request_response::{
-        Config as RequestResponseConfig, ConfigBuilder, DialOptions, RequestResponseError,
-        RequestResponseEvent,
+        Config as RequestResponseConfig, ConfigBuilder, DialOptions, RejectReason,
+        RequestResponseError, RequestResponseEvent,
     },
     transport::tcp::config::Config as TcpConfig,
     types::{protocol::ProtocolName, RequestId},
@@ -314,7 +314,7 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected
+            error: RequestResponseError::Rejected(RejectReason::ConnectionClosed)
         }
     );
 }
@@ -789,7 +789,7 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected,
+            error: RequestResponseError::Rejected(RejectReason::ConnectionClosed),
         }
     );
 }
@@ -1005,7 +1005,7 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected,
+            error: RequestResponseError::Rejected(RejectReason::ConnectionClosed),
         }
     );
 }
@@ -1569,7 +1569,7 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected,
+            error: RequestResponseError::Rejected(RejectReason::ConnectionClosed),
         }
     );
 }
@@ -1916,7 +1916,7 @@ async fn excess_inbound_request_rejected(transport1: Transport, transport2: Tran
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected
+            error: RequestResponseError::Rejected(RejectReason::ConnectionClosed)
         }
     );
 }
@@ -2008,7 +2008,7 @@ async fn feedback_received_for_succesful_response(transport1: Transport, transpo
         .await
         .unwrap();
 
-    assert!(matches!(
+    assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
             peer: peer1,
@@ -2016,13 +2016,13 @@ async fn feedback_received_for_succesful_response(transport1: Transport, transpo
             request_id,
             request: vec![1, 3, 3, 7]
         },
-    ));
+    );
 
     // send response with feedback and verify that the response was sent successfully
     let (feedback_tx, feedback_rx) = channel::oneshot::channel();
     handle2.send_response_with_feedback(request_id, vec![1, 3, 3, 8], feedback_tx);
 
-    assert!(matches!(
+    assert_eq!(
         handle1.next().await.unwrap(),
         RequestResponseEvent::ResponseReceived {
             peer: peer2,
@@ -2030,7 +2030,7 @@ async fn feedback_received_for_succesful_response(transport1: Transport, transpo
             response: vec![1, 3, 3, 8],
             fallback: None,
         }
-    ));
+    );
     assert!(feedback_rx.await.is_ok());
 }
 
@@ -2350,7 +2350,7 @@ async fn dial_failure(transport: Transport) {
         RequestResponseEvent::RequestFailed {
             peer,
             request_id,
-            error: RequestResponseError::Rejected
+            error: RequestResponseError::Rejected(RejectReason::ConnectionClosed)
         }
     );
 }
@@ -2865,23 +2865,19 @@ async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request(
         .await
         .unwrap();
 
-    match handle1.next().await.unwrap() {
+    assert_eq!(
+        handle1.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
             peer: peer2,
             fallback: Some(ProtocolName::from("/genesis/protocol/1")),
             request_id,
-            request,
-        } => {
-            assert_eq!(peer2, peer1);
-            assert_eq!(request_id, request_id);
-            assert_eq!(request, vec![1, 2, 3, 4]);
+            request: vec![1, 2, 3, 4],
         }
-        _ => panic!("unexpected event"),
-    };
+    );
 
     handle1.send_response(request_id, vec![1, 3, 3, 7]);
 
-    assert!(matches!(
+    assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::ResponseReceived {
             peer: peer1,
@@ -2889,7 +2885,7 @@ async fn binary_incompatible_fallback_two_fallback_protocols_inbound_request(
             response: vec![1, 3, 3, 7],
             fallback: None,
         }
-    ));
+    );
 }
 
 #[tokio::test]
@@ -2987,7 +2983,7 @@ async fn binary_incompatible_fallback_compatible_nodes(
         .await
         .unwrap();
 
-    assert!(matches!(
+    assert_eq!(
         handle2.next().await.unwrap(),
         RequestResponseEvent::RequestReceived {
             peer: peer1,
@@ -2995,11 +2991,11 @@ async fn binary_incompatible_fallback_compatible_nodes(
             request_id,
             request: vec![1, 2, 3, 4],
         }
-    ));
+    );
 
     handle2.send_response(request_id, vec![1, 3, 3, 7]);
 
-    assert!(matches!(
+    assert_eq!(
         handle1.next().await.unwrap(),
         RequestResponseEvent::ResponseReceived {
             peer: peer2,
@@ -3007,5 +3003,5 @@ async fn binary_incompatible_fallback_compatible_nodes(
             response: vec![1, 3, 3, 7],
             fallback: None,
         }
-    ));
+    );
 }

@@ -279,7 +279,7 @@ pub enum DialError {
 }
 
 /// Dialing resulted in an immediate error before performing any network operations.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Copy, Clone, Eq, PartialEq)]
 pub enum ImmediateDialError {
     /// The provided address does not include a peer ID.
     #[error("`PeerId` missing from the address")]

@@ -34,7 +34,6 @@ use crate::{
 
 use bytes::BytesMut;
 use futures::{channel, future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use handle::RejectReason;
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
@@ -54,7 +53,9 @@ use std::{
 };
 
 pub use config::{Config, ConfigBuilder};
-pub use handle::{DialOptions, RequestResponseError, RequestResponseEvent, RequestResponseHandle};
+pub use handle::{
+    DialOptions, RejectReason, RequestResponseError, RequestResponseEvent, RequestResponseHandle,
+};
 
 mod config;
 mod handle;

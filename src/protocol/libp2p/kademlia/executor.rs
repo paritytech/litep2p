@@ -259,10 +259,9 @@ mod tests {
         let mut executor = QueryExecutor::new();
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
-        substream
-            .expect_poll_next()
-            .times(1)
-            .return_once(|_| Poll::Ready(Some(Err(crate::Error::Unknown))));
+        substream.expect_poll_next().times(1).return_once(|_| {
+            Poll::Ready(Some(Err(crate::error::SubstreamError::ConnectionClosed)))
+        });
 
         executor.read_message(
             peer,
@@ -294,10 +293,9 @@ mod tests {
         substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
         substream.expect_start_send().times(1).return_once(|_| Ok(()));
         substream.expect_poll_flush().times(1).return_once(|_| Poll::Ready(Ok(())));
-        substream
-            .expect_poll_next()
-            .times(1)
-            .return_once(|_| Poll::Ready(Some(Err(crate::Error::Unknown))));
+        substream.expect_poll_next().times(1).return_once(|_| {
+            Poll::Ready(Some(Err(crate::error::SubstreamError::ConnectionClosed)))
+        });
 
         executor.send_request_read_response(
             peer,
@@ -330,7 +328,7 @@ mod tests {
         substream
             .expect_poll_ready()
             .times(1)
-            .return_once(|_| Poll::Ready(Err(crate::Error::Unknown)));
+            .return_once(|_| Poll::Ready(Err(crate::error::SubstreamError::ConnectionClosed)));
         substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
 
         executor.send_request_read_response(

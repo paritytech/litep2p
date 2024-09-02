@@ -65,6 +65,14 @@ pub enum RequestResponseError {
     UnsupportedProtocol,
 }
 
+impl std::cmp::PartialEq for RequestResponseError {
+    fn eq(&self, other: &Self) -> bool {
+        // We are not interested in the error details of rejections
+        // for equality checks.
+        core::mem::discriminant(self) == core::mem::discriminant(other)
+    }
+}
+
 /// The reason why a request was rejected.
 #[derive(Debug)]
 pub enum RejectReason {
@@ -162,7 +170,7 @@ impl From<InnerRequestResponseEvent> for RequestResponseEvent {
 }
 
 /// Request-response events.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RequestResponseEvent {
     /// Request received from remote
     RequestReceived {

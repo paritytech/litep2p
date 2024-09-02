@@ -573,7 +573,7 @@ mod tests {
         handle.supported_transport.insert(SupportedTransport::Tcp);
 
         let err = handle.dial(&handle.local_peer_id).unwrap_err();
-        assert!(matches!(err, ImmediateDialError::NoAddressAvailable));
+        assert_eq!(err, ImmediateDialError::TriedToDialSelf);
 
         assert!(rx.try_recv().is_err());
     }
