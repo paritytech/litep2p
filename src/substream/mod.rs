@@ -47,7 +47,7 @@ use std::{
     hash::Hash,
     io::ErrorKind,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
 
 /// Logging target for the file.
@@ -766,6 +766,7 @@ where
     S: Stream<Item = crate::Result<BytesMut>> + Unpin,
 {
     substreams: HashMap<K, S>,
+    waker: Option<Waker>,
 }
 
 impl<K, S> SubstreamSet<K, S>
@@ -777,6 +778,7 @@ where
     pub fn new() -> Self {
         Self {
             substreams: HashMap::new(),
+            waker: None,
         }
     }
 
@@ -791,10 +793,13 @@ where
                 debug_assert!(false);
             }
         }
+
+        self.waker.take().map(|waker| waker.wake());
     }
 
     /// Remove substream from the set.
     pub fn remove(&mut self, key: &K) -> Option<S> {
+        self.waker.take().map(|waker| waker.wake());
         self.substreams.remove(key)
     }
 
@@ -838,6 +843,7 @@ where
             }
         }
 
+        inner.waker = Some(cx.waker().clone());
         Poll::Pending
     }
 }
