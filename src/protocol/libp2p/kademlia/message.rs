@@ -187,13 +187,13 @@ impl KademliaMessage {
         };
 
         let mut buf = BytesMut::with_capacity(message.encoded_len());
-        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
+        message.encode(&mut buf).expect("BytesMut to provide needed capacity");
 
         buf.freeze()
     }
 
     /// Create `GET_PROVIDERS` request for `key`.
-    pub fn get_providers_request(key: RecordKey) -> Vec<u8> {
+    pub fn get_providers_request(key: RecordKey) -> Bytes {
         let message = schema::kademlia::Message {
             key: key.to_vec(),
             cluster_level_raw: 10,
@@ -201,10 +201,10 @@ impl KademliaMessage {
             ..Default::default()
         };
 
-        let mut buf = Vec::with_capacity(message.encoded_len());
-        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
+        let mut buf = BytesMut::with_capacity(message.encoded_len());
+        message.encode(&mut buf).expect("BytesMut to provide needed capacity");
 
-        buf
+        buf.freeze()
     }
 
     /// Create `GET_PROVIDERS` response.
