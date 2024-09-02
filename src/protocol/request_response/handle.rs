@@ -74,10 +74,14 @@ pub enum RejectReason {
     /// The connection closed before the request was processed.
     ConnectionClosed,
 
-    /// Dial failed.
+    /// The dial failed.
     ///
-    /// Contains an optional error that occurred before the dial was attempted
-    /// over the network.
+    /// If the dial failure is immediate, the error is included.
+    ///
+    /// If the dialing process is happening in parallel on multiple
+    /// addresses (potentially with multiple protocols), the dialing
+    /// process is not considered immediate and the given errors are not
+    /// propagated for simplicity.
     DialFailed(Option<ImmediateDialError>),
 }
 
