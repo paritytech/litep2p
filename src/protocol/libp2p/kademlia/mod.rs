@@ -588,11 +588,8 @@ impl Kademlia {
                             .routing_table
                             .closest(Key::from(key.to_vec()), self.replication_factor);
 
-                        let message = KademliaMessage::get_providers_response(
-                            key.clone(),
-                            providers,
-                            &closer_peers,
-                        );
+                        let message =
+                            KademliaMessage::get_providers_response(providers, &closer_peers);
                         self.executor.send_message(peer, message.into(), substream);
                     }
                     (None, None) => tracing::debug!(
@@ -831,6 +828,19 @@ impl Kademlia {
                     .send(KademliaEvent::GetRecordSuccess {
                         query_id,
                         records: RecordsType::Network(records),
+                    })
+                    .await;
+                Ok(())
+            }
+            QueryAction::GetProvidersQueryDone {
+                query_id,
+                providers,
+            } => {
+                let _ = self
+                    .event_tx
+                    .send(KademliaEvent::GetProvidersSuccess {
+                        query_id,
+                        providers,
                     })
                     .await;
                 Ok(())
@@ -1108,13 +1118,13 @@ impl Kademlia {
 
                             tracing::debug!(target: LOG_TARGET, ?key, "get providers from DHT");
 
-                            // self.engine.start_get_providers(
-                            //     query_id,
-                            //     key.clone(),
-                            //     self.routing_table
-                            //         .closest(Key::new(key), self.replication_factor)
-                            //         .into(),
-                            // );
+                            self.engine.start_get_providers(
+                                query_id,
+                                key.clone(),
+                                self.routing_table
+                                    .closest(Key::new(key), self.replication_factor)
+                                    .into(),
+                            );
                         }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
                             tracing::trace!(

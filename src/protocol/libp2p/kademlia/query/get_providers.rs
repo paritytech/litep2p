@@ -24,7 +24,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{QueryAction, QueryId},
-        record::{Key as RecordKey, ProviderRecord},
+        record::Key as RecordKey,
         types::{Distance, KademliaPeer, Key},
     },
     PeerId,
@@ -73,7 +73,7 @@ pub struct GetProvidersContext {
 
     /// Found providers.
     // TODO: deduplicate.
-    pub found_providers: Vec<ProviderRecord>,
+    pub found_providers: Vec<KademliaPeer>,
 }
 
 impl GetProvidersContext {
@@ -100,7 +100,7 @@ impl GetProvidersContext {
     }
 
     /// Get the found providers.
-    pub fn found_providers(self) -> Vec<ProviderRecord> {
+    pub fn found_providers(self) -> Vec<KademliaPeer> {
         self.found_providers
     }
 
@@ -123,7 +123,7 @@ impl GetProvidersContext {
     pub fn register_response(
         &mut self,
         peer: PeerId,
-        providers: impl IntoIterator<Item = ProviderRecord>,
+        providers: impl IntoIterator<Item = KademliaPeer>,
         closer_peers: impl IntoIterator<Item = KademliaPeer>,
     ) {
         tracing::trace!(

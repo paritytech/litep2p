@@ -209,12 +209,9 @@ impl KademliaMessage {
 
     /// Create `GET_PROVIDERS` response.
     pub fn get_providers_response(
-        key: RecordKey,
         providers: Vec<ProviderRecord>,
         closer_peers: &[KademliaPeer],
     ) -> Vec<u8> {
-        debug_assert!(providers.iter().all(|p| p.key == key));
-
         let provider_peers = providers
             .into_iter()
             .map(|p| {
@@ -228,7 +225,6 @@ impl KademliaMessage {
             .collect();
 
         let message = schema::kademlia::Message {
-            key: key.to_vec(),
             cluster_level_raw: 10,
             r#type: schema::kademlia::MessageType::GetProviders.into(),
             closer_peers: closer_peers.iter().map(Into::into).collect(),

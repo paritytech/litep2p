@@ -23,6 +23,7 @@ use crate::{
         message::KademliaMessage,
         query::{
             find_node::{FindNodeConfig, FindNodeContext},
+            get_providers::{GetProvidersConfig, GetProvidersContext},
             get_record::{GetRecordConfig, GetRecordContext},
         },
         record::{Key as RecordKey, ProviderRecord, Record},
@@ -40,6 +41,7 @@ use self::find_many_nodes::FindManyNodesContext;
 
 mod find_many_nodes;
 mod find_node;
+mod get_providers;
 mod get_record;
 
 /// Logging target for the file.
@@ -89,6 +91,12 @@ enum QueryType {
 
         /// Context for the `FIND_NODE` query.
         context: FindNodeContext<RecordKey>,
+    },
+
+    /// `GET_PROVIDERS` query.
+    GetProviders {
+        /// Context for the `GET_PROVIDERS` query.
+        context: GetProvidersContext,
     },
 }
 
@@ -145,6 +153,15 @@ pub enum QueryAction {
 
         /// Found records.
         records: Vec<PeerRecord>,
+    },
+
+    /// `GET_PROVIDERS` query succeeded.
+    GetProvidersQueryDone {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Found providers.
+        providers: Vec<KademliaPeer>,
     },
 
     /// Query succeeded.
@@ -358,6 +375,39 @@ impl QueryEngine {
         query_id
     }
 
+    /// Start `GET_PROVIDERS` query.
+    pub fn start_get_providers(
+        &mut self,
+        query_id: QueryId,
+        key: RecordKey,
+        candidates: VecDeque<KademliaPeer>,
+    ) -> QueryId {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            ?key,
+            num_peers = ?candidates.len(),
+            "start `GET_PROVIDERS` query",
+        );
+
+        let target = Key::new(key);
+        let config = GetProvidersConfig {
+            local_peer_id: self.local_peer_id,
+            parallelism_factor: self.parallelism_factor,
+            query: query_id,
+            target,
+        };
+
+        self.queries.insert(
+            query_id,
+            QueryType::GetProviders {
+                context: GetProvidersContext::new(config, candidates),
+            },
+        );
+
+        query_id
+    }
+
     /// Register response failure from a queried peer.
     pub fn register_response_failure(&mut self, query: QueryId, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response failure");
@@ -379,6 +429,9 @@ impl QueryEngine {
                 context.register_response_failure(peer);
             }
             Some(QueryType::AddProvider { context, .. }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::GetProviders { context }) => {
                 context.register_response_failure(peer);
             }
         }
@@ -422,6 +475,16 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
+            Some(QueryType::GetProviders { context }) => match message {
+                KademliaMessage::GetProviders {
+                    key: _,
+                    providers,
+                    peers,
+                } => {
+                    context.register_response(peer, providers, peers);
+                }
+                _ => unreachable!(),
+            },
         }
     }
 
@@ -439,6 +502,7 @@ impl QueryEngine {
             Some(QueryType::PutRecordToPeers { context, .. }) => context.next_peer_action(peer),
             Some(QueryType::GetRecord { context }) => context.next_peer_action(peer),
             Some(QueryType::AddProvider { context, .. }) => context.next_peer_action(peer),
+            Some(QueryType::GetProviders { context }) => context.next_peer_action(peer),
         }
     }
 
@@ -467,6 +531,10 @@ impl QueryEngine {
                 provider,
                 peers: context.responses.into_values().collect::<Vec<_>>(),
             },
+            QueryType::GetProviders { context } => QueryAction::GetProvidersQueryDone {
+                query_id: context.config.query,
+                providers: context.found_providers(),
+            },
         }
     }
 
@@ -487,6 +555,7 @@ impl QueryEngine {
                 QueryType::PutRecordToPeers { context, .. } => context.next_action(),
                 QueryType::GetRecord { context } => context.next_action(),
                 QueryType::AddProvider { context, .. } => context.next_action(),
+                QueryType::GetProviders { context } => context.next_action(),
             };
 
             match action {
