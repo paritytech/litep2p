@@ -20,8 +20,8 @@
 
 use crate::{
     error::Error,
-    public_addresses::PublicAddresses,
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
+    public_addresses::PublicAddresses,
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId, DEFAULT_CHANNEL_SIZE,
