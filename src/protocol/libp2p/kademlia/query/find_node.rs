@@ -233,6 +233,14 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         // If we cannot make progress, return the final result.
         // A query failed when we are not able to identify one single peer.
         if self.is_done() {
+            tracing::trace!(
+                target: LOG_TARGET,
+                query = ?self.config.query,
+                pending = self.pending.len(),
+                candidates = self.candidates.len(),
+                "query finished"
+            );
+
             return if self.responses.is_empty() {
                 Some(QueryAction::QueryFailed {
                     query: self.config.query,
