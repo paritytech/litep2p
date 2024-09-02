@@ -425,7 +425,7 @@ impl Substream {
         match &mut self.substream {
             #[cfg(test)]
             SubstreamType::Mock(ref mut substream) =>
-                futures::SinkExt::send(substream, bytes).await,
+                futures::SinkExt::send(substream, bytes).await.map_err(Into::into),
             SubstreamType::Tcp(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
                 ProtocolCodec::Identity(payload_size) =>
@@ -942,7 +942,7 @@ mod tests {
         assert_eq!(value.1.unwrap(), BytesMut::from(&b"hello"[..]));
 
         match set.next().await {
-            Some((exited_peer, Err(Error::SubstreamError(SubstreamError::ConnectionClosed)))) => {
+            Some((exited_peer, Err(SubstreamError::ConnectionClosed))) => {
                 assert_eq!(peer, exited_peer);
             }
             _ => panic!("inavlid event received"),

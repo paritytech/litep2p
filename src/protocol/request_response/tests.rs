@@ -189,7 +189,7 @@ async fn inbound_substream_error() {
     substream
         .expect_poll_next()
         .times(1)
-        .return_once(|_| Poll::Ready(Some(Err(Error::Unknown))));
+        .return_once(|_| Poll::Ready(Some(Err(SubstreamError::Unknown))));
 
     // register inbound substream from peer
     protocol
@@ -297,7 +297,7 @@ async fn request_failure_reported_once() {
         }) => {
             assert_eq!(request_peer, peer);
             assert_eq!(request_id, RequestId::from(1337usize));
-            assert_eq!(error, RequestResponseError::Rejected);
+            assert!(matches!(error, RequestResponseError::Rejected(_)));
         }
         event => panic!("unexpected event: {event:?}"),
     }

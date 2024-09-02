@@ -156,7 +156,7 @@ impl UserProtocol for CustomProtocol {
                             }
                             Some(mut substream) => {
                                 let payload = Bytes::from(payload);
-                                let res = substream.send_framed(payload).await;
+                                let res = substream.send_framed(payload).await.map_err(Into::into);
                                 tx.send(res).unwrap();
                                 let _ = substream.close().await;
                             }

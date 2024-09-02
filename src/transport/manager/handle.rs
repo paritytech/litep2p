@@ -449,7 +449,7 @@ mod tests {
         };
 
         match handle.dial(&peer) {
-            Err(Error::AlreadyConnected) => {}
+            Err(ImmediateDialError::AlreadyConnected) => {}
             _ => panic!("invalid return value"),
         }
     }
@@ -518,12 +518,8 @@ mod tests {
             peer
         };
 
-        match handle.dial(&peer) {
-            Err(Error::NoAddressAvailable(failed_peer)) => {
-                assert_eq!(failed_peer, peer);
-            }
-            _ => panic!("invalid return value"),
-        }
+        let err = handle.dial(&peer).unwrap_err();
+        assert!(matches!(err, ImmediateDialError::NoAddressAvailable));
     }
 
     #[tokio::test]
@@ -576,10 +572,9 @@ mod tests {
         let (mut handle, mut rx) = make_transport_manager_handle();
         handle.supported_transport.insert(SupportedTransport::Tcp);
 
-        match handle.dial(&handle.local_peer_id) {
-            Err(Error::TriedToDialSelf) => {}
-            _ => panic!("invalid return value"),
-        }
+        let err = handle.dial(&handle.local_peer_id).unwrap_err();
+        assert!(matches!(err, ImmediateDialError::NoAddressAvailable));
+
         assert!(rx.try_recv().is_err());
     }
 

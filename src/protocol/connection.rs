@@ -236,7 +236,7 @@ mod tests {
             SubstreamId::new(),
             permit,
         ) {
-            Err(Error::ChannelClogged) => {}
+            Err(SubstreamError::ChannelClogged) => {}
             error => panic!("invalid error: {error:?}"),
         }
     }

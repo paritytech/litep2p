@@ -393,7 +393,7 @@ mod tests {
         substream
             .expect_poll_next()
             .times(1)
-            .return_once(|_| Poll::Ready(Some(Err(crate::Error::Unknown))));
+            .return_once(|_| Poll::Ready(Some(Err(crate::error::SubstreamError::ChannelClogged))));
 
         executor.read_message(
             peer,
