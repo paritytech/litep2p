@@ -22,8 +22,8 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     executor::Executor,
-    external_addresses::ExternalAddresses,
     protocol::ProtocolSet,
+    public_addresses::PublicAddresses,
     transport::manager::{
         address::{AddressRecord, AddressStore},
         types::{PeerContext, PeerState, SupportedTransport},
@@ -77,7 +77,7 @@ pub struct TransportManagerHandle {
     supported_transport: HashSet<SupportedTransport>,
 
     /// Local listen addresess.
-    listen_addresses: ExternalAddresses,
+    listen_addresses: PublicAddresses,
 }
 
 impl TransportManagerHandle {
@@ -87,7 +87,7 @@ impl TransportManagerHandle {
         peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
         cmd_tx: Sender<InnerTransportManagerCommand>,
         supported_transport: HashSet<SupportedTransport>,
-        listen_addresses: ExternalAddresses,
+        listen_addresses: PublicAddresses,
     ) -> Self {
         Self {
             peers,
@@ -103,8 +103,8 @@ impl TransportManagerHandle {
         self.supported_transport.insert(transport);
     }
 
-    /// Get listen addresses.
-    pub(crate) fn external_addresses(&self) -> ExternalAddresses {
+    /// Get the list of public addresses of the node.
+    pub(crate) fn public_addresses(&self) -> PublicAddresses {
         self.listen_addresses.clone()
     }
 
@@ -152,7 +152,13 @@ impl TransportManagerHandle {
 
     /// Check if the address is a local listen address and if so, discard it.
     fn is_local_address(&self, address: &Multiaddr) -> bool {
-        self.listen_addresses.contains_partial(&address)
+        let mut address: Multiaddr = address
+            .iter()
+            .take_while(|protocol| !std::matches!(protocol, Protocol::P2p(_)))
+            .collect();
+        address.push(Protocol::P2p(self.local_peer_id.into()));
+
+        self.listen_addresses.inner.read().contains(&address)
     }
 
     /// Add one or more known addresses for peer.
@@ -329,7 +335,7 @@ mod tests {
                 cmd_tx,
                 peers: Default::default(),
                 supported_transport: HashSet::new(),
-                listen_addresses: ExternalAddresses::new(local_peer_id),
+                listen_addresses: PublicAddresses::new(local_peer_id),
             },
             cmd_rx,
         )
@@ -593,8 +599,9 @@ mod tests {
         let first_addr: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
         let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
 
-        let listen_addresses = ExternalAddresses::new(local_peer_id);
-        listen_addresses.extend([first_addr.clone(), second_addr.clone()]);
+        let listen_addresses = PublicAddresses::new(local_peer_id);
+        listen_addresses.add_public_address(first_addr.clone()).unwrap();
+        listen_addresses.add_public_address(second_addr.clone()).unwrap();
         println!("{:?}", listen_addresses);
 
         let handle = TransportManagerHandle {

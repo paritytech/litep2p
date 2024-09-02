@@ -237,7 +237,7 @@ async fn main() {
 
     // establish connection to litep2p for all other litep2ps
     let peer2 = *litep2p2.local_peer_id();
-    let listen_address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let listen_address = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
 
     litep2p1.add_known_address(peer2, vec![listen_address.clone()].into_iter());
     litep2p3.add_known_address(peer2, vec![listen_address.clone()].into_iter());

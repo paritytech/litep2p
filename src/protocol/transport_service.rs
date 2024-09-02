@@ -20,7 +20,7 @@
 
 use crate::{
     error::Error,
-    external_addresses::ExternalAddresses,
+    public_addresses::PublicAddresses,
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -158,9 +158,9 @@ impl TransportService {
         )
     }
 
-    /// Get the listen address of litep2p.
-    pub fn external_addresses(&self) -> ExternalAddresses {
-        self.transport_handle.listen_addresses()
+    /// Get the list of public addresses of the node.
+    pub fn public_addresses(&self) -> PublicAddresses {
+        self.transport_handle.public_addresses()
     }
 
     /// Handle connection established event.
@@ -445,7 +445,7 @@ mod tests {
             Arc::new(RwLock::new(HashMap::new())),
             cmd_tx,
             HashSet::new(),
-            ExternalAddresses::new(peer),
+            PublicAddresses::new(peer),
         );
 
         let (service, sender) = TransportService::new(

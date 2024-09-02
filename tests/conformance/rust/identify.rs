@@ -119,7 +119,7 @@ async fn identify_works() {
 
     let mut libp2p = initialize_libp2p();
     let (mut litep2p, _ping_event_stream, mut identify_event_stream) = initialize_litep2p();
-    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.public_addresses().get_addresses().get(0).unwrap().clone();
 
     libp2p.dial(address).unwrap();
 

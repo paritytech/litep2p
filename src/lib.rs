@@ -31,13 +31,13 @@
 use crate::{
     config::Litep2pConfig,
     error::DialError,
-    external_addresses::ExternalAddresses,
     protocol::{
         libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
         mdns::Mdns,
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
     },
+    public_addresses::PublicAddresses,
     transport::{
         manager::{SupportedTransport, TransportManager},
         tcp::TcpTransport,
@@ -70,8 +70,8 @@ pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod executor;
-pub mod external_addresses;
 pub mod protocol;
+pub mod public_addresses;
 pub mod substream;
 pub mod transport;
 pub mod types;
@@ -139,7 +139,7 @@ pub struct Litep2p {
     local_peer_id: PeerId,
 
     /// Listen addresses.
-    listen_addresses: ExternalAddresses,
+    listen_addresses: PublicAddresses,
 
     /// Transport manager.
     transport_manager: TransportManager,
@@ -363,7 +363,7 @@ impl Litep2p {
                 .register_transport(SupportedTransport::WebSocket, Box::new(transport));
         }
 
-        let listen_addresses = transport_manager.listen_addresses();
+        let listen_addresses = transport_manager.public_addresses();
 
         // enable mdns if the config exists
         if let Some(config) = litep2p_config.mdns.take() {
@@ -389,7 +389,7 @@ impl Litep2p {
         }
 
         // verify that at least one transport is specified
-        if listen_addresses.is_empty() {
+        if listen_addresses.inner.read().is_empty() {
             tracing::warn!(
                 target: LOG_TARGET,
                 "litep2p started with no listen addresses, cannot accept inbound connections",
@@ -440,8 +440,8 @@ impl Litep2p {
         &self.local_peer_id
     }
 
-    /// Get the listen address of litep2p.
-    pub fn external_addresses(&self) -> ExternalAddresses {
+    /// Get the list of public addresses of the node.
+    pub fn public_addresses(&self) -> PublicAddresses {
         self.listen_addresses.clone()
     }
 

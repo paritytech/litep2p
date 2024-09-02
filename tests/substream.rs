@@ -218,7 +218,7 @@ impl UserProtocol for CustomProtocol {
 }
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
-    let listen_address = litep2p1.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let listen_address = litep2p1.public_addresses().get_addresses().get(0).unwrap().clone();
     litep2p2.dial_address(listen_address).await.unwrap();
 
     let mut litep2p1_ready = false;

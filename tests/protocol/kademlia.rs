@@ -153,7 +153,7 @@ async fn records_are_stored_automatically() {
     kad_handle1
         .add_known_peer(
             *litep2p2.local_peer_id(),
-            litep2p2.listen_addresses().get_addresses(),
+            litep2p2.public_addresses().get_addresses(),
         )
         .await;
 
@@ -234,7 +234,7 @@ async fn records_are_stored_manually() {
     kad_handle1
         .add_known_peer(
             *litep2p2.local_peer_id(),
-            litep2p2.listen_addresses().get_addresses(),
+            litep2p2.public_addresses().get_addresses(),
         )
         .await;
 
@@ -317,7 +317,7 @@ async fn not_validated_records_are_not_stored() {
     kad_handle1
         .add_known_peer(
             *litep2p2.local_peer_id(),
-            litep2p2.listen_addresses().get_addresses(),
+            litep2p2.public_addresses().get_addresses(),
         )
         .await;
 
@@ -419,7 +419,7 @@ async fn get_record_retrieves_remote_records() {
                         kad_handle2
                             .add_known_peer(
                                 *litep2p1.local_peer_id(),
-                                litep2p1.listen_addresses().get_addresses(),
+                                litep2p1.public_addresses().get_addresses(),
                             )
                             .await;
 

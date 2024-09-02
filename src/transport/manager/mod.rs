@@ -23,8 +23,8 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, DialError, Error},
     executor::Executor,
-    external_addresses::ExternalAddresses,
     protocol::{InnerTransportEvent, TransportService},
+    public_addresses::PublicAddresses,
     transport::{
         manager::{
             address::{AddressRecord, AddressStore},
@@ -217,7 +217,7 @@ pub struct TransportManager {
     protocol_names: HashSet<ProtocolName>,
 
     /// Listen addresses.
-    listen_addresses: ExternalAddresses,
+    listen_addresses: PublicAddresses,
 
     /// Next connection ID.
     next_connection_id: Arc<AtomicUsize>,
@@ -267,7 +267,7 @@ impl TransportManager {
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let listen_addresses = ExternalAddresses::new(local_peer_id);
+        let listen_addresses = PublicAddresses::new(local_peer_id);
         let handle = TransportManagerHandle::new(
             local_peer_id,
             peers.clone(),
@@ -381,14 +381,14 @@ impl TransportManager {
         self.transport_manager_handle.register_transport(name);
     }
 
-    /// Get listen addresses.
-    pub(crate) fn external_addresses(&self) -> ExternalAddresses {
+    /// Get the list of public addresses of the node.
+    pub(crate) fn public_addresses(&self) -> PublicAddresses {
         self.listen_addresses.clone()
     }
 
     /// Register local listen address.
     pub fn register_listen_address(&mut self, address: Multiaddr) {
-        if let Err(address) = self.listen_addresses.register_listen_address(address) {
+        if let Err(address) = self.listen_addresses.add_public_address(address) {
             tracing::warn!(target: LOG_TARGET, ?address, "failed to register listen address");
         }
     }
@@ -479,8 +479,9 @@ impl TransportManager {
             return Err(Error::NoAddressAvailable(peer));
         }
 
+        let locked_addresses = self.listen_addresses.inner.read();
         for record in records.values() {
-            if self.listen_addresses.contains(record.as_ref()) {
+            if locked_addresses.contains(record.as_ref()) {
                 tracing::warn!(
                     target: LOG_TARGET,
                     ?peer,
@@ -492,6 +493,7 @@ impl TransportManager {
                 return Err(Error::TriedToDialSelf);
             }
         }
+        drop(locked_addresses);
 
         // set connection id for the address record and put peer into `Opening` state
         let connection_id =
@@ -582,7 +584,7 @@ impl TransportManager {
         let mut record = AddressRecord::from_multiaddr(address)
             .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
 
-        if self.listen_addresses.contains(record.as_ref()) {
+        if self.listen_addresses.inner.read().contains(record.as_ref()) {
             return Err(Error::TriedToDialSelf);
         }
 
