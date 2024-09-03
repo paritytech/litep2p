@@ -34,7 +34,7 @@ use crate::{
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_record";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_providers";
 
 /// The configuration needed to instantiate a new [`GetProvidersContext`].
 #[derive(Debug)]
