@@ -29,6 +29,7 @@
 #![allow(clippy::match_like_matches_macro)]
 
 use crate::{
+    addresses::PublicAddresses,
     config::Litep2pConfig,
     error::DialError,
     protocol::{
@@ -37,7 +38,6 @@ use crate::{
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
     },
-    addresses::PublicAddresses,
     transport::{
         manager::{SupportedTransport, TransportManager},
         tcp::TcpTransport,
@@ -52,6 +52,7 @@ use crate::transport::webrtc::WebRtcTransport;
 #[cfg(feature = "websocket")]
 use crate::transport::websocket::WebSocketTransport;
 
+use addresses::ListenAddresses;
 use multiaddr::Multiaddr;
 use transport::Endpoint;
 use types::ConnectionId;
@@ -65,13 +66,13 @@ pub use types::protocol::ProtocolName;
 
 pub(crate) mod peer_id;
 
+pub mod addresses;
 pub mod codec;
 pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod executor;
 pub mod protocol;
-pub mod addresses;
 pub mod substream;
 pub mod transport;
 pub mod types;
@@ -139,7 +140,10 @@ pub struct Litep2p {
     local_peer_id: PeerId,
 
     /// Listen addresses.
-    listen_addresses: PublicAddresses,
+    listen_addresses: ListenAddresses,
+
+    /// Listen addresses.
+    public_addresses: PublicAddresses,
 
     /// Transport manager.
     transport_manager: TransportManager,
@@ -363,7 +367,7 @@ impl Litep2p {
                 .register_transport(SupportedTransport::WebSocket, Box::new(transport));
         }
 
-        let listen_addresses = transport_manager.public_addresses();
+        let listen_addresses = transport_manager.listen_addresses();
 
         // enable mdns if the config exists
         if let Some(config) = litep2p_config.mdns.take() {
@@ -400,6 +404,7 @@ impl Litep2p {
             local_peer_id,
             bandwidth_sink,
             listen_addresses,
+            public_addresses: transport_manager.public_addresses(),
             transport_manager,
         })
     }
@@ -440,9 +445,14 @@ impl Litep2p {
         &self.local_peer_id
     }
 
+    /// Get the list of listen addresses of the node.
+    pub fn listen_addresses(&self) -> ListenAddresses {
+        self.listen_addresses.clone()
+    }
+
     /// Get the list of public addresses of the node.
     pub fn public_addresses(&self) -> PublicAddresses {
-        self.listen_addresses.clone()
+        self.public_addresses.clone()
     }
 
     /// Get handle to bandwidth sink.

@@ -76,22 +76,26 @@ impl PublicAddresses {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ListenAddresses {
     pub(crate) inner: Arc<RwLock<HashSet<Multiaddr>>>,
+    local_peer_id: PeerId,
 }
 
 impl ListenAddresses {
-    pub(crate) fn new() -> Self {
+    /// Creates new [`ListenAddresses`] from the given peer ID.
+    pub(crate) fn new(local_peer_id: PeerId) -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashSet::new())),
+            local_peer_id,
         }
     }
-
     /// Add a listen address to the list of addresses.
     ///
     /// Returns true if the address was added, false if it was already present.
-    pub fn add_address(&self, address: Multiaddr) -> bool {
-        self.inner.write().insert(address)
+    pub fn add_address(&self, address: Multiaddr) -> Result<bool, Multiaddr> {
+        let address = ensure_local_peer(address, self.local_peer_id)?;
+        Ok(self.inner.write().insert(address))
     }
 
     /// Remove the listen address.

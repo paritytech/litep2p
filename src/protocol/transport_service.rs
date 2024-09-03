@@ -19,9 +19,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    addresses::{ListenAddresses, PublicAddresses},
     error::Error,
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
-    addresses::PublicAddresses,
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId, DEFAULT_CHANNEL_SIZE,
@@ -161,6 +161,11 @@ impl TransportService {
     /// Get the list of public addresses of the node.
     pub fn public_addresses(&self) -> PublicAddresses {
         self.transport_handle.public_addresses()
+    }
+
+    /// Get the list of listen addresses of the node.
+    pub fn listen_addresses(&self) -> ListenAddresses {
+        self.transport_handle.listen_addresses()
     }
 
     /// Handle connection established event.

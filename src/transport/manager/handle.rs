@@ -19,11 +19,11 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    addresses::{ListenAddresses, PublicAddresses},
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     executor::Executor,
     protocol::ProtocolSet,
-    addresses::PublicAddresses,
     transport::manager::{
         address::{AddressRecord, AddressStore},
         types::{PeerContext, PeerState, SupportedTransport},
@@ -77,7 +77,10 @@ pub struct TransportManagerHandle {
     supported_transport: HashSet<SupportedTransport>,
 
     /// Local listen addresess.
-    listen_addresses: PublicAddresses,
+    listen_addresses: ListenAddresses,
+
+    /// Public addresses.
+    public_addresses: PublicAddresses,
 }
 
 impl TransportManagerHandle {
@@ -87,14 +90,16 @@ impl TransportManagerHandle {
         peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
         cmd_tx: Sender<InnerTransportManagerCommand>,
         supported_transport: HashSet<SupportedTransport>,
-        listen_addresses: PublicAddresses,
+        listen_addresses: ListenAddresses,
+        public_addresses: PublicAddresses,
     ) -> Self {
         Self {
             peers,
             cmd_tx,
             local_peer_id,
-            listen_addresses,
             supported_transport,
+            listen_addresses,
+            public_addresses,
         }
     }
 
@@ -105,6 +110,11 @@ impl TransportManagerHandle {
 
     /// Get the list of public addresses of the node.
     pub(crate) fn public_addresses(&self) -> PublicAddresses {
+        self.public_addresses.clone()
+    }
+
+    /// Get the list of listen addresses of the node.
+    pub(crate) fn listen_addresses(&self) -> ListenAddresses {
         self.listen_addresses.clone()
     }
 

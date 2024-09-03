@@ -19,12 +19,12 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    addresses::{ListenAddresses, PublicAddresses},
     codec::ProtocolCodec,
     crypto::ed25519::Keypair,
     error::{AddressError, DialError, Error},
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
-    addresses::PublicAddresses,
     transport::{
         manager::{
             address::{AddressRecord, AddressStore},
@@ -217,7 +217,10 @@ pub struct TransportManager {
     protocol_names: HashSet<ProtocolName>,
 
     /// Listen addresses.
-    listen_addresses: PublicAddresses,
+    listen_addresses: ListenAddresses,
+
+    /// Listen addresses.
+    public_addresses: PublicAddresses,
 
     /// Next connection ID.
     next_connection_id: Arc<AtomicUsize>,
@@ -267,13 +270,15 @@ impl TransportManager {
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let listen_addresses = PublicAddresses::new(local_peer_id);
+        let listen_addresses = ListenAddresses::new(local_peer_id);
+        let public_addresses = PublicAddresses::new(local_peer_id);
         let handle = TransportManagerHandle::new(
             local_peer_id,
             peers.clone(),
             cmd_tx,
             supported_transports,
             listen_addresses.clone(),
+            public_addresses.clone(),
         );
 
         (
@@ -286,6 +291,7 @@ impl TransportManager {
                 local_peer_id,
                 bandwidth_sink,
                 listen_addresses,
+                public_addresses,
                 max_parallel_dials,
                 protocols: HashMap::new(),
                 transports: TransportContext::new(),
@@ -383,6 +389,11 @@ impl TransportManager {
 
     /// Get the list of public addresses of the node.
     pub(crate) fn public_addresses(&self) -> PublicAddresses {
+        self.public_addresses.clone()
+    }
+
+    /// Get the list of listen addresses of the node.
+    pub(crate) fn listen_addresses(&self) -> ListenAddresses {
         self.listen_addresses.clone()
     }
 
