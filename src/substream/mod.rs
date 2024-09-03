@@ -766,6 +766,8 @@ where
     S: Stream<Item = crate::Result<BytesMut>> + Unpin,
 {
     substreams: HashMap<K, S>,
+    keys: Vec<K>,
+    poll_index: usize,
     waker: Option<Waker>,
 }
 
@@ -778,6 +780,8 @@ where
     pub fn new() -> Self {
         Self {
             substreams: HashMap::new(),
+            keys: Vec::new(),
+            poll_index: 0,
             waker: None,
         }
     }
@@ -787,20 +791,25 @@ where
         match self.substreams.entry(key) {
             Entry::Vacant(entry) => {
                 entry.insert(substream);
+                self.keys.push(key);
+                self.waker.take().map(|waker| waker.wake());
             }
             Entry::Occupied(_) => {
                 tracing::error!(?key, "substream already exists");
                 debug_assert!(false);
             }
         }
-
-        self.waker.take().map(|waker| waker.wake());
     }
 
     /// Remove substream from the set.
     pub fn remove(&mut self, key: &K) -> Option<S> {
+        let Some(substream) = self.substreams.remove(key) else {
+            return None;
+        };
+
         self.waker.take().map(|waker| waker.wake());
-        self.substreams.remove(key)
+        self.keys.retain(|k| k != key);
+        Some(substream)
     }
 
     /// Get mutable reference to stored substream.
@@ -830,8 +839,15 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inner = Pin::into_inner(self);
 
-        // TODO: poll the streams more randomly
-        for (key, mut substream) in inner.substreams.iter_mut() {
+        let len = inner.keys.len();
+        for _ in 0..len {
+            let key = &inner.keys[inner.poll_index];
+            inner.poll_index = (inner.poll_index + 1) % len;
+
+            let Some(mut substream) = inner.substreams.get_mut(key) else {
+                continue;
+            };
+
             match Pin::new(&mut substream).poll_next(cx) {
                 Poll::Pending => continue,
                 Poll::Ready(Some(data)) => return Poll::Ready(Some((*key, data))),
