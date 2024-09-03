@@ -458,8 +458,8 @@ impl Litep2p {
     }
 
     /// Get the list of listen addresses of the node.
-    pub fn listen_addresses(&self) -> Vec<Multiaddr> {
-        self.listen_addresses.clone()
+    pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
+        self.listen_addresses.iter()
     }
 
     /// Get handle to bandwidth sink.

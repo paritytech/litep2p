@@ -52,7 +52,7 @@ use std::{
 use crate::common::{add_transport, Transport};
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
-    let address = litep2p2.listen_addresses().get(0).unwrap().clone();
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
     tracing::info!("address: {address}");
     litep2p1.dial_address(address).await.unwrap();
 
@@ -1435,7 +1435,7 @@ async fn dial_peer_when_sending_request(transport1: Transport, transport2: Trans
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
-    let address = litep2p2.listen_addresses().get(0).unwrap().clone();
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
 
     // add known address for `peer2` and start event loop for both litep2ps
     litep2p1.add_known_address(peer2, std::iter::once(address));

@@ -454,7 +454,7 @@ mod tests {
         assert!(litep2p1.public_addresses().add_address(multiaddr.clone()).unwrap());
 
         // Dial `litep2p1`
-        litep2p2.dial_address(litep2p1_address).await.unwrap();
+        litep2p2.dial_address(litep2p1_address.clone()).await.unwrap();
 
         let expected_multiaddr = multiaddr.with(Protocol::P2p(peer1.into()));
 

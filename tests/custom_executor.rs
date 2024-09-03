@@ -158,7 +158,7 @@ async fn custom_executor() {
     let peer2 = *litep2p2.local_peer_id();
 
     // wait until peers have connected and spawn the litep2p objects in the background
-    let address = litep2p2.listen_addresses().get(0).unwrap().clone();
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
     litep2p1.dial_address(address).await.unwrap();
 
     let mut litep2p1_connected = false;
