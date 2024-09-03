@@ -21,11 +21,11 @@
 //! [`/ipfs/identify/1.0.0`](https://github.com/libp2p/specs/blob/master/identify/README.md) implementation.
 
 use crate::{
+    addresses::{ListenAddresses, PublicAddresses},
     codec::ProtocolCodec,
     crypto::PublicKey,
     error::{Error, SubstreamError},
     protocol::{Direction, TransportEvent, TransportService},
-    addresses::PublicAddresses,
     substream::Substream,
     transport::Endpoint,
     types::{protocol::ProtocolName, SubstreamId},
@@ -33,7 +33,7 @@ use crate::{
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
-use multiaddr::{Multiaddr, Protocol};
+use multiaddr::Multiaddr;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
@@ -183,8 +183,14 @@ pub(crate) struct Identify {
     /// User agent.
     user_agent: String,
 
+    /// Listen addresses.
+    listen_addresses: ListenAddresses,
+
     /// Public addresses.
-    listen_addresses: PublicAddresses,
+    public_addresses: PublicAddresses,
+
+    /// User provided list of addresses.
+    user_addresses: Vec<Vec<u8>>,
 
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,
@@ -202,30 +208,18 @@ pub(crate) struct Identify {
 impl Identify {
     /// Create new [`Identify`] protocol.
     pub(crate) fn new(service: TransportService, config: Config) -> Self {
-        let listen_addresses = service.public_addresses();
-
-        let local_peer_id = service.local_peer_id();
-        let filtered_public_addr = config.public_addresses.into_iter().filter_map(|address| {
-            if address.is_empty() {
-                return None;
-            }
-            if let Some(peer_id) = PeerId::try_from_multiaddr(&address) {
-                if peer_id != local_peer_id {
-                    return None;
-                }
-
-                return Some(address);
-            }
-
-            Some(address.with(Protocol::P2p(local_peer_id.into())))
-        });
-        listen_addresses.inner.write().extend(filtered_public_addr);
+        let listen_addresses = service.listen_addresses();
+        let public_addresses = service.public_addresses();
+        let user_addresses =
+            config.public_addresses.into_iter().map(|addr| addr.to_vec()).collect();
 
         Self {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
             listen_addresses,
+            public_addresses,
+            user_addresses,
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
@@ -281,13 +275,15 @@ impl Identify {
             }
         };
 
-        let listen_addrs =
-            self.listen_addresses.inner.read().iter().map(|addr| addr.to_vec()).collect();
+        let mut listen_addr: HashSet<_> = self.user_addresses.iter().cloned().collect();
+        listen_addr.extend(self.listen_addresses.inner.read().iter().map(|addr| addr.to_vec()));
+        listen_addr.extend(self.public_addresses.inner.read().iter().map(|addr| addr.to_vec()));
+
         let identify = identify_schema::Identify {
             protocol_version: Some(self.protocol_version.clone()),
             agent_version: Some(self.user_agent.clone()),
             public_key: Some(self.public.to_protobuf_encoding()),
-            listen_addrs,
+            listen_addrs: listen_addr.into_iter().collect(),
             observed_addr,
             protocols: self.protocols.clone(),
         };
