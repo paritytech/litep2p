@@ -526,10 +526,10 @@ impl Kademlia {
                     }
                 }
             }
-            ref message @ KademliaMessage::GetProviders {
-                ref key,
-                ref peers,
-                ref providers,
+            KademliaMessage::GetProviders {
+                key,
+                peers,
+                providers,
             } => {
                 match (query_id, key) {
                     (Some(query_id), key) => {
@@ -545,9 +545,17 @@ impl Kademlia {
                         );
 
                         // update routing table and inform user about the update
-                        self.update_routing_table(peers).await;
+                        self.update_routing_table(&peers).await;
 
-                        self.engine.register_response(query_id, peer, message.clone());
+                        self.engine.register_response(
+                            query_id,
+                            peer,
+                            KademliaMessage::GetProviders {
+                                key,
+                                peers,
+                                providers,
+                            },
+                        );
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -557,26 +565,24 @@ impl Kademlia {
                             "handle `GET_PROVIDERS` request",
                         );
 
-                        let providers = self.store.get_providers(key);
+                        let providers = self.store.get_providers(&key);
                         // TODO: if local peer is among the providers, update its `ProviderRecord`
                         //       to have up-to-date addresses.
                         //       Requires https://github.com/paritytech/litep2p/issues/211.
 
                         let closer_peers = self
                             .routing_table
-                            .closest(Key::from(key.to_vec()), self.replication_factor);
+                            .closest(Key::new(key.as_ref()), self.replication_factor);
 
-                        let message = KademliaMessage::get_providers_response(
-                            key.clone(),
-                            providers,
-                            &closer_peers,
-                        );
+                        let message =
+                            KademliaMessage::get_providers_response(key, providers, &closer_peers);
                         self.executor.send_message(peer, message.into(), substream);
                     }
                     (None, None) => tracing::debug!(
                         target: LOG_TARGET,
                         ?peer,
-                        ?message,
+                        ?peers,
+                        ?providers,
                         "unable to handle `GET_PROVIDERS` request with empty key",
                     ),
                 }
