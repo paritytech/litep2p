@@ -43,6 +43,9 @@ use std::{
     task::{Context, Poll},
 };
 
+/// Tokio DNS resolver.
+static TOKIO_DNS_RESOLVER: std::sync::OnceLock<TokioAsyncResolver> = std::sync::OnceLock::new();
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::transport::listener";
 
@@ -84,23 +87,23 @@ impl AddressType {
             } => (address, port, dns_type),
         };
 
-        let lookup =
-            match TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
-                .lookup_ip(url.clone())
-                .await
-            {
-                Ok(lookup) => lookup,
-                Err(error) => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "failed to resolve DNS address `{}`",
-                        url
-                    );
+        let resolver = TOKIO_DNS_RESOLVER.get_or_init(|| {
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
+        });
 
-                    return Err(DnsError::ResolveError(url));
-                }
-            };
+        let lookup = match resolver.lookup_ip(url.clone()).await {
+            Ok(lookup) => lookup,
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to resolve DNS address `{}`",
+                    url
+                );
+
+                return Err(DnsError::ResolveError(url));
+            }
+        };
 
         let Some(ip) = lookup.iter().find(|ip| match dns_type {
             DnsType::Dns => true,
