@@ -22,11 +22,7 @@
 //! Substream-related helper code.
 
 use crate::{
-    codec::ProtocolCodec,
-    error::{Error, SubstreamError},
-    transport::tcp,
-    types::SubstreamId,
-    PeerId,
+    codec::ProtocolCodec, error::SubstreamError, transport::tcp, types::SubstreamId, PeerId,
 };
 
 #[cfg(feature = "quic")]
@@ -362,14 +358,12 @@ impl Substream {
         io: &mut T,
         payload_size: usize,
         payload: Bytes,
-    ) -> crate::Result<()> {
+    ) -> Result<(), SubstreamError> {
         if payload.len() != payload_size {
-            return Err(Error::IoError(ErrorKind::PermissionDenied));
+            return Err(SubstreamError::IoError(ErrorKind::PermissionDenied));
         }
 
-        io.write_all(&payload)
-            .await
-            .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))?;
+        io.write_all(&payload).await.map_err(|_| SubstreamError::ConnectionClosed)?;
 
         // Flush the stream.
         io.flush().await.map_err(From::from)
@@ -380,10 +374,10 @@ impl Substream {
         io: &mut T,
         bytes: Bytes,
         max_size: Option<usize>,
-    ) -> crate::Result<()> {
+    ) -> Result<(), SubstreamError> {
         if let Some(max_size) = max_size {
             if bytes.len() > max_size {
-                return Err(Error::IoError(ErrorKind::PermissionDenied));
+                return Err(SubstreamError::IoError(ErrorKind::PermissionDenied));
             }
         }
 
@@ -413,7 +407,7 @@ impl Substream {
     /// # Panics
     ///
     /// Panics if no codec is provided.
-    pub async fn send_framed(&mut self, bytes: Bytes) -> crate::Result<()> {
+    pub async fn send_framed(&mut self, bytes: Bytes) -> Result<(), SubstreamError> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,

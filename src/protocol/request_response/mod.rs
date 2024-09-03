@@ -371,7 +371,7 @@ impl RequestResponseProtocol {
                     fallback_protocol,
                     Err(RequestResponseError::Timeout),
                 ),
-                Ok(Err(Error::IoError(ErrorKind::PermissionDenied))) => {
+                Ok(Err(SubstreamError::IoError(ErrorKind::PermissionDenied))) => {
                     tracing::warn!(
                         target: LOG_TARGET,
                         ?peer,
@@ -390,7 +390,7 @@ impl RequestResponseProtocol {
                     peer,
                     request_id,
                     fallback_protocol,
-                    Err(RequestResponseError::NotConnected),
+                    Err(RequestResponseError::NotConnected)
                 ),
                 Ok(Ok(_)) => {
                     tokio::select! {

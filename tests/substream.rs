@@ -326,6 +326,7 @@ async fn too_big_identity_payload_framed(transport1: Transport, transport2: Tran
 
     match rx.await {
         Ok(Err(Error::IoError(ErrorKind::PermissionDenied))) => {}
+        Ok(Err(Error::SubstreamError(SubstreamError::IoError(ErrorKind::PermissionDenied)))) => {}
         event => panic!("invalid event received: {event:?}"),
     }
 }
