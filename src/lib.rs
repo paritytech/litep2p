@@ -52,8 +52,8 @@ use crate::transport::webrtc::WebRtcTransport;
 #[cfg(feature = "websocket")]
 use crate::transport::websocket::WebSocketTransport;
 
-use addresses::ListenAddresses;
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 use transport::Endpoint;
 use types::ConnectionId;
 
@@ -140,7 +140,7 @@ pub struct Litep2p {
     local_peer_id: PeerId,
 
     /// Listen addresses.
-    listen_addresses: ListenAddresses,
+    listen_addresses: Vec<Multiaddr>,
 
     /// Listen addresses.
     public_addresses: PublicAddresses,
@@ -157,6 +157,7 @@ impl Litep2p {
     pub fn new(mut litep2p_config: Litep2pConfig) -> crate::Result<Litep2p> {
         let local_peer_id = PeerId::from_public_key(&litep2p_config.keypair.public().into());
         let bandwidth_sink = BandwidthSink::new();
+        let mut listen_addresses = vec![];
 
         let supported_transports = Self::supported_transports(&litep2p_config);
         let (mut transport_manager, transport_handle) = TransportManager::new(
@@ -166,7 +167,6 @@ impl Litep2p {
             litep2p_config.max_parallel_dials,
             litep2p_config.connection_limits,
         );
-        let listen_addresses = transport_manager.listen_addresses();
 
         // add known addresses to `TransportManager`, if any exist
         if !litep2p_config.known_addresses.is_empty() {
@@ -319,9 +319,10 @@ impl Litep2p {
                 <TcpTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport_listen_addresses {
-                if let Err(err) = listen_addresses.add_address(address.clone()) {
-                    tracing::warn!(target: LOG_TARGET, ?err, "failed to register listen address");
-                }
+                transport_manager.register_listen_address(address.clone());
+                listen_addresses.push(address.with(Protocol::P2p(
+                    Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
+                )));
             }
 
             transport_manager.register_transport(SupportedTransport::Tcp, Box::new(transport));
@@ -335,9 +336,10 @@ impl Litep2p {
                 <QuicTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport_listen_addresses {
-                if let Err(err) = listen_addresses.add_address(address.clone()) {
-                    tracing::warn!(target: LOG_TARGET, ?err, "failed to register listen address");
-                }
+                transport_manager.register_listen_address(address.clone());
+                listen_addresses.push(address.with(Protocol::P2p(
+                    Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
+                )));
             }
 
             transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
@@ -351,9 +353,10 @@ impl Litep2p {
                 <WebRtcTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport_listen_addresses {
-                if let Err(err) = listen_addresses.add_address(address.clone()) {
-                    tracing::warn!(target: LOG_TARGET, ?err, "failed to register listen address");
-                }
+                transport_manager.register_listen_address(address.clone());
+                listen_addresses.push(address.with(Protocol::P2p(
+                    Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
+                )));
             }
 
             transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
@@ -367,9 +370,10 @@ impl Litep2p {
                 <WebSocketTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport_listen_addresses {
-                if let Err(err) = listen_addresses.add_address(address.clone()) {
-                    tracing::warn!(target: LOG_TARGET, ?err, "failed to register listen address");
-                }
+                transport_manager.register_listen_address(address.clone());
+                listen_addresses.push(address.with(Protocol::P2p(
+                    Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
+                )));
             }
 
             transport_manager
@@ -378,7 +382,7 @@ impl Litep2p {
 
         // enable mdns if the config exists
         if let Some(config) = litep2p_config.mdns.take() {
-            let mdns = Mdns::new(transport_handle, config, listen_addresses.get_addresses())?;
+            let mdns = Mdns::new(transport_handle, config, listen_addresses.clone())?;
 
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = mdns.start().await;
@@ -400,7 +404,7 @@ impl Litep2p {
         }
 
         // verify that at least one transport is specified
-        if listen_addresses.inner.read().is_empty() {
+        if listen_addresses.is_empty() {
             tracing::warn!(
                 target: LOG_TARGET,
                 "litep2p started with no listen addresses, cannot accept inbound connections",
@@ -452,14 +456,14 @@ impl Litep2p {
         &self.local_peer_id
     }
 
-    /// Get the list of listen addresses of the node.
-    pub fn listen_addresses(&self) -> ListenAddresses {
-        self.listen_addresses.clone()
-    }
-
     /// Get the list of public addresses of the node.
     pub fn public_addresses(&self) -> PublicAddresses {
         self.public_addresses.clone()
+    }
+
+    /// Get the list of listen addresses of the node.
+    pub fn listen_addresses(&self) -> Vec<Multiaddr> {
+        self.listen_addresses.clone()
     }
 
     /// Get handle to bandwidth sink.

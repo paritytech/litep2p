@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    addresses::{ListenAddresses, PublicAddresses},
+    addresses::PublicAddresses,
     error::Error,
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
     transport::{manager::TransportManagerHandle, Endpoint},
@@ -164,7 +164,7 @@ impl TransportService {
     }
 
     /// Get the list of listen addresses of the node.
-    pub fn listen_addresses(&self) -> ListenAddresses {
+    pub fn listen_addresses(&self) -> HashSet<Multiaddr> {
         self.transport_handle.listen_addresses()
     }
 

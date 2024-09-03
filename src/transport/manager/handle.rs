@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    addresses::{ListenAddresses, PublicAddresses},
+    addresses::PublicAddresses,
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     executor::Executor,
@@ -77,7 +77,7 @@ pub struct TransportManagerHandle {
     supported_transport: HashSet<SupportedTransport>,
 
     /// Local listen addresess.
-    listen_addresses: ListenAddresses,
+    listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 
     /// Public addresses.
     public_addresses: PublicAddresses,
@@ -90,7 +90,7 @@ impl TransportManagerHandle {
         peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
         cmd_tx: Sender<InnerTransportManagerCommand>,
         supported_transport: HashSet<SupportedTransport>,
-        listen_addresses: ListenAddresses,
+        listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
         public_addresses: PublicAddresses,
     ) -> Self {
         Self {
@@ -114,8 +114,8 @@ impl TransportManagerHandle {
     }
 
     /// Get the list of listen addresses of the node.
-    pub(crate) fn listen_addresses(&self) -> ListenAddresses {
-        self.listen_addresses.clone()
+    pub(crate) fn listen_addresses(&self) -> HashSet<Multiaddr> {
+        self.listen_addresses.read().clone()
     }
 
     /// Check if `address` is supported by one of the enabled transports.
@@ -162,13 +162,12 @@ impl TransportManagerHandle {
 
     /// Check if the address is a local listen address and if so, discard it.
     fn is_local_address(&self, address: &Multiaddr) -> bool {
-        let mut address: Multiaddr = address
+        let address: Multiaddr = address
             .iter()
             .take_while(|protocol| !std::matches!(protocol, Protocol::P2p(_)))
             .collect();
-        address.push(Protocol::P2p(self.local_peer_id.into()));
 
-        self.listen_addresses.inner.read().contains(&address)
+        self.listen_addresses.read().contains(&address)
     }
 
     /// Add one or more known addresses for peer.

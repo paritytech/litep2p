@@ -76,45 +76,6 @@ impl PublicAddresses {
     }
 }
 
-/// Set of the addresses the local node listens on.
-///
-/// The format of the addresses stored in the set contain the local peer ID.
-/// This requirement is enforced by the [`ListenAddresses::add_address`] method.
-///
-/// The listen addresses are populated during the construction of the Litep2p object.
-#[derive(Debug, Clone)]
-pub struct ListenAddresses {
-    pub(crate) inner: Arc<RwLock<HashSet<Multiaddr>>>,
-    local_peer_id: PeerId,
-}
-
-impl ListenAddresses {
-    /// Creates new [`ListenAddresses`] from the given peer ID.
-    pub(crate) fn new(local_peer_id: PeerId) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(HashSet::new())),
-            local_peer_id,
-        }
-    }
-    /// Add a listen address to the list of addresses.
-    ///
-    /// Returns true if the address was added, false if it was already present.
-    pub fn add_address(&self, address: Multiaddr) -> Result<bool, InsertionError> {
-        let address = ensure_local_peer(address, self.local_peer_id)?;
-        Ok(self.inner.write().insert(address))
-    }
-
-    /// Remove the listen address.
-    pub fn remove_address(&self, address: &Multiaddr) -> bool {
-        self.inner.write().remove(address)
-    }
-
-    /// Returns a vector of the available listen addresses.
-    pub fn get_addresses(&self) -> Vec<Multiaddr> {
-        self.inner.read().iter().cloned().collect()
-    }
-}
-
 /// Check if the address contains the local peer ID.
 ///
 /// If the address does not contain any peer ID, it will be added.

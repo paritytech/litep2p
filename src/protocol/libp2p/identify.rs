@@ -21,7 +21,6 @@
 //! [`/ipfs/identify/1.0.0`](https://github.com/libp2p/specs/blob/master/identify/README.md) implementation.
 
 use crate::{
-    addresses::{ListenAddresses, PublicAddresses},
     codec::ProtocolCodec,
     crypto::PublicKey,
     error::{Error, SubstreamError},
@@ -183,14 +182,8 @@ pub(crate) struct Identify {
     /// User agent.
     user_agent: String,
 
-    /// Listen addresses.
-    listen_addresses: ListenAddresses,
-
-    /// Public addresses.
-    public_addresses: PublicAddresses,
-
-    /// User provided list of addresses.
-    user_addresses: Vec<Vec<u8>>,
+    /// User provided list of addresses concatenated with the listen addresses.
+    addresses: HashSet<Vec<u8>>,
 
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,
@@ -208,18 +201,14 @@ pub(crate) struct Identify {
 impl Identify {
     /// Create new [`Identify`] protocol.
     pub(crate) fn new(service: TransportService, config: Config) -> Self {
-        let listen_addresses = service.listen_addresses();
-        let public_addresses = service.public_addresses();
-        let user_addresses =
-            config.public_addresses.into_iter().map(|addr| addr.to_vec()).collect();
+        let mut addresses = service.listen_addresses();
+        addresses.extend(config.public_addresses.iter().cloned());
 
         Self {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            listen_addresses,
-            public_addresses,
-            user_addresses,
+            addresses: addresses.into_iter().map(|addr| addr.to_vec()).collect(),
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
@@ -275,9 +264,9 @@ impl Identify {
             }
         };
 
-        let mut listen_addr: HashSet<_> = self.user_addresses.iter().cloned().collect();
-        listen_addr.extend(self.listen_addresses.inner.read().iter().map(|addr| addr.to_vec()));
-        listen_addr.extend(self.public_addresses.inner.read().iter().map(|addr| addr.to_vec()));
+        let mut listen_addr: HashSet<_> = self.addresses.clone();
+        listen_addr
+            .extend(self.service.public_addresses().inner.read().iter().map(|addr| addr.to_vec()));
 
         let identify = identify_schema::Identify {
             protocol_version: Some(self.protocol_version.clone()),

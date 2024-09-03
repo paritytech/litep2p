@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    addresses::{ListenAddresses, PublicAddresses},
+    addresses::PublicAddresses,
     codec::ProtocolCodec,
     crypto::ed25519::Keypair,
     error::{AddressError, DialError, Error},
@@ -40,6 +40,7 @@ use crate::{
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -217,7 +218,7 @@ pub struct TransportManager {
     protocol_names: HashSet<ProtocolName>,
 
     /// Listen addresses.
-    listen_addresses: ListenAddresses,
+    listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 
     /// Listen addresses.
     public_addresses: PublicAddresses,
@@ -270,7 +271,7 @@ impl TransportManager {
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
-        let listen_addresses = ListenAddresses::new(local_peer_id);
+        let listen_addresses = Arc::new(RwLock::new(HashSet::new()));
         let public_addresses = PublicAddresses::new(local_peer_id);
         let handle = TransportManagerHandle::new(
             local_peer_id,
@@ -392,9 +393,16 @@ impl TransportManager {
         self.public_addresses.clone()
     }
 
-    /// Get the list of listen addresses of the node.
-    pub(crate) fn listen_addresses(&self) -> ListenAddresses {
-        self.listen_addresses.clone()
+    /// Register local listen address.
+    pub fn register_listen_address(&mut self, address: Multiaddr) {
+        assert!(!address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))));
+
+        let mut listen_addresses = self.listen_addresses.write();
+
+        listen_addresses.insert(address.clone());
+        listen_addresses.insert(address.with(Protocol::P2p(
+            Multihash::from_bytes(&self.local_peer_id.to_bytes()).unwrap(),
+        )));
     }
 
     /// Add one or more known addresses for `peer`.
@@ -483,7 +491,7 @@ impl TransportManager {
             return Err(Error::NoAddressAvailable(peer));
         }
 
-        let locked_addresses = self.listen_addresses.inner.read();
+        let locked_addresses = self.listen_addresses.read();
         for record in records.values() {
             if locked_addresses.contains(record.as_ref()) {
                 tracing::warn!(
@@ -588,7 +596,7 @@ impl TransportManager {
         let mut record = AddressRecord::from_multiaddr(address)
             .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
 
-        if self.listen_addresses.inner.read().contains(record.as_ref()) {
+        if self.listen_addresses.read().contains(record.as_ref()) {
             return Err(Error::TriedToDialSelf);
         }
 
