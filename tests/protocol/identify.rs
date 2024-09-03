@@ -88,8 +88,8 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
-    let address1 = litep2p1.public_addresses().get_addresses().get(0).unwrap().clone();
-    let address2 = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address1 = litep2p1.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address2 = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     tracing::info!("listen address of peer1: {address1}");
     tracing::info!("listen address of peer2: {address2}");
@@ -202,7 +202,7 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     litep2p1.dial_address(address).await.unwrap();
 

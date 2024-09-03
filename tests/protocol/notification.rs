@@ -46,7 +46,7 @@ use std::{net::Ipv6Addr, task::Poll, time::Duration};
 use crate::common::{add_transport, Transport};
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
-    let address = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
     litep2p1.dial_address(address).await.unwrap();
 
     let mut litep2p1_connected = false;
@@ -2550,7 +2550,7 @@ async fn dial_peer_when_opening_substream(transport1: Transport, transport2: Tra
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
 
-    let address = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
     litep2p1.add_known_address(peer2, std::iter::once(address));
 
     // add `peer2` known address for `peer1` and spawn the litep2p objects in the background
@@ -2708,8 +2708,8 @@ async fn open_and_close_batched(
     let peer2 = *litep2p2.local_peer_id();
     let peer3 = *litep2p3.local_peer_id();
 
-    let address2 = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
-    let address3 = litep2p3.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address2 = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address3 = litep2p3.listen_addresses().get_addresses().get(0).unwrap().clone();
     litep2p1.add_known_address(peer2, std::iter::once(address2));
     litep2p1.add_known_address(peer3, std::iter::once(address3));
 
@@ -2913,8 +2913,8 @@ async fn open_and_close_batched_duplicate_peer(
     let peer2 = *litep2p2.local_peer_id();
     let peer3 = *litep2p3.local_peer_id();
 
-    let address2 = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
-    let address3 = litep2p3.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address2 = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address3 = litep2p3.listen_addresses().get_addresses().get(0).unwrap().clone();
     litep2p1.add_known_address(peer2, std::iter::once(address2));
     litep2p1.add_known_address(peer3, std::iter::once(address3));
 
@@ -3150,7 +3150,7 @@ async fn no_listener_address_for_one_peer(transport1: Transport, transport2: Tra
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
 
-    let address2 = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address2 = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
     litep2p1.add_known_address(peer2, std::iter::once(address2));
 
     tokio::spawn(async move {
@@ -3550,7 +3550,7 @@ async fn dialing_disabled(transport1: Transport, transport2: Transport) {
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer2 = *litep2p2.local_peer_id();
-    let listen_address = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let listen_address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     litep2p1.add_known_address(peer2, vec![listen_address].into_iter());
 
@@ -3641,7 +3641,7 @@ async fn validation_takes_too_long(transport1: Transport, transport2: Transport)
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
-    let listen_address = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let listen_address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     litep2p1.add_known_address(peer2, vec![listen_address].into_iter());
 
@@ -3748,7 +3748,7 @@ async fn ignored_validation_open_substream(transport1: Transport, transport2: Tr
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
-    let listen_address = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let listen_address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     litep2p1.add_known_address(peer2, vec![listen_address].into_iter());
 
@@ -3893,7 +3893,7 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
 
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
-    let listen_address = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let listen_address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
 
     litep2p1.add_known_address(peer2, vec![listen_address].into_iter());
 

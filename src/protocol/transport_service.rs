@@ -455,6 +455,7 @@ mod tests {
             Arc::new(RwLock::new(HashMap::new())),
             cmd_tx,
             HashSet::new(),
+            ListenAddresses::new(peer),
             PublicAddresses::new(peer),
         );
 

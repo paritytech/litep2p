@@ -345,7 +345,8 @@ mod tests {
                 cmd_tx,
                 peers: Default::default(),
                 supported_transport: HashSet::new(),
-                listen_addresses: PublicAddresses::new(local_peer_id),
+                listen_addresses: ListenAddresses::new(local_peer_id),
+                public_addresses: PublicAddresses::new(local_peer_id),
             },
             cmd_rx,
         )
@@ -609,7 +610,7 @@ mod tests {
         let first_addr: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
         let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
 
-        let listen_addresses = PublicAddresses::new(local_peer_id);
+        let listen_addresses = ListenAddresses::new(local_peer_id);
         listen_addresses.add_address(first_addr.clone()).unwrap();
         listen_addresses.add_address(second_addr.clone()).unwrap();
         println!("{:?}", listen_addresses);
@@ -620,6 +621,7 @@ mod tests {
             peers: Default::default(),
             supported_transport: HashSet::new(),
             listen_addresses,
+            public_addresses: PublicAddresses::new(local_peer_id),
         };
 
         // local addresses

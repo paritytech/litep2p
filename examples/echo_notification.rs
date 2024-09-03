@@ -125,7 +125,7 @@ async fn main() {
 
     // get the first (and only) listen address for the second peer
     // and add it as a known address for `litep2p1`
-    let listen_address = litep2p2.public_addresses().get_addresses().get(0).unwrap().clone();
+    let listen_address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
     let peer = *litep2p2.local_peer_id();
 
     litep2p1.add_known_address(peer, vec![listen_address].into_iter());

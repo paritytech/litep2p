@@ -119,7 +119,7 @@ async fn substrate_open_substream() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let address = litep2p.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut libp2p_ready = false;
@@ -214,7 +214,7 @@ async fn litep2p_open_substream() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let address = litep2p.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut libp2p_ready = false;
@@ -311,7 +311,7 @@ async fn substrate_reject_substream() {
 
     let libp2p_peer = *libp2p.local_peer_id();
 
-    let address = litep2p.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
     libp2p.dial(address).unwrap();
 
     loop {
@@ -360,7 +360,7 @@ async fn litep2p_reject_substream() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let address = litep2p.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
     libp2p.dial(address).unwrap();
 
     loop {
@@ -412,7 +412,7 @@ async fn substrate_close_substream() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let address = litep2p.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut libp2p_notification_count = 0;
@@ -504,7 +504,7 @@ async fn litep2p_close_substream() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let address = litep2p.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut notif_count = 0;
@@ -584,7 +584,7 @@ async fn both_nodes_open_substreams() {
     let libp2p_peer = *libp2p.local_peer_id();
     let litep2p_peer = *litep2p.local_peer_id();
 
-    let address = litep2p.public_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
     libp2p.dial(address).unwrap();
 
     let mut libp2p_ready = false;
