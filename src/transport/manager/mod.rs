@@ -397,13 +397,6 @@ impl TransportManager {
         self.listen_addresses.clone()
     }
 
-    /// Register local listen address.
-    pub fn register_listen_address(&mut self, address: Multiaddr) {
-        if let Err(address) = self.listen_addresses.add_address(address) {
-            tracing::warn!(target: LOG_TARGET, ?address, "failed to register listen address");
-        }
-    }
-
     /// Add one or more known addresses for `peer`.
     pub fn add_known_address(
         &mut self,

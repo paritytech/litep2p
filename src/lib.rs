@@ -166,6 +166,7 @@ impl Litep2p {
             litep2p_config.max_parallel_dials,
             litep2p_config.connection_limits,
         );
+        let listen_addresses = transport_manager.listen_addresses();
 
         // add known addresses to `TransportManager`, if any exist
         if !litep2p_config.known_addresses.is_empty() {
@@ -318,7 +319,9 @@ impl Litep2p {
                 <TcpTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport_listen_addresses {
-                transport_manager.register_listen_address(address.clone());
+                if let Err(err) = listen_addresses.add_address(address.clone()) {
+                    tracing::warn!(target: LOG_TARGET, ?err, "failed to register listen address");
+                }
             }
 
             transport_manager.register_transport(SupportedTransport::Tcp, Box::new(transport));
@@ -332,7 +335,9 @@ impl Litep2p {
                 <QuicTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport_listen_addresses {
-                transport_manager.register_listen_address(address.clone());
+                if let Err(err) = listen_addresses.add_address(address.clone()) {
+                    tracing::warn!(target: LOG_TARGET, ?err, "failed to register listen address");
+                }
             }
 
             transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
@@ -346,7 +351,9 @@ impl Litep2p {
                 <WebRtcTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport_listen_addresses {
-                transport_manager.register_listen_address(address.clone());
+                if let Err(err) = listen_addresses.add_address(address.clone()) {
+                    tracing::warn!(target: LOG_TARGET, ?err, "failed to register listen address");
+                }
             }
 
             transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
@@ -360,14 +367,14 @@ impl Litep2p {
                 <WebSocketTransport as TransportBuilder>::new(handle, config)?;
 
             for address in transport_listen_addresses {
-                transport_manager.register_listen_address(address.clone());
+                if let Err(err) = listen_addresses.add_address(address.clone()) {
+                    tracing::warn!(target: LOG_TARGET, ?err, "failed to register listen address");
+                }
             }
 
             transport_manager
                 .register_transport(SupportedTransport::WebSocket, Box::new(transport));
         }
-
-        let listen_addresses = transport_manager.listen_addresses();
 
         // enable mdns if the config exists
         if let Some(config) = litep2p_config.mdns.take() {
