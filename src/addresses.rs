@@ -28,7 +28,7 @@ use crate::PeerId;
 /// Set of the public addresses of the local node.
 ///
 /// The format of the addresses stored in the set contain the local peer ID.
-/// This requirement is enforced by the [`PublicAddresses::add_public_address`] method,
+/// This requirement is enforced by the [`PublicAddresses::add_address`] method,
 /// that will add the local peer ID to the address if it is missing.
 ///
 /// # Note
@@ -76,6 +76,12 @@ impl PublicAddresses {
     }
 }
 
+/// Set of the addresses the local node listens on.
+///
+/// The format of the addresses stored in the set contain the local peer ID.
+/// This requirement is enforced by the [`ListenAddresses::add_address`] method.
+///
+/// The listen addresses are populated during the construction of the Litep2p object.
 #[derive(Debug, Clone)]
 pub struct ListenAddresses {
     pub(crate) inner: Arc<RwLock<HashSet<Multiaddr>>>,
