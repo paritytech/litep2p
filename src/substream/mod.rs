@@ -841,21 +841,26 @@ where
 
         let len = inner.keys.len();
         for _ in 0..len {
-            let key = &inner.keys[inner.poll_index];
             inner.poll_index = (inner.poll_index + 1) % len;
+            let key = &inner.keys[inner.poll_index];
 
             let Some(mut substream) = inner.substreams.get_mut(key) else {
                 continue;
             };
 
             match Pin::new(&mut substream).poll_next(cx) {
-                Poll::Pending => continue,
-                Poll::Ready(Some(data)) => return Poll::Ready(Some((*key, data))),
-                Poll::Ready(None) =>
+                Poll::Pending => {
+                    continue;
+                }
+                Poll::Ready(Some(data)) => {
+                    return Poll::Ready(Some((*key, data)));
+                }
+                Poll::Ready(None) => {
                     return Poll::Ready(Some((
                         *key,
                         Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
-                    ))),
+                    )));
+                }
             }
         }
 
