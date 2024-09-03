@@ -31,7 +31,7 @@ use crate::{
 use bytes::{Buf, Bytes, BytesMut};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use prost::Message;
-use snow::{Builder, HandshakeState, TransportState};
+use snow::{params::NoiseParams, Builder, HandshakeState, TransportState};
 
 use std::{
     fmt, io,
@@ -47,7 +47,10 @@ mod handshake_schema {
 }
 
 /// Noise parameters.
-const NOISE_PARAMETERS: &str = "Noise_XX_25519_ChaChaPoly_SHA256";
+static NOISE_PARAMETERS: std::sync::OnceLock<NoiseParams> = std::sync::OnceLock::new();
+
+/// Noise parameters name.
+const NOISE_PARAMETERS_NAME: &str = "Noise_XX_25519_ChaChaPoly_SHA256";
 
 /// Prefix of static key signatures for domain separation.
 pub(crate) const STATIC_KEY_DOMAIN: &str = "noise-libp2p-static-key:";
@@ -128,7 +131,9 @@ impl NoiseContext {
         tracing::trace!(target: LOG_TARGET, ?role, "create new noise configuration");
 
         let builder: Builder<'_> = Builder::with_resolver(
-            NOISE_PARAMETERS.parse().expect("qed; Valid noise pattern"),
+            NOISE_PARAMETERS
+                .get_or_init(|| NOISE_PARAMETERS_NAME.parse().expect("qed; Valid noise pattern"))
+                .clone(),
             Box::new(protocol::Resolver),
         );
 
@@ -147,7 +152,9 @@ impl NoiseContext {
     #[cfg(feature = "webrtc")]
     pub fn with_prologue(id_keys: &Keypair, prologue: Vec<u8>) -> Result<Self, NegotiationError> {
         let noise: Builder<'_> = Builder::with_resolver(
-            NOISE_PARAMETERS.parse().expect("qed; Valid noise pattern"),
+            NOISE_PARAMETERS
+                .get_or_init(|| NOISE_PARAMETERS_NAME.parse().expect("qed; Valid noise pattern"))
+                .clone(),
             Box::new(protocol::Resolver),
         );
 
