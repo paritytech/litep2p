@@ -424,7 +424,7 @@ impl Kademlia {
                         let message = KademliaMessage::find_node_response(
                             &target,
                             self.routing_table
-                                .closest(Key::new(target.as_ref()), self.replication_factor),
+                                .closest(&Key::new(target.as_ref()), self.replication_factor),
                         );
                         self.executor.send_message(peer, message.into(), substream);
                     }
@@ -475,7 +475,7 @@ impl Kademlia {
                         let value = self.store.get(&key).cloned();
                         let closest_peers = self
                             .routing_table
-                            .closest(Key::new(key.as_ref()), self.replication_factor);
+                            .closest(&Key::new(key.as_ref()), self.replication_factor);
 
                         let message =
                             KademliaMessage::get_value_response(key, closest_peers, value);
@@ -572,7 +572,7 @@ impl Kademlia {
 
                         let closer_peers = self
                             .routing_table
-                            .closest(Key::new(key.as_ref()), self.replication_factor);
+                            .closest(&Key::new(key.as_ref()), self.replication_factor);
 
                         let message =
                             KademliaMessage::get_providers_response(key, providers, &closer_peers);
@@ -863,7 +863,7 @@ impl Kademlia {
                             self.engine.start_find_node(
                                 query_id,
                                 peer,
-                                self.routing_table.closest(Key::from(peer), self.replication_factor).into()
+                                self.routing_table.closest(&Key::from(peer), self.replication_factor).into()
                             );
                         }
                         Some(KademliaCommand::PutRecord { mut record, query_id }) => {
@@ -882,7 +882,7 @@ impl Kademlia {
                             self.engine.start_put_record(
                                 query_id,
                                 record,
-                                self.routing_table.closest(key, self.replication_factor).into(),
+                                self.routing_table.closest(&key, self.replication_factor).into(),
                             );
                         }
                         Some(KademliaCommand::PutRecordToPeers { mut record, query_id, peers, update_local_store }) => {
@@ -928,7 +928,7 @@ impl Kademlia {
                                     self.engine.start_get_record(
                                         query_id,
                                         key.clone(),
-                                        self.routing_table.closest(Key::new(key.clone()), self.replication_factor).into(),
+                                        self.routing_table.closest(&Key::new(key.clone()), self.replication_factor).into(),
                                         quorum,
                                         if record.is_some() { 1 } else { 0 },
                                     );
