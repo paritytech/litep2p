@@ -151,10 +151,7 @@ async fn records_are_stored_automatically() {
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     kad_handle1
-        .add_known_peer(
-            *litep2p2.local_peer_id(),
-            litep2p2.listen_addresses().get_addresses(),
-        )
+        .add_known_peer(*litep2p2.local_peer_id(), litep2p2.listen_addresses())
         .await;
 
     // Publish the record.
@@ -232,10 +229,7 @@ async fn records_are_stored_manually() {
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     kad_handle1
-        .add_known_peer(
-            *litep2p2.local_peer_id(),
-            litep2p2.listen_addresses().get_addresses(),
-        )
+        .add_known_peer(*litep2p2.local_peer_id(), litep2p2.listen_addresses())
         .await;
 
     // Publish the record.
@@ -315,10 +309,7 @@ async fn not_validated_records_are_not_stored() {
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     kad_handle1
-        .add_known_peer(
-            *litep2p2.local_peer_id(),
-            litep2p2.listen_addresses().get_addresses(),
-        )
+        .add_known_peer(*litep2p2.local_peer_id(), litep2p2.listen_addresses())
         .await;
 
     // Publish the record.
@@ -419,7 +410,7 @@ async fn get_record_retrieves_remote_records() {
                         kad_handle2
                             .add_known_peer(
                                 *litep2p1.local_peer_id(),
-                                litep2p1.listen_addresses().get_addresses(),
+                                litep2p1.listen_addresses(),
                             )
                             .await;
 

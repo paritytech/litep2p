@@ -70,7 +70,7 @@ async fn ping_supported(transport1: Transport, transport2: Transport) {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p2.listen_addresses().get(0).unwrap().clone();
 
     litep2p1.dial_address(address).await.unwrap();
 

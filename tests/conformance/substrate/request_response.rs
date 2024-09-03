@@ -101,7 +101,7 @@ async fn request_works() {
 
     let (mut libp2p, peer_store, requests) = initialize_libp2p();
     let (mut litep2p, mut handle) = initialize_litep2p().await;
-    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get(0).unwrap().clone();
     let litep2p_peer = *litep2p.local_peer_id();
     let libp2p_peer = *libp2p.local_peer_id();
     let mut pending_responses = FuturesUnordered::new();
@@ -197,7 +197,7 @@ async fn substrate_reject_request() {
 
     let (mut libp2p, peer_store, requests) = initialize_libp2p();
     let (mut litep2p, mut handle) = initialize_litep2p().await;
-    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get(0).unwrap().clone();
     let libp2p_peer = *libp2p.local_peer_id();
 
     tokio::spawn(peer_store.run());
@@ -254,7 +254,7 @@ async fn litep2p_reject_request() {
 
     let (mut libp2p, peer_store, _) = initialize_libp2p();
     let (mut litep2p, mut handle) = initialize_litep2p().await;
-    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get(0).unwrap().clone();
     let litep2p_peer = *litep2p.local_peer_id();
     let mut pending_responses = FuturesUnordered::new();
 
@@ -321,7 +321,7 @@ async fn substrate_request_timeout() {
 
     let (mut libp2p, peer_store, requests) = initialize_libp2p();
     let (mut litep2p, mut handle) = initialize_litep2p().await;
-    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get(0).unwrap().clone();
     let libp2p_peer = *libp2p.local_peer_id();
     let mut _timeout_request = None;
 
@@ -379,7 +379,7 @@ async fn litep2p_request_timeout() {
 
     let (mut libp2p, peer_store, _) = initialize_libp2p();
     let (mut litep2p, mut handle) = initialize_litep2p().await;
-    let address = litep2p.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p.listen_addresses().get(0).unwrap().clone();
     let litep2p_peer = *litep2p.local_peer_id();
     let mut pending_responses = FuturesUnordered::new();
 

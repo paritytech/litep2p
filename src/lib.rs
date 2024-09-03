@@ -142,9 +142,6 @@ pub struct Litep2p {
     /// Listen addresses.
     listen_addresses: Vec<Multiaddr>,
 
-    /// Listen addresses.
-    public_addresses: PublicAddresses,
-
     /// Transport manager.
     transport_manager: TransportManager,
 
@@ -415,7 +412,6 @@ impl Litep2p {
             local_peer_id,
             bandwidth_sink,
             listen_addresses,
-            public_addresses: transport_manager.public_addresses(),
             transport_manager,
         })
     }
@@ -458,7 +454,7 @@ impl Litep2p {
 
     /// Get the list of public addresses of the node.
     pub fn public_addresses(&self) -> PublicAddresses {
-        self.public_addresses.clone()
+        self.transport_manager.public_addresses()
     }
 
     /// Get the list of listen addresses of the node.

@@ -99,7 +99,7 @@ async fn user_protocol() {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let peer1 = *litep2p1.local_peer_id();
-    let listen_address = litep2p1.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let listen_address = litep2p1.listen_addresses().get(0).unwrap().clone();
 
     let custom_protocol2 = Box::new(CustomProtocol::new());
     let config2 = ConfigBuilder::new()

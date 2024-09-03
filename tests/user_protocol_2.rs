@@ -122,7 +122,7 @@ async fn user_protocol_2() {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.listen_addresses().get_addresses().get(0).unwrap().clone();
+    let address = litep2p2.listen_addresses().get(0).unwrap().clone();
 
     sender1.send(address).await.unwrap();
 

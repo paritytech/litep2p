@@ -182,7 +182,7 @@ pub(crate) struct Identify {
     /// User agent.
     user_agent: String,
 
-    /// User provided list of addresses concatenated with the listen addresses.
+    /// User provided list of addresses.
     addresses: HashSet<Vec<u8>>,
 
     /// Protocols supported by the local node, filled by `Litep2p`.
@@ -201,14 +201,11 @@ pub(crate) struct Identify {
 impl Identify {
     /// Create new [`Identify`] protocol.
     pub(crate) fn new(service: TransportService, config: Config) -> Self {
-        let mut addresses = service.listen_addresses();
-        addresses.extend(config.public_addresses.iter().cloned());
-
         Self {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            addresses: addresses.into_iter().map(|addr| addr.to_vec()).collect(),
+            addresses: config.public_addresses.into_iter().map(|addr| addr.to_vec()).collect(),
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
@@ -265,6 +262,7 @@ impl Identify {
         };
 
         let mut listen_addr: HashSet<_> = self.addresses.clone();
+        listen_addr.extend(self.service.listen_addresses().into_iter().map(|addr| addr.to_vec()));
         listen_addr
             .extend(self.service.public_addresses().inner.read().iter().map(|addr| addr.to_vec()));
 
@@ -449,12 +447,11 @@ mod tests {
         // Create two instances of litep2p
         let (mut litep2p1, mut event_stream1, peer1) = create_litep2p();
         let (mut litep2p2, mut event_stream2, _peer2) = create_litep2p();
-        let litep2p1_address =
-            litep2p1.listen_addresses().get_addresses().into_iter().next().unwrap();
+        let litep2p1_address = litep2p1.listen_addresses().into_iter().next().unwrap();
 
         let multiaddr: Multiaddr = "/ip6/::9/tcp/111".parse().unwrap();
         // Litep2p1 is now reporting the new address.
-        assert!(litep2p1.listen_addresses().add_address(multiaddr.clone()).unwrap());
+        assert!(litep2p1.public_addresses().add_address(multiaddr.clone()).unwrap());
 
         // Dial `litep2p1`
         litep2p2.dial_address(litep2p1_address).await.unwrap();

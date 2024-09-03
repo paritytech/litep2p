@@ -329,6 +329,7 @@ impl TransportHandle {
 mod tests {
     use super::*;
     use multihash::Multihash;
+    use parking_lot::lock_api::RwLock;
     use tokio::sync::mpsc::{channel, Receiver};
 
     fn make_transport_manager_handle() -> (
@@ -344,7 +345,7 @@ mod tests {
                 cmd_tx,
                 peers: Default::default(),
                 supported_transport: HashSet::new(),
-                listen_addresses: ListenAddresses::new(local_peer_id),
+                listen_addresses: Default::default(),
                 public_addresses: PublicAddresses::new(local_peer_id),
             },
             cmd_rx,
@@ -609,9 +610,9 @@ mod tests {
         let first_addr: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
         let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
 
-        let listen_addresses = ListenAddresses::new(local_peer_id);
-        listen_addresses.add_address(first_addr.clone()).unwrap();
-        listen_addresses.add_address(second_addr.clone()).unwrap();
+        let listen_addresses = Arc::new(RwLock::new(
+            [first_addr.clone(), second_addr.clone()].iter().cloned().collect(),
+        ));
         println!("{:?}", listen_addresses);
 
         let handle = TransportManagerHandle {
