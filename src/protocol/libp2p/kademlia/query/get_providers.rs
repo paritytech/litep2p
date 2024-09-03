@@ -25,8 +25,9 @@ use crate::{
         message::KademliaMessage,
         query::{QueryAction, QueryId},
         record::Key as RecordKey,
-        types::{Distance, KademliaPeer, Key},
+        types::{ConnectionType, Distance, KademliaPeer, Key},
     },
+    types::multiaddr::Multiaddr,
     PeerId,
 };
 
@@ -72,7 +73,6 @@ pub struct GetProvidersContext {
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
     /// Found providers.
-    // TODO: deduplicate.
     pub found_providers: Vec<KademliaPeer>,
 }
 
@@ -101,7 +101,32 @@ impl GetProvidersContext {
 
     /// Get the found providers.
     pub fn found_providers(self) -> Vec<KademliaPeer> {
-        self.found_providers
+        // Merge addresses of different provider records of the same peer.
+        let mut providers = HashMap::<PeerId, HashSet<Multiaddr>>::new();
+        self.found_providers.into_iter().for_each(|provider| {
+            providers
+                .entry(provider.peer)
+                .or_default()
+                .extend(provider.addresses.into_iter())
+        });
+
+        // Convert into `Vec<KademliaPeer>`
+        let mut providers = providers
+            .into_iter()
+            .map(|(peer, addresses)| KademliaPeer {
+                key: Key::from(peer.clone()),
+                peer,
+                addresses: addresses.into_iter().collect(),
+                connection: ConnectionType::CanConnect,
+            })
+            .collect::<Vec<_>>();
+
+        // Sort by the provider distance to the target key.
+        providers.sort_unstable_by(|p1, p2| {
+            p1.key.distance(&self.config.target).cmp(&p2.key.distance(&self.config.target))
+        });
+
+        providers
     }
 
     /// Register response failure for `peer`.

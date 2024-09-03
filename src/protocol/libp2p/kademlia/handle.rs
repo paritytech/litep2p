@@ -203,9 +203,8 @@ pub enum KademliaEvent {
         /// Query ID.
         query_id: QueryId,
 
-        /// Found providers with cached addresses.
-        // TODO: return only `max_providers_per_key` providers from the peers closest to the
-        // provided key.
+        /// Found providers with cached addresses. Returned providers are sorted by distane to the
+        /// provided key.
         providers: Vec<KademliaPeer>,
     },
 
