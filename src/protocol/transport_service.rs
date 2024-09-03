@@ -150,7 +150,7 @@ impl TransportService {
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
-                keep_alive_timeout: keep_alive_timeout,
+                keep_alive_timeout,
                 pending_keep_alive_timeouts: FuturesUnordered::new(),
             },
             tx,
