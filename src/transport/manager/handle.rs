@@ -23,7 +23,7 @@ use crate::{
     error::{AddressError, Error},
     executor::Executor,
     protocol::ProtocolSet,
-    public_addresses::PublicAddresses,
+    addresses::PublicAddresses,
     transport::manager::{
         address::{AddressRecord, AddressStore},
         types::{PeerContext, PeerState, SupportedTransport},

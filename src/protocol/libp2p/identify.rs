@@ -25,7 +25,7 @@ use crate::{
     crypto::PublicKey,
     error::{Error, SubstreamError},
     protocol::{Direction, TransportEvent, TransportService},
-    public_addresses::PublicAddresses,
+    addresses::PublicAddresses,
     substream::Substream,
     transport::Endpoint,
     types::{protocol::ProtocolName, SubstreamId},

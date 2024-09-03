@@ -21,7 +21,7 @@
 use crate::{
     error::Error,
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
-    public_addresses::PublicAddresses,
+    addresses::PublicAddresses,
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId, DEFAULT_CHANNEL_SIZE,

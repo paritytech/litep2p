@@ -59,7 +59,7 @@ impl PublicAddresses {
     ///
     /// Returns true if the address was added, false if it was already present.
     pub fn add_address(&self, address: Multiaddr) -> Result<bool, Multiaddr> {
-        let address = self.ensure_local_peer(address)?;
+        let address = ensure_local_peer(address, self.local_peer_id)?;
         Ok(self.inner.write().insert(address))
     }
 
@@ -74,24 +74,56 @@ impl PublicAddresses {
     pub fn get_addresses(&self) -> Vec<Multiaddr> {
         self.inner.read().iter().cloned().collect()
     }
+}
 
-    /// Checks if the address contains the local peer ID.
-    fn ensure_local_peer(&self, mut address: Multiaddr) -> Result<Multiaddr, Multiaddr> {
-        if address.is_empty() {
+pub struct ListenAddresses {
+    pub(crate) inner: Arc<RwLock<HashSet<Multiaddr>>>,
+}
+
+impl ListenAddresses {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(HashSet::new())),
+        }
+    }
+
+    /// Add a listen address to the list of addresses.
+    ///
+    /// Returns true if the address was added, false if it was already present.
+    pub fn add_address(&self, address: Multiaddr) -> bool {
+        self.inner.write().insert(address)
+    }
+
+    /// Remove the listen address.
+    pub fn remove_address(&self, address: &Multiaddr) -> bool {
+        self.inner.write().remove(address)
+    }
+
+    /// Returns a vector of the available listen addresses.
+    pub fn get_addresses(&self) -> Vec<Multiaddr> {
+        self.inner.read().iter().cloned().collect()
+    }
+}
+
+/// Check if the address contains the local peer ID.
+fn ensure_local_peer(
+    mut address: Multiaddr,
+    local_peer_id: PeerId,
+) -> Result<Multiaddr, Multiaddr> {
+    if address.is_empty() {
+        return Err(address);
+    }
+
+    // Verify the peer ID from the address corresponds to the local peer ID.
+    if let Some(peer_id) = PeerId::try_from_multiaddr(&address) {
+        if peer_id != local_peer_id {
             return Err(address);
         }
-
-        // Verify the peer ID from the address corresponds to the local peer ID.
-        if let Some(peer_id) = PeerId::try_from_multiaddr(&address) {
-            if peer_id != self.local_peer_id {
-                return Err(address);
-            }
-        } else {
-            address.push(Protocol::P2p(self.local_peer_id.into()));
-        }
-
-        Ok(address)
+    } else {
+        address.push(Protocol::P2p(local_peer_id.into()));
     }
+
+    Ok(address)
 }
 
 #[cfg(test)]

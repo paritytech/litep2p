@@ -24,7 +24,7 @@ use crate::{
     error::{AddressError, DialError, Error},
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
-    public_addresses::PublicAddresses,
+    addresses::PublicAddresses,
     transport::{
         manager::{
             address::{AddressRecord, AddressStore},

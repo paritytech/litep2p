@@ -37,7 +37,7 @@ use crate::{
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
     },
-    public_addresses::PublicAddresses,
+    addresses::PublicAddresses,
     transport::{
         manager::{SupportedTransport, TransportManager},
         tcp::TcpTransport,
@@ -71,7 +71,7 @@ pub mod crypto;
 pub mod error;
 pub mod executor;
 pub mod protocol;
-pub mod public_addresses;
+pub mod addresses;
 pub mod substream;
 pub mod transport;
 pub mod types;
