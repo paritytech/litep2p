@@ -469,7 +469,7 @@ mod tests {
 
         let multiaddr: Multiaddr = "/ip6/::9/tcp/111".parse().unwrap();
         // Litep2p1 is now reporting the new address.
-        assert!(litep2p1.public_addresses().add_public_address(multiaddr.clone()).unwrap());
+        assert!(litep2p1.public_addresses().add_address(multiaddr.clone()).unwrap());
 
         // Dial `litep2p1`
         litep2p2.dial_address(litep2p1_address).await.unwrap();

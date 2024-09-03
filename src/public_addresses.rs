@@ -58,15 +58,15 @@ impl PublicAddresses {
     /// In case the address does not contain any peer ID, it will be added.
     ///
     /// Returns true if the address was added, false if it was already present.
-    pub fn add_public_address(&self, address: Multiaddr) -> Result<bool, Multiaddr> {
-        let address = self.check_local_peer(address)?;
+    pub fn add_address(&self, address: Multiaddr) -> Result<bool, Multiaddr> {
+        let address = self.ensure_local_peer(address)?;
         Ok(self.inner.write().insert(address))
     }
 
     /// Remove the exact public address.
     ///
     /// The provided address must contain the local peer ID.
-    pub fn remove_public_address(&self, address: &Multiaddr) -> bool {
+    pub fn remove_address(&self, address: &Multiaddr) -> bool {
         self.inner.write().remove(address)
     }
 
@@ -76,7 +76,7 @@ impl PublicAddresses {
     }
 
     /// Checks if the address contains the local peer ID.
-    fn check_local_peer(&self, mut address: Multiaddr) -> Result<Multiaddr, Multiaddr> {
+    fn ensure_local_peer(&self, mut address: Multiaddr) -> Result<Multiaddr, Multiaddr> {
         if address.is_empty() {
             return Err(address);
         }
@@ -110,14 +110,14 @@ mod tests {
 
         assert!(!addresses.get_addresses().contains(&address));
 
-        assert!(addresses.add_public_address(address.clone()).unwrap());
+        assert!(addresses.add_address(address.clone()).unwrap());
         // Adding the address a second time returns Ok(false).
-        assert!(!addresses.add_public_address(address.clone()).unwrap());
+        assert!(!addresses.add_address(address.clone()).unwrap());
 
         assert!(!addresses.get_addresses().contains(&address));
         assert!(addresses.get_addresses().contains(&peer_address));
 
-        addresses.remove_public_address(&peer_address);
+        addresses.remove_address(&peer_address);
         assert!(!addresses.get_addresses().contains(&peer_address));
     }
 
@@ -133,9 +133,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(addresses.add_public_address(address1.clone()).unwrap());
-        assert!(addresses.add_public_address(address2.clone()).unwrap());
-        addresses.add_public_address(address3.clone()).unwrap_err();
+        assert!(addresses.add_address(address1.clone()).unwrap());
+        assert!(addresses.add_address(address2.clone()).unwrap());
+        addresses.add_address(address3.clone()).unwrap_err();
 
         let addresses = addresses.get_addresses();
         assert_eq!(addresses.len(), 2);

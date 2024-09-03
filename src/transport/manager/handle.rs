@@ -600,8 +600,8 @@ mod tests {
         let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
 
         let listen_addresses = PublicAddresses::new(local_peer_id);
-        listen_addresses.add_public_address(first_addr.clone()).unwrap();
-        listen_addresses.add_public_address(second_addr.clone()).unwrap();
+        listen_addresses.add_address(first_addr.clone()).unwrap();
+        listen_addresses.add_address(second_addr.clone()).unwrap();
         println!("{:?}", listen_addresses);
 
         let handle = TransportManagerHandle {

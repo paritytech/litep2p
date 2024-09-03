@@ -388,7 +388,7 @@ impl TransportManager {
 
     /// Register local listen address.
     pub fn register_listen_address(&mut self, address: Multiaddr) {
-        if let Err(address) = self.listen_addresses.add_public_address(address) {
+        if let Err(address) = self.listen_addresses.add_address(address) {
             tracing::warn!(target: LOG_TARGET, ?address, "failed to register listen address");
         }
     }
