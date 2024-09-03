@@ -58,7 +58,7 @@ impl PublicAddresses {
     /// In case the address does not contain any peer ID, it will be added.
     ///
     /// Returns true if the address was added, false if it was already present.
-    pub fn add_address(&self, address: Multiaddr) -> Result<bool, Multiaddr> {
+    pub fn add_address(&self, address: Multiaddr) -> Result<bool, InsertionError> {
         let address = ensure_local_peer(address, self.local_peer_id)?;
         Ok(self.inner.write().insert(address))
     }
@@ -99,7 +99,7 @@ impl ListenAddresses {
     /// Add a listen address to the list of addresses.
     ///
     /// Returns true if the address was added, false if it was already present.
-    pub fn add_address(&self, address: Multiaddr) -> Result<bool, Multiaddr> {
+    pub fn add_address(&self, address: Multiaddr) -> Result<bool, InsertionError> {
         let address = ensure_local_peer(address, self.local_peer_id)?;
         Ok(self.inner.write().insert(address))
     }
@@ -116,24 +116,35 @@ impl ListenAddresses {
 }
 
 /// Check if the address contains the local peer ID.
+///
+/// If the address does not contain any peer ID, it will be added.
 fn ensure_local_peer(
     mut address: Multiaddr,
     local_peer_id: PeerId,
-) -> Result<Multiaddr, Multiaddr> {
+) -> Result<Multiaddr, InsertionError> {
     if address.is_empty() {
-        return Err(address);
+        return Err(InsertionError::EmptyAddress);
     }
 
     // Verify the peer ID from the address corresponds to the local peer ID.
     if let Some(peer_id) = PeerId::try_from_multiaddr(&address) {
         if peer_id != local_peer_id {
-            return Err(address);
+            return Err(InsertionError::DifferentPeerId);
         }
     } else {
         address.push(Protocol::P2p(local_peer_id.into()));
     }
 
     Ok(address)
+}
+
+/// The error returned when an address cannot be inserted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsertionError {
+    /// The address is empty.
+    EmptyAddress,
+    /// The address contains a different peer ID than the local peer ID.
+    DifferentPeerId,
 }
 
 #[cfg(test)]
