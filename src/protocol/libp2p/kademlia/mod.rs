@@ -444,13 +444,9 @@ impl Kademlia {
 
                 let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
             }
-            ref message @ KademliaMessage::GetRecord {
-                ref key,
-                ref record,
-                ref peers,
-            } => {
+            KademliaMessage::GetRecord { key, record, peers } => {
                 match (query_id, key) {
-                    (Some(query_id), _) => {
+                    (Some(query_id), key) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             ?peer,
@@ -461,8 +457,12 @@ impl Kademlia {
                         );
 
                         // update routing table and inform user about the update
-                        self.update_routing_table(peers).await;
-                        self.engine.register_response(query_id, peer, message.clone());
+                        self.update_routing_table(&peers).await;
+                        self.engine.register_response(
+                            query_id,
+                            peer,
+                            KademliaMessage::GetRecord { key, record, peers },
+                        );
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -472,22 +472,20 @@ impl Kademlia {
                             "handle `GET_VALUE` request",
                         );
 
-                        let value = self.store.get(key).cloned();
+                        let value = self.store.get(&key).cloned();
                         let closest_peers = self
                             .routing_table
-                            .closest(Key::from(key.to_vec()), self.replication_factor);
+                            .closest(Key::new(key.as_ref()), self.replication_factor);
 
-                        let message = KademliaMessage::get_value_response(
-                            (*key).clone(),
-                            closest_peers,
-                            value,
-                        );
+                        let message =
+                            KademliaMessage::get_value_response(key, closest_peers, value);
                         self.executor.send_message(peer, message.into(), substream);
                     }
                     (None, None) => tracing::debug!(
                         target: LOG_TARGET,
                         ?peer,
-                        ?message,
+                        ?record,
+                        ?peers,
                         "unable to handle `GET_RECORD` request with empty key",
                     ),
                 }
