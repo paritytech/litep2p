@@ -79,9 +79,6 @@ pub struct Config {
     /// Protocols supported by the local node, filled by `Litep2p`.
     pub(crate) protocols: Vec<ProtocolName>,
 
-    /// Public addresses.
-    pub(crate) public_addresses: Vec<Multiaddr>,
-
     /// Protocol version.
     pub(crate) protocol_version: String,
 
@@ -97,7 +94,6 @@ impl Config {
     pub fn new(
         protocol_version: String,
         user_agent: Option<String>,
-        public_addresses: Vec<Multiaddr>,
     ) -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -105,7 +101,6 @@ impl Config {
             Self {
                 tx_event,
                 public: None,
-                public_addresses,
                 protocol_version,
                 user_agent,
                 codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
@@ -182,9 +177,6 @@ pub(crate) struct Identify {
     /// User agent.
     user_agent: String,
 
-    /// User provided list of addresses.
-    addresses: HashSet<Vec<u8>>,
-
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,
 
@@ -205,7 +197,6 @@ impl Identify {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            addresses: config.public_addresses.into_iter().map(|addr| addr.to_vec()).collect(),
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
@@ -261,8 +252,8 @@ impl Identify {
             }
         };
 
-        let mut listen_addr: HashSet<_> = self.addresses.clone();
-        listen_addr.extend(self.service.listen_addresses().into_iter().map(|addr| addr.to_vec()));
+        let mut listen_addr: HashSet<_> =
+            self.service.listen_addresses().into_iter().map(|addr| addr.to_vec()).collect();
         listen_addr
             .extend(self.service.public_addresses().inner.read().iter().map(|addr| addr.to_vec()));
 
@@ -422,11 +413,8 @@ mod tests {
         Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>,
         PeerId,
     ) {
-        let (identify_config, identify) = Config::new(
-            "1.0.0".to_string(),
-            Some("litep2p/1.0.0".to_string()),
-            vec![Multiaddr::empty()],
-        );
+        let (identify_config, identify) =
+            Config::new("1.0.0".to_string(), Some("litep2p/1.0.0".to_string()));
 
         let keypair = crate::crypto::ed25519::Keypair::generate();
         let peer = PeerId::from_public_key(&crate::crypto::PublicKey::Ed25519(keypair.public()));
