@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    addresses::PublicAddresses,
     crypto::ed25519::Keypair,
     error::{AddressError, Error},
     executor::Executor,
@@ -77,6 +78,9 @@ pub struct TransportManagerHandle {
 
     /// Local listen addresess.
     listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
+
+    /// Public addresses.
+    public_addresses: PublicAddresses,
 }
 
 impl TransportManagerHandle {
@@ -87,19 +91,31 @@ impl TransportManagerHandle {
         cmd_tx: Sender<InnerTransportManagerCommand>,
         supported_transport: HashSet<SupportedTransport>,
         listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
+        public_addresses: PublicAddresses,
     ) -> Self {
         Self {
             peers,
             cmd_tx,
             local_peer_id,
-            listen_addresses,
             supported_transport,
+            listen_addresses,
+            public_addresses,
         }
     }
 
     /// Register new transport to [`TransportManagerHandle`].
     pub(crate) fn register_transport(&mut self, transport: SupportedTransport) {
         self.supported_transport.insert(transport);
+    }
+
+    /// Get the list of public addresses of the node.
+    pub(crate) fn public_addresses(&self) -> PublicAddresses {
+        self.public_addresses.clone()
+    }
+
+    /// Get the list of listen addresses of the node.
+    pub(crate) fn listen_addresses(&self) -> HashSet<Multiaddr> {
+        self.listen_addresses.read().clone()
     }
 
     /// Check if `address` is supported by one of the enabled transports.
@@ -313,6 +329,7 @@ impl TransportHandle {
 mod tests {
     use super::*;
     use multihash::Multihash;
+    use parking_lot::lock_api::RwLock;
     use tokio::sync::mpsc::{channel, Receiver};
 
     fn make_transport_manager_handle() -> (
@@ -321,13 +338,15 @@ mod tests {
     ) {
         let (cmd_tx, cmd_rx) = channel(64);
 
+        let local_peer_id = PeerId::random();
         (
             TransportManagerHandle {
-                local_peer_id: PeerId::random(),
+                local_peer_id,
                 cmd_tx,
                 peers: Default::default(),
                 supported_transport: HashSet::new(),
                 listen_addresses: Default::default(),
+                public_addresses: PublicAddresses::new(local_peer_id),
             },
             cmd_rx,
         )
@@ -587,21 +606,22 @@ mod tests {
     fn is_local_address() {
         let (cmd_tx, _cmd_rx) = channel(64);
 
+        let local_peer_id = PeerId::random();
+        let first_addr: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
+        let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
+
+        let listen_addresses = Arc::new(RwLock::new(
+            [first_addr.clone(), second_addr.clone()].iter().cloned().collect(),
+        ));
+        println!("{:?}", listen_addresses);
+
         let handle = TransportManagerHandle {
-            local_peer_id: PeerId::random(),
+            local_peer_id,
             cmd_tx,
             peers: Default::default(),
             supported_transport: HashSet::new(),
-            listen_addresses: Arc::new(RwLock::new(HashSet::from_iter([
-                "/ip6/::1/tcp/8888".parse().expect("valid multiaddress"),
-                "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress"),
-                "/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                    .parse()
-                    .expect("valid multiaddress"),
-                "/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                    .parse()
-                    .expect("valid multiaddress"),
-            ]))),
+            listen_addresses,
+            public_addresses: PublicAddresses::new(local_peer_id),
         };
 
         // local addresses

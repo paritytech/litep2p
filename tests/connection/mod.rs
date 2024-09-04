@@ -1040,10 +1040,9 @@ async fn multiple_listen_addresses(
     let (mut litep2p2, _event_stream) = make_dummy_litep2p(transport2).await;
     let (mut litep2p3, _event_stream) = make_dummy_litep2p(transport3).await;
 
-    let mut address_iter = litep2p1.listen_addresses();
-    let address1 = address_iter.next().unwrap().clone();
-    let address2 = address_iter.next().unwrap().clone();
-    drop(address_iter);
+    let addresses: Vec<_> = litep2p1.listen_addresses().cloned().collect();
+    let address1 = addresses.get(0).unwrap().clone();
+    let address2 = addresses.get(1).unwrap().clone();
 
     tokio::spawn(async move {
         loop {
@@ -1176,11 +1175,7 @@ async fn unspecified_listen_address_tcp() {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let peer1 = *litep2p1.local_peer_id();
 
-    for address in litep2p1.listen_addresses() {
-        tracing::info!("address: {address:?}");
-    }
-
-    let listen_address = litep2p1.listen_addresses().collect::<Vec<_>>();
+    let listen_address: Vec<_> = litep2p1.listen_addresses().cloned().collect();
 
     let ip4_port = listen_address.iter().find_map(|address| {
         let mut iter = address.iter();
@@ -1281,11 +1276,7 @@ async fn unspecified_listen_address_websocket() {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let peer1 = *litep2p1.local_peer_id();
 
-    for address in litep2p1.listen_addresses() {
-        tracing::info!("address: {address:?}");
-    }
-
-    let listen_address = litep2p1.listen_addresses().collect::<Vec<_>>();
+    let listen_address: Vec<_> = litep2p1.listen_addresses().cloned().collect();
 
     let ip4_port = listen_address.iter().find_map(|address| {
         let mut iter = address.iter();
@@ -1430,8 +1421,8 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
 
-    litep2p1.add_known_address(peer2, litep2p2.listen_addresses().cloned());
-    litep2p2.add_known_address(peer1, litep2p1.listen_addresses().cloned());
+    litep2p1.add_known_address(peer2, litep2p2.listen_addresses().into_iter().cloned());
+    litep2p2.add_known_address(peer1, litep2p1.listen_addresses().into_iter().cloned());
 
     let (_, _) = tokio::join!(litep2p1.dial(&peer2), litep2p2.dial(&peer1));
 

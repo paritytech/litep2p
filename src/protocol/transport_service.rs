@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    addresses::PublicAddresses,
     error::Error,
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
     transport::{manager::TransportManagerHandle, Endpoint},
@@ -150,11 +151,21 @@ impl TransportService {
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
-                keep_alive_timeout: keep_alive_timeout,
+                keep_alive_timeout,
                 pending_keep_alive_timeouts: FuturesUnordered::new(),
             },
             tx,
         )
+    }
+
+    /// Get the list of public addresses of the node.
+    pub fn public_addresses(&self) -> PublicAddresses {
+        self.transport_handle.public_addresses()
+    }
+
+    /// Get the list of listen addresses of the node.
+    pub fn listen_addresses(&self) -> HashSet<Multiaddr> {
+        self.transport_handle.listen_addresses()
     }
 
     /// Handle connection established event.
@@ -445,6 +456,7 @@ mod tests {
             cmd_tx,
             HashSet::new(),
             Default::default(),
+            PublicAddresses::new(peer),
         );
 
         let (service, sender) = TransportService::new(
