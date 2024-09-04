@@ -30,6 +30,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use std::{
     num::NonZeroUsize,
     pin::Pin,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
 };
 
@@ -234,23 +238,26 @@ pub struct KademliaHandle {
     event_rx: Receiver<KademliaEvent>,
 
     /// Next query ID.
-    next_query_id: usize,
+    next_query_id: Arc<AtomicUsize>,
 }
 
 impl KademliaHandle {
     /// Create new [`KademliaHandle`].
-    pub(super) fn new(cmd_tx: Sender<KademliaCommand>, event_rx: Receiver<KademliaEvent>) -> Self {
+    pub(super) fn new(
+        cmd_tx: Sender<KademliaCommand>,
+        event_rx: Receiver<KademliaEvent>,
+        next_query_id: Arc<AtomicUsize>,
+    ) -> Self {
         Self {
             cmd_tx,
             event_rx,
-            next_query_id: 0usize,
+            next_query_id,
         }
     }
 
     /// Allocate next query ID.
     fn next_query_id(&mut self) -> QueryId {
-        let query_id = self.next_query_id;
-        self.next_query_id += 1;
+        let query_id = self.next_query_id.fetch_add(1, Ordering::Relaxed);
 
         QueryId(query_id)
     }

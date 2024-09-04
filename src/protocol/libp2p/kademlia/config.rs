@@ -31,7 +31,11 @@ use crate::{
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicUsize, Arc},
+    time::Duration,
+};
 
 /// Default TTL for the records.
 const DEFAULT_TTL: Duration = Duration::from_secs(36 * 60 * 60);
@@ -85,6 +89,9 @@ pub struct Config {
 
     /// RX channel for receiving commands from `KademliaHandle`.
     pub(super) cmd_rx: Receiver<KademliaCommand>,
+
+    /// Next query ID counter shared with the handle.
+    pub(super) next_query_id: Arc<AtomicUsize>,
 }
 
 impl Config {
@@ -100,6 +107,7 @@ impl Config {
     ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let next_query_id = Arc::new(AtomicUsize::new(0usize));
 
         // if no protocol names were provided, use the default protocol
         if protocol_names.is_empty() {
@@ -119,8 +127,9 @@ impl Config {
                 known_peers,
                 cmd_rx,
                 event_tx,
+                next_query_id: next_query_id.clone(),
             },
-            KademliaHandle::new(cmd_tx, event_rx),
+            KademliaHandle::new(cmd_tx, event_rx, next_query_id),
         )
     }
 
