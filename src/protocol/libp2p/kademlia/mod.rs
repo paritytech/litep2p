@@ -48,6 +48,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
     collections::{hash_map::Entry, HashMap},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -134,6 +138,9 @@ pub(crate) struct Kademlia {
     /// RX channel for receiving commands from `KademliaHandle`.
     cmd_rx: Receiver<KademliaCommand>,
 
+    /// Next query ID.
+    next_query_id: Arc<AtomicUsize>,
+
     /// Routing table.
     routing_table: RoutingTable,
 
@@ -166,9 +173,6 @@ pub(crate) struct Kademlia {
 
     /// Query executor.
     executor: QueryExecutor,
-
-    /// Next query ID.
-    next_query_id: usize,
 }
 
 impl Kademlia {
@@ -198,6 +202,7 @@ impl Kademlia {
             routing_table,
             peers: HashMap::new(),
             cmd_rx: config.cmd_rx,
+            next_query_id: config.next_query_id,
             store,
             event_tx: config.event_tx,
             local_key,
@@ -210,8 +215,14 @@ impl Kademlia {
             provider_ttl: config.provider_ttl,
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
-            next_query_id: 0usize,
         }
+    }
+
+    /// Allocate next query ID.
+    fn next_query_id(&mut self) -> QueryId {
+        let query_id = self.next_query_id.fetch_add(1, Ordering::Relaxed);
+
+        QueryId(query_id)
     }
 
     /// Connection established to remote peer.
@@ -955,10 +966,7 @@ impl Kademlia {
                 },
                 command = self.cmd_rx.recv() => {
                     match command {
-                        Some(KademliaCommand::FindNode { peer, query_id_tx }) => {
-                            let query_id = self.next_query_id();
-                            let _ = query_id_tx.send(query_id);
-
+                        Some(KademliaCommand::FindNode { peer, query_id }) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
@@ -974,10 +982,7 @@ impl Kademlia {
                                     .into()
                             );
                         }
-                        Some(KademliaCommand::PutRecord { mut record, query_id_tx }) => {
-                            let query_id = self.next_query_id();
-                            let _ = query_id_tx.send(query_id);
-
+                        Some(KademliaCommand::PutRecord { mut record, query_id }) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 query = ?query_id,
@@ -1006,13 +1011,10 @@ impl Kademlia {
                         }
                         Some(KademliaCommand::PutRecordToPeers {
                             mut record,
-                            query_id_tx,
+                            query_id,
                             peers,
                             update_local_store,
                         }) => {
-                            let query_id = self.next_query_id();
-                            let _ = query_id_tx.send(query_id);
-
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 query = ?query_id,
@@ -1052,11 +1054,8 @@ impl Kademlia {
                         Some(KademliaCommand::StartProviding {
                             key,
                             public_addresses,
-                            query_id_tx
+                            query_id
                         }) => {
-                            let query_id = self.next_query_id();
-                            let _ = query_id_tx.send(query_id);
-
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 query = ?query_id,
@@ -1082,10 +1081,7 @@ impl Kademlia {
                                     .into(),
                             );
                         }
-                        Some(KademliaCommand::GetRecord { key, quorum, query_id_tx }) => {
-                            let query_id = self.next_query_id();
-                            let _ = query_id_tx.send(query_id);
-
+                        Some(KademliaCommand::GetRecord { key, quorum, query_id }) => {
                             tracing::debug!(target: LOG_TARGET, ?key, "get record from DHT");
 
                             match (self.store.get(&key), quorum) {
@@ -1112,10 +1108,7 @@ impl Kademlia {
                             }
 
                         }
-                        Some(KademliaCommand::GetProviders { key, query_id_tx }) => {
-                            let query_id = self.next_query_id();
-                            let _ = query_id_tx.send(query_id);
-
+                        Some(KademliaCommand::GetProviders { key, query_id }) => {
                             tracing::debug!(target: LOG_TARGET, ?key, "get providers from DHT");
 
                             self.engine.start_get_providers(
@@ -1191,14 +1184,6 @@ impl Kademlia {
             }
         }
     }
-
-    /// Allocate next query ID.
-    fn next_query_id(&mut self) -> QueryId {
-        let query_id = self.next_query_id;
-        self.next_query_id += 1;
-
-        QueryId(query_id)
-    }
 }
 
 #[cfg(test)]
@@ -1244,6 +1229,7 @@ mod tests {
         );
         let (event_tx, event_rx) = channel(64);
         let (_cmd_tx, cmd_rx) = channel(64);
+        let next_query_id = Arc::new(AtomicUsize::new(0usize));
 
         let config = Config {
             protocol_names: vec![ProtocolName::from("/kad/1")],
@@ -1257,6 +1243,7 @@ mod tests {
             provider_refresh_interval: Duration::from_secs(22 * 60 * 60),
             event_tx,
             cmd_rx,
+            next_query_id,
         };
 
         (
