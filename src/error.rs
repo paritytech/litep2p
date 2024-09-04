@@ -152,7 +152,7 @@ pub enum AddressError {
     InvalidPeerId(Multihash),
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ParseError {
     /// The provided probuf message cannot be decoded.
     #[error("Failed to decode protobuf message: `{0:?}`")]
@@ -182,7 +182,7 @@ pub enum ParseError {
     InvalidData,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum SubstreamError {
     #[error("Connection closed")]
     ConnectionClosed,
@@ -238,6 +238,25 @@ pub enum NegotiationError {
     #[cfg(feature = "websocket")]
     #[error("WebSocket error: `{0}`")]
     WebSocket(#[from] tokio_tungstenite::tungstenite::error::Error),
+}
+
+impl PartialEq for NegotiationError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::MultistreamSelectError(lhs), Self::MultistreamSelectError(rhs)) => lhs == rhs,
+            (Self::SnowError(lhs), Self::SnowError(rhs)) => lhs == rhs,
+            (Self::ParseError(lhs), Self::ParseError(rhs)) => lhs == rhs,
+            (Self::IoError(lhs), Self::IoError(rhs)) => lhs == rhs,
+            (Self::PeerIdMismatch(lhs, lhs_1), Self::PeerIdMismatch(rhs, rhs_1)) =>
+                lhs == rhs && lhs_1 == rhs_1,
+            #[cfg(feature = "quic")]
+            (Self::Quic(lhs), Self::Quic(rhs)) => lhs == rhs,
+            #[cfg(feature = "websocket")]
+            (Self::WebSocket(lhs), Self::WebSocket(rhs)) =>
+                core::mem::discriminant(lhs) == core::mem::discriminant(rhs),
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -303,7 +322,7 @@ pub enum ImmediateDialError {
 
 /// Error during the QUIC transport negotiation.
 #[cfg(feature = "quic")]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum QuicError {
     /// The provided certificate is invalid.
     #[error("Invalid certificate")]
@@ -317,7 +336,7 @@ pub enum QuicError {
 }
 
 /// Error during DNS resolution.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum DnsError {
     /// The DNS resolution failed to resolve the provided URL.
     #[error("DNS failed to resolve url `{0}`")]

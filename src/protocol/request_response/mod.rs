@@ -386,11 +386,11 @@ impl RequestResponseProtocol {
                         Err(RequestResponseError::TooLargePayload),
                     )
                 }
-                Ok(Err(_error)) => (
+                Ok(Err(error)) => (
                     peer,
                     request_id,
                     fallback_protocol,
-                    Err(RequestResponseError::NotConnected)
+                    Err(RequestResponseError::Rejected(RejectReason::SubstreamOpenError(error))),
                 ),
                 Ok(Ok(_)) => {
                     tokio::select! {
@@ -429,7 +429,16 @@ impl RequestResponseProtocol {
                             Some(Err(error)) => {
                                 (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(RejectReason::SubstreamOpenError(error))))
                             },
-                            None => (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(RejectReason::ConnectionClosed))),
+                            None => {
+                                tracing::info!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    %protocol,
+                                    ?request_id,
+                                    "substream closed",
+                                );
+                                (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(RejectReason::SubstreamClosed)))
+                            }
                         }
                     }
                 }

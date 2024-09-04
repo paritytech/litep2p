@@ -44,7 +44,7 @@ use std::{
 const LOG_TARGET: &str = "litep2p::request-response::handle";
 
 /// Request-response error.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RequestResponseError {
     /// Request was rejected.
     Rejected(RejectReason),
@@ -55,7 +55,7 @@ pub enum RequestResponseError {
     /// Request timed out.
     Timeout,
 
-    /// Litep2p isn't connected to the peer.
+    /// The peer is not connected and the dialing option was [`DialOptions::Reject`].
     NotConnected,
 
     /// Too large payload.
@@ -65,22 +65,17 @@ pub enum RequestResponseError {
     UnsupportedProtocol,
 }
 
-impl std::cmp::PartialEq for RequestResponseError {
-    fn eq(&self, other: &Self) -> bool {
-        // We are not interested in the error details of rejections
-        // for equality checks.
-        core::mem::discriminant(self) == core::mem::discriminant(other)
-    }
-}
-
 /// The reason why a request was rejected.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RejectReason {
     /// Substream error.
     SubstreamOpenError(SubstreamError),
 
-    /// The connection closed before the request was processed.
+    /// The peer disconnected before the request was processed.
     ConnectionClosed,
+
+    /// The substream was closed before the request was processed.
+    SubstreamClosed,
 
     /// The dial failed.
     ///

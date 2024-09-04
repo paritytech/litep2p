@@ -445,6 +445,15 @@ pub enum ProtocolError {
     ProtocolNotSupported,
 }
 
+impl PartialEq for ProtocolError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ProtocolError::IoError(lhs), ProtocolError::IoError(rhs)) => lhs.kind() == rhs.kind(),
+            _ => std::mem::discriminant(self) == std::mem::discriminant(other),
+        }
+    }
+}
+
 impl From<ProtocolError> for io::Error {
     fn from(err: ProtocolError) -> Self {
         if let ProtocolError::IoError(e) = err {
