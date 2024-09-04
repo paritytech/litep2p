@@ -25,10 +25,7 @@ use crate::{
 
 use futures::Stream;
 use multiaddr::Multiaddr;
-use tokio::sync::{
-    mpsc::{Receiver, Sender},
-    oneshot,
-};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
     num::NonZeroUsize,
@@ -91,8 +88,8 @@ pub(crate) enum KademliaCommand {
         /// Peer ID.
         peer: PeerId,
 
-        /// Query ID callback.
-        query_id_tx: oneshot::Sender<QueryId>,
+        /// Query ID for the query.
+        query_id: QueryId,
     },
 
     /// Store record to DHT.
@@ -100,8 +97,8 @@ pub(crate) enum KademliaCommand {
         /// Record.
         record: Record,
 
-        /// Query ID callback.
-        query_id_tx: oneshot::Sender<QueryId>,
+        /// Query ID for the query.
+        query_id: QueryId,
     },
 
     /// Store record to DHT to the given peers.
@@ -111,8 +108,8 @@ pub(crate) enum KademliaCommand {
         /// Record.
         record: Record,
 
-        /// Query ID callback.
-        query_id_tx: oneshot::Sender<QueryId>,
+        /// Query ID for the query.
+        query_id: QueryId,
 
         /// Use the following peers for the put request.
         peers: Vec<PeerId>,
@@ -129,8 +126,8 @@ pub(crate) enum KademliaCommand {
         /// [`Quorum`] for the query.
         quorum: Quorum,
 
-        /// Query ID callback.
-        query_id_tx: oneshot::Sender<QueryId>,
+        /// Query ID for the query.
+        query_id: QueryId,
     },
 
     /// Register as a content provider for `key`.
@@ -142,7 +139,7 @@ pub(crate) enum KademliaCommand {
         public_addresses: Vec<Multiaddr>,
 
         /// Query ID for the query.
-        query_id_tx: oneshot::Sender<QueryId>,
+        query_id: QueryId,
     },
 
     /// Store record locally.
@@ -235,12 +232,27 @@ pub struct KademliaHandle {
 
     /// RX channel for receiving events from `Kademlia`.
     event_rx: Receiver<KademliaEvent>,
+
+    /// Next query ID.
+    next_query_id: usize,
 }
 
 impl KademliaHandle {
     /// Create new [`KademliaHandle`].
     pub(super) fn new(cmd_tx: Sender<KademliaCommand>, event_rx: Receiver<KademliaEvent>) -> Self {
-        Self { cmd_tx, event_rx }
+        Self {
+            cmd_tx,
+            event_rx,
+            next_query_id: 0usize,
+        }
+    }
+
+    /// Allocate next query ID.
+    fn next_query_id(&mut self) -> QueryId {
+        let query_id = self.next_query_id;
+        self.next_query_id += 1;
+
+        QueryId(query_id)
     }
 
     /// Add known peer.
@@ -249,32 +261,19 @@ impl KademliaHandle {
     }
 
     /// Send `FIND_NODE` query to known peers.
-    ///
-    /// Returns [`Err`] only if [`super::Kademlia`] is terminating.
-    pub async fn find_node(&mut self, peer: PeerId) -> Result<QueryId, ()> {
-        let (query_id_tx, query_id_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(KademliaCommand::FindNode { peer, query_id_tx })
-            .await
-            .map_err(|_| ())?;
+    pub async fn find_node(&mut self, peer: PeerId) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::FindNode { peer, query_id }).await;
 
-        query_id_rx.await.map_err(|_| ())
+        query_id
     }
 
     /// Store record to DHT.
-    ///
-    /// Returns [`Err`] only if [`super::Kademlia`] is terminating.
-    pub async fn put_record(&mut self, record: Record) -> Result<QueryId, ()> {
-        let (query_id_tx, query_id_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(KademliaCommand::PutRecord {
-                record,
-                query_id_tx,
-            })
-            .await
-            .map_err(|_| ())?;
+    pub async fn put_record(&mut self, record: Record) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::PutRecord { record, query_id }).await;
 
-        query_id_rx.await.map_err(|_| ())
+        query_id
     }
 
     /// Store record to DHT to the given peers.
@@ -283,34 +282,34 @@ impl KademliaHandle {
         record: Record,
         peers: Vec<PeerId>,
         update_local_store: bool,
-    ) -> Result<QueryId, ()> {
-        let (query_id_tx, query_id_rx) = oneshot::channel();
-        self.cmd_tx
+    ) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self
+            .cmd_tx
             .send(KademliaCommand::PutRecordToPeers {
                 record,
-                query_id_tx,
+                query_id,
                 peers,
                 update_local_store,
             })
-            .await
-            .map_err(|_| ())?;
+            .await;
 
-        query_id_rx.await.map_err(|_| ())
+        query_id
     }
 
     /// Get record from DHT.
-    pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) -> Result<QueryId, ()> {
-        let (query_id_tx, query_id_rx) = oneshot::channel();
-        self.cmd_tx
+    pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self
+            .cmd_tx
             .send(KademliaCommand::GetRecord {
                 key,
                 quorum,
-                query_id_tx,
+                query_id,
             })
-            .await
-            .map_err(|_| ())?;
+            .await;
 
-        query_id_rx.await.map_err(|_| ())
+        query_id
     }
 
     /// Register as a content provider on the DHT.
@@ -320,18 +319,18 @@ impl KademliaHandle {
         &mut self,
         key: RecordKey,
         public_addresses: Vec<Multiaddr>,
-    ) -> Result<QueryId, ()> {
-        let (query_id_tx, query_id_rx) = oneshot::channel();
-        self.cmd_tx
+    ) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self
+            .cmd_tx
             .send(KademliaCommand::StartProviding {
                 key,
                 public_addresses,
-                query_id_tx,
+                query_id,
             })
-            .await
-            .map_err(|_| ())?;
+            .await;
 
-        query_id_rx.await.map_err(|_| ())
+        query_id
     }
 
     /// Store the record in the local store. Used in combination with
