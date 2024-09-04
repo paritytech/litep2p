@@ -272,7 +272,7 @@ impl RequestResponseProtocol {
                         .report_request_failure(
                             peer,
                             context.request_id,
-                            RequestResponseError::Rejected(RejectReason::SubstreamOpenError(error)),
+                            RequestResponseError::Rejected(error.into()),
                         )
                         .await;
                 }
@@ -390,7 +390,7 @@ impl RequestResponseProtocol {
                     peer,
                     request_id,
                     fallback_protocol,
-                    Err(RequestResponseError::Rejected(RejectReason::SubstreamOpenError(error))),
+                    Err(RequestResponseError::Rejected(error.into())),
                 ),
                 Ok(Ok(_)) => {
                     tokio::select! {
@@ -427,7 +427,7 @@ impl RequestResponseProtocol {
                                 (peer, request_id, fallback_protocol, Ok(response.freeze().into()))
                             },
                             Some(Err(error)) => {
-                                (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(RejectReason::SubstreamOpenError(error))))
+                                (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(error.into())))
                             },
                             None => {
                                 tracing::info!(
@@ -681,7 +681,7 @@ impl RequestResponseProtocol {
                     SubstreamError::NegotiationError(NegotiationError::MultistreamSelectError(
                         MultistreamFailed,
                     )) => RequestResponseError::UnsupportedProtocol,
-                    _ => RequestResponseError::Rejected(RejectReason::SubstreamOpenError(error)),
+                    _ => RequestResponseError::Rejected(error.into()),
                 },
             })
             .await
@@ -809,7 +809,7 @@ impl RequestResponseProtocol {
                 self.report_request_failure(
                     peer,
                     request_id,
-                    RequestResponseError::Rejected(RejectReason::SubstreamOpenError(error)),
+                    RequestResponseError::Rejected(error.into()),
                 )
                 .await
             }

@@ -20,6 +20,7 @@
 
 use crate::{
     error::{ImmediateDialError, SubstreamError},
+    multistream_select::ProtocolError,
     types::{protocol::ProtocolName, RequestId},
     Error, PeerId,
 };
@@ -32,6 +33,7 @@ use tokio::sync::{
 
 use std::{
     collections::HashMap,
+    io::ErrorKind,
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -86,6 +88,30 @@ pub enum RejectReason {
     /// process is not considered immediate and the given errors are not
     /// propagated for simplicity.
     DialFailed(Option<ImmediateDialError>),
+}
+
+impl From<SubstreamError> for RejectReason {
+    fn from(error: SubstreamError) -> Self {
+        // Convert `ErrorKind::NotConnected` to `RejectReason::ConnectionClosed`.
+        match error {
+            SubstreamError::IoError(error) if error == ErrorKind::NotConnected =>
+                RejectReason::ConnectionClosed,
+            SubstreamError::YamuxError(crate::yamux::ConnectionError::Io(error), _)
+                if error.kind() == ErrorKind::NotConnected =>
+                RejectReason::ConnectionClosed,
+            SubstreamError::NegotiationError(crate::error::NegotiationError::IoError(error))
+                if error == ErrorKind::NotConnected =>
+                RejectReason::ConnectionClosed,
+            SubstreamError::NegotiationError(
+                crate::error::NegotiationError::MultistreamSelectError(
+                    crate::multistream_select::NegotiationError::ProtocolError(
+                        ProtocolError::IoError(error),
+                    ),
+                ),
+            ) if error.kind() == ErrorKind::NotConnected => RejectReason::ConnectionClosed,
+            error => RejectReason::SubstreamOpenError(error),
+        }
+    }
 }
 
 /// Request-response events.
