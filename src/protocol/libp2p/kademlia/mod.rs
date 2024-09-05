@@ -776,37 +776,20 @@ impl Kademlia {
 
                 let provided_key = provider.key.clone();
                 let message = KademliaMessage::add_provider(provider);
-                let peer_action = PeerAction::SendAddProvider(message);
 
                 for peer in peers {
-                    match self.service.open_substream(peer.peer) {
-                        Ok(substream_id) => {
-                            self.pending_substreams.insert(substream_id, peer.peer);
-                            self.peers
-                                .entry(peer.peer)
-                                .or_default()
-                                .pending_actions
-                                .insert(substream_id, peer_action.clone());
-                        }
-                        Err(_) => match self.service.dial(&peer.peer) {
-                            Ok(_) => match self.pending_dials.entry(peer.peer) {
-                                Entry::Occupied(entry) => {
-                                    entry.into_mut().push(peer_action.clone());
-                                }
-                                Entry::Vacant(entry) => {
-                                    entry.insert(vec![peer_action.clone()]);
-                                }
-                            },
-                            Err(error) => {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?provided_key,
-                                    ?error,
-                                    "failed to dial peer",
-                                )
-                            }
-                        },
+                    if let Err(error) = self.open_substream_or_dial(
+                        peer.peer,
+                        PeerAction::SendAddProvider(message.clone()),
+                        None,
+                    ) {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?provided_key,
+                            ?error,
+                            "failed to add provider record to peer",
+                        )
                     }
                 }
 
