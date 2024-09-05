@@ -125,6 +125,8 @@ pub enum Error {
     ConnectionDoesntExist(ConnectionId),
     #[error("Exceeded connection limits `{0:?}`")]
     ConnectionLimit(ConnectionLimitsError),
+    #[error("Failed to dial peer immediately")]
+    ImmediateDialError(#[from] ImmediateDialError),
 }
 
 /// Error type for address parsing.
@@ -150,7 +152,7 @@ pub enum AddressError {
     InvalidPeerId(Multihash),
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ParseError {
     /// The provided probuf message cannot be decoded.
     #[error("Failed to decode protobuf message: `{0:?}`")]
@@ -180,10 +182,16 @@ pub enum ParseError {
     InvalidData,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum SubstreamError {
     #[error("Connection closed")]
     ConnectionClosed,
+    #[error("Connection channel clogged")]
+    ChannelClogged,
+    #[error("Connection to peer does not exist: `{0}`")]
+    PeerDoesNotExist(PeerId),
+    #[error("I/O error: `{0}`")]
+    IoError(ErrorKind),
     #[error("yamux error: `{0}`")]
     YamuxError(crate::yamux::ConnectionError, Direction),
     #[error("Failed to read from substream, substream id `{0:?}`")]
@@ -232,6 +240,25 @@ pub enum NegotiationError {
     WebSocket(#[from] tokio_tungstenite::tungstenite::error::Error),
 }
 
+impl PartialEq for NegotiationError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::MultistreamSelectError(lhs), Self::MultistreamSelectError(rhs)) => lhs == rhs,
+            (Self::SnowError(lhs), Self::SnowError(rhs)) => lhs == rhs,
+            (Self::ParseError(lhs), Self::ParseError(rhs)) => lhs == rhs,
+            (Self::IoError(lhs), Self::IoError(rhs)) => lhs == rhs,
+            (Self::PeerIdMismatch(lhs, lhs_1), Self::PeerIdMismatch(rhs, rhs_1)) =>
+                lhs == rhs && lhs_1 == rhs_1,
+            #[cfg(feature = "quic")]
+            (Self::Quic(lhs), Self::Quic(rhs)) => lhs == rhs,
+            #[cfg(feature = "websocket")]
+            (Self::WebSocket(lhs), Self::WebSocket(rhs)) =>
+                core::mem::discriminant(lhs) == core::mem::discriminant(rhs),
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum NotificationError {
     #[error("Peer already exists")]
@@ -246,7 +273,8 @@ pub enum NotificationError {
 
 /// The error type for dialing a peer.
 ///
-/// This error is reported via the litep2p events.
+/// This error is reported via the litep2p events after performing
+/// a network dialing operation.
 #[derive(Debug, thiserror::Error)]
 pub enum DialError {
     /// The dialing operation timed out.
@@ -269,9 +297,32 @@ pub enum DialError {
     NegotiationError(#[from] NegotiationError),
 }
 
+/// Dialing resulted in an immediate error before performing any network operations.
+#[derive(Debug, thiserror::Error, Copy, Clone, Eq, PartialEq)]
+pub enum ImmediateDialError {
+    /// The provided address does not include a peer ID.
+    #[error("`PeerId` missing from the address")]
+    PeerIdMissing,
+    /// The peer ID provided in the address is the same as the local peer ID.
+    #[error("Tried to dial self")]
+    TriedToDialSelf,
+    /// Cannot dial an already connected peer.
+    #[error("Already connected to peer")]
+    AlreadyConnected,
+    /// Cannot dial a peer that does not have any address available.
+    #[error("No address available for peer")]
+    NoAddressAvailable,
+    /// The essential task was closed.
+    #[error("TaskClosed")]
+    TaskClosed,
+    /// The channel is clogged.
+    #[error("Connection channel clogged")]
+    ChannelClogged,
+}
+
 /// Error during the QUIC transport negotiation.
 #[cfg(feature = "quic")]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum QuicError {
     /// The provided certificate is invalid.
     #[error("Invalid certificate")]
@@ -285,7 +336,7 @@ pub enum QuicError {
 }
 
 /// Error during DNS resolution.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum DnsError {
     /// The DNS resolution failed to resolve the provided URL.
     #[error("DNS failed to resolve url `{0}`")]
@@ -306,6 +357,12 @@ impl From<MultihashGeneric<64>> for Error {
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Error {
         Error::IoError(error.kind())
+    }
+}
+
+impl From<io::Error> for SubstreamError {
+    fn from(error: io::Error) -> SubstreamError {
+        SubstreamError::IoError(error.kind())
     }
 }
 

@@ -20,7 +20,7 @@
 
 use crate::{
     addresses::PublicAddresses,
-    error::Error,
+    error::{Error, ImmediateDialError, SubstreamError},
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -290,7 +290,7 @@ impl TransportService {
     /// Dial `peer` using `PeerId`.
     ///
     /// Call fails if `Litep2p` doesn't have a known address for the peer.
-    pub fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
+    pub fn dial(&mut self, peer: &PeerId) -> Result<(), ImmediateDialError> {
         self.transport_handle.dial(peer)
     }
 
@@ -302,7 +302,7 @@ impl TransportService {
     /// Calling this function is only necessary for those addresses that are discovered out-of-band
     /// since `Litep2p` internally keeps track of all peer addresses it has learned through user
     /// calling this function, Kademlia peer discoveries and `Identify` responses.
-    pub fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
+    pub fn dial_address(&mut self, address: Multiaddr) -> Result<(), ImmediateDialError> {
         self.transport_handle.dial_address(address)
     }
 
@@ -327,12 +327,15 @@ impl TransportService {
     ///
     /// Call fails if there is no connection open to `peer` or the channel towards
     /// the connection is clogged.
-    pub fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
+    pub fn open_substream(&mut self, peer: PeerId) -> Result<SubstreamId, SubstreamError> {
         // always prefer the primary connection
-        let connection =
-            &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?.primary;
+        let connection = &mut self
+            .connections
+            .get_mut(&peer)
+            .ok_or(SubstreamError::PeerDoesNotExist(peer))?
+            .primary;
 
-        let permit = connection.try_get_permit().ok_or(Error::ConnectionClosed)?;
+        let permit = connection.try_get_permit().ok_or(SubstreamError::ConnectionClosed)?;
         let substream_id =
             SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
 

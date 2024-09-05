@@ -325,7 +325,7 @@ impl Identify {
                         return Err(Error::SubstreamError(SubstreamError::ReadFailure(Some(
                             substream_id,
                         )))),
-                    Ok(Some(Err(error))) => return Err(error),
+                    Ok(Some(Err(error))) => return Err(error.into()),
                     Ok(Some(Ok(payload))) => payload,
                 };
 
