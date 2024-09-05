@@ -21,6 +21,7 @@
 use litep2p::{
     codec::ProtocolCodec,
     config::ConfigBuilder,
+    error::SubstreamError,
     protocol::{Direction, TransportEvent, TransportService, UserProtocol},
     substream::{Substream, SubstreamSet},
     transport::tcp::config::Config as TcpConfig,
@@ -156,7 +157,7 @@ impl UserProtocol for CustomProtocol {
                             }
                             Some(mut substream) => {
                                 let payload = Bytes::from(payload);
-                                let res = substream.send_framed(payload).await;
+                                let res = substream.send_framed(payload).await.map_err(Into::into);
                                 tx.send(res).unwrap();
                                 let _ = substream.close().await;
                             }
@@ -169,7 +170,7 @@ impl UserProtocol for CustomProtocol {
                             }
                             Some(mut substream) => {
                                 let payload = Bytes::from(payload);
-                                let res = substream.send(payload).await;
+                                let res = substream.send(payload).await.map_err(Into::into);
                                 tx.send(res).unwrap();
                                 let _ = substream.close().await;
                             }
@@ -325,6 +326,7 @@ async fn too_big_identity_payload_framed(transport1: Transport, transport2: Tran
 
     match rx.await {
         Ok(Err(Error::IoError(ErrorKind::PermissionDenied))) => {}
+        Ok(Err(Error::SubstreamError(SubstreamError::IoError(ErrorKind::PermissionDenied)))) => {}
         event => panic!("invalid event received: {event:?}"),
     }
 }
@@ -411,12 +413,15 @@ async fn too_big_identity_payload_sink(transport1: Transport, transport2: Transp
             panic!("failed to open substream");
         };
 
-        // send too large paylod to peer
+        // send too large payload to peer
         let (tx, rx) = oneshot::channel();
         tx1.send(Command::SendPayloadSink(peer2, vec![0u8; 16], tx)).await.unwrap();
 
         match rx.await {
             Ok(Err(Error::IoError(ErrorKind::PermissionDenied))) => {}
+            Ok(Err(Error::SubstreamError(SubstreamError::IoError(
+                ErrorKind::PermissionDenied,
+            )))) => {}
             event => panic!("invalid event received: {event:?}"),
         }
     }

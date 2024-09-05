@@ -173,7 +173,7 @@ pub enum ProtocolCommand {
 
         /// Fallback names.
         ///
-        /// If the protocol has changed its name but wishes to suppor the old name(s), it must
+        /// If the protocol has changed its name but wishes to support the old name(s), it must
         /// provide the old protocol names in `fallback_names`. These are fed into
         /// `multistream-select` which them attempts to negotiate a protocol for the substream
         /// using one of the provided names and if the substream is negotiated successfully, will

@@ -18,10 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    error::{Error, SubstreamError},
-    BandwidthSink,
-};
+use crate::{error::SubstreamError, BandwidthSink};
 
 use bytes::Bytes;
 use futures::{AsyncRead, AsyncWrite};
@@ -63,14 +60,14 @@ impl Substream {
     }
 
     /// Write `buffers` to the underlying socket.
-    pub async fn write_all_chunks(&mut self, buffers: &mut [Bytes]) -> crate::Result<()> {
+    pub async fn write_all_chunks(&mut self, buffers: &mut [Bytes]) -> Result<(), SubstreamError> {
         let nwritten = buffers.iter().fold(0usize, |acc, buffer| acc + buffer.len());
 
         match self
             .send_stream
             .write_all_chunks(buffers)
             .await
-            .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))
+            .map_err(|_| SubstreamError::ConnectionClosed)
         {
             Ok(()) => {
                 self.bandwidth_sink.increase_outbound(nwritten);

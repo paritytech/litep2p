@@ -138,7 +138,7 @@ impl MemoryStore {
 
             Vec::default()
         } else {
-            self.provider_keys.get(key).cloned().unwrap_or_else(|| Vec::default())
+            self.provider_keys.get(key).cloned().unwrap_or_else(Vec::default)
         }
     }
 
@@ -202,7 +202,7 @@ impl MemoryStore {
 
                             false
                         } else {
-                            if providers.len() == usize::from(self.config.max_providers_per_key) {
+                            if providers.len() == self.config.max_providers_per_key {
                                 providers.pop();
                             }
 

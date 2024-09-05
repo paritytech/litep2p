@@ -294,6 +294,17 @@ pub enum FrameDecodeError {
     FrameTooLarge(usize),
 }
 
+impl PartialEq for FrameDecodeError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (FrameDecodeError::Io(e1), FrameDecodeError::Io(e2)) => e1.kind() == e2.kind(),
+            (FrameDecodeError::Header(e1), FrameDecodeError::Header(e2)) => e1 == e2,
+            (FrameDecodeError::FrameTooLarge(n1), FrameDecodeError::FrameTooLarge(n2)) => n1 == n2,
+            _ => false,
+        }
+    }
+}
+
 impl std::fmt::Display for FrameDecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {

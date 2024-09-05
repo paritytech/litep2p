@@ -951,7 +951,7 @@ impl NotificationProtocol {
                         )
                         .await;
 
-                    return Err(error);
+                    return Err(error.into());
                 }
                 Ok(()) => {
                     tracing::trace!(
@@ -1175,7 +1175,7 @@ impl NotificationProtocol {
                                 )
                                 .await;
 
-                            Err(error)
+                            Err(error.into())
                         }
                     },
                     // here the state is one of `OutboundState::{OutboundInitiated, Negotiating,
@@ -1767,7 +1767,7 @@ impl NotificationProtocol {
                 Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                     self.on_substream_open_failure(substream, error).await;
                 }
-                Some(TransportEvent::DialFailure { peer, address }) => self.on_dial_failure(peer, address).await,
+                Some(TransportEvent::DialFailure { peer, address, .. }) => self.on_dial_failure(peer, address).await,
                 None => (),
             },
             result = self.pending_validations.select_next_some(), if !self.pending_validations.is_empty() => {
