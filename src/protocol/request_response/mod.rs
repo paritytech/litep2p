@@ -430,7 +430,7 @@ impl RequestResponseProtocol {
                                 (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(error.into())))
                             },
                             None => {
-                                tracing::info!(
+                                tracing::debug!(
                                     target: LOG_TARGET,
                                     ?peer,
                                     %protocol,
