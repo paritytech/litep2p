@@ -41,6 +41,7 @@ use std::{
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::store";
 
 /// Memory store events.
+#[derive(Debug, PartialEq, Eq)]
 pub enum MemoryStoreAction {
     RefreshProvider { provider: ProviderRecord },
 }
@@ -744,5 +745,46 @@ mod tests {
         assert_eq!(store.get_providers(&provider3.key), vec![]);
     }
 
-    // TODO: test local providers.
+    #[tokio::test]
+    async fn local_providers_refresh() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::with_config(
+            local_peer_id,
+            MemoryStoreConfig {
+                provider_refresh_interval: Duration::from_secs(5),
+                ..Default::default()
+            },
+        );
+
+        let local_provider = ProviderRecord {
+            key: Key::from(vec![1, 2, 3]),
+            provider: local_peer_id,
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        assert!(store.put_provider(local_provider.clone()));
+
+        assert_eq!(
+            store.get_providers(&local_provider.key),
+            vec![local_provider.clone()]
+        );
+        assert_eq!(
+            store.local_providers.get(&local_provider.key),
+            Some(&local_provider)
+        );
+
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), store.next_action()).await,
+            Err(_),
+        ));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(10), store.next_action())
+                .await
+                .unwrap(),
+            Some(MemoryStoreAction::RefreshProvider {
+                provider: local_provider
+            }),
+        );
+    }
 }
