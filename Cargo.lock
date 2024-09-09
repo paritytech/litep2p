@@ -2897,7 +2897,7 @@ dependencies = [
  "rand_xorshift",
  "rcgen",
  "ring 0.16.20",
- "rustls 0.20.9",
+ "rustls 0.21.12",
  "sc-network",
  "sc-utils 17.0.0",
  "serde",
