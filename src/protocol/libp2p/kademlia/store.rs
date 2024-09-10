@@ -171,6 +171,17 @@ impl MemoryStore {
     ///
     /// Returns `true` if the provider was added, `false` otherwise.
     pub fn put_provider(&mut self, provider_record: ProviderRecord) -> bool {
+        // Helper to schedule local provider refresh.
+        let mut schedule_local_provider_refresh = |provider_record: ProviderRecord| {
+            let key = provider_record.key.clone();
+            let refresh_interval = self.config.provider_refresh_interval;
+            self.local_providers.insert(key.clone(), provider_record);
+            self.pending_provider_refresh.push(Box::pin(async move {
+                tokio::time::sleep(refresh_interval).await;
+                key
+            }));
+        };
+
         // Make sure we have no more than `max_provider_addresses`.
         let provider_record = {
             let mut record = provider_record;
@@ -183,6 +194,10 @@ impl MemoryStore {
         match self.provider_keys.entry(provider_record.key.clone()) {
             Entry::Vacant(entry) =>
                 if can_insert_new_key {
+                    if provider_record.provider == self.local_peer_id {
+                        schedule_local_provider_refresh(provider_record.clone());
+                    }
+
                     entry.insert(vec![provider_record]);
 
                     true
@@ -206,8 +221,13 @@ impl MemoryStore {
 
                 match provider_position {
                     Ok(i) => {
+                        if provider_record.provider == self.local_peer_id {
+                            schedule_local_provider_refresh(provider_record.clone());
+                        }
                         // Update the provider in place.
                         providers[i] = provider_record.clone();
+
+                        true
                     }
                     Err(i) => {
                         // `Err(i)` contains the insertion point.
@@ -221,29 +241,22 @@ impl MemoryStore {
                                  existing `max_providers_per_key`",
                             );
 
-                            return false;
+                            false
                         } else {
                             if providers.len() == usize::from(self.config.max_providers_per_key) {
                                 providers.pop();
                             }
 
+                            if provider_record.provider == self.local_peer_id {
+                                schedule_local_provider_refresh(provider_record.clone());
+                            }
+
                             providers.insert(i, provider_record.clone());
+
+                            true
                         }
                     }
                 }
-
-                if provider_record.provider == self.local_peer_id {
-                    // We must make sure to refresh the local provider.
-                    let key = provider_record.key.clone();
-                    let refresh_interval = self.config.provider_refresh_interval;
-                    self.local_providers.insert(key.clone(), provider_record);
-                    self.pending_provider_refresh.push(Box::pin(async move {
-                        tokio::time::sleep(refresh_interval).await;
-                        key
-                    }));
-                }
-
-                true
             }
         }
     }
