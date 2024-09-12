@@ -955,17 +955,6 @@ impl RequestResponseProtocol {
                     }
                 }
             }
-            RequestResponseCommand::CancelRequest { request_id } => {
-                if let Err(error) = self.on_cancel_request(request_id) {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        protocol = %self.protocol,
-                        ?request_id,
-                        ?error,
-                        "failed to cancel reqeuest",
-                    );
-                }
-            }
             RequestResponseCommand::SendRequestWithFallback {
                 peer,
                 request_id,
@@ -995,6 +984,17 @@ impl RequestResponseProtocol {
                             "failed to report request failure",
                         );
                     }
+                }
+            }
+            RequestResponseCommand::CancelRequest { request_id } => {
+                if let Err(error) = self.on_cancel_request(request_id) {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        protocol = %self.protocol,
+                        ?request_id,
+                        ?error,
+                        "failed to cancel reqeuest",
+                    );
                 }
             }
         }
