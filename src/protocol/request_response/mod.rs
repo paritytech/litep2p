@@ -871,7 +871,7 @@ impl RequestResponseProtocol {
     }
 
     /// Cancel outbound request.
-    async fn on_cancel_request(&mut self, request_id: RequestId) -> crate::Result<()> {
+    fn on_cancel_request(&mut self, request_id: RequestId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, protocol = %self.protocol, ?request_id, "cancel outbound request");
 
         match self.pending_outbound_cancels.remove(&request_id) {
@@ -962,7 +962,7 @@ impl RequestResponseProtocol {
                 }
             }
             RequestResponseCommand::CancelRequest { request_id } => {
-                if let Err(error) = self.on_cancel_request(request_id).await {
+                if let Err(error) = self.on_cancel_request(request_id) {
                     tracing::debug!(
                         target: LOG_TARGET,
                         protocol = %self.protocol,
