@@ -706,14 +706,14 @@ impl RequestResponseProtocol {
     }
 
     /// Send request to remote peer.
-    async fn on_send_request(
+    fn on_send_request(
         &mut self,
         peer: PeerId,
         request_id: RequestId,
         request: Vec<u8>,
         dial_options: DialOptions,
         fallback: Option<(ProtocolName, Vec<u8>)>,
-    ) -> crate::Result<()> {
+    ) -> Result<(), RequestResponseError> {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
@@ -735,13 +735,7 @@ impl RequestResponseProtocol {
                         "peer not connected and should not dial",
                     );
 
-                    return self
-                        .report_request_failure(
-                            peer,
-                            request_id,
-                            RequestResponseError::NotConnected,
-                        )
-                        .await;
+                    return Err(RequestResponseError::NotConnected);
                 }
                 DialOptions::Dial => match self.service.dial(&peer) {
                     Ok(_) => {
@@ -768,15 +762,9 @@ impl RequestResponseProtocol {
                             "failed to dial peer"
                         );
 
-                        return self
-                            .report_request_failure(
-                                peer,
-                                request_id,
-                                RequestResponseError::Rejected(RejectReason::DialFailed(Some(
-                                    error,
-                                ))),
-                            )
-                            .await;
+                        return Err(RequestResponseError::Rejected(RejectReason::DialFailed(
+                            Some(error),
+                        )));
                     }
                 },
             }
@@ -806,12 +794,7 @@ impl RequestResponseProtocol {
                     "failed to open substream",
                 );
 
-                self.report_request_failure(
-                    peer,
-                    request_id,
-                    RequestResponseError::Rejected(error.into()),
-                )
-                .await
+                return Err(RequestResponseError::Rejected(error.into()));
             }
         }
     }
@@ -949,7 +932,7 @@ impl RequestResponseProtocol {
                 dial_options,
             } => {
                 if let Err(error) =
-                    self.on_send_request(peer, request_id, request, dial_options, None).await
+                    self.on_send_request(peer, request_id, request, dial_options, None)
                 {
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -959,6 +942,17 @@ impl RequestResponseProtocol {
                         ?error,
                         "failed to send request",
                     );
+
+                    if let Err(error) = self.report_request_failure(peer, request_id, error).await {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            ?request_id,
+                            ?error,
+                            "failed to report request failure",
+                        );
+                    }
                 }
             }
             RequestResponseCommand::CancelRequest { request_id } => {
@@ -979,9 +973,8 @@ impl RequestResponseProtocol {
                 fallback,
                 dial_options,
             } => {
-                if let Err(error) = self
-                    .on_send_request(peer, request_id, request, dial_options, Some(fallback))
-                    .await
+                if let Err(error) =
+                    self.on_send_request(peer, request_id, request, dial_options, Some(fallback))
                 {
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -991,6 +984,17 @@ impl RequestResponseProtocol {
                         ?error,
                         "failed to send request",
                     );
+
+                    if let Err(error) = self.report_request_failure(peer, request_id, error).await {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            ?request_id,
+                            ?error,
+                            "failed to report request failure",
+                        );
+                    }
                 }
             }
         }
