@@ -155,11 +155,11 @@ pub(crate) struct RequestResponseProtocol {
     /// notifies the future that the request should be rejected by closing the substream.
     pending_outbound_responses: FuturesUnordered<BoxFuture<'static, ()>>,
 
-    /// Pending inbound responses.
-    pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
-
     /// Pending outbound cancellation handles.
     pending_outbound_cancels: HashMap<RequestId, oneshot::Sender<()>>,
+
+    /// Pending inbound responses.
+    pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
 
     /// Pending inbound requests.
     pending_inbound_requests: SubstreamSet<(PeerId, RequestId), Substream>,
@@ -889,6 +889,56 @@ impl RequestResponseProtocol {
         }
     }
 
+    /// Handles the service event.
+    async fn handle_service_event(&mut self, event: TransportEvent) {
+        match event {
+            TransportEvent::ConnectionEstablished { peer, .. } => {
+                let _ = self.on_connection_established(peer).await;
+            }
+
+            TransportEvent::ConnectionClosed { peer } => {
+                self.on_connection_closed(peer).await;
+            }
+
+            TransportEvent::SubstreamOpened {
+                peer,
+                substream,
+                direction,
+                fallback,
+                ..
+            } => match direction {
+                Direction::Inbound => {
+                    if let Err(error) = self.on_inbound_substream(peer, fallback, substream).await {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            ?error,
+                            "failed to handle inbound substream",
+                        );
+                    }
+                }
+                Direction::Outbound(substream_id) => {
+                    let _ =
+                        self.on_outbound_substream(peer, substream_id, substream, fallback).await;
+                }
+            },
+
+            TransportEvent::SubstreamOpenFailure { substream, error } => {
+                if let Err(error) = self.on_substream_open_failure(substream, error).await {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        protocol = %self.protocol,
+                        ?error,
+                        "failed to handle substream open failure",
+                    );
+                }
+            }
+
+            TransportEvent::DialFailure { peer, .. } => self.on_dial_failure(peer).await,
+        }
+    }
+
     /// Start [`RequestResponseProtocol`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting request-response event loop");
@@ -900,45 +950,7 @@ impl RequestResponseProtocol {
                 biased;
 
                 event = self.service.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        let _ = self.on_connection_established(peer).await;
-                    }
-                    Some(TransportEvent::ConnectionClosed { peer }) => {
-                        self.on_connection_closed(peer).await;
-                    }
-                    Some(TransportEvent::SubstreamOpened {
-                        peer,
-                        substream,
-                        direction,
-                        fallback,
-                        ..
-                    }) => match direction {
-                        Direction::Inbound => {
-                            if let Err(error) = self.on_inbound_substream(peer, fallback, substream).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    protocol = %self.protocol,
-                                    ?error,
-                                    "failed to handle inbound substream",
-                                );
-                            }
-                        }
-                        Direction::Outbound(substream_id) => {
-                            let _ = self.on_outbound_substream(peer, substream_id, substream, fallback).await;
-                        }
-                    },
-                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
-                        if let Err(error) = self.on_substream_open_failure(substream, error).await {
-                            tracing::warn!(
-                                target: LOG_TARGET,
-                                protocol = %self.protocol,
-                                ?error,
-                                "failed to handle substream open failure",
-                            );
-                        }
-                    }
-                    Some(TransportEvent::DialFailure { peer, ..  }) => self.on_dial_failure(peer).await,
+                    Some(event) => self.handle_service_event(event).await,
                     None => return,
                 },
                 event = self.pending_inbound.select_next_some(), if !self.pending_inbound.is_empty() => {
