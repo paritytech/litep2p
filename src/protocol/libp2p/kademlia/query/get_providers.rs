@@ -117,7 +117,7 @@ impl GetProvidersContext {
                 key: Key::from(peer.clone()),
                 peer,
                 addresses: addresses.into_iter().collect(),
-                connection: ConnectionType::CanConnect,
+                connection: ConnectionType::NotConnected,
             })
             .collect::<Vec<_>>();
 
