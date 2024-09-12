@@ -939,6 +939,63 @@ impl RequestResponseProtocol {
         }
     }
 
+    /// Handles the user command.
+    async fn handle_user_command(&mut self, command: RequestResponseCommand) {
+        match command {
+            RequestResponseCommand::SendRequest {
+                peer,
+                request_id,
+                request,
+                dial_options,
+            } => {
+                if let Err(error) =
+                    self.on_send_request(peer, request_id, request, dial_options, None).await
+                {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        ?request_id,
+                        ?error,
+                        "failed to send request",
+                    );
+                }
+            }
+            RequestResponseCommand::CancelRequest { request_id } => {
+                if let Err(error) = self.on_cancel_request(request_id).await {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        protocol = %self.protocol,
+                        ?request_id,
+                        ?error,
+                        "failed to cancel reqeuest",
+                    );
+                }
+            }
+            RequestResponseCommand::SendRequestWithFallback {
+                peer,
+                request_id,
+                request,
+                fallback,
+                dial_options,
+            } => {
+                if let Err(error) = self
+                    .on_send_request(peer, request_id, request, dial_options, Some(fallback))
+                    .await
+                {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        ?request_id,
+                        ?error,
+                        "failed to send request",
+                    );
+                }
+            }
+        }
+    }
+
     /// Start [`RequestResponseProtocol`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting request-response event loop");
@@ -998,46 +1055,10 @@ impl RequestResponseProtocol {
 
                 // User commands.
                 command = self.command_rx.recv() => match command {
+                    Some(command) => self.handle_user_command(command).await,
                     None => {
                         tracing::debug!(target: LOG_TARGET, protocol = %self.protocol, "user protocol has exited, exiting");
                         return
-                    }
-                    Some(command) => match command {
-                        RequestResponseCommand::SendRequest { peer, request_id, request, dial_options } => {
-                            if let Err(error) = self.on_send_request(peer, request_id, request, dial_options, None).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    protocol = %self.protocol,
-                                    ?request_id,
-                                    ?error,
-                                    "failed to send request",
-                                );
-                            }
-                        }
-                        RequestResponseCommand::CancelRequest { request_id } => {
-                            if let Err(error) = self.on_cancel_request(request_id).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    protocol = %self.protocol,
-                                    ?request_id,
-                                    ?error,
-                                    "failed to cancel reqeuest",
-                                );
-                            }
-                        }
-                        RequestResponseCommand::SendRequestWithFallback { peer, request_id, request, fallback, dial_options } => {
-                            if let Err(error) = self.on_send_request(peer, request_id, request, dial_options, Some(fallback)).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    protocol = %self.protocol,
-                                    ?request_id,
-                                    ?error,
-                                    "failed to send request",
-                                );
-                            }
-                        }
                     }
                 },
             }
