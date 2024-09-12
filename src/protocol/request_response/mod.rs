@@ -949,10 +949,16 @@ impl RequestResponseProtocol {
                 // responses to network behaviour so ensure that the commands operate on the most up to date information.
                 biased;
 
+                // Connection and substream events from the transport service.
                 event = self.service.next() => match event {
                     Some(event) => self.handle_service_event(event).await,
-                    None => return,
+                    None => {
+                        tracing::debug!(target: LOG_TARGET, protocol = %self.protocol, "service has exited, exiting");
+                        return
+                    }
                 },
+
+                // These are outbound requests waiting for the substream to produce a response.
                 event = self.pending_inbound.select_next_some(), if !self.pending_inbound.is_empty() => {
                     let (peer, request_id, fallback, event) = event;
 
@@ -969,7 +975,11 @@ impl RequestResponseProtocol {
 
                     self.pending_outbound_cancels.remove(&request_id);
                 }
+
+                // These are inbound requests waiting for the user to respond, then for the substream to send the response.
                 _ = self.pending_outbound_responses.next(), if !self.pending_outbound_responses.is_empty() => {}
+
+                // Inbound requests that are moved to `pending_outbound_responses`.
                 event = self.pending_inbound_requests.next() => match event {
                     Some(((peer, request_id), message)) => {
                         if let Err(error) = self.on_inbound_request(peer, request_id, message).await {
@@ -985,6 +995,8 @@ impl RequestResponseProtocol {
                     }
                     None => return,
                 },
+
+                // User commands.
                 command = self.command_rx.recv() => match command {
                     None => {
                         tracing::debug!(target: LOG_TARGET, protocol = %self.protocol, "user protocol has exited, exiting");
