@@ -759,7 +759,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_providers_refresh() {
+    async fn local_provider_refresh() {
         let local_peer_id = PeerId::random();
         let mut store = MemoryStore::with_config(
             local_peer_id,
@@ -787,10 +787,69 @@ mod tests {
             Some(&local_provider)
         );
 
+        // No actions are instantly generated.
         assert!(matches!(
             tokio::time::timeout(Duration::from_secs(1), store.next_action()).await,
             Err(_),
         ));
+        // The local provider is refreshed.
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(10), store.next_action())
+                .await
+                .unwrap(),
+            Some(MemoryStoreAction::RefreshProvider {
+                provider: local_provider
+            }),
+        );
+    }
+
+    #[tokio::test]
+    async fn local_provider_inserted_after_remote_provider_refresh() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::with_config(
+            local_peer_id,
+            MemoryStoreConfig {
+                provider_refresh_interval: Duration::from_secs(5),
+                ..Default::default()
+            },
+        );
+
+        let key = Key::from(vec![1, 2, 3]);
+
+        let remote_peer_id = PeerId::random();
+        let remote_provider = ProviderRecord {
+            key: key.clone(),
+            provider: remote_peer_id,
+            addresses: vec![multiaddr!(Ip4([192, 168, 0, 1]), Tcp(10000u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        let local_provider = ProviderRecord {
+            key: Key::from(vec![1, 2, 3]),
+            provider: local_peer_id,
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        assert!(store.put_provider(remote_provider.clone()));
+        assert!(store.put_provider(local_provider.clone()));
+
+        let got_providers = store.get_providers(&local_provider.key);
+        assert_eq!(got_providers.len(), 2);
+        assert!(got_providers.contains(&remote_provider));
+        assert!(got_providers.contains(&local_provider));
+
+        assert_eq!(
+            store.local_providers.get(&local_provider.key),
+            Some(&local_provider)
+        );
+
+        // No actions are instantly generated.
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), store.next_action()).await,
+            Err(_),
+        ));
+        // The local provider is refreshed.
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(10), store.next_action())
                 .await
