@@ -268,13 +268,15 @@ impl MemoryStore {
             return;
         };
 
-        let drop_key = match self.provider_keys.get_mut(&key) {
-            None => {
+        match self.provider_keys.entry(key.clone()) {
+            Entry::Vacant(_) => {
                 tracing::error!(?key, "local provider key not found during removal",);
                 debug_assert!(false);
                 return;
             }
-            Some(providers) => {
+            Entry::Occupied(mut entry) => {
+                let providers = entry.get_mut();
+
                 // Providers are sorted by distance.
                 let local_provider_distance = KademliaKey::from(self.local_peer_id.clone())
                     .distance(&KademliaKey::new(key.clone()));
@@ -292,13 +294,11 @@ impl MemoryStore {
                     }
                 }
 
-                providers.is_empty()
+                if providers.is_empty() {
+                    entry.remove();
+                }
             }
         };
-
-        if drop_key {
-            self.provider_keys.remove(&key);
-        }
     }
 
     /// Poll next action from the store.
