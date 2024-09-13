@@ -1061,7 +1061,7 @@ impl Kademlia {
                                 query = ?query_id,
                                 ?key,
                                 ?public_addresses,
-                                "register as content provider"
+                                "register as a content provider",
                             );
 
                             let provider = ProviderRecord {
@@ -1080,6 +1080,17 @@ impl Kademlia {
                                     .closest(Key::new(key), self.replication_factor)
                                     .into(),
                             );
+                        }
+                        Some(KademliaCommand::StopProviding {
+                            key,
+                        }) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?key,
+                                "stop providing",
+                            );
+
+                            self.store.remove_local_provider(key);
                         }
                         Some(KademliaCommand::GetRecord { key, quorum, query_id }) => {
                             tracing::debug!(target: LOG_TARGET, ?key, "get record from DHT");
