@@ -20,20 +20,19 @@
 
 //! Memory store implementation for Kademlia.
 
-#![allow(unused)]
 use crate::{
     protocol::libp2p::kademlia::{
         config::DEFAULT_PROVIDER_REFRESH_INTERVAL,
         futures_stream::FuturesStream,
         record::{Key, ProviderRecord, Record},
+        types::Key as KademliaKey,
     },
     PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, StreamExt};
 use std::{
     collections::{hash_map::Entry, HashMap},
-    num::NonZeroUsize,
     time::Duration,
 };
 
@@ -64,6 +63,7 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     /// Create new [`MemoryStore`].
+    #[cfg(test)]
     pub fn new(local_peer_id: PeerId) -> Self {
         Self {
             local_peer_id,
@@ -150,14 +150,14 @@ impl MemoryStore {
     ///
     /// Returns a non-empty list of providers, if any.
     pub fn get_providers(&mut self, key: &Key) -> Vec<ProviderRecord> {
-        let drop = self.provider_keys.get_mut(key).map_or(false, |providers| {
+        let drop_key = self.provider_keys.get_mut(key).map_or(false, |providers| {
             let now = std::time::Instant::now();
             providers.retain(|p| !p.is_expired(now));
 
             providers.is_empty()
         });
 
-        if drop {
+        if drop_key {
             self.provider_keys.remove(key);
 
             Vec::default()
@@ -212,7 +212,7 @@ impl MemoryStore {
                     false
                 },
             Entry::Occupied(mut entry) => {
-                let mut providers = entry.get_mut();
+                let providers = entry.get_mut();
 
                 // Providers under every key are sorted by distance from the provided key, with
                 // equal distances meaning peer IDs (more strictly, their hashes)
@@ -260,6 +260,46 @@ impl MemoryStore {
                 }
             }
         }
+    }
+
+    /// Remove local provider for `key`.
+    pub fn remove_local_provider(&mut self, key: Key) {
+        if self.local_providers.remove(&key).is_none() {
+            tracing::warn!(?key, "trying to remove nonexistent local provider",);
+            return;
+        };
+
+        match self.provider_keys.entry(key.clone()) {
+            Entry::Vacant(_) => {
+                tracing::error!(?key, "local provider key not found during removal",);
+                debug_assert!(false);
+                return;
+            }
+            Entry::Occupied(mut entry) => {
+                let providers = entry.get_mut();
+
+                // Providers are sorted by distance.
+                let local_provider_distance = KademliaKey::from(self.local_peer_id.clone())
+                    .distance(&KademliaKey::new(key.clone()));
+                let provider_position =
+                    providers.binary_search_by(|p| p.distance().cmp(&local_provider_distance));
+
+                match provider_position {
+                    Ok(i) => {
+                        providers.remove(i);
+                    }
+                    Err(_) => {
+                        tracing::error!(?key, "local provider not found during removal",);
+                        debug_assert!(false);
+                        return;
+                    }
+                }
+
+                if providers.is_empty() {
+                    entry.remove();
+                }
+            }
+        };
     }
 
     /// Poll next action from the store.
@@ -329,10 +369,7 @@ impl Default for MemoryStoreConfig {
 mod tests {
     use super::*;
     use crate::PeerId;
-    use multiaddr::{
-        multiaddr,
-        Protocol::{Ip4, Tcp},
-    };
+    use multiaddr::multiaddr;
 
     #[test]
     fn put_get_record() {
