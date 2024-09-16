@@ -795,6 +795,138 @@ mod tests {
         assert_eq!(store.get_providers(&provider3.key), vec![]);
     }
 
+    #[test]
+    fn local_provider_registered() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::new(local_peer_id);
+
+        let local_provider = ProviderRecord {
+            key: Key::from(vec![1, 2, 3]),
+            provider: local_peer_id,
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        assert!(store.local_providers.is_empty());
+        assert_eq!(store.pending_provider_refresh.len(), 0);
+
+        assert!(store.put_provider(local_provider.clone()));
+
+        assert_eq!(
+            store.local_providers.get(&local_provider.key),
+            Some(&local_provider),
+        );
+        assert_eq!(store.pending_provider_refresh.len(), 1);
+    }
+
+    #[test]
+    fn local_provider_registered_after_remote_provider() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::new(local_peer_id);
+
+        let key = Key::from(vec![1, 2, 3]);
+
+        let remote_peer_id = PeerId::random();
+        let remote_provider = ProviderRecord {
+            key: key.clone(),
+            provider: remote_peer_id,
+            addresses: vec![multiaddr!(Ip4([192, 168, 0, 1]), Tcp(10000u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        let local_provider = ProviderRecord {
+            key: key.clone(),
+            provider: local_peer_id,
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        assert!(store.local_providers.is_empty());
+        assert_eq!(store.pending_provider_refresh.len(), 0);
+
+        assert!(store.put_provider(remote_provider.clone()));
+        assert!(store.put_provider(local_provider.clone()));
+
+        let got_providers = store.get_providers(&key);
+        assert_eq!(got_providers.len(), 2);
+        assert!(got_providers.contains(&remote_provider));
+        assert!(got_providers.contains(&local_provider));
+
+        assert_eq!(
+            store.local_providers.get(&local_provider.key),
+            Some(&local_provider),
+        );
+        assert_eq!(store.pending_provider_refresh.len(), 1);
+    }
+
+    #[test]
+    fn local_provider_removed() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::new(local_peer_id);
+
+        let local_provider = ProviderRecord {
+            key: Key::from(vec![1, 2, 3]),
+            provider: local_peer_id,
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        assert!(store.local_providers.is_empty());
+
+        assert!(store.put_provider(local_provider.clone()));
+
+        assert_eq!(
+            store.local_providers.get(&local_provider.key),
+            Some(&local_provider),
+        );
+
+        store.remove_local_provider(local_provider.key.clone());
+
+        assert!(store.get_providers(&local_provider.key).is_empty());
+        assert!(store.local_providers.is_empty());
+    }
+
+    #[test]
+    fn local_provider_removed_when_remote_providers_present() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::new(local_peer_id);
+
+        let key = Key::from(vec![1, 2, 3]);
+
+        let remote_peer_id = PeerId::random();
+        let remote_provider = ProviderRecord {
+            key: key.clone(),
+            provider: remote_peer_id,
+            addresses: vec![multiaddr!(Ip4([192, 168, 0, 1]), Tcp(10000u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        let local_provider = ProviderRecord {
+            key: key.clone(),
+            provider: local_peer_id,
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        assert!(store.put_provider(remote_provider.clone()));
+        assert!(store.put_provider(local_provider.clone()));
+
+        let got_providers = store.get_providers(&key);
+        assert_eq!(got_providers.len(), 2);
+        assert!(got_providers.contains(&remote_provider));
+        assert!(got_providers.contains(&local_provider));
+
+        assert_eq!(
+            store.local_providers.get(&local_provider.key),
+            Some(&local_provider),
+        );
+
+        store.remove_local_provider(key.clone());
+
+        assert_eq!(store.get_providers(&key), vec![remote_provider]);
+        assert!(store.local_providers.is_empty());
+    }
+
     #[tokio::test]
     async fn local_provider_refresh() {
         let local_peer_id = PeerId::random();
@@ -895,5 +1027,47 @@ mod tests {
                 provider: local_provider
             }),
         );
+    }
+
+    #[tokio::test]
+    async fn removed_local_provider_not_refreshed() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::with_config(
+            local_peer_id,
+            MemoryStoreConfig {
+                provider_refresh_interval: Duration::from_secs(1),
+                ..Default::default()
+            },
+        );
+
+        let local_provider = ProviderRecord {
+            key: Key::from(vec![1, 2, 3]),
+            provider: local_peer_id,
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        };
+
+        assert!(store.put_provider(local_provider.clone()));
+
+        assert_eq!(
+            store.get_providers(&local_provider.key),
+            vec![local_provider.clone()]
+        );
+        assert_eq!(
+            store.local_providers.get(&local_provider.key),
+            Some(&local_provider)
+        );
+
+        store.remove_local_provider(local_provider.key);
+
+        // The local provider is not refreshed in 10 secs (future fires at 1 sec and yields `None`).
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), store.next_action()).await,
+            Ok(None),
+        );
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(5), store.next_action()).await,
+            Err(_),
+        ));
     }
 }
