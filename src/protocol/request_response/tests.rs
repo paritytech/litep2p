@@ -286,7 +286,6 @@ async fn request_failure_reported_once() {
             DialOptions::Reject,
             None,
         )
-        .await
         .unwrap();
 
     match handle.next().await {
