@@ -196,7 +196,7 @@ impl AddressStore {
         self.by_score.is_empty()
     }
 
-    /// Check if address is already in the a
+    /// Check if address is already in the address store.
     pub fn contains(&self, address: &Multiaddr) -> bool {
         self.by_address.contains(address)
     }
