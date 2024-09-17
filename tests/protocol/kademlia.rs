@@ -25,8 +25,8 @@ use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::kademlia::{
-        ConfigBuilder as KademliaConfigBuilder, IncomingRecordValidationMode, KademliaEvent,
-        PeerRecord, Quorum, Record, RecordKey, RecordsType,
+        ConfigBuilder as KademliaConfigBuilder, ContentProvider, IncomingRecordValidationMode,
+        KademliaEvent, PeerRecord, Quorum, Record, RecordKey, RecordsType,
     },
     transport::tcp::config::Config as TcpConfig,
     Litep2p, PeerId,
@@ -454,6 +454,85 @@ async fn get_record_retrieves_remote_records() {
                     }
                     Some(KademliaEvent::QueryFailed { query_id: _ }) => {
                         panic!("query failed")
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_providers_retrieved_by_remote_node() {
+    let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
+    let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
+
+    let config1 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .build();
+
+    let config2 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    let key = RecordKey::new(&vec![1, 2, 3]);
+
+    let peer1_addresses = litep2p1.listen_addresses().cloned().collect::<Vec<_>>();
+    assert_eq!(peer1_addresses.len(), 1);
+
+    // Store provider locally.
+    kad_handle1.start_providing(key.clone(), peer1_addresses.clone()).await;
+    let expected_provider = ContentProvider {
+        peer: *litep2p1.local_peer_id(),
+        addresses: peer1_addresses,
+    };
+
+    // This request to get rpovider should fail because the nodes are not connected.
+    let query1 = kad_handle2.get_providers(key.clone()).await;
+    let mut query2 = None;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("provider was not retrieved in 10 secs")
+            }
+            event = litep2p1.next_event() => {}
+            event = litep2p2.next_event() => {}
+            event = kad_handle1.next() => {}
+            event = kad_handle2.next() => {
+                match event {
+                    Some(KademliaEvent::QueryFailed { query_id }) => {
+                        // Query failed, because the nodes don't know about each other yet.
+                        assert_eq!(query_id, query1);
+
+                        // Let the node know about `litep2p1`.
+                        kad_handle2
+                            .add_known_peer(
+                                *litep2p1.local_peer_id(),
+                                litep2p1.listen_addresses().cloned().collect(),
+                            )
+                            .await;
+
+                        // And request providers again.
+                        query2 = Some(kad_handle2.get_providers(key.clone()).await);
+                    }
+                    Some(KademliaEvent::GetProvidersSuccess { query_id, providers }) => {
+                        assert_eq!(query_id, query2.unwrap());
+                        assert_eq!(providers.len(), 1);
+                        assert_eq!(providers.first().unwrap(), &expected_provider);
+
+                        break
                     }
                     _ => {}
                 }
