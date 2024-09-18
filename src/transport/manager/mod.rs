@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    addresses::PublicAddresses,
     codec::ProtocolCodec,
     crypto::ed25519::Keypair,
     error::{AddressError, DialError, Error},
@@ -219,6 +220,9 @@ pub struct TransportManager {
     /// Listen addresses.
     listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 
+    /// Listen addresses.
+    public_addresses: PublicAddresses,
+
     /// Next connection ID.
     next_connection_id: Arc<AtomicUsize>,
 
@@ -268,12 +272,14 @@ impl TransportManager {
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
         let listen_addresses = Arc::new(RwLock::new(HashSet::new()));
+        let public_addresses = PublicAddresses::new(local_peer_id);
         let handle = TransportManagerHandle::new(
             local_peer_id,
             peers.clone(),
             cmd_tx,
             supported_transports,
-            Arc::clone(&listen_addresses),
+            listen_addresses.clone(),
+            public_addresses.clone(),
         );
 
         (
@@ -286,6 +292,7 @@ impl TransportManager {
                 local_peer_id,
                 bandwidth_sink,
                 listen_addresses,
+                public_addresses,
                 max_parallel_dials,
                 protocols: HashMap::new(),
                 transports: TransportContext::new(),
@@ -379,6 +386,11 @@ impl TransportManager {
 
         self.transports.register_transport(name, transport);
         self.transport_manager_handle.register_transport(name);
+    }
+
+    /// Get the list of public addresses of the node.
+    pub(crate) fn public_addresses(&self) -> PublicAddresses {
+        self.public_addresses.clone()
     }
 
     /// Register local listen address.
@@ -479,8 +491,9 @@ impl TransportManager {
             return Err(Error::NoAddressAvailable(peer));
         }
 
+        let locked_addresses = self.listen_addresses.read();
         for record in records.values() {
-            if self.listen_addresses.read().contains(record.as_ref()) {
+            if locked_addresses.contains(record.as_ref()) {
                 tracing::warn!(
                     target: LOG_TARGET,
                     ?peer,
@@ -492,6 +505,7 @@ impl TransportManager {
                 return Err(Error::TriedToDialSelf);
             }
         }
+        drop(locked_addresses);
 
         // set connection id for the address record and put peer into `Opening` state
         let connection_id =
@@ -1769,6 +1783,8 @@ impl TransportManager {
 #[cfg(test)]
 mod tests {
     use limits::ConnectionLimitsConfig;
+
+    use multihash::Multihash;
 
     use super::*;
     use crate::{
