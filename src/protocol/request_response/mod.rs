@@ -53,7 +53,9 @@ use std::{
 };
 
 pub use config::{Config, ConfigBuilder};
-pub use handle::{DialOptions, RequestResponseError, RequestResponseEvent, RequestResponseHandle};
+pub use handle::{
+    DialOptions, RejectReason, RequestResponseError, RequestResponseEvent, RequestResponseHandle,
+};
 
 mod config;
 mod handle;
@@ -270,7 +272,7 @@ impl RequestResponseProtocol {
                         .report_request_failure(
                             peer,
                             context.request_id,
-                            RequestResponseError::Rejected,
+                            RequestResponseError::Rejected(error.into()),
                         )
                         .await;
                 }
@@ -301,7 +303,7 @@ impl RequestResponseProtocol {
                 .send(InnerRequestResponseEvent::RequestFailed {
                     peer,
                     request_id,
-                    error: RequestResponseError::Rejected,
+                    error: RequestResponseError::Rejected(RejectReason::ConnectionClosed),
                 })
                 .await;
         }
@@ -369,7 +371,7 @@ impl RequestResponseProtocol {
                     fallback_protocol,
                     Err(RequestResponseError::Timeout),
                 ),
-                Ok(Err(Error::IoError(ErrorKind::PermissionDenied))) => {
+                Ok(Err(SubstreamError::IoError(ErrorKind::PermissionDenied))) => {
                     tracing::warn!(
                         target: LOG_TARGET,
                         ?peer,
@@ -384,11 +386,11 @@ impl RequestResponseProtocol {
                         Err(RequestResponseError::TooLargePayload),
                     )
                 }
-                Ok(Err(_error)) => (
+                Ok(Err(error)) => (
                     peer,
                     request_id,
                     fallback_protocol,
-                    Err(RequestResponseError::NotConnected),
+                    Err(RequestResponseError::Rejected(error.into())),
                 ),
                 Ok(Ok(_)) => {
                     tokio::select! {
@@ -423,8 +425,20 @@ impl RequestResponseProtocol {
                         event = substream.next() => match event {
                             Some(Ok(response)) => {
                                 (peer, request_id, fallback_protocol, Ok(response.freeze().into()))
+                            },
+                            Some(Err(error)) => {
+                                (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(error.into())))
+                            },
+                            None => {
+                                tracing::info!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    %protocol,
+                                    ?request_id,
+                                    "substream closed",
+                                );
+                                (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(RejectReason::SubstreamClosed)))
                             }
-                            _ => (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected)),
                         }
                     }
                 }
@@ -439,7 +453,7 @@ impl RequestResponseProtocol {
         &mut self,
         peer: PeerId,
         request_id: RequestId,
-        request: crate::Result<BytesMut>,
+        request: Result<BytesMut, SubstreamError>,
     ) -> crate::Result<()> {
         let fallback = self
             .peers
@@ -614,7 +628,11 @@ impl RequestResponseProtocol {
                 .get_mut(&peer)
                 .map(|peer_context| peer_context.active.remove(&context.request_id));
             let _ = self
-                .report_request_failure(peer, context.request_id, RequestResponseError::Rejected)
+                .report_request_failure(
+                    peer,
+                    context.request_id,
+                    RequestResponseError::Rejected(RejectReason::DialFailed(None)),
+                )
                 .await;
         }
     }
@@ -663,7 +681,7 @@ impl RequestResponseProtocol {
                     SubstreamError::NegotiationError(NegotiationError::MultistreamSelectError(
                         MultistreamFailed,
                     )) => RequestResponseError::UnsupportedProtocol,
-                    _ => RequestResponseError::Rejected,
+                    _ => RequestResponseError::Rejected(error.into()),
                 },
             })
             .await
@@ -754,7 +772,9 @@ impl RequestResponseProtocol {
                             .report_request_failure(
                                 peer,
                                 request_id,
-                                RequestResponseError::Rejected,
+                                RequestResponseError::Rejected(RejectReason::DialFailed(Some(
+                                    error,
+                                ))),
                             )
                             .await;
                     }
@@ -786,8 +806,12 @@ impl RequestResponseProtocol {
                     "failed to open substream",
                 );
 
-                self.report_request_failure(peer, request_id, RequestResponseError::Rejected)
-                    .await
+                self.report_request_failure(
+                    peer,
+                    request_id,
+                    RequestResponseError::Rejected(error.into()),
+                )
+                .await
             }
         }
     }
@@ -914,7 +938,7 @@ impl RequestResponseProtocol {
                             );
                         }
                     }
-                    Some(TransportEvent::DialFailure { peer, .. }) => self.on_dial_failure(peer).await,
+                    Some(TransportEvent::DialFailure { peer, ..  }) => self.on_dial_failure(peer).await,
                     None => return,
                 },
                 event = self.pending_inbound.select_next_some(), if !self.pending_inbound.is_empty() => {

@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::Error,
     mock::substream::{DummySubstream, MockSubstream},
     protocol::{
         self,
@@ -1029,7 +1028,7 @@ async fn second_inbound_substream_opened_while_outbound_substream_was_opening() 
     substream1
         .expect_poll_ready()
         .times(1)
-        .return_once(|_| Poll::Ready(Err(Error::Unknown)));
+        .return_once(|_| Poll::Ready(Err(SubstreamError::ConnectionClosed)));
 
     notif.peers.insert(
         peer,

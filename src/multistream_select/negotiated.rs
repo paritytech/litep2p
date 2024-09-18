@@ -350,7 +350,7 @@ where
 }
 
 /// Error that can happen when negotiating a protocol with the remote.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum NegotiationError {
     /// A protocol error occurred during the negotiation.
     #[error("A protocol error occurred during the negotiation: `{0:?}`")]
