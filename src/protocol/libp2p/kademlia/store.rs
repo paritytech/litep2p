@@ -295,7 +295,6 @@ impl MemoryStore {
             Entry::Vacant(_) => {
                 tracing::error!(?key, "local provider key not found during removal",);
                 debug_assert!(false);
-                return;
             }
             Entry::Occupied(mut entry) => {
                 let providers = entry.get_mut();

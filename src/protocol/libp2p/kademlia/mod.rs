@@ -519,7 +519,7 @@ impl Kademlia {
                     ),
                 }
             }
-            KademliaMessage::AddProvider { key, providers } => {
+            KademliaMessage::AddProvider { key, mut providers } => {
                 tracing::trace!(
                     target: LOG_TARGET,
                     ?peer,
@@ -528,16 +528,27 @@ impl Kademlia {
                     "handle `ADD_PROVIDER` message",
                 );
 
-                match (providers.len(), providers.first()) {
+                match (providers.len(), providers.pop()) {
                     (1, Some(provider)) =>
                         if provider.peer == peer {
                             self.store.put_provider(
-                                key,
+                                key.clone(),
                                 ContentProvider {
                                     peer,
                                     addresses: provider.addresses.clone(),
                                 },
                             );
+
+                            let _ = self
+                                .event_tx
+                                .send(KademliaEvent::IncomingProvider {
+                                    provided_key: key,
+                                    provider: ContentProvider {
+                                        peer: provider.peer,
+                                        addresses: provider.addresses,
+                                    },
+                                })
+                                .await;
                         } else {
                             tracing::trace!(
                                 target: LOG_TARGET,

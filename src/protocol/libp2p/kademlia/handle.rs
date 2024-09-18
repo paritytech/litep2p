@@ -240,6 +240,15 @@ pub enum KademliaEvent {
         /// Record.
         record: Record,
     },
+
+    /// Incoming `ADD_PROVIDER` request received.
+    IncomingProvider {
+        /// Provided key.
+        provided_key: RecordKey,
+
+        /// Provider.
+        provider: ContentProvider,
+    },
 }
 
 /// The type of the DHT records.
