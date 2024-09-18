@@ -215,6 +215,13 @@ impl AddressStore {
         }
     }
 
+    /// Update the score of an existing address.
+    pub fn update(&mut self, address: &Multiaddr, score: i32) {
+        if let Some(record) = self.addresses.get_mut(address) {
+            record.update_score(score);
+        }
+    }
+
     /// Return the available addresses sorted by score.
     pub fn addresses(&self) -> Vec<AddressRecord> {
         let mut records = self.addresses.values().cloned().collect::<Vec<_>>();

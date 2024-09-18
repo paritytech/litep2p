@@ -769,9 +769,7 @@ impl TransportManager {
                     return Ok(());
                 }
 
-                record.update_score(SCORE_CONNECT_FAILURE);
-                context.addresses.insert(record.clone());
-
+                context.addresses.update(record.address(), SCORE_CONNECT_FAILURE);
                 context.state = PeerState::Disconnected { dial_record: None };
                 Ok(())
             }
@@ -780,7 +778,7 @@ impl TransportManager {
             }
             PeerState::Connected {
                 record,
-                dial_record: Some(mut dial_record),
+                dial_record: Some(dial_record),
             } => {
                 if dial_record.connection_id() != &Some(connection_id) {
                     tracing::warn!(
@@ -799,9 +797,7 @@ impl TransportManager {
                     return Ok(());
                 }
 
-                dial_record.update_score(SCORE_CONNECT_FAILURE);
-                context.addresses.insert(dial_record);
-
+                context.addresses.update(record.address(), SCORE_CONNECT_FAILURE);
                 context.state = PeerState::Connected {
                     record,
                     dial_record: None,
@@ -834,8 +830,7 @@ impl TransportManager {
                     return Ok(());
                 }
 
-                dial_record.update_score(SCORE_CONNECT_FAILURE);
-                context.addresses.insert(dial_record);
+                context.addresses.update(dial_record.address(), SCORE_CONNECT_FAILURE);
 
                 Ok(())
             }
