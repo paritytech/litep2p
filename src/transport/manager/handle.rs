@@ -19,8 +19,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    addresses::PublicAddresses,
     crypto::ed25519::Keypair,
-    error::{AddressError, Error},
+    error::ImmediateDialError,
     executor::Executor,
     protocol::ProtocolSet,
     transport::manager::{
@@ -77,6 +78,9 @@ pub struct TransportManagerHandle {
 
     /// Local listen addresess.
     listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
+
+    /// Public addresses.
+    public_addresses: PublicAddresses,
 }
 
 impl TransportManagerHandle {
@@ -87,19 +91,31 @@ impl TransportManagerHandle {
         cmd_tx: Sender<InnerTransportManagerCommand>,
         supported_transport: HashSet<SupportedTransport>,
         listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
+        public_addresses: PublicAddresses,
     ) -> Self {
         Self {
             peers,
             cmd_tx,
             local_peer_id,
-            listen_addresses,
             supported_transport,
+            listen_addresses,
+            public_addresses,
         }
     }
 
     /// Register new transport to [`TransportManagerHandle`].
     pub(crate) fn register_transport(&mut self, transport: SupportedTransport) {
         self.supported_transport.insert(transport);
+    }
+
+    /// Get the list of public addresses of the node.
+    pub(crate) fn public_addresses(&self) -> PublicAddresses {
+        self.public_addresses.clone()
+    }
+
+    /// Get the list of listen addresses of the node.
+    pub(crate) fn listen_addresses(&self) -> HashSet<Multiaddr> {
+        self.listen_addresses.read().clone()
     }
 
     /// Check if `address` is supported by one of the enabled transports.
@@ -216,9 +232,9 @@ impl TransportManagerHandle {
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
-    pub fn dial(&self, peer: &PeerId) -> crate::Result<()> {
+    pub fn dial(&self, peer: &PeerId) -> Result<(), ImmediateDialError> {
         if peer == &self.local_peer_id {
-            return Err(Error::TriedToDialSelf);
+            return Err(ImmediateDialError::TriedToDialSelf);
         }
 
         {
@@ -226,14 +242,14 @@ impl TransportManagerHandle {
                 Some(PeerContext {
                     state: PeerState::Connected { .. },
                     ..
-                }) => return Err(Error::AlreadyConnected),
+                }) => return Err(ImmediateDialError::AlreadyConnected),
                 Some(PeerContext {
                     state: PeerState::Disconnected { dial_record },
                     addresses,
                     ..
                 }) => {
                     if addresses.is_empty() {
-                        return Err(Error::NoAddressAvailable(*peer));
+                        return Err(ImmediateDialError::NoAddressAvailable);
                     }
 
                     // peer is already being dialed, don't dial again until the first dial concluded
@@ -251,31 +267,31 @@ impl TransportManagerHandle {
                     state: PeerState::Dialing { .. } | PeerState::Opening { .. },
                     ..
                 }) => return Ok(()),
-                None => return Err(Error::PeerDoesntExist(*peer)),
+                None => return Err(ImmediateDialError::NoAddressAvailable),
             }
         }
 
         self.cmd_tx
             .try_send(InnerTransportManagerCommand::DialPeer { peer: *peer })
             .map_err(|error| match error {
-                TrySendError::Full(_) => Error::ChannelClogged,
-                TrySendError::Closed(_) => Error::EssentialTaskClosed,
+                TrySendError::Full(_) => ImmediateDialError::ChannelClogged,
+                TrySendError::Closed(_) => ImmediateDialError::TaskClosed,
             })
     }
 
     /// Dial peer using `Multiaddr`.
     ///
     /// Returns an error if address it not valid.
-    pub fn dial_address(&self, address: Multiaddr) -> crate::Result<()> {
+    pub fn dial_address(&self, address: Multiaddr) -> Result<(), ImmediateDialError> {
         if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
-            return Err(Error::AddressError(AddressError::PeerIdMissing));
+            return Err(ImmediateDialError::PeerIdMissing);
         }
 
         self.cmd_tx
             .try_send(InnerTransportManagerCommand::DialAddress { address })
             .map_err(|error| match error {
-                TrySendError::Full(_) => Error::ChannelClogged,
-                TrySendError::Closed(_) => Error::EssentialTaskClosed,
+                TrySendError::Full(_) => ImmediateDialError::ChannelClogged,
+                TrySendError::Closed(_) => ImmediateDialError::TaskClosed,
             })
     }
 }
@@ -313,6 +329,7 @@ impl TransportHandle {
 mod tests {
     use super::*;
     use multihash::Multihash;
+    use parking_lot::lock_api::RwLock;
     use tokio::sync::mpsc::{channel, Receiver};
 
     fn make_transport_manager_handle() -> (
@@ -321,13 +338,15 @@ mod tests {
     ) {
         let (cmd_tx, cmd_rx) = channel(64);
 
+        let local_peer_id = PeerId::random();
         (
             TransportManagerHandle {
-                local_peer_id: PeerId::random(),
+                local_peer_id,
                 cmd_tx,
                 peers: Default::default(),
                 supported_transport: HashSet::new(),
                 listen_addresses: Default::default(),
+                public_addresses: PublicAddresses::new(local_peer_id),
             },
             cmd_rx,
         )
@@ -449,7 +468,7 @@ mod tests {
         };
 
         match handle.dial(&peer) {
-            Err(Error::AlreadyConnected) => {}
+            Err(ImmediateDialError::AlreadyConnected) => {}
             _ => panic!("invalid return value"),
         }
     }
@@ -518,12 +537,8 @@ mod tests {
             peer
         };
 
-        match handle.dial(&peer) {
-            Err(Error::NoAddressAvailable(failed_peer)) => {
-                assert_eq!(failed_peer, peer);
-            }
-            _ => panic!("invalid return value"),
-        }
+        let err = handle.dial(&peer).unwrap_err();
+        assert!(matches!(err, ImmediateDialError::NoAddressAvailable));
     }
 
     #[tokio::test]
@@ -576,10 +591,9 @@ mod tests {
         let (mut handle, mut rx) = make_transport_manager_handle();
         handle.supported_transport.insert(SupportedTransport::Tcp);
 
-        match handle.dial(&handle.local_peer_id) {
-            Err(Error::TriedToDialSelf) => {}
-            _ => panic!("invalid return value"),
-        }
+        let err = handle.dial(&handle.local_peer_id).unwrap_err();
+        assert_eq!(err, ImmediateDialError::TriedToDialSelf);
+
         assert!(rx.try_recv().is_err());
     }
 
@@ -587,21 +601,22 @@ mod tests {
     fn is_local_address() {
         let (cmd_tx, _cmd_rx) = channel(64);
 
+        let local_peer_id = PeerId::random();
+        let first_addr: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
+        let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
+
+        let listen_addresses = Arc::new(RwLock::new(
+            [first_addr.clone(), second_addr.clone()].iter().cloned().collect(),
+        ));
+        println!("{:?}", listen_addresses);
+
         let handle = TransportManagerHandle {
-            local_peer_id: PeerId::random(),
+            local_peer_id,
             cmd_tx,
             peers: Default::default(),
             supported_transport: HashSet::new(),
-            listen_addresses: Arc::new(RwLock::new(HashSet::from_iter([
-                "/ip6/::1/tcp/8888".parse().expect("valid multiaddress"),
-                "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress"),
-                "/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                    .parse()
-                    .expect("valid multiaddress"),
-                "/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                    .parse()
-                    .expect("valid multiaddress"),
-            ]))),
+            listen_addresses,
+            public_addresses: PublicAddresses::new(local_peer_id),
         };
 
         // local addresses

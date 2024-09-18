@@ -21,7 +21,7 @@
 //! [`/ipfs/kad/1.0.0`](https://github.com/libp2p/specs/blob/master/kad-dht/README.md) implementation.
 
 use crate::{
-    error::{Error, SubstreamError},
+    error::{Error, ImmediateDialError, SubstreamError},
     protocol::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
@@ -29,7 +29,6 @@ use crate::{
             handle::KademliaCommand,
             message::KademliaMessage,
             query::{QueryAction, QueryEngine},
-            record::ProviderRecord,
             routing_table::RoutingTable,
             store::{MemoryStore, MemoryStoreAction, MemoryStoreConfig},
             types::{ConnectionType, KademliaPeer, Key},
@@ -61,7 +60,7 @@ pub use handle::{
     IncomingRecordValidationMode, KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode,
 };
 pub use query::QueryId;
-pub use record::{Key as RecordKey, PeerRecord, Record};
+pub use record::{ContentProvider, Key as RecordKey, PeerRecord, Record};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
@@ -165,9 +164,6 @@ pub(crate) struct Kademlia {
     /// Default record TTL.
     record_ttl: Duration,
 
-    /// Provider record TTL.
-    provider_ttl: Duration,
-
     /// Query engine.
     engine: QueryEngine,
 
@@ -193,6 +189,7 @@ impl Kademlia {
             local_peer_id,
             MemoryStoreConfig {
                 provider_refresh_interval: config.provider_refresh_interval,
+                provider_ttl: config.provider_ttl,
                 ..Default::default()
             },
         );
@@ -212,7 +209,6 @@ impl Kademlia {
             update_mode: config.update_mode,
             validation_mode: config.validation_mode,
             record_ttl: config.record_ttl,
-            provider_ttl: config.provider_ttl,
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
         }
@@ -523,7 +519,7 @@ impl Kademlia {
                     ),
                 }
             }
-            KademliaMessage::AddProvider { key, providers } => {
+            KademliaMessage::AddProvider { key, mut providers } => {
                 tracing::trace!(
                     target: LOG_TARGET,
                     ?peer,
@@ -532,15 +528,27 @@ impl Kademlia {
                     "handle `ADD_PROVIDER` message",
                 );
 
-                match (providers.len(), providers.first()) {
+                match (providers.len(), providers.pop()) {
                     (1, Some(provider)) =>
                         if provider.peer == peer {
-                            self.store.put_provider(ProviderRecord {
-                                key,
-                                provider: peer,
-                                addresses: provider.addresses.clone(),
-                                expires: Instant::now() + self.provider_ttl,
-                            });
+                            self.store.put_provider(
+                                key.clone(),
+                                ContentProvider {
+                                    peer,
+                                    addresses: provider.addresses.clone(),
+                                },
+                            );
+
+                            let _ = self
+                                .event_tx
+                                .send(KademliaEvent::IncomingProvider {
+                                    provided_key: key,
+                                    provider: ContentProvider {
+                                        peer: provider.peer,
+                                        addresses: provider.addresses,
+                                    },
+                                })
+                                .await;
                         } else {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -590,10 +598,13 @@ impl Kademlia {
                             "handle `GET_PROVIDERS` request",
                         );
 
-                        let providers = self.store.get_providers(key);
-                        // TODO: if local peer is among the providers, update its `ProviderRecord`
-                        //       to have up-to-date addresses.
-                        //       Requires https://github.com/paritytech/litep2p/issues/211.
+                        let mut providers = self.store.get_providers(key);
+
+                        // Make sure local provider addresses are up to date.
+                        let local_peer_id = self.local_key.clone().into_preimage();
+                        providers.iter_mut().find(|p| p.peer == local_peer_id).as_mut().map(|p| {
+                            p.addresses = self.service.public_addresses().get_addresses();
+                        });
 
                         let closer_peers = self
                             .routing_table
@@ -695,7 +706,7 @@ impl Kademlia {
                     }
 
                     // Already connected is a recoverable error.
-                    Err(Error::AlreadyConnected) => {
+                    Err(ImmediateDialError::AlreadyConnected) => {
                         // Dial returned `Error::AlreadyConnected`, retry opening the substream.
                         match self.service.open_substream(peer) {
                             Ok(substream_id) => {
@@ -709,14 +720,14 @@ impl Kademlia {
                             }
                             Err(err) => {
                                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?err, "Failed to open substream a second time");
-                                Err(err)
+                                Err(err.into())
                             }
                         }
                     }
 
                     Err(error) => {
                         tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?error, "Failed to dial peer");
-                        Err(error)
+                        Err(error.into())
                     }
                 }
             }
@@ -787,47 +798,33 @@ impl Kademlia {
 
                 Ok(())
             }
-            QueryAction::AddProviderToFoundNodes { provider, peers } => {
+            QueryAction::AddProviderToFoundNodes {
+                provided_key,
+                provider,
+                peers,
+            } => {
                 tracing::trace!(
                     target: LOG_TARGET,
-                    provided_key = ?provider.key,
+                    ?provided_key,
                     num_peers = ?peers.len(),
                     "add provider record to found peers",
                 );
 
-                let provided_key = provider.key.clone();
-                let message = KademliaMessage::add_provider(provider);
-                let peer_action = PeerAction::SendAddProvider(message);
+                let message = KademliaMessage::add_provider(provided_key.clone(), provider);
 
                 for peer in peers {
-                    match self.service.open_substream(peer.peer) {
-                        Ok(substream_id) => {
-                            self.pending_substreams.insert(substream_id, peer.peer);
-                            self.peers
-                                .entry(peer.peer)
-                                .or_default()
-                                .pending_actions
-                                .insert(substream_id, peer_action.clone());
-                        }
-                        Err(_) => match self.service.dial(&peer.peer) {
-                            Ok(_) => match self.pending_dials.entry(peer.peer) {
-                                Entry::Occupied(entry) => {
-                                    entry.into_mut().push(peer_action.clone());
-                                }
-                                Entry::Vacant(entry) => {
-                                    entry.insert(vec![peer_action.clone()]);
-                                }
-                            },
-                            Err(error) => {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?provided_key,
-                                    ?error,
-                                    "failed to dial peer",
-                                )
-                            }
-                        },
+                    if let Err(error) = self.open_substream_or_dial(
+                        peer.peer,
+                        PeerAction::SendAddProvider(message.clone()),
+                        None,
+                    ) {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?provided_key,
+                            ?error,
+                            "failed to add provider record to peer",
+                        )
                     }
                 }
 
@@ -845,12 +842,14 @@ impl Kademlia {
             }
             QueryAction::GetProvidersQueryDone {
                 query_id,
+                provided_key,
                 providers,
             } => {
                 let _ = self
                     .event_tx
                     .send(KademliaEvent::GetProvidersSuccess {
                         query_id,
+                        provided_key,
                         providers,
                     })
                     .await;
@@ -914,7 +913,7 @@ impl Kademlia {
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error).await;
                     }
-                    Some(TransportEvent::DialFailure { peer, address }) =>
+                    Some(TransportEvent::DialFailure { peer, address, .. }) =>
                         self.on_dial_failure(peer, address),
                     None => return Err(Error::EssentialTaskClosed),
                 },
@@ -1053,28 +1052,26 @@ impl Kademlia {
                         }
                         Some(KademliaCommand::StartProviding {
                             key,
-                            public_addresses,
                             query_id
                         }) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 query = ?query_id,
                                 ?key,
-                                ?public_addresses,
                                 "register as a content provider",
                             );
 
-                            let provider = ProviderRecord {
-                                key: key.clone(),
-                                provider: self.service.local_peer_id(),
-                                addresses: public_addresses,
-                                expires: Instant::now() + self.provider_ttl,
+                            let addresses = self.service.public_addresses().get_addresses();
+                            let provider = ContentProvider {
+                                peer: self.service.local_peer_id(),
+                                addresses,
                             };
 
-                            self.store.put_provider(provider.clone());
+                            self.store.put_provider(key.clone(), provider.clone());
 
                             self.engine.start_add_provider(
                                 query_id,
+                                key.clone(),
                                 provider,
                                 self.routing_table
                                     .closest(Key::new(key), self.replication_factor)
@@ -1122,12 +1119,15 @@ impl Kademlia {
                         Some(KademliaCommand::GetProviders { key, query_id }) => {
                             tracing::debug!(target: LOG_TARGET, ?key, "get providers from DHT");
 
+                            let known_providers = self.store.get_providers(&key);
+
                             self.engine.start_get_providers(
                                 query_id,
                                 key.clone(),
                                 self.routing_table
                                     .closest(Key::new(key), self.replication_factor)
                                     .into(),
+                                known_providers,
                             );
                         }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
@@ -1168,25 +1168,24 @@ impl Kademlia {
                     }
                 },
                 action = self.store.next_action() => match action {
-                    Some(MemoryStoreAction::RefreshProvider { mut provider }) => {
+                    Some(MemoryStoreAction::RefreshProvider { provided_key, provider }) => {
                         tracing::trace!(
                             target: LOG_TARGET,
-                            key = ?provider.key,
+                            ?provided_key,
                             "republishing local provider",
                         );
 
-                        // Make sure to roll expiration time.
-                        provider.expires = Instant::now() + self.provider_ttl;
+                        self.store.put_provider(provided_key.clone(), provider.clone());
+                        // We never update local provider addresses in the store when refresh
+                        // it, as this is done anyway when replying to `GET_PROVIDERS` request.
 
-                        self.store.put_provider(provider.clone());
-
-                        let key = provider.key.clone();
                         let query_id = self.next_query_id();
                         self.engine.start_add_provider(
                             query_id,
+                            provided_key.clone(),
                             provider,
                             self.routing_table
-                                .closest(Key::new(key), self.replication_factor)
+                                .closest(Key::new(provided_key), self.replication_factor)
                                 .into(),
                         );
                     }
