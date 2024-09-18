@@ -391,6 +391,7 @@ impl QueryEngine {
         query_id: QueryId,
         key: RecordKey,
         candidates: VecDeque<KademliaPeer>,
+        known_providers: Vec<ContentProvider>,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -406,6 +407,7 @@ impl QueryEngine {
             parallelism_factor: self.parallelism_factor,
             query: query_id,
             target,
+            known_providers: known_providers.into_iter().map(Into::into).collect(),
         };
 
         self.queries.insert(

@@ -50,6 +50,9 @@ pub struct GetProvidersConfig {
 
     /// Target key.
     pub target: Key<RecordKey>,
+
+    /// Known providers from the local store.
+    pub known_providers: Vec<KademliaPeer>,
 }
 
 #[derive(Debug)]
@@ -101,11 +104,14 @@ impl GetProvidersContext {
 
     /// Get the found providers.
     pub fn found_providers(self) -> Vec<ContentProvider> {
-        Self::merge_and_sort_providers(self.found_providers, self.config.target)
+        Self::merge_and_sort_providers(
+            self.config.known_providers.into_iter().chain(self.found_providers),
+            self.config.target,
+        )
     }
 
     fn merge_and_sort_providers(
-        found_providers: Vec<KademliaPeer>,
+        found_providers: impl IntoIterator<Item = KademliaPeer>,
         target: Key<RecordKey>,
     ) -> Vec<ContentProvider> {
         // Merge addresses of different provider records of the same peer.

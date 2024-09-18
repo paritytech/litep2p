@@ -20,7 +20,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::types::{Distance, Key as KademliaKey},
+    protocol::libp2p::kademlia::types::{
+        ConnectionType, Distance, KademliaPeer, Key as KademliaKey,
+    },
     Multiaddr, PeerId,
 };
 
@@ -161,4 +163,15 @@ pub struct ContentProvider {
 
     // Cached addresses of the provider.
     pub addresses: Vec<Multiaddr>,
+}
+
+impl From<ContentProvider> for KademliaPeer {
+    fn from(provider: ContentProvider) -> Self {
+        Self {
+            key: KademliaKey::from(provider.peer),
+            peer: provider.peer,
+            addresses: provider.addresses,
+            connection: ConnectionType::NotConnected,
+        }
+    }
 }

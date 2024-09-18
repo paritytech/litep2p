@@ -1108,12 +1108,15 @@ impl Kademlia {
                         Some(KademliaCommand::GetProviders { key, query_id }) => {
                             tracing::debug!(target: LOG_TARGET, ?key, "get providers from DHT");
 
+                            let known_providers = self.store.get_providers(&key);
+
                             self.engine.start_get_providers(
                                 query_id,
                                 key.clone(),
                                 self.routing_table
                                     .closest(Key::new(key), self.replication_factor)
                                     .into(),
+                                known_providers,
                             );
                         }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
