@@ -286,6 +286,7 @@ mod tests {
             parallelism_factor: 3,
             query: QueryId(0),
             target: Key::new(vec![1, 2, 3].into()),
+            known_providers: vec![],
         }
     }
 
@@ -370,10 +371,14 @@ mod tests {
             [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
         let mut context = GetProvidersContext::new(config, candidate_peers);
 
-        let provider1 = peer_to_kad(PeerId::random());
-        let provider2 = peer_to_kad(PeerId::random());
-        let provider3 = peer_to_kad(PeerId::random());
-        let provider4 = peer_to_kad(PeerId::random());
+        let [provider1, provider2, provider3, provider4] = (0..4)
+            .map(|_| ContentProvider {
+                peer: PeerId::random(),
+                addresses: vec![],
+            })
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
 
         // Schedule peer queries.
         for num in 0..3 {
@@ -399,14 +404,14 @@ mod tests {
         assert!(context.queried.is_empty());
 
         // Provide responses back.
-        let providers = vec![provider1.clone(), provider2.clone()];
+        let providers = vec![provider1.clone().into(), provider2.clone().into()];
         context.register_response(peer_a, providers, vec![]);
         assert_eq!(context.pending.len(), 2);
         assert_eq!(context.queried.len(), 1);
         assert_eq!(context.found_providers.len(), 2);
 
         // Provide different response from peer b with peer d as candidate.
-        let providers = vec![provider2.clone(), provider3.clone()];
+        let providers = vec![provider2.clone().into(), provider3.clone().into()];
         let candidates = vec![peer_to_kad(peer_d.clone())];
         context.register_response(peer_b, providers, candidates);
         assert_eq!(context.pending.len(), 1);
@@ -433,7 +438,7 @@ mod tests {
         }
 
         // Peer D responds.
-        let providers = vec![provider4.clone()];
+        let providers = vec![provider4.clone().into()];
         context.register_response(peer_d, providers, vec![]);
 
         // Produces the result.
