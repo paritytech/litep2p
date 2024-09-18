@@ -227,6 +227,12 @@ impl RequestResponseProtocol {
 
         match self.pending_dials.remove(&peer) {
             None => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    "peer connected without pending dial",
+                );
                 entry.insert(PeerContext::new());
             }
             Some(context) => match self.service.open_substream(peer) {
@@ -876,7 +882,15 @@ impl RequestResponseProtocol {
     async fn handle_service_event(&mut self, event: TransportEvent) {
         match event {
             TransportEvent::ConnectionEstablished { peer, .. } => {
-                let _ = self.on_connection_established(peer).await;
+                if let Err(error) = self.on_connection_established(peer).await {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        ?error,
+                        "failed to handle connection established",
+                    );
+                }
             }
 
             TransportEvent::ConnectionClosed { peer } => {
