@@ -21,7 +21,7 @@
 //! [`/ipfs/kad/1.0.0`](https://github.com/libp2p/specs/blob/master/kad-dht/README.md) implementation.
 
 use crate::{
-    error::{Error, SubstreamError},
+    error::{Error, ImmediateDialError, SubstreamError},
     protocol::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
@@ -698,7 +698,7 @@ impl Kademlia {
                     }
 
                     // Already connected is a recoverable error.
-                    Err(Error::AlreadyConnected) => {
+                    Err(ImmediateDialError::AlreadyConnected) => {
                         // Dial returned `Error::AlreadyConnected`, retry opening the substream.
                         match self.service.open_substream(peer) {
                             Ok(substream_id) => {
@@ -712,14 +712,14 @@ impl Kademlia {
                             }
                             Err(err) => {
                                 tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?err, "Failed to open substream a second time");
-                                Err(err)
+                                Err(err.into())
                             }
                         }
                     }
 
                     Err(error) => {
                         tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?error, "Failed to dial peer");
-                        Err(error)
+                        Err(error.into())
                     }
                 }
             }
@@ -800,37 +800,20 @@ impl Kademlia {
 
                 let provided_key = provider.key.clone();
                 let message = KademliaMessage::add_provider(provider);
-                let peer_action = PeerAction::SendAddProvider(message);
 
                 for peer in peers {
-                    match self.service.open_substream(peer.peer) {
-                        Ok(substream_id) => {
-                            self.pending_substreams.insert(substream_id, peer.peer);
-                            self.peers
-                                .entry(peer.peer)
-                                .or_default()
-                                .pending_actions
-                                .insert(substream_id, peer_action.clone());
-                        }
-                        Err(_) => match self.service.dial(&peer.peer) {
-                            Ok(_) => match self.pending_dials.entry(peer.peer) {
-                                Entry::Occupied(entry) => {
-                                    entry.into_mut().push(peer_action.clone());
-                                }
-                                Entry::Vacant(entry) => {
-                                    entry.insert(vec![peer_action.clone()]);
-                                }
-                            },
-                            Err(error) => {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?provided_key,
-                                    ?error,
-                                    "failed to dial peer",
-                                )
-                            }
-                        },
+                    if let Err(error) = self.open_substream_or_dial(
+                        peer.peer,
+                        PeerAction::SendAddProvider(message.clone()),
+                        None,
+                    ) {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?provided_key,
+                            ?error,
+                            "failed to add provider record to peer",
+                        )
                     }
                 }
 
@@ -904,7 +887,7 @@ impl Kademlia {
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error).await;
                     }
-                    Some(TransportEvent::DialFailure { peer, address }) =>
+                    Some(TransportEvent::DialFailure { peer, address, .. }) =>
                         self.on_dial_failure(peer, address),
                     None => return Err(Error::EssentialTaskClosed),
                 },
