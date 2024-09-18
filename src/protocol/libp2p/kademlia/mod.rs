@@ -37,6 +37,7 @@ use crate::{
         Direction, TransportEvent, TransportService,
     },
     substream::Substream,
+    transport::Endpoint,
     types::SubstreamId,
     PeerId,
 };
@@ -199,13 +200,37 @@ impl Kademlia {
     }
 
     /// Connection established to remote peer.
-    fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
-                    entry.connection = ConnectionType::Connected;
+                match self.routing_table.entry(Key::from(peer)) {
+                    KBucketEntry::Occupied(entry) => {
+                        entry.connection = ConnectionType::Connected;
+
+                        // Update the address if not already present.
+                        if !entry.addresses.iter().any(|address| address == endpoint.address()) {
+                            entry.addresses.push(endpoint.address().clone());
+                        }
+                    }
+                    mut vacant @ KBucketEntry::Vacant(_) => {
+                        // Can only insert a new peer if the routing table update mode is set to
+                        // automatic.
+                        //
+                        // Otherwise, the user is responsible of adding the peer manually if it
+                        // deems necessary.
+                        if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
+                            vacant.insert(KademliaPeer::new(
+                                peer,
+                                vec![endpoint.address().clone()],
+                                ConnectionType::Connected,
+                            ));
+                        }
+                    }
+                    entry => {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?entry, "failed to update routing table on connection");
+                    }
                 }
 
                 let Some(actions) = self.pending_dials.remove(&peer) else {
@@ -268,6 +293,10 @@ impl Kademlia {
             });
         }
 
+        // Don't add the peer to the routing table into a vacant (or already disconnected) entry.
+        //
+        // Update the state if the peer could enter the kbucket during `add_known_peer` or
+        // `on_connection_established`.
         if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
             entry.connection = ConnectionType::NotConnected;
         }
@@ -792,8 +821,8 @@ impl Kademlia {
 
             tokio::select! {
                 event = self.service.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer) {
+                    Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
+                        if let Err(error) = self.on_connection_established(peer, endpoint) {
                             tracing::debug!(target: LOG_TARGET, ?error, "failed to handle established connection");
                         }
                     }
