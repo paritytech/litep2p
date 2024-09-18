@@ -29,8 +29,10 @@ use litep2p::{
         KademliaEvent, PeerRecord, Quorum, Record, RecordKey, RecordsType,
     },
     transport::tcp::config::Config as TcpConfig,
+    types::multiaddr::{Multiaddr, Protocol},
     Litep2p, PeerId,
 };
+use sc_network::config::MultiaddrWithPeerId;
 
 fn spawn_litep2p(port: u16) {
     let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
@@ -463,7 +465,7 @@ async fn get_record_retrieves_remote_records() {
 }
 
 #[tokio::test]
-async fn local_providers_retrieved_by_remote_node() {
+async fn provider_retrieved_by_remote_node() {
     let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
     let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
 
@@ -488,14 +490,24 @@ async fn local_providers_retrieved_by_remote_node() {
 
     let key = RecordKey::new(&vec![1, 2, 3]);
 
-    let peer1_addresses = litep2p1.listen_addresses().cloned().collect::<Vec<_>>();
-    assert_eq!(peer1_addresses.len(), 1);
+    // Register at least one public address.
+    let peer1_public_address = "/ip4/192.168.0.1/tcp/10000"
+        .parse::<Multiaddr>()
+        .unwrap()
+        .with(Protocol::P2p((*litep2p1.local_peer_id()).into()));
+    litep2p1.public_addresses().add_address(peer1_public_address.clone());
+    assert_eq!(
+        litep2p1.public_addresses().get_addresses(),
+        vec![peer1_public_address.clone()],
+    );
 
     // Store provider locally.
-    kad_handle1.start_providing(key.clone(), peer1_addresses.clone()).await;
+    kad_handle1.start_providing(key.clone()).await;
+
+    // This is the expected provider.
     let expected_provider = ContentProvider {
         peer: *litep2p1.local_peer_id(),
-        addresses: peer1_addresses,
+        addresses: vec![peer1_public_address],
     };
 
     // This request to get rpovider should fail because the nodes are not connected.
@@ -527,8 +539,13 @@ async fn local_providers_retrieved_by_remote_node() {
                         // And request providers again.
                         query2 = Some(kad_handle2.get_providers(key.clone()).await);
                     }
-                    Some(KademliaEvent::GetProvidersSuccess { query_id, providers }) => {
+                    Some(KademliaEvent::GetProvidersSuccess {
+                        query_id,
+                        provided_key,
+                        providers,
+                    }) => {
                         assert_eq!(query_id, query2.unwrap());
+                        assert_eq!(provided_key, key);
                         assert_eq!(providers.len(), 1);
                         assert_eq!(providers.first().unwrap(), &expected_provider);
 
