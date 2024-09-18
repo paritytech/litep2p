@@ -148,9 +148,6 @@ pub(crate) enum KademliaCommand {
         /// Provided key.
         key: RecordKey,
 
-        /// Our external addresses to publish.
-        public_addresses: Vec<Multiaddr>,
-
         /// Query ID for the query.
         query_id: QueryId,
     },
@@ -355,20 +352,9 @@ impl KademliaHandle {
     ///
     /// Register the local peer ID & its `public_addresses` as a provider for a given `key`.
     /// Returns [`Err`] only if [`super::Kademlia`] is terminating.
-    pub async fn start_providing(
-        &mut self,
-        key: RecordKey,
-        public_addresses: Vec<Multiaddr>,
-    ) -> QueryId {
+    pub async fn start_providing(&mut self, key: RecordKey) -> QueryId {
         let query_id = self.next_query_id();
-        let _ = self
-            .cmd_tx
-            .send(KademliaCommand::StartProviding {
-                key,
-                public_addresses,
-                query_id,
-            })
-            .await;
+        let _ = self.cmd_tx.send(KademliaCommand::StartProviding { key, query_id }).await;
 
         query_id
     }

@@ -587,10 +587,13 @@ impl Kademlia {
                             "handle `GET_PROVIDERS` request",
                         );
 
-                        let providers = self.store.get_providers(key);
-                        // TODO: if local peer is among the providers, update its `ProviderRecord`
-                        //       to have up-to-date addresses.
-                        //       Requires https://github.com/paritytech/litep2p/issues/211.
+                        let mut providers = self.store.get_providers(key);
+
+                        // Make sure local provider addresses are up to date.
+                        let local_peer_id = self.local_key.clone().into_preimage();
+                        providers.iter_mut().find(|p| p.peer == local_peer_id).as_mut().map(|p| {
+                            p.addresses = self.service.public_addresses().get_addresses();
+                        });
 
                         let closer_peers = self
                             .routing_table
@@ -1038,20 +1041,19 @@ impl Kademlia {
                         }
                         Some(KademliaCommand::StartProviding {
                             key,
-                            public_addresses,
                             query_id
                         }) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 query = ?query_id,
                                 ?key,
-                                ?public_addresses,
                                 "register as a content provider",
                             );
 
+                            let addresses = self.service.public_addresses().get_addresses();
                             let provider = ContentProvider {
                                 peer: self.service.local_peer_id(),
-                                addresses: public_addresses,
+                                addresses,
                             };
 
                             self.store.put_provider(key.clone(), provider.clone());
@@ -1160,6 +1162,8 @@ impl Kademlia {
                         );
 
                         self.store.put_provider(provided_key.clone(), provider.clone());
+                        // We never update local provider addresses in the store when refresh
+                        // it, as this is done anyway when replying to `GET_PROVIDERS` request.
 
                         let query_id = self.next_query_id();
                         self.engine.start_add_provider(
