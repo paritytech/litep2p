@@ -20,10 +20,13 @@
 
 use crate::{types::ConnectionId, PeerId};
 
+use std::collections::HashMap;
+
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
-use std::collections::{BinaryHeap, HashSet};
+/// Maximum number of addresses tracked for a peer.
+const MAX_ADDRESSES: usize = 32;
 
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
@@ -134,19 +137,16 @@ impl Ord for AddressRecord {
 /// Store for peer addresses.
 #[derive(Debug)]
 pub struct AddressStore {
-    //// Addresses sorted by score.
-    pub by_score: BinaryHeap<AddressRecord>,
-
-    /// Addresses queryable by hashing them for faster lookup.
-    pub by_address: HashSet<Multiaddr>,
+    /// Addresses available.
+    pub addresses: HashMap<Multiaddr, AddressRecord>,
 }
 
 impl FromIterator<Multiaddr> for AddressStore {
     fn from_iter<T: IntoIterator<Item = Multiaddr>>(iter: T) -> Self {
         let mut store = AddressStore::new();
         for address in iter {
-            if let Some(address) = AddressRecord::from_multiaddr(address) {
-                store.insert(address);
+            if let Some(record) = AddressRecord::from_multiaddr(address) {
+                store.insert(record);
             }
         }
 
@@ -158,8 +158,7 @@ impl FromIterator<AddressRecord> for AddressStore {
     fn from_iter<T: IntoIterator<Item = AddressRecord>>(iter: T) -> Self {
         let mut store = AddressStore::new();
         for record in iter {
-            store.by_address.insert(record.address.clone());
-            store.by_score.push(record);
+            store.insert(record);
         }
 
         store
@@ -186,51 +185,40 @@ impl AddressStore {
     /// Create new [`AddressStore`].
     pub fn new() -> Self {
         Self {
-            by_score: BinaryHeap::new(),
-            by_address: HashSet::new(),
+            addresses: HashMap::with_capacity(MAX_ADDRESSES),
         }
     }
 
     /// Check if [`AddressStore`] is empty.
     pub fn is_empty(&self) -> bool {
-        self.by_score.is_empty()
+        self.addresses.is_empty()
     }
 
     /// Check if address is already in the address store.
     pub fn contains(&self, address: &Multiaddr) -> bool {
-        self.by_address.contains(address)
+        self.addresses.contains_key(address)
     }
 
-    /// Insert new address record into [`AddressStore`] with default address score.
-    pub fn insert(&mut self, mut record: AddressRecord) {
-        if self.by_address.contains(record.address()) {
-            return;
-        }
-
-        record.connection_id = None;
-        self.by_address.insert(record.address.clone());
-        self.by_score.push(record);
-    }
-
-    /// Pop address with the highest score from [`AddressStore`].
-    pub fn pop(&mut self) -> Option<AddressRecord> {
-        self.by_score.pop().map(|record| {
-            self.by_address.remove(&record.address);
-            record
-        })
-    }
-
-    /// Take at most `limit` `AddressRecord`s from [`AddressStore`].
-    pub fn take(&mut self, limit: usize) -> Vec<AddressRecord> {
-        let mut records = Vec::new();
-
-        for _ in 0..limit {
-            match self.pop() {
-                Some(record) => records.push(record),
-                None => break,
+    /// Update the address record into [`AddressStore`] with the provided score.
+    ///
+    /// If the address is not in the store, it will be inserted.
+    pub fn insert(&mut self, record: AddressRecord) {
+        match self.addresses.entry(record.address.clone()) {
+            std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                let found_record = occupied_entry.into_mut();
+                found_record.update_score(record.score);
+                found_record.connection_id = record.connection_id;
+            }
+            std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(record.clone());
             }
         }
+    }
 
+    /// Return the available addresses sorted by score.
+    pub fn addresses(&self) -> Vec<AddressRecord> {
+        let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
+        records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
         records
     }
 }

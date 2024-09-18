@@ -435,7 +435,7 @@ impl TransportManager {
         let PeerContext {
             state,
             secondary_connection,
-            mut addresses,
+            addresses,
         } = match peers.remove(&peer) {
             None => return Err(Error::PeerDoesntExist(peer)),
             Some(
@@ -482,8 +482,9 @@ impl TransportManager {
         }
 
         let mut records: HashMap<_, _> = addresses
-            .take(limit)
+            .addresses()
             .into_iter()
+            .take(limit)
             .map(|record| (record.address().clone(), record))
             .collect();
 
