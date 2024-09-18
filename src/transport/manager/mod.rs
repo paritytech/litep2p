@@ -831,6 +831,7 @@ impl TransportManager {
                 }
 
                 context.addresses.update(dial_record.address(), SCORE_CONNECT_FAILURE);
+                context.state = PeerState::Disconnected { dial_record: None };
 
                 Ok(())
             }
