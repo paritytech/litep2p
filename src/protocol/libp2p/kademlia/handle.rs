@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{KademliaPeer, PeerRecord, QueryId, Record, RecordKey},
+    protocol::libp2p::kademlia::{ContentProvider, PeerRecord, QueryId, Record, RecordKey},
     PeerId,
 };
 
@@ -210,9 +210,12 @@ pub enum KademliaEvent {
         /// Query ID.
         query_id: QueryId,
 
+        /// Provided key.
+        provided_key: RecordKey,
+
         /// Found providers with cached addresses. Returned providers are sorted by distane to the
         /// provided key.
-        providers: Vec<KademliaPeer>,
+        providers: Vec<ContentProvider>,
     },
 
     /// `PUT_VALUE` query succeeded.
@@ -384,9 +387,7 @@ impl KademliaHandle {
     /// Returns [`Err`] only if [`super::Kademlia`] is terminating.
     pub async fn get_providers(&mut self, key: RecordKey) -> QueryId {
         let query_id = self.next_query_id();
-        let _ = self.cmd_tx
-            .send(KademliaCommand::GetProviders { key, query_id })
-            .await;
+        let _ = self.cmd_tx.send(KademliaCommand::GetProviders { key, query_id }).await;
 
         query_id
     }

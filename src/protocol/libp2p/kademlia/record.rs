@@ -152,3 +152,13 @@ impl ProviderRecord {
         now >= self.expires
     }
 }
+
+/// A user-facing provider type.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ContentProvider {
+    // Peer ID of the provider.
+    pub peer: PeerId,
+
+    // Cached addresses of the provider.
+    pub addresses: Vec<Multiaddr>,
+}

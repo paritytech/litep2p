@@ -22,9 +22,9 @@
 
 use crate::{
     protocol::libp2p::kademlia::{
-        config::DEFAULT_PROVIDER_REFRESH_INTERVAL,
+        config::{DEFAULT_PROVIDER_REFRESH_INTERVAL, DEFAULT_PROVIDER_TTL},
         futures_stream::FuturesStream,
-        record::{Key, ProviderRecord, Record},
+        record::{ContentProvider, Key, ProviderRecord, Record},
         types::Key as KademliaKey,
     },
     PeerId,
@@ -41,7 +41,10 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia::store";
 
 /// Memory store events.
 pub enum MemoryStoreAction {
-    RefreshProvider { provider: ProviderRecord },
+    RefreshProvider {
+        provided_key: Key,
+        provider: ContentProvider,
+    },
 }
 
 /// Memory store.
@@ -55,7 +58,7 @@ pub struct MemoryStore {
     /// Provider records.
     provider_keys: HashMap<Key, Vec<ProviderRecord>>,
     /// Local providers.
-    local_providers: HashMap<Key, ProviderRecord>,
+    local_providers: HashMap<Key, ContentProvider>,
     /// Futures to signal it's time to republish a local provider.
     pending_provider_refresh: FuturesStream<BoxFuture<'static, Key>>,
 }
@@ -148,7 +151,7 @@ impl MemoryStore {
     /// Try to get providers from local store for `key`.
     ///
     /// Returns a non-empty list of providers, if any.
-    pub fn get_providers(&mut self, key: &Key) -> Vec<ProviderRecord> {
+    pub fn get_providers(&mut self, key: &Key) -> Vec<ContentProvider> {
         let drop_key = self.provider_keys.get_mut(key).map_or(false, |providers| {
             let now = std::time::Instant::now();
             providers.retain(|p| !p.is_expired(now));
@@ -161,7 +164,16 @@ impl MemoryStore {
 
             Vec::default()
         } else {
-            self.provider_keys.get(key).cloned().unwrap_or_else(|| Vec::default())
+            self.provider_keys
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| Vec::default())
+                .into_iter()
+                .map(|p| ContentProvider {
+                    peer: p.provider,
+                    addresses: p.addresses,
+                })
+                .collect()
         }
     }
 
@@ -170,12 +182,18 @@ impl MemoryStore {
     /// the furthest already inserted provider. The furthest provider is then discarded.
     ///
     /// Returns `true` if the provider was added, `false` otherwise.
-    pub fn put_provider(&mut self, provider_record: ProviderRecord) -> bool {
+    pub fn put_provider(&mut self, key: Key, provider: ContentProvider) -> bool {
         // Helper to schedule local provider refresh.
         let mut schedule_local_provider_refresh = |provider_record: ProviderRecord| {
             let key = provider_record.key.clone();
             let refresh_interval = self.config.provider_refresh_interval;
-            self.local_providers.insert(key.clone(), provider_record);
+            self.local_providers.insert(
+                key.clone(),
+                ContentProvider {
+                    peer: provider_record.provider,
+                    addresses: provider_record.addresses,
+                },
+            );
             self.pending_provider_refresh.push(Box::pin(async move {
                 tokio::time::sleep(refresh_interval).await;
                 key
@@ -184,7 +202,12 @@ impl MemoryStore {
 
         // Make sure we have no more than `max_provider_addresses`.
         let provider_record = {
-            let mut record = provider_record;
+            let mut record = ProviderRecord {
+                key,
+                provider: provider.peer,
+                addresses: provider.addresses,
+                expires: std::time::Instant::now() + self.config.provider_ttl,
+            };
             record.addresses.truncate(self.config.max_provider_addresses);
             record
         };
@@ -243,7 +266,7 @@ impl MemoryStore {
 
                             false
                         } else {
-                            if providers.len() == usize::from(self.config.max_providers_per_key) {
+                            if providers.len() == self.config.max_providers_per_key {
                                 providers.pop();
                             }
 
@@ -278,8 +301,8 @@ impl MemoryStore {
                 let providers = entry.get_mut();
 
                 // Providers are sorted by distance.
-                let local_provider_distance = KademliaKey::from(self.local_peer_id.clone())
-                    .distance(&KademliaKey::new(key.clone()));
+                let local_provider_distance =
+                    KademliaKey::from(self.local_peer_id).distance(&KademliaKey::new(key.clone()));
                 let provider_position =
                     providers.binary_search_by(|p| p.distance().cmp(&local_provider_distance));
 
@@ -303,30 +326,29 @@ impl MemoryStore {
 
     /// Poll next action from the store.
     pub async fn next_action(&mut self) -> Option<MemoryStoreAction> {
-        // [`FuturesStream`] never terminates, so `map()` below is always triggered.
-        self.pending_provider_refresh
-            .next()
-            .await
-            .map(|key| {
-                if let Some(provider) = self.local_providers.get(&key).cloned() {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?key,
-                        "refresh provider"
-                    );
+        // [`FuturesStream`] never terminates, so `and_then()` below is always triggered.
+        self.pending_provider_refresh.next().await.and_then(|key| {
+            if let Some(provider) = self.local_providers.get(&key).cloned() {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?key,
+                    "refresh provider"
+                );
 
-                    Some(MemoryStoreAction::RefreshProvider { provider })
-                } else {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?key,
-                        "it's time to refresh a provider, but we do not provide this key anymore",
-                    );
+                Some(MemoryStoreAction::RefreshProvider {
+                    provided_key: key,
+                    provider,
+                })
+            } else {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?key,
+                    "it's time to refresh a provider, but we do not provide this key anymore",
+                );
 
-                    None
-                }
-            })
-            .flatten()
+                None
+            }
+        })
     }
 }
 
@@ -349,6 +371,9 @@ pub struct MemoryStoreConfig {
 
     /// Local providers republish interval.
     pub provider_refresh_interval: Duration,
+
+    /// Provider record TTL.
+    pub provider_ttl: Duration,
 }
 
 impl Default for MemoryStoreConfig {
@@ -360,6 +385,7 @@ impl Default for MemoryStoreConfig {
             max_provider_addresses: 30,
             max_providers_per_key: 20,
             provider_refresh_interval: DEFAULT_PROVIDER_REFRESH_INTERVAL,
+            provider_ttl: DEFAULT_PROVIDER_TTL,
         }
     }
 }
@@ -367,7 +393,7 @@ impl Default for MemoryStoreConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PeerId;
+    use crate::{protocol::libp2p::kademlia::types::Key as KademliaKey, PeerId};
     use multiaddr::multiaddr;
 
     #[test]
@@ -468,36 +494,31 @@ mod tests {
     #[test]
     fn put_get_provider() {
         let mut store = MemoryStore::new(PeerId::random());
-        let provider = ProviderRecord {
-            key: Key::from(vec![1, 2, 3]),
-            provider: PeerId::random(),
+        let key = Key::from(vec![1, 2, 3]);
+        let provider = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
         };
 
-        store.put_provider(provider.clone());
-        assert_eq!(store.get_providers(&provider.key), vec![provider]);
+        store.put_provider(key.clone(), provider.clone());
+        assert_eq!(store.get_providers(&key), vec![provider]);
     }
 
     #[test]
     fn multiple_providers_per_key() {
         let mut store = MemoryStore::new(PeerId::random());
         let key = Key::from(vec![1, 2, 3]);
-        let provider1 = ProviderRecord {
-            key: key.clone(),
-            provider: PeerId::random(),
+        let provider1 = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
         };
-        let provider2 = ProviderRecord {
-            key: key.clone(),
-            provider: PeerId::random(),
+        let provider2 = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
         };
 
-        store.put_provider(provider1.clone());
-        store.put_provider(provider2.clone());
+        store.put_provider(key.clone(), provider1.clone());
+        store.put_provider(key.clone(), provider2.clone());
 
         let got_providers = store.get_providers(&key);
         assert_eq!(got_providers.len(), 2);
@@ -510,21 +531,24 @@ mod tests {
         let mut store = MemoryStore::new(PeerId::random());
         let key = Key::from(vec![1, 2, 3]);
         let providers = (0..10)
-            .map(|_| ProviderRecord {
-                key: key.clone(),
-                provider: PeerId::random(),
+            .map(|_| ContentProvider {
+                peer: PeerId::random(),
                 addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-                expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
             })
             .collect::<Vec<_>>();
 
         providers.iter().for_each(|p| {
-            store.put_provider(p.clone());
+            store.put_provider(key.clone(), p.clone());
         });
 
         let sorted_providers = {
+            let target = KademliaKey::new(key.clone());
             let mut providers = providers;
-            providers.sort_unstable_by_key(ProviderRecord::distance);
+            providers.sort_by(|p1, p2| {
+                KademliaKey::from(p1.peer.clone())
+                    .distance(&target)
+                    .cmp(&KademliaKey::from(p2.peer.clone()).distance(&target))
+            });
             providers
         };
 
@@ -542,16 +566,14 @@ mod tests {
         );
         let key = Key::from(vec![1, 2, 3]);
         let providers = (0..20)
-            .map(|_| ProviderRecord {
-                key: key.clone(),
-                provider: PeerId::random(),
+            .map(|_| ContentProvider {
+                peer: PeerId::random(),
                 addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-                expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
             })
             .collect::<Vec<_>>();
 
         providers.iter().for_each(|p| {
-            store.put_provider(p.clone());
+            store.put_provider(key.clone(), p.clone());
         });
         assert_eq!(store.get_providers(&key).len(), 10);
     }
@@ -567,21 +589,24 @@ mod tests {
         );
         let key = Key::from(vec![1, 2, 3]);
         let providers = (0..20)
-            .map(|_| ProviderRecord {
-                key: key.clone(),
-                provider: PeerId::random(),
+            .map(|_| ContentProvider {
+                peer: PeerId::random(),
                 addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-                expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
             })
             .collect::<Vec<_>>();
 
         providers.iter().for_each(|p| {
-            store.put_provider(p.clone());
+            store.put_provider(key.clone(), p.clone());
         });
 
         let closest_providers = {
+            let target = KademliaKey::new(key.clone());
             let mut providers = providers;
-            providers.sort_unstable_by_key(ProviderRecord::distance);
+            providers.sort_by(|p1, p2| {
+                KademliaKey::from(p1.peer.clone())
+                    .distance(&target)
+                    .cmp(&KademliaKey::from(p2.peer.clone()).distance(&target))
+            });
             providers.truncate(10);
             providers
         };
@@ -600,28 +625,31 @@ mod tests {
         );
         let key = Key::from(vec![1, 2, 3]);
         let providers = (0..11)
-            .map(|_| ProviderRecord {
-                key: key.clone(),
-                provider: PeerId::random(),
+            .map(|_| ContentProvider {
+                peer: PeerId::random(),
                 addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-                expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
             })
             .collect::<Vec<_>>();
 
         let sorted_providers = {
+            let target = KademliaKey::new(key.clone());
             let mut providers = providers;
-            providers.sort_unstable_by_key(ProviderRecord::distance);
+            providers.sort_by(|p1, p2| {
+                KademliaKey::from(p1.peer.clone())
+                    .distance(&target)
+                    .cmp(&KademliaKey::from(p2.peer.clone()).distance(&target))
+            });
             providers
         };
 
         // First 10 providers are inserted.
         for i in 0..10 {
-            assert!(store.put_provider(sorted_providers[i].clone()));
+            assert!(store.put_provider(key.clone(), sorted_providers[i].clone()));
         }
         assert_eq!(store.get_providers(&key), sorted_providers[..10]);
 
         // The furthests provider doesn't fit.
-        assert!(!store.put_provider(sorted_providers[10].clone()));
+        assert!(!store.put_provider(key.clone(), sorted_providers[10].clone()));
         assert_eq!(store.get_providers(&key), sorted_providers[..10]);
     }
 
@@ -639,40 +667,41 @@ mod tests {
         let peer_id0 = peer_ids[0];
         let providers = peer_ids
             .iter()
-            .map(|peer_id| ProviderRecord {
-                key: key.clone(),
-                provider: *peer_id,
+            .map(|peer_id| ContentProvider {
+                peer: *peer_id,
                 addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-                expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
             })
             .collect::<Vec<_>>();
 
         providers.iter().for_each(|p| {
-            store.put_provider(p.clone());
+            store.put_provider(key.clone(), p.clone());
         });
 
         let sorted_providers = {
+            let target = KademliaKey::new(key.clone());
             let mut providers = providers;
-            providers.sort_unstable_by_key(ProviderRecord::distance);
+            providers.sort_by(|p1, p2| {
+                KademliaKey::from(p1.peer.clone())
+                    .distance(&target)
+                    .cmp(&KademliaKey::from(p2.peer.clone()).distance(&target))
+            });
             providers
         };
 
         assert_eq!(store.get_providers(&key), sorted_providers);
 
-        let provider0_new = ProviderRecord {
-            key: key.clone(),
-            provider: peer_id0,
+        let provider0_new = ContentProvider {
+            peer: peer_id0,
             addresses: vec![multiaddr!(Ip4([192, 168, 0, 1]), Tcp(20000u16))],
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
         };
 
         // Provider is updated in place.
-        assert!(store.put_provider(provider0_new.clone()));
+        assert!(store.put_provider(key.clone(), provider0_new.clone()));
 
         let providers_new = sorted_providers
             .into_iter()
             .map(|p| {
-                if p.provider == peer_id0 {
+                if p.peer == peer_id0 {
                     provider0_new.clone()
                 } else {
                     p
@@ -683,46 +712,67 @@ mod tests {
         assert_eq!(store.get_providers(&key), providers_new);
     }
 
-    #[test]
-    fn provider_record_expires() {
-        let mut store = MemoryStore::new(PeerId::random());
-        let provider = ProviderRecord {
-            key: Key::from(vec![1, 2, 3]),
-            provider: PeerId::random(),
+    #[tokio::test]
+    async fn provider_record_expires() {
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                provider_ttl: std::time::Duration::from_secs(1),
+                ..Default::default()
+            },
+        );
+        let key = Key::from(vec![1, 2, 3]);
+        let provider = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-            expires: std::time::Instant::now() - std::time::Duration::from_secs(5),
         };
 
-        // Provider record is already expired.
-        assert!(provider.is_expired(std::time::Instant::now()));
+        store.put_provider(key.clone(), provider.clone());
 
-        store.put_provider(provider.clone());
-        assert!(store.get_providers(&provider.key).is_empty());
+        // Provider does not instantly expire.
+        assert_eq!(store.get_providers(&key), vec![provider]);
+
+        // Provider expires after 2 seconds.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(store.get_providers(&key), vec![]);
     }
 
-    #[test]
-    fn individual_provider_record_expires() {
-        let mut store = MemoryStore::new(PeerId::random());
+    #[tokio::test]
+    async fn individual_provider_record_expires() {
+        let mut store = MemoryStore::with_config(
+            PeerId::random(),
+            MemoryStoreConfig {
+                provider_ttl: std::time::Duration::from_secs(8),
+                ..Default::default()
+            },
+        );
         let key = Key::from(vec![1, 2, 3]);
-        let provider1 = ProviderRecord {
-            key: key.clone(),
-            provider: PeerId::random(),
+        let provider1 = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-            expires: std::time::Instant::now() - std::time::Duration::from_secs(5),
         };
-        let provider2 = ProviderRecord {
-            key: key.clone(),
-            provider: PeerId::random(),
+        let provider2 = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
         };
 
-        assert!(provider1.is_expired(std::time::Instant::now()));
+        store.put_provider(key.clone(), provider1.clone());
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        store.put_provider(key.clone(), provider2.clone());
 
-        store.put_provider(provider1.clone());
-        store.put_provider(provider2.clone());
+        // Providers do not instantly expire.
+        let got_providers = store.get_providers(&key);
+        assert_eq!(got_providers.len(), 2);
+        assert!(got_providers.contains(&provider1));
+        assert!(got_providers.contains(&provider2));
 
+        // First provider expires.
+        tokio::time::sleep(Duration::from_secs(6)).await;
         assert_eq!(store.get_providers(&key), vec![provider2]);
+
+        // Second provider expires.
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        assert_eq!(store.get_providers(&key), vec![]);
     }
 
     #[test]
@@ -735,9 +785,8 @@ mod tests {
             },
         );
         let key = Key::from(vec![1, 2, 3]);
-        let provider = ProviderRecord {
-            key: Key::from(vec![1, 2, 3]),
-            provider: PeerId::random(),
+        let provider = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![
                 multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16)),
                 multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16)),
@@ -745,14 +794,12 @@ mod tests {
                 multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10003u16)),
                 multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10004u16)),
             ],
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
         };
 
-        store.put_provider(provider);
+        store.put_provider(key.clone(), provider);
 
         let got_providers = store.get_providers(&key);
         assert_eq!(got_providers.len(), 1);
-        assert_eq!(got_providers.first().unwrap().key, key);
         assert_eq!(got_providers.first().unwrap().addresses.len(), 2);
     }
 
@@ -766,32 +813,29 @@ mod tests {
             },
         );
 
-        let provider1 = ProviderRecord {
-            key: Key::from(vec![1, 2, 3]),
-            provider: PeerId::random(),
+        let key1 = Key::from(vec![1, 1, 1]);
+        let provider1 = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
         };
-        let provider2 = ProviderRecord {
-            key: Key::from(vec![4, 5, 6]),
-            provider: PeerId::random(),
+        let key2 = Key::from(vec![2, 2, 2]);
+        let provider2 = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10002u16))],
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
         };
-        let provider3 = ProviderRecord {
-            key: Key::from(vec![7, 8, 9]),
-            provider: PeerId::random(),
+        let key3 = Key::from(vec![3, 3, 3]);
+        let provider3 = ContentProvider {
+            peer: PeerId::random(),
             addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10003u16))],
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(3600),
         };
 
-        assert!(store.put_provider(provider1.clone()));
-        assert!(store.put_provider(provider2.clone()));
-        assert!(!store.put_provider(provider3.clone()));
+        assert!(store.put_provider(key1.clone(), provider1.clone()));
+        assert!(store.put_provider(key2.clone(), provider2.clone()));
+        assert!(!store.put_provider(key3.clone(), provider3.clone()));
 
-        assert_eq!(store.get_providers(&provider1.key), vec![provider1]);
-        assert_eq!(store.get_providers(&provider2.key), vec![provider2]);
-        assert_eq!(store.get_providers(&provider3.key), vec![]);
+        assert_eq!(store.get_providers(&key1), vec![provider1]);
+        assert_eq!(store.get_providers(&key2), vec![provider2]);
+        assert_eq!(store.get_providers(&key3), vec![]);
     }
 
     // TODO: test local providers.
