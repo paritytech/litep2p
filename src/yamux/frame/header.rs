@@ -388,7 +388,7 @@ pub fn decode(buf: &[u8; HEADER_SIZE]) -> Result<Header<()>, HeaderDecodeError> 
 
 /// Possible errors while decoding a message frame header.
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum HeaderDecodeError {
     /// Unknown version.
     Version(u8),
