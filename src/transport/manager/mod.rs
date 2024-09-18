@@ -667,10 +667,8 @@ impl TransportManager {
                 Entry::Occupied(occupied) => {
                     let context = occupied.into_mut();
 
-                    // For a better address tacking, see:
-                    // https://github.com/paritytech/litep2p/issues/180
-                    //
-                    // TODO: context.addresses.insert(record.clone());
+                    // Keep the provided record around for possible future dials.
+                    context.addresses.insert(record.clone());
 
                     tracing::debug!(
                         target: LOG_TARGET,
