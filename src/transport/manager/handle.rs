@@ -180,8 +180,6 @@ impl TransportManagerHandle {
         peer: &PeerId,
         addresses: impl Iterator<Item = Multiaddr>,
     ) -> usize {
-        let mut peers = self.peers.write();
-
         let mut peer_addresses = HashMap::new();
 
         for address in addresses {
@@ -221,6 +219,7 @@ impl TransportManagerHandle {
             "add known addresses",
         );
 
+        let mut peers = self.peers.write();
         for (peer, addresses) in peer_addresses {
             let entry = peers.entry(peer).or_insert_with(|| PeerContext {
                 state: PeerState::Disconnected { dial_record: None },
