@@ -792,6 +792,8 @@ impl TransportManager {
     }
 
     /// Handle dial failure.
+    ///
+    /// The main purpose of this function is to advance the internal `PeerState`.
     fn on_dial_failure(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
         let peer = self.pending_connections.remove(&connection_id).ok_or_else(|| {
             tracing::error!(
@@ -836,7 +838,6 @@ impl TransportManager {
                     return Ok(());
                 }
 
-                context.addresses.update_score(record.address(), SCORE_CONNECT_FAILURE);
                 context.state = PeerState::Disconnected { dial_record: None };
                 Ok(())
             }
@@ -864,7 +865,6 @@ impl TransportManager {
                     return Ok(());
                 }
 
-                context.addresses.update_score(record.address(), SCORE_CONNECT_FAILURE);
                 context.state = PeerState::Connected {
                     record,
                     dial_record: None,
@@ -897,7 +897,6 @@ impl TransportManager {
                     return Ok(());
                 }
 
-                context.addresses.update_score(dial_record.address(), SCORE_CONNECT_FAILURE);
                 context.state = PeerState::Disconnected { dial_record: None };
 
                 Ok(())
@@ -1600,6 +1599,9 @@ impl TransportManager {
                                 "failed to dial peer",
                             );
 
+                            // Update the addresses on dial failure regardless of the
+                            // internal peer context state. This ensures a robust address tracking
+                            // while taking into account the error type.
                             self.update_address_on_dial_failure(address.clone(), &error);
 
                             if let Ok(()) = self.on_dial_failure(connection_id) {
