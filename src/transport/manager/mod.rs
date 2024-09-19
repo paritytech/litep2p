@@ -1065,6 +1065,37 @@ impl TransportManager {
         }
     }
 
+    /// Update the address on a connection established.
+    fn update_address_on_connection_established(&mut self, peer: PeerId, endpoint: &Endpoint) {
+        // The connection can be inbound or outbound.
+        // For the inbound connection type, in most cases, the remote peer dialed
+        // with an ephemeral port which it might not be listening on.
+        // Therefore, we only insert the address into the store if we're the dialer.
+        if endpoint.is_listener() {
+            return;
+        }
+
+        let mut peers = self.peers.write();
+
+        let record = AddressRecord::new(
+            &peer,
+            endpoint.address().clone(),
+            scores::CONNECTION_ESTABLISHED,
+            Some(endpoint.connection_id()),
+        );
+
+        let context = peers.entry(peer).or_insert_with(|| PeerContext {
+            state: PeerState::Connected {
+                record: record.clone(),
+                dial_record: None,
+            },
+            addresses: AddressStore::new(),
+            secondary_connection: None,
+        });
+
+        context.addresses.insert(record);
+    }
+
     fn on_connection_established(
         &mut self,
         peer: PeerId,
@@ -1115,19 +1146,6 @@ impl TransportManager {
                             "secondary connection already exists, ignoring connection",
                         );
 
-                        // insert address into the store only if we're the dialer
-                        //
-                        // if we're the listener, remote might have dialed with an ephemeral port
-                        // which it might not be listening, making this address useless
-                        if endpoint.is_listener() {
-                            context.addresses.insert(AddressRecord::new(
-                                &peer,
-                                endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
-                                None,
-                            ))
-                        }
-
                         return Ok(ConnectionEstablishedResult::Reject);
                     }
                     None => match dial_record.take() {
@@ -1145,7 +1163,7 @@ impl TransportManager {
                             context.secondary_connection = Some(AddressRecord::new(
                                 &peer,
                                 endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
+                                scores::CONNECTION_ESTABLISHED,
                                 Some(endpoint.connection_id()),
                             ));
                         }
@@ -1161,7 +1179,7 @@ impl TransportManager {
                             context.secondary_connection = Some(AddressRecord::new(
                                 &peer,
                                 endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
+                                scores::CONNECTION_ESTABLISHED,
                                 Some(endpoint.connection_id()),
                             ));
                         }
@@ -1212,7 +1230,7 @@ impl TransportManager {
                                 record: AddressRecord::new(
                                     &peer,
                                     endpoint.address().clone(),
-                                    SCORE_CONNECT_SUCCESS,
+                                    scores::CONNECTION_ESTABLISHED,
                                     Some(endpoint.connection_id()),
                                 ),
                                 dial_record: Some(record.clone()),
@@ -1262,18 +1280,17 @@ impl TransportManager {
 
                     let record = match records.remove(endpoint.address()) {
                         Some(mut record) => {
-                            record.update_score(SCORE_CONNECT_SUCCESS);
+                            record.update_score(scores::CONNECTION_ESTABLISHED);
                             record.set_connection_id(endpoint.connection_id());
                             record
                         }
                         None => AddressRecord::new(
                             &peer,
                             endpoint.address().clone(),
-                            SCORE_CONNECT_SUCCESS,
+                            scores::CONNECTION_ESTABLISHED,
                             Some(endpoint.connection_id()),
                         ),
                     };
-                    context.addresses.extend(records.iter().map(|(_, record)| record));
 
                     context.state = PeerState::Connected {
                         record,
@@ -1302,7 +1319,7 @@ impl TransportManager {
                                     AddressRecord::new(
                                         &peer,
                                         endpoint.address().clone(),
-                                        SCORE_CONNECT_SUCCESS,
+                                        scores::CONNECTION_ESTABLISHED,
                                         Some(endpoint.connection_id()),
                                     ),
                                     Some(dial_record),
@@ -1312,7 +1329,7 @@ impl TransportManager {
                             AddressRecord::new(
                                 &peer,
                                 endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
+                                scores::CONNECTION_ESTABLISHED,
                                 Some(endpoint.connection_id()),
                             ),
                             None,
@@ -1333,7 +1350,7 @@ impl TransportManager {
                             record: AddressRecord::new(
                                 &peer,
                                 endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
+                                scores::CONNECTION_ESTABLISHED,
                                 Some(endpoint.connection_id()),
                             ),
                             dial_record: None,
@@ -1412,7 +1429,7 @@ impl TransportManager {
                 // all other address records back to `AddressStore`. and ask
                 // transport to negotiate the
                 let mut dial_record = records.remove(&address).expect("address to exist");
-                dial_record.update_score(SCORE_CONNECT_SUCCESS);
+                dial_record.update_score(scores::CONNECTION_ESTABLISHED);
 
                 // negotiate the connection
                 match self
@@ -1522,7 +1539,7 @@ impl TransportManager {
 
                 if transports.is_empty() {
                     for (_, mut record) in records {
-                        record.update_score(SCORE_CONNECT_FAILURE);
+                        record.update_score(scores::CONNECTION_FAILURE);
                         context.addresses.insert(record);
                     }
 
@@ -1690,6 +1707,8 @@ impl TransportManager {
                         }
                         TransportEvent::ConnectionEstablished { peer, endpoint } => {
                             self.opening_errors.remove(&endpoint.connection_id());
+                            self.update_address_on_connection_established(peer, &endpoint);
+
                             match self.on_connection_established(peer, &endpoint) {
                                 Err(error) => {
                                     tracing::debug!(
