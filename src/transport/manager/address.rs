@@ -194,11 +194,6 @@ impl AddressStore {
         self.addresses.is_empty()
     }
 
-    /// Check if address is already in the address store.
-    pub fn contains(&self, address: &Multiaddr) -> bool {
-        self.addresses.contains_key(address)
-    }
-
     /// Insert the address record into [`AddressStore`] with the provided score.
     ///
     /// If the address is not in the store, it will be inserted.
@@ -213,13 +208,6 @@ impl AddressStore {
             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
                 vacant_entry.insert(record.clone());
             }
-        }
-    }
-
-    /// Update the score of an existing address.
-    pub fn update_score(&mut self, address: &Multiaddr, score: i32) {
-        if let Some(record) = self.addresses.get_mut(address) {
-            record.update_score(score);
         }
     }
 
