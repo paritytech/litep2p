@@ -176,15 +176,38 @@ impl AddressStore {
     /// If the address is not in the store, it will be inserted.
     /// Otherwise, the score and connection ID will be updated.
     pub fn insert(&mut self, record: AddressRecord) {
-        match self.addresses.entry(record.address.clone()) {
-            std::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                let found_record = occupied_entry.into_mut();
-                found_record.update_score(record.score);
-            }
-            std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(record.clone());
-            }
+        let num_addresses = self.addresses.len();
+
+        if let Some(occupied) = self.addresses.get_mut(record.address()) {
+            occupied.update_score(record.score);
+            return;
         }
+
+        // The eviction algorithm favours addresses with higher scores.
+        //
+        // This algorithm has the following implications:
+        //  - it keeps the best addresses in the store.
+        //  - if the store is at capacity, the worst address will be evicted.
+        //  - an address that is not dialed yet (with score zero) will be preferred over an address
+        //  that already failed (with negative score).
+        if num_addresses > MAX_ADDRESSES {
+            // No need to keep track of negative addresses if we are at capacity.
+            if record.score < 0 {
+                return;
+            }
+
+            let Some(min_record) = self.addresses.values().min().cloned() else {
+                return;
+            };
+            // The lowest score is better than the new record.
+            if record.score < min_record.score {
+                return;
+            }
+            self.addresses.remove(min_record.address());
+        }
+
+        // Insert the record.
+        self.addresses.insert(record.address.clone(), record);
     }
 
     /// Return the available addresses sorted by score.
