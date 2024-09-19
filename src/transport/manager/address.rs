@@ -199,9 +199,10 @@ impl AddressStore {
         self.addresses.contains_key(address)
     }
 
-    /// Update the address record into [`AddressStore`] with the provided score.
+    /// Insert the address record into [`AddressStore`] with the provided score.
     ///
     /// If the address is not in the store, it will be inserted.
+    /// Otherwise, the score and connection ID will be updated.
     pub fn insert(&mut self, record: AddressRecord) {
         match self.addresses.entry(record.address.clone()) {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
