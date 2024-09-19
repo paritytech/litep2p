@@ -118,9 +118,53 @@ impl PeerState {
             } => {
                 return Err(Ok(()));
             }
+
             // The peer is disconnected, start dialing.
             Self::Disconnected { dial_record: None } => return Ok(DisconnectedState::new(self)),
         }
+    }
+
+    /// Handle dial failure.
+    ///
+    /// Returns `true` if the dial record was cleared, false otherwise.
+    ///
+    /// # Transitions
+    /// - [`PeerState::Dialing`] (with record) -> [`PeerState::Disconnected`]
+    /// - [`PeerState::Connected`] (with dial record) -> [`PeerState::Connected`]
+    /// - [`PeerState::Disconnected`] (with dial record) -> [`PeerState::Disconnected`]
+    pub fn on_dial_failure(&mut self, connection_id: ConnectionId) -> bool {
+        match self {
+            // Clear the dial record if the connection ID matches.
+            Self::Dialing { record } =>
+                if record.connection_id == connection_id {
+                    *self = Self::Disconnected { dial_record: None };
+                    return true;
+                },
+
+            Self::Connected {
+                record,
+                dial_record: Some(dial_record),
+            } =>
+                if dial_record.connection_id == connection_id {
+                    *self = Self::Connected {
+                        record: record.clone(),
+                        dial_record: None,
+                    };
+                    return true;
+                },
+
+            Self::Disconnected {
+                dial_record: Some(dial_record),
+            } =>
+                if dial_record.connection_id == connection_id {
+                    *self = Self::Disconnected { dial_record: None };
+                    return true;
+                },
+
+            _ => (),
+        };
+
+        return false;
     }
 }
 
