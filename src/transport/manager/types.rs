@@ -21,7 +21,7 @@
 use crate::{
     transport::{manager::address::AddressStore, Endpoint},
     types::ConnectionId,
-    PeerId,
+    Error, PeerId,
 };
 
 use multiaddr::{Multiaddr, Protocol};
@@ -96,6 +96,40 @@ pub enum PeerState {
     },
 }
 
+impl PeerState {
+    /// Advances the peer state on a dial attempt.
+    /// The dialing is happing on a single address.
+    ///
+    /// Provides a response if the dialing should return immediately.
+    ///
+    /// # Transitions
+    ///
+    /// [`PeerState::Disconnected`] -> [`PeerState::Dialing`]
+    pub fn on_dial_record(&mut self, dial_record: ConnectionRecord) -> Option<Result<(), Error>> {
+        match self {
+            // The peer is already connected, no need to dial a second time.
+            Self::Connected { .. } => {
+                return Some(Err(Error::AlreadyConnected));
+            }
+            // The dialing state is already in progress, an event will be emitted later.
+            Self::Dialing { .. }
+            | Self::Opening { .. }
+            | Self::Disconnected {
+                dial_record: Some(_),
+            } => {
+                return Some(Ok(()));
+            }
+            // The peer is disconnected, start dialing.
+            Self::Disconnected { dial_record: None } => {
+                *self = Self::Dialing {
+                    record: dial_record,
+                };
+                return None;
+            }
+        }
+    }
+}
+
 /// The connection record keeps track of the connection ID and the address of the connection.
 ///
 /// The connection ID is used to track the connection in the transport layer.
@@ -160,4 +194,14 @@ pub struct PeerContext {
 
     /// Known addresses of peer.
     pub addresses: AddressStore,
+}
+
+impl Default for PeerContext {
+    fn default() -> Self {
+        Self {
+            state: PeerState::Disconnected { dial_record: None },
+            secondary_connection: None,
+            addresses: AddressStore::new(),
+        }
+    }
 }

@@ -679,55 +679,16 @@ impl TransportManager {
 
         {
             let mut peers = self.peers.write();
-            match peers.entry(remote_peer_id) {
-                Entry::Occupied(occupied) => {
-                    let context = occupied.into_mut();
 
-                    // Keep the provided record around for possible future dials.
-                    context.addresses.insert(address_record.clone());
+            let context = peers.entry(remote_peer_id).or_insert_with(|| PeerContext::default());
 
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        peer = ?remote_peer_id,
-                        state = ?context.state,
-                        "peer state exists",
-                    );
+            // Keep the provided record around for possible future dials.
+            context.addresses.insert(address_record.clone());
 
-                    match context.state {
-                        PeerState::Connected { .. } => {
-                            return Err(Error::AlreadyConnected);
-                        }
-                        PeerState::Dialing { .. } | PeerState::Opening { .. } => {
-                            return Ok(());
-                        }
-                        PeerState::Disconnected {
-                            dial_record: Some(_),
-                        } => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                peer = ?remote_peer_id,
-                                state = ?context.state,
-                                "peer is already being dialed from a disconnected state"
-                            );
-                            return Ok(());
-                        }
-                        PeerState::Disconnected { dial_record: None } => {
-                            context.state = PeerState::Dialing {
-                                record: dial_record,
-                            };
-                        }
-                    }
-                }
-                Entry::Vacant(vacant) => {
-                    vacant.insert(PeerContext {
-                        state: PeerState::Dialing {
-                            record: dial_record,
-                        },
-                        addresses: AddressStore::from_iter(std::iter::once(address_record.clone())),
-                        secondary_connection: None,
-                    });
-                }
-            };
+            // Dialing from an invalid state, or another dial is in progress.
+            if let Some(immediate_result) = context.state.on_dial_record(dial_record) {
+                return immediate_result;
+            }
         }
 
         self.transports

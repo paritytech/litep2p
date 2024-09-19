@@ -221,11 +221,7 @@ impl TransportManagerHandle {
 
         let mut peers = self.peers.write();
         for (peer, addresses) in peer_addresses {
-            let entry = peers.entry(peer).or_insert_with(|| PeerContext {
-                state: PeerState::Disconnected { dial_record: None },
-                addresses: AddressStore::new(),
-                secondary_connection: None,
-            });
+            let entry = peers.entry(peer).or_insert_with(|| PeerContext::default());
 
             // All addresses should be valid at this point, since the peer ID was either added or
             // double checked.
