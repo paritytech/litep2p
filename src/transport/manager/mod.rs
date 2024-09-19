@@ -72,15 +72,20 @@ pub(crate) mod handle;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::transport-manager";
 
-/// Score for a working address.
-const SCORE_CONNECT_SUCCESS: i32 = 100i32;
-/// Score for a negotiated connection with a different peer ID than expected.
-const SCORE_MAY_CONNECT: i32 = 50i32;
+/// Scores for address records.
+mod scores {
+    /// Score indicating that the connection was successfully established.
+    pub const CONNECTION_ESTABLISHED: i32 = 100i32;
 
-/// Score for a non-working address.
-const SCORE_CONNECT_FAILURE: i32 = -100i32;
-/// Score for a dial failure due to a timeout.
-const SCORE_TIMEOUT_FAILURE: i32 = -50i32;
+    /// Score for a connection with a peer using a different ID than expected.
+    pub const DIFFERENT_PEER_ID: i32 = 50i32;
+
+    /// Score for failing to connect due to an invalid or unreachable address.
+    pub const CONNECTION_FAILURE: i32 = -100i32;
+
+    /// Score for a connection attempt that failed due to a timeout.
+    pub const TIMEOUT_FAILURE: i32 = -50i32;
+}
 
 /// The connection established result.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -732,9 +737,9 @@ impl TransportManager {
         let mut peers = self.peers.write();
 
         let score = match error {
-            DialError::Timeout => SCORE_TIMEOUT_FAILURE,
-            DialError::AddressError(_) => SCORE_CONNECT_FAILURE,
-            DialError::DnsError(_) => SCORE_CONNECT_FAILURE,
+            DialError::Timeout => scores::CONNECTION_ESTABLISHED,
+            DialError::AddressError(_) => scores::CONNECTION_FAILURE,
+            DialError::DnsError(_) => scores::CONNECTION_FAILURE,
             DialError::NegotiationError(negotiation_error) => match negotiation_error {
                 // Check if the address corresponds to a different peer ID than the one we're
                 // dialing. This can happen if the node operation restarts the node.
@@ -757,16 +762,16 @@ impl TransportManager {
                     context.addresses.insert(AddressRecord::new(
                         &provided,
                         address.clone(),
-                        SCORE_MAY_CONNECT,
+                        scores::DIFFERENT_PEER_ID,
                         None,
                     ));
 
                     return;
                 }
                 // Timeout during the negotiation phase.
-                NegotiationError::Timeout => SCORE_TIMEOUT_FAILURE,
+                NegotiationError::Timeout => scores::TIMEOUT_FAILURE,
                 // Treat other errors as connection failures.
-                _ => SCORE_CONNECT_FAILURE,
+                _ => scores::CONNECTION_FAILURE,
             },
         };
 
