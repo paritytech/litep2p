@@ -1250,8 +1250,6 @@ impl TransportManager {
                     connection_id,
                     ref transports,
                 } => {
-                    debug_assert!(std::matches!(endpoint, &Endpoint::Listener { .. }));
-
                     tracing::trace!(
                         target: LOG_TARGET,
                         ?peer,
