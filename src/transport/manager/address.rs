@@ -98,11 +98,6 @@ impl AddressRecord {
         &self.address
     }
 
-    /// Get connection ID.
-    pub fn connection_id(&self) -> &Option<ConnectionId> {
-        &self.connection_id
-    }
-
     /// Update score of an address.
     pub fn update_score(&mut self, score: i32) {
         self.score = self.score.saturating_add(score);

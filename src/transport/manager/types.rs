@@ -18,10 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    transport::manager::address::{AddressRecord, AddressStore},
-    types::ConnectionId,
-};
+use crate::{transport::manager::address::AddressStore, types::ConnectionId};
 
 use multiaddr::Multiaddr;
 
@@ -52,7 +49,7 @@ pub enum PeerState {
     /// `Litep2p` is connected to peer.
     Connected {
         /// The established record of the connection.
-        record: DialRecord,
+        record: ConnectionRecord,
 
         /// Dial address, if it exists.
         ///
@@ -60,7 +57,7 @@ pub enum PeerState {
         /// the local node and connection was established successfully. This dial address
         /// is stored for processing later when the dial attempt concluded as either
         /// successful/failed.
-        dial_record: Option<DialRecord>,
+        dial_record: Option<ConnectionRecord>,
     },
 
     /// Connection to peer is opening over one or more addresses.
@@ -78,7 +75,7 @@ pub enum PeerState {
     /// Peer is being dialed.
     Dialing {
         /// Address record.
-        record: DialRecord,
+        record: ConnectionRecord,
     },
 
     /// `Litep2p` is not connected to peer.
@@ -90,14 +87,25 @@ pub enum PeerState {
         /// been closed before the dial concluded which means that
         /// [`crate::transport::manager::TransportManager`] must be prepared to handle the dial
         /// failure even after the connection has been closed.
-        dial_record: Option<DialRecord>,
+        dial_record: Option<ConnectionRecord>,
     },
 }
 
-/// The dial record.
+/// The connection record keeps track of the connection ID and the address of the connection.
+///
+/// The connection ID is used to track the connection in the transport layer.
+/// While the address is used to keep a healthy view of the network for dialing purposes.
+///
+/// # Note
+///
+/// The structure is used to keep track of:
+///
+///  - dialing state for outbound connections.
+///  - established outbound connections via [`PeerState::Connected`].
+///  - established inbound connections via `PeerContext::secondary_connection`.
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
-pub struct DialRecord {
+pub struct ConnectionRecord {
     /// Address that was dialed.
     pub address: Multiaddr,
 
@@ -112,7 +120,7 @@ pub struct PeerContext {
     pub state: PeerState,
 
     /// Secondary connection, if it's open.
-    pub secondary_connection: Option<AddressRecord>,
+    pub secondary_connection: Option<ConnectionRecord>,
 
     /// Known addresses of peer.
     pub addresses: AddressStore,
