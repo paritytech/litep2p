@@ -108,6 +108,16 @@ impl AddressRecord {
         self.score = self.score.saturating_add(score);
     }
 
+    /// Update the `ConnectionId` for the [`AddressRecord`].
+    pub fn update_connection_id(&mut self, connection_id: Option<ConnectionId>) {
+        match (self.connection_id, connection_id) {
+            (Some(_), Some(_)) | (None, Some(_)) => {
+                self.connection_id = connection_id;
+            }
+            _ => {}
+        };
+    }
+
     /// Set `ConnectionId` for the [`AddressRecord`].
     pub fn set_connection_id(&mut self, connection_id: ConnectionId) {
         self.connection_id = Some(connection_id);
@@ -203,7 +213,7 @@ impl AddressStore {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
                 let found_record = occupied_entry.into_mut();
                 found_record.update_score(record.score);
-                found_record.connection_id = record.connection_id;
+                found_record.update_connection_id(record.connection_id);
             }
             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
                 vacant_entry.insert(record.clone());
