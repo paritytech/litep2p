@@ -805,7 +805,7 @@ impl TransportManager {
                 Ok(())
             }
             PeerState::Disconnected {
-                dial_record: Some(mut dial_record),
+                dial_record: Some(dial_record),
             } => {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -898,7 +898,6 @@ impl TransportManager {
                 // state to `Disconnected`
                 true => match context.secondary_connection.take() {
                     None => {
-                        context.addresses.insert(record);
                         context.state = PeerState::Disconnected {
                             dial_record: actual_dial_record,
                         };
@@ -909,7 +908,6 @@ impl TransportManager {
                         }))
                     }
                     Some(secondary_connection) => {
-                        context.addresses.insert(record);
                         context.state = PeerState::Connected {
                             record: secondary_connection,
                             dial_record: actual_dial_record,
@@ -945,7 +943,6 @@ impl TransportManager {
                             "secondary connection closed",
                         );
 
-                        context.addresses.insert(secondary_connection);
                         context.state = PeerState::Connected {
                             record,
                             dial_record: actual_dial_record,

@@ -26,7 +26,7 @@ use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
 /// Maximum number of addresses tracked for a peer.
-const MAX_ADDRESSES: usize = 32;
+const MAX_ADDRESSES: usize = 64;
 
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
@@ -216,7 +216,7 @@ impl AddressStore {
     }
 
     /// Update the score of an existing address.
-    pub fn update(&mut self, address: &Multiaddr, score: i32) {
+    pub fn update_score(&mut self, address: &Multiaddr, score: i32) {
         if let Some(record) = self.addresses.get_mut(address) {
             record.update_score(score);
         }
