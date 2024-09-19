@@ -1087,10 +1087,7 @@ impl TransportManager {
 
         let context = peers.entry(peer).or_insert_with(|| PeerContext {
             state: PeerState::Connected {
-                record: ConnectionRecord {
-                    address: endpoint.address().clone(),
-                    connection_id: endpoint.connection_id(),
-                },
+                record: ConnectionRecord::from_endpoint(peer, endpoint),
                 dial_record: None,
             },
             addresses: AddressStore::new(),
@@ -1162,10 +1159,8 @@ impl TransportManager {
                                 "dialed connection opened as secondary connection",
                             );
 
-                            context.secondary_connection = Some(ConnectionRecord {
-                                address: endpoint.address().clone(),
-                                connection_id: endpoint.connection_id(),
-                            });
+                            context.secondary_connection =
+                                Some(ConnectionRecord::from_endpoint(peer, endpoint));
                         }
                         None => {
                             tracing::debug!(
@@ -1176,10 +1171,8 @@ impl TransportManager {
                                 "secondary connection",
                             );
 
-                            context.secondary_connection = Some(ConnectionRecord {
-                                address: endpoint.address().clone(),
-                                connection_id: endpoint.connection_id(),
-                            });
+                            context.secondary_connection =
+                                Some(ConnectionRecord::from_endpoint(peer, endpoint));
                         }
                         Some(record) => {
                             tracing::warn!(
@@ -1225,10 +1218,7 @@ impl TransportManager {
                             );
 
                             context.state = PeerState::Connected {
-                                record: ConnectionRecord {
-                                    address: endpoint.address().clone(),
-                                    connection_id: endpoint.connection_id(),
-                                },
+                                record: ConnectionRecord::from_endpoint(peer, endpoint),
                                 dial_record: Some(record.clone()),
                             };
                         }
@@ -1262,10 +1252,7 @@ impl TransportManager {
                     self.pending_connections.remove(&connection_id);
 
                     context.state = PeerState::Connected {
-                        record: ConnectionRecord {
-                            address: endpoint.address().clone(),
-                            connection_id: endpoint.connection_id(),
-                        },
+                        record: ConnectionRecord::from_endpoint(peer, endpoint),
                         dial_record: None,
                     };
                 }
@@ -1287,20 +1274,11 @@ impl TransportManager {
                                 (dial_record, None)
                             } else {
                                 (
-                                    ConnectionRecord {
-                                        address: endpoint.address().clone(),
-                                        connection_id: endpoint.connection_id(),
-                                    },
+                                    ConnectionRecord::from_endpoint(peer, endpoint),
                                     Some(dial_record),
                                 )
                             },
-                        None => (
-                            ConnectionRecord {
-                                address: endpoint.address().clone(),
-                                connection_id: endpoint.connection_id(),
-                            },
-                            None,
-                        ),
+                        None => (ConnectionRecord::from_endpoint(peer, endpoint), None),
                     };
 
                     context.state = PeerState::Connected {
@@ -1314,10 +1292,7 @@ impl TransportManager {
                     peer,
                     PeerContext {
                         state: PeerState::Connected {
-                            record: ConnectionRecord {
-                                address: endpoint.address().clone(),
-                                connection_id: endpoint.connection_id(),
-                            },
+                            record: ConnectionRecord::from_endpoint(peer, endpoint),
                             dial_record: None,
                         },
                         addresses: AddressStore::new(),
@@ -1407,10 +1382,7 @@ impl TransportManager {
                         self.pending_connections.insert(connection_id, peer);
 
                         context.state = PeerState::Dialing {
-                            record: ConnectionRecord {
-                                address: address.clone(),
-                                connection_id,
-                            },
+                            record: ConnectionRecord::new(peer, address.clone(), connection_id),
                         };
 
                         context.addresses.insert(AddressRecord::new(

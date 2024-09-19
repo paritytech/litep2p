@@ -18,9 +18,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{transport::manager::address::AddressStore, types::ConnectionId};
+use crate::{
+    transport::{manager::address::AddressStore, Endpoint},
+    types::ConnectionId,
+    PeerId,
+};
 
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 
 use std::collections::HashSet;
 
@@ -106,11 +111,42 @@ pub enum PeerState {
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
 pub struct ConnectionRecord {
-    /// Address that was dialed.
+    /// Address of the connection.
+    ///
+    /// The address must contain the peer ID extension `/p2p/<peer_id>`.
     pub address: Multiaddr,
 
     /// Connection ID resulted from dialing.
     pub connection_id: ConnectionId,
+}
+
+impl ConnectionRecord {
+    /// Construct a new connection record.
+    pub fn new(peer: PeerId, address: Multiaddr, connection_id: ConnectionId) -> Self {
+        Self {
+            address: Self::ensure_peer_id(peer, address),
+            connection_id,
+        }
+    }
+
+    /// Create a new connection record from the peer ID and the endpoint.
+    pub fn from_endpoint(peer: PeerId, endpoint: &Endpoint) -> Self {
+        Self {
+            address: Self::ensure_peer_id(peer, endpoint.address().clone()),
+            connection_id: endpoint.connection_id(),
+        }
+    }
+
+    /// Ensures the peer ID is present in the address.
+    fn ensure_peer_id(peer: PeerId, address: Multiaddr) -> Multiaddr {
+        if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
+            address.with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
+            ))
+        } else {
+            address
+        }
+    }
 }
 
 /// Peer context.
