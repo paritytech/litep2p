@@ -25,7 +25,7 @@ use crate::{
     executor::Executor,
     protocol::ProtocolSet,
     transport::manager::{
-        address::{AddressRecord, AddressStore},
+        address::AddressRecord,
         types::{PeerContext, PeerState, SupportedTransport},
         ProtocolContext, TransportManagerEvent, LOG_TARGET,
     },
