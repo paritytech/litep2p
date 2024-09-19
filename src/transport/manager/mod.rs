@@ -601,7 +601,7 @@ impl TransportManager {
     pub async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
         self.connection_limits.on_dial_address()?;
 
-        let mut record = AddressRecord::from_multiaddr(address)
+        let record = AddressRecord::from_multiaddr(address)
             .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
 
         if self.listen_addresses.read().contains(record.as_ref()) {
@@ -665,7 +665,6 @@ impl TransportManager {
 
         // set connection id for the address record and put peer into `Dialing` state
         let connection_id = self.next_connection_id();
-        record.set_connection_id(connection_id);
 
         {
             let mut peers = self.peers.write();
@@ -766,7 +765,6 @@ impl TransportManager {
                         &provided,
                         address.clone(),
                         scores::DIFFERENT_PEER_ID,
-                        None,
                     ));
 
                     return;
@@ -794,9 +792,7 @@ impl TransportManager {
             addresses: AddressStore::new(),
             secondary_connection: None,
         });
-        context
-            .addresses
-            .insert(AddressRecord::new(&peer_id, address.clone(), score, None));
+        context.addresses.insert(AddressRecord::new(&peer_id, address.clone(), score));
     }
 
     /// Handle dial failure.
@@ -1087,7 +1083,6 @@ impl TransportManager {
             &peer,
             endpoint.address().clone(),
             scores::CONNECTION_ESTABLISHED,
-            Some(endpoint.connection_id()),
         );
 
         let context = peers.entry(peer).or_insert_with(|| PeerContext {
@@ -1422,7 +1417,6 @@ impl TransportManager {
                             &peer,
                             address,
                             scores::CONNECTION_ESTABLISHED,
-                            Some(connection_id),
                         ));
 
                         Ok(())
@@ -1510,7 +1504,6 @@ impl TransportManager {
                             &peer,
                             address,
                             scores::CONNECTION_FAILURE,
-                            None,
                         ));
                     }
 
@@ -2682,12 +2675,7 @@ mod tests {
                 state => panic!("invalid state: {state:?}"),
             };
 
-            let dial_record = Some(AddressRecord::new(
-                &peer,
-                address2.clone(),
-                0,
-                Some(ConnectionId::from(0usize)),
-            ));
+            let dial_record = Some(AddressRecord::new(&peer, address2.clone(), 0));
 
             peer_context.state = PeerState::Connected {
                 record,
@@ -3899,13 +3887,8 @@ mod tests {
             let mut peers = manager.peers.write();
 
             let state = PeerState::Connected {
-                record: AddressRecord::new(&peer, first_addr.clone(), 0, Some(first_connection_id)),
-                dial_record: Some(AddressRecord::new(
-                    &peer,
-                    first_addr.clone(),
-                    0,
-                    Some(second_connection_id),
-                )),
+                record: AddressRecord::new(&peer, first_addr.clone(), 0),
+                dial_record: Some(AddressRecord::new(&peer, first_addr.clone(), 0)),
             };
 
             let peer_context = PeerContext {

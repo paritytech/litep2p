@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{types::ConnectionId, PeerId};
+use crate::PeerId;
 
 use std::collections::HashMap;
 
@@ -36,9 +36,6 @@ pub struct AddressRecord {
 
     /// Address.
     address: Multiaddr,
-
-    /// Connection ID, if specified.
-    connection_id: Option<ConnectionId>,
 }
 
 impl AsRef<Multiaddr> for AddressRecord {
@@ -50,12 +47,7 @@ impl AsRef<Multiaddr> for AddressRecord {
 impl AddressRecord {
     /// Create new `AddressRecord` and if `address` doesn't contain `P2p`,
     /// append the provided `PeerId` to the address.
-    pub fn new(
-        peer: &PeerId,
-        address: Multiaddr,
-        score: i32,
-        connection_id: Option<ConnectionId>,
-    ) -> Self {
+    pub fn new(peer: &PeerId, address: Multiaddr, score: i32) -> Self {
         let address = if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
             address.with(Protocol::P2p(
                 Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
@@ -64,11 +56,7 @@ impl AddressRecord {
             address
         };
 
-        Self {
-            address,
-            score,
-            connection_id,
-        }
+        Self { address, score }
     }
 
     /// Create `AddressRecord` from `Multiaddr`.
@@ -83,7 +71,6 @@ impl AddressRecord {
         Some(AddressRecord {
             address,
             score: 0i32,
-            connection_id: None,
         })
     }
 
@@ -101,21 +88,6 @@ impl AddressRecord {
     /// Update score of an address.
     pub fn update_score(&mut self, score: i32) {
         self.score = self.score.saturating_add(score);
-    }
-
-    /// Update the `ConnectionId` for the [`AddressRecord`].
-    pub fn update_connection_id(&mut self, connection_id: Option<ConnectionId>) {
-        match (self.connection_id, connection_id) {
-            (Some(_), Some(_)) | (None, Some(_)) => {
-                self.connection_id = connection_id;
-            }
-            _ => {}
-        };
-    }
-
-    /// Set `ConnectionId` for the [`AddressRecord`].
-    pub fn set_connection_id(&mut self, connection_id: ConnectionId) {
-        self.connection_id = Some(connection_id);
     }
 }
 
@@ -208,7 +180,6 @@ impl AddressStore {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
                 let found_record = occupied_entry.into_mut();
                 found_record.update_score(record.score);
-                found_record.update_connection_id(record.connection_id);
             }
             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
                 vacant_entry.insert(record.clone());
@@ -253,7 +224,6 @@ mod tests {
                 .with(Protocol::from(address.ip()))
                 .with(Protocol::Tcp(address.port())),
             score,
-            None,
         )
     }
 
@@ -277,7 +247,6 @@ mod tests {
                 .with(Protocol::Tcp(address.port()))
                 .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string()))),
             score,
-            None,
         )
     }
 
@@ -301,7 +270,6 @@ mod tests {
                 .with(Protocol::Udp(address.port()))
                 .with(Protocol::QuicV1),
             score,
-            None,
         )
     }
 
