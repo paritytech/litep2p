@@ -17,7 +17,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# ${{ vars.CI_UNIFIED_IMAGE }} is defined in the repository variables
+# common variable is defined in the workflow
+# repo env variable doesn't work for PR from forks
 env:
   CI_IMAGE: "paritytech/ci-unified:bullseye-1.75.0-2024-01-22-v20240222"
 
@@ -130,7 +131,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: arc-runners-litep2p
+    runs-on: parity-default
     timeout-minutes: 15
     needs: [set-image]
     container:
