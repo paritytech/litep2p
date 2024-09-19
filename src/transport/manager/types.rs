@@ -51,8 +51,8 @@ pub enum SupportedTransport {
 pub enum PeerState {
     /// `Litep2p` is connected to peer.
     Connected {
-        /// Address record.
-        record: AddressRecord,
+        /// The established record of the connection.
+        record: DialRecord,
 
         /// Dial address, if it exists.
         ///
@@ -60,7 +60,7 @@ pub enum PeerState {
         /// the local node and connection was established successfully. This dial address
         /// is stored for processing later when the dial attempt concluded as either
         /// successful/failed.
-        dial_record: Option<AddressRecord>,
+        dial_record: Option<DialRecord>,
     },
 
     /// Connection to peer is opening over one or more addresses.
@@ -78,7 +78,7 @@ pub enum PeerState {
     /// Peer is being dialed.
     Dialing {
         /// Address record.
-        record: AddressRecord,
+        record: DialRecord,
     },
 
     /// `Litep2p` is not connected to peer.
@@ -90,8 +90,19 @@ pub enum PeerState {
         /// been closed before the dial concluded which means that
         /// [`crate::transport::manager::TransportManager`] must be prepared to handle the dial
         /// failure even after the connection has been closed.
-        dial_record: Option<AddressRecord>,
+        dial_record: Option<DialRecord>,
     },
+}
+
+/// The dial record.
+#[allow(clippy::derived_hash_with_manual_eq)]
+#[derive(Debug, Clone, Hash)]
+pub struct DialRecord {
+    /// Address that was dialed.
+    pub address: Multiaddr,
+
+    /// Connection ID resulted from dialing.
+    pub connection_id: ConnectionId,
 }
 
 /// Peer context.
