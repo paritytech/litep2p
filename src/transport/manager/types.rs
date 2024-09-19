@@ -25,7 +25,7 @@ use crate::{
 
 use multiaddr::Multiaddr;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// Supported protocols.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -66,7 +66,7 @@ pub enum PeerState {
     /// Connection to peer is opening over one or more addresses.
     Opening {
         /// Address records used for dialing.
-        records: HashMap<Multiaddr, AddressRecord>,
+        records: HashSet<Multiaddr>,
 
         /// Connection ID.
         connection_id: ConnectionId,

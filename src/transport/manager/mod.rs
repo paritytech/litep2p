@@ -490,11 +490,11 @@ impl TransportManager {
             return Ok(());
         }
 
-        let mut records: HashMap<_, _> = addresses
+        let records: HashSet<_> = addresses
             .addresses()
             .into_iter()
             .take(limit)
-            .map(|record| (record.address().clone(), record))
+            .map(|record| record.address().clone())
             .collect();
 
         if records.is_empty() {
@@ -502,8 +502,8 @@ impl TransportManager {
         }
 
         let locked_addresses = self.listen_addresses.read();
-        for record in records.values() {
-            if locked_addresses.contains(record.as_ref()) {
+        for record in &records {
+            if locked_addresses.contains(record) {
                 tracing::warn!(
                     target: LOG_TARGET,
                     ?peer,
@@ -535,9 +535,7 @@ impl TransportManager {
         let mut quic = Vec::new();
         let mut tcp = Vec::new();
 
-        for (address, record) in &mut records {
-            record.set_connection_id(connection_id);
-
+        for address in &records {
             #[cfg(feature = "quic")]
             if address.iter().any(|p| std::matches!(&p, Protocol::QuicV1)) {
                 quic.push(address.clone());
@@ -1274,18 +1272,7 @@ impl TransportManager {
 
                     // since an inbound connection was removed, the outbound connection can be
                     // removed from pending dials
-                    //
-                    // all records have the same `ConnectionId` so it doesn't matter which of them
-                    // is used to remove the pending dial
-                    self.pending_connections.remove(
-                        &records
-                            .iter()
-                            .next()
-                            .expect("record to exist")
-                            .1
-                            .connection_id()
-                            .expect("`ConnectionId` to exist"),
-                    );
+                    self.pending_connections.remove(&connection_id);
 
                     context.state = PeerState::Connected {
                         record: DialRecord {
@@ -1393,9 +1380,9 @@ impl TransportManager {
             PeerState::Disconnected { dial_record: None },
         ) {
             PeerState::Opening {
-                mut records,
                 connection_id,
                 transports,
+                ..
             } => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -1414,14 +1401,6 @@ impl TransportManager {
                         .cancel(connection_id);
                 }
 
-                // set peer state to `Dialing` to signal that the connection is fully opening
-                //
-                // set the succeeded `AddressRecord` as the one that is used for dialing and move
-                // all other address records back to `AddressStore`. and ask
-                // transport to negotiate the
-                let mut dial_record = records.remove(&address).expect("address to exist");
-                dial_record.update_score(scores::CONNECTION_ESTABLISHED);
-
                 // negotiate the connection
                 match self
                     .transports
@@ -1434,7 +1413,6 @@ impl TransportManager {
                             target: LOG_TARGET,
                             ?peer,
                             ?connection_id,
-                            ?dial_record,
                             ?transport,
                             "negotiation started"
                         );
@@ -1448,9 +1426,12 @@ impl TransportManager {
                             },
                         };
 
-                        for (_, record) in records {
-                            context.addresses.insert(record);
-                        }
+                        context.addresses.insert(AddressRecord::new(
+                            &peer,
+                            address,
+                            scores::CONNECTION_ESTABLISHED,
+                            Some(connection_id),
+                        ));
 
                         Ok(())
                     }
@@ -1532,9 +1513,13 @@ impl TransportManager {
                 transports.remove(&transport);
 
                 if transports.is_empty() {
-                    for (_, mut record) in records {
-                        record.update_score(scores::CONNECTION_FAILURE);
-                        context.addresses.insert(record);
+                    for address in records {
+                        context.addresses.insert(AddressRecord::new(
+                            &peer,
+                            address,
+                            scores::CONNECTION_FAILURE,
+                            None,
+                        ));
                     }
 
                     tracing::trace!(
