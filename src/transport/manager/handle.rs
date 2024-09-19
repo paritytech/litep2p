@@ -222,7 +222,7 @@ impl TransportManagerHandle {
         );
 
         for (peer, addresses) in peer_addresses {
-            let mut entry = peers.entry(peer).or_insert_with(|| PeerContext {
+            let entry = peers.entry(peer).or_insert_with(|| PeerContext {
                 state: PeerState::Disconnected { dial_record: None },
                 addresses: AddressStore::new(),
                 secondary_connection: None,

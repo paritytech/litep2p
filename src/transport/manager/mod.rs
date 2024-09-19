@@ -22,7 +22,7 @@ use crate::{
     addresses::PublicAddresses,
     codec::ProtocolCodec,
     crypto::ed25519::Keypair,
-    error::{AddressError, DialError, Error},
+    error::{AddressError, DialError, Error, NegotiationError},
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
     transport::{
@@ -74,9 +74,13 @@ const LOG_TARGET: &str = "litep2p::transport-manager";
 
 /// Score for a working address.
 const SCORE_CONNECT_SUCCESS: i32 = 100i32;
+/// Score for a negotiated connection with a different peer ID than expected.
+const SCORE_MAY_CONNECT: i32 = 50i32;
 
 /// Score for a non-working address.
 const SCORE_CONNECT_FAILURE: i32 = -100i32;
+/// Score for a dial failure due to a timeout.
+const SCORE_TIMEOUT_FAILURE: i32 = -50i32;
 
 /// The connection established result.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -721,6 +725,70 @@ impl TransportManager {
         self.pending_connections.insert(connection_id, remote_peer_id);
 
         Ok(())
+    }
+
+    // Update the address on a dial failure.
+    fn update_address_on_dial_failure(&mut self, mut address: Multiaddr, error: &DialError) {
+        let mut peers = self.peers.write();
+
+        let score = match error {
+            DialError::Timeout => SCORE_TIMEOUT_FAILURE,
+            DialError::AddressError(_) => SCORE_CONNECT_FAILURE,
+            DialError::DnsError(_) => SCORE_CONNECT_FAILURE,
+            DialError::NegotiationError(negotiation_error) => match negotiation_error {
+                // Check if the address corresponds to a different peer ID than the one we're
+                // dialing. This can happen if the node operation restarts the node.
+                //
+                // In this case the address is reachable, however the peer ID is different.
+                // Keep track of this address for future dials.
+                //
+                // Note: this is happening quite often in practice and is the primary reason
+                // of negotiation failures.
+                NegotiationError::PeerIdMismatch(_, provided) => {
+                    let context = peers.entry(*provided).or_insert_with(|| PeerContext {
+                        state: PeerState::Disconnected { dial_record: None },
+                        addresses: AddressStore::new(),
+                        secondary_connection: None,
+                    });
+
+                    if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
+                        address.pop();
+                    }
+                    context.addresses.insert(AddressRecord::new(
+                        &provided,
+                        address.clone(),
+                        SCORE_MAY_CONNECT,
+                        None,
+                    ));
+
+                    return;
+                }
+                // Timeout during the negotiation phase.
+                NegotiationError::Timeout => SCORE_TIMEOUT_FAILURE,
+                // Treat other errors as connection failures.
+                _ => SCORE_CONNECT_FAILURE,
+            },
+        };
+
+        // Extract the peer ID at this point to give `NegotiationError::PeerIdMismatch` a chance to
+        // propagate.
+        let peer_id = match address.iter().last() {
+            Some(Protocol::P2p(hash)) => PeerId::from_multihash(hash).ok(),
+            _ => None,
+        };
+        let Some(peer_id) = peer_id else {
+            return;
+        };
+
+        // We need a valid context for this peer to keep track of failed addresses.
+        let context = peers.entry(peer_id).or_insert_with(|| PeerContext {
+            state: PeerState::Disconnected { dial_record: None },
+            addresses: AddressStore::new(),
+            secondary_connection: None,
+        });
+        context
+            .addresses
+            .insert(AddressRecord::new(&peer_id, address.clone(), score, None));
     }
 
     /// Handle dial failure.
@@ -1531,6 +1599,8 @@ impl TransportManager {
                                 ?error,
                                 "failed to dial peer",
                             );
+
+                            self.update_address_on_dial_failure(address.clone(), &error);
 
                             if let Ok(()) = self.on_dial_failure(connection_id) {
                                 match address.iter().last() {
