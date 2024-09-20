@@ -29,7 +29,7 @@ use crate::{
         manager::{
             address::AddressRecord,
             handle::InnerTransportManagerCommand,
-            types::{ConnectionRecord, InitiateDialResult, PeerContext, PeerState},
+            types::{ConnectionRecord, PeerContext, PeerState, StateDialResult},
         },
         Endpoint, Transport, TransportEvent,
     },
@@ -449,10 +449,11 @@ impl TransportManager {
 
         let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
 
-        let disconnected_state = match context.state.initiate_dial() {
-            InitiateDialResult::AlreadyConnected => return Err(Error::AlreadyConnected),
-            InitiateDialResult::DialingInProgress => return Ok(()),
-            InitiateDialResult::Disconnected(disconnected_state) => disconnected_state,
+        // Check if dialing is possible before allocating addresses.
+        match context.state.can_dial() {
+            StateDialResult::AlreadyConnected => return Err(Error::AlreadyConnected),
+            StateDialResult::DialingInProgress => return Ok(()),
+            StateDialResult::Ok => {}
         };
 
         // The addresses are sorted by score and contain the remote peer ID.
@@ -471,11 +472,14 @@ impl TransportManager {
         );
 
         let transports = Self::open_addresses(&dial_addresses);
-        disconnected_state.dial_addresses(
+
+        // Dialing addresses will succeed because the `context.state.can_dial()` returned `Ok`.
+        let result = context.state.dial_addresses(
             connection_id,
             dial_addresses.iter().cloned().collect(),
             transports.keys().cloned().collect(),
         );
+        assert_eq!(result, StateDialResult::Ok);
 
         for (transport, addresses) in transports {
             if addresses.is_empty() {
@@ -586,13 +590,11 @@ impl TransportManager {
             // Keep the provided record around for possible future dials.
             context.addresses.insert(address_record.clone());
 
-            let disconnected_state = match context.state.initiate_dial() {
-                InitiateDialResult::AlreadyConnected => return Err(Error::AlreadyConnected),
-                InitiateDialResult::DialingInProgress => return Ok(()),
-                InitiateDialResult::Disconnected(disconnected_state) => disconnected_state,
+            match context.state.dial_single_address(dial_record) {
+                StateDialResult::AlreadyConnected => return Err(Error::AlreadyConnected),
+                StateDialResult::DialingInProgress => return Ok(()),
+                StateDialResult::Ok => {}
             };
-
-            disconnected_state.dial_record(dial_record);
         }
 
         self.transports
@@ -2049,7 +2051,7 @@ mod tests {
         let established_result = manager
             .on_connection_established(
                 peer,
-                &Endpoint::listener(address1, ConnectionId::from(0usize)),
+                &Endpoint::dialer(address1.clone(), ConnectionId::from(0usize)),
             )
             .unwrap();
         assert_eq!(established_result, ConnectionEstablishedResult::Accept);
@@ -2110,8 +2112,9 @@ mod tests {
                 assert_eq!(secondary_connection.address, address2);
                 // Endpoint::listener addresses are not tracked.
                 assert!(!peer.addresses.addresses.contains_key(&address2));
+                assert!(!peer.addresses.addresses.contains_key(&address3));
                 assert_eq!(
-                    !peer.addresses.addresses.get(&address3).unwrap().score(),
+                    peer.addresses.addresses.get(&address1).unwrap().score(),
                     scores::CONNECTION_ESTABLISHED
                 );
             }
@@ -2263,8 +2266,13 @@ mod tests {
 
             match &peer.state {
                 PeerState::Connected {
-                    secondary: None, ..
-                } => {}
+                    record,
+                    secondary: None,
+                    ..
+                } => {
+                    // Primary connection is established.
+                    assert_eq!(record.connection_id, ConnectionId::from(0usize));
+                }
                 state => panic!("invalid state: {state:?}"),
             }
         }
@@ -2312,7 +2320,8 @@ mod tests {
                     context.addresses.addresses.get(&address2).unwrap().score(),
                     scores::CONNECTION_ESTABLISHED
                 );
-                assert_eq!(record.connection_id, ConnectionId::from(1usize));
+                // Primary remains opened.
+                assert_eq!(record.connection_id, ConnectionId::from(0usize));
             }
             state => panic!("invalid state: {state:?}"),
         }

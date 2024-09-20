@@ -106,37 +106,83 @@ pub enum SecondaryOrDialing {
 }
 
 /// Result of initiating a dial.
-pub enum InitiateDialResult<'a> {
+#[derive(Debug, Clone, PartialEq)]
+pub enum StateDialResult {
     /// The peer is already connected.
     AlreadyConnected,
     /// The dialing state is already in progress.
     DialingInProgress,
     /// The peer is disconnected, start dialing.
-    Disconnected(DisconnectedState<'a>),
+    Ok,
 }
 
 impl PeerState {
-    /// Provides a disconnected state object if the peer can initiate a dial.
-    ///
-    /// From the disconnected state, the peer can be dialed on a single address or multiple
-    /// addresses. The provided state leverages the type system to ensure the peer
-    /// can transition gracefully to the next state.
-    pub fn initiate_dial(&mut self) -> InitiateDialResult {
+    /// Check if the peer can be dialed.
+    pub fn can_dial(&self) -> StateDialResult {
         match self {
             // The peer is already connected, no need to dial again.
-            Self::Connected { .. } => return InitiateDialResult::AlreadyConnected,
+            Self::Connected { .. } => return StateDialResult::AlreadyConnected,
             // The dialing state is already in progress, an event will be emitted later.
             Self::Dialing { .. }
             | Self::Opening { .. }
             | Self::Disconnected {
                 dial_record: Some(_),
             } => {
-                return InitiateDialResult::DialingInProgress;
+                return StateDialResult::DialingInProgress;
             }
 
-            // The peer is disconnected, start dialing.
-            Self::Disconnected { dial_record: None } =>
-                return InitiateDialResult::Disconnected(DisconnectedState::new(self)),
+            Self::Disconnected { dial_record: None } => StateDialResult::Ok,
+        }
+    }
+
+    /// Dial the peer on a single address.
+    pub fn dial_single_address(&mut self, dial_record: ConnectionRecord) -> StateDialResult {
+        let check = self.can_dial();
+        if check != StateDialResult::Ok {
+            return check;
+        }
+
+        match self {
+            Self::Disconnected { dial_record: None } => {
+                *self = PeerState::Dialing { dial_record };
+                return StateDialResult::Ok;
+            }
+            state => panic!(
+                "unexpected state: {:?} validated by Self::can_dial; qed",
+                state
+            ),
+        }
+    }
+
+    /// Dial the peer on multiple addresses.
+    ///
+    /// # Transitions
+    ///
+    /// [`PeerState::Disconnected`] -> [`PeerState::Opening`]
+    pub fn dial_addresses(
+        &mut self,
+        connection_id: ConnectionId,
+        addresses: HashSet<Multiaddr>,
+        transports: HashSet<SupportedTransport>,
+    ) -> StateDialResult {
+        let check = self.can_dial();
+        if check != StateDialResult::Ok {
+            return check;
+        }
+
+        match self {
+            Self::Disconnected { dial_record: None } => {
+                *self = PeerState::Opening {
+                    addresses,
+                    connection_id,
+                    transports,
+                };
+                return StateDialResult::Ok;
+            }
+            state => panic!(
+                "unexpected state: {:?} validated by Self::can_dial; qed",
+                state
+            ),
         }
     }
 
@@ -305,53 +351,6 @@ impl PeerState {
         }
 
         false
-    }
-}
-
-pub struct DisconnectedState<'a> {
-    state: &'a mut PeerState,
-}
-
-impl<'a> DisconnectedState<'a> {
-    /// Constructs a new [`DisconnectedState`].
-    ///
-    /// # Panics
-    ///
-    /// Panics if the state is not [`PeerState::Disconnected`].
-    fn new(state: &'a mut PeerState) -> Self {
-        assert!(matches!(
-            state,
-            PeerState::Disconnected { dial_record: None }
-        ));
-
-        Self { state }
-    }
-
-    /// Dial the peer on a single address.
-    ///
-    /// # Transitions
-    ///
-    /// [`PeerState::Disconnected`] -> [`PeerState::Dialing`]
-    pub fn dial_record(self, dial_record: ConnectionRecord) {
-        *self.state = PeerState::Dialing { dial_record };
-    }
-
-    /// Dial the peer on multiple addresses.
-    ///
-    /// # Transitions
-    ///
-    /// [`PeerState::Disconnected`] -> [`PeerState::Opening`]
-    pub fn dial_addresses(
-        self,
-        connection_id: ConnectionId,
-        addresses: HashSet<Multiaddr>,
-        transports: HashSet<SupportedTransport>,
-    ) {
-        *self.state = PeerState::Opening {
-            addresses,
-            connection_id,
-            transports,
-        };
     }
 }
 
