@@ -26,7 +26,7 @@ use crate::{
     protocol::ProtocolSet,
     transport::manager::{
         address::AddressRecord,
-        types::{PeerContext, PeerState, SupportedTransport},
+        types::{PeerContext, StateDialResult, SupportedTransport},
         ProtocolContext, TransportManagerEvent, LOG_TARGET,
     },
     types::{protocol::ProtocolName, ConnectionId},
@@ -242,36 +242,21 @@ impl TransportManagerHandle {
         }
 
         {
-            match self.peers.read().get(peer) {
-                Some(PeerContext {
-                    state: PeerState::Connected { .. },
-                    ..
-                }) => return Err(ImmediateDialError::AlreadyConnected),
-                Some(PeerContext {
-                    state: PeerState::Disconnected { dial_record },
-                    addresses,
-                    ..
-                }) => {
-                    if addresses.is_empty() {
-                        return Err(ImmediateDialError::NoAddressAvailable);
-                    }
+            let peers = self.peers.read();
+            let Some(PeerContext { state, addresses }) = peers.get(peer) else {
+                return Err(ImmediateDialError::NoAddressAvailable);
+            };
 
-                    // peer is already being dialed, don't dial again until the first dial concluded
-                    if dial_record.is_some() {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?dial_record,
-                            "peer is aready being dialed",
-                        );
-                        return Ok(());
-                    }
-                }
-                Some(PeerContext {
-                    state: PeerState::Dialing { .. } | PeerState::Opening { .. },
-                    ..
-                }) => return Ok(()),
-                None => return Err(ImmediateDialError::NoAddressAvailable),
+            match state.can_dial() {
+                StateDialResult::AlreadyConnected =>
+                    return Err(ImmediateDialError::AlreadyConnected),
+                StateDialResult::DialingInProgress => return Ok(()),
+                StateDialResult::Ok => {}
+            };
+
+            // Check if we have enough addresses to dial.
+            if addresses.is_empty() {
+                return Err(ImmediateDialError::NoAddressAvailable);
             }
         }
 
