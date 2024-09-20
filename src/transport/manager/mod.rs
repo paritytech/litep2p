@@ -37,6 +37,7 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
+use address::scores;
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
@@ -71,21 +72,6 @@ pub(crate) mod handle;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::transport-manager";
-
-/// Scores for address records.
-mod scores {
-    /// Score indicating that the connection was successfully established.
-    pub const CONNECTION_ESTABLISHED: i32 = 100i32;
-
-    /// Score for a connection with a peer using a different ID than expected.
-    pub const DIFFERENT_PEER_ID: i32 = 50i32;
-
-    /// Score for failing to connect due to an invalid or unreachable address.
-    pub const CONNECTION_FAILURE: i32 = -100i32;
-
-    /// Score for a connection attempt that failed due to a timeout.
-    pub const TIMEOUT_FAILURE: i32 = -50i32;
-}
 
 /// The connection established result.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

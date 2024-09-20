@@ -28,6 +28,21 @@ use multihash::Multihash;
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
 
+/// Scores for address records.
+pub mod scores {
+    /// Score indicating that the connection was successfully established.
+    pub const CONNECTION_ESTABLISHED: i32 = 100i32;
+
+    /// Score for a connection with a peer using a different ID than expected.
+    pub const DIFFERENT_PEER_ID: i32 = 50i32;
+
+    /// Score for failing to connect due to an invalid or unreachable address.
+    pub const CONNECTION_FAILURE: i32 = -100i32;
+
+    /// Score for a connection attempt that failed due to a timeout.
+    pub const TIMEOUT_FAILURE: i32 = -50i32;
+}
+
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
 pub struct AddressRecord {
@@ -297,6 +312,27 @@ mod tests {
                 .with(Protocol::QuicV1),
             score,
         )
+    }
+
+    #[test]
+    fn insert_record() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+
+        let mut record = tcp_address_record(&mut rng);
+        record.score = 10;
+
+        store.insert(record.clone());
+
+        assert_eq!(store.addresses.len(), 1);
+        assert_eq!(store.addresses.get(record.address()).unwrap(), &record);
+
+        // This time the record is updated.
+        store.insert(record.clone());
+
+        assert_eq!(store.addresses.len(), 1);
+        let store_record = store.addresses.get(record.address()).unwrap();
+        assert_eq!(store_record.score, record.score * 2);
     }
 
     #[test]
