@@ -181,12 +181,12 @@ impl PeerState {
         match self {
             // Transform the dial record into a secondary connection.
             Self::Connected {
+                record,
                 secondary: Some(SecondaryOrDialing::Dialing(dial_record)),
-                ..
             } =>
                 if dial_record.connection_id == connection.connection_id {
                     *self = Self::Connected {
-                        record: connection.clone(),
+                        record: record.clone(),
                         secondary: Some(SecondaryOrDialing::Secondary(connection)),
                     };
 
@@ -194,10 +194,11 @@ impl PeerState {
                 },
             // There's place for a secondary connection.
             Self::Connected {
-                secondary: None, ..
+                record,
+                secondary: None,
             } => {
                 *self = Self::Connected {
-                    record: connection.clone(),
+                    record: record.clone(),
                     secondary: Some(SecondaryOrDialing::Secondary(connection)),
                 };
 
@@ -359,7 +360,6 @@ impl<'a> DisconnectedState<'a> {
 ///  - dialing state for outbound connections.
 ///  - established outbound connections via [`PeerState::Connected`].
 ///  - established inbound connections via `PeerContext::secondary_connection`.
-#[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash, PartialEq)]
 pub struct ConnectionRecord {
     /// Address of the connection.

@@ -2106,7 +2106,8 @@ mod tests {
                 ..
             } => {
                 assert_eq!(secondary_connection.address, address2);
-                assert!(peer.addresses.addresses.contains_key(&address2));
+                // Endpoint::listener addresses are not tracked.
+                assert!(!peer.addresses.addresses.contains_key(&address2));
                 assert_eq!(
                     !peer.addresses.addresses.get(&address3).unwrap().score(),
                     scores::CONNECTION_ESTABLISHED
@@ -2356,7 +2357,7 @@ mod tests {
             ConnectionEstablishedResult::Accept
         ));
 
-        // verify that the peer state is `Connected` with no seconary connection
+        // verify that the peer state is `Connected` with no secondary connection
         {
             let peers = manager.peers.read();
             let peer = peers.get(&peer).unwrap();
@@ -2369,7 +2370,7 @@ mod tests {
             }
         }
 
-        // second connection is established, verify that the seconary connection is tracked
+        // second connection is established, verify that the secondary connection is tracked
         let emit_event = manager
             .on_connection_established(
                 peer,
@@ -2408,7 +2409,8 @@ mod tests {
                 secondary: None,
                 record,
             } => {
-                assert!(context.addresses.addresses.contains_key(&address1));
+                assert!(!context.addresses.addresses.contains_key(&address1));
+                assert!(context.addresses.addresses.contains_key(&address2));
                 assert_eq!(record.connection_id, ConnectionId::from(1usize));
             }
             state => panic!("invalid state: {state:?}"),
