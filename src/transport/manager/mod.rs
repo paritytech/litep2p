@@ -3149,7 +3149,9 @@ mod tests {
                 state: PeerState::Connected { record, secondary },
                 addresses,
             } => {
-                assert!(addresses.is_empty());
+                // Saved from the dial attempt.
+                assert_eq!(addresses.addresses.get(&dial_address).unwrap().score(), 0);
+
                 assert!(secondary.is_none());
                 assert_eq!(record.address, dial_address);
                 assert_eq!(record.connection_id, connection_id);
