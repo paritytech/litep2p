@@ -49,7 +49,7 @@ pub enum SupportedTransport {
 }
 
 /// Peer state.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PeerState {
     /// `Litep2p` is connected to peer.
     Connected {
@@ -97,7 +97,7 @@ pub enum PeerState {
 }
 
 /// The state of the secondary connection.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SecondaryOrDialing {
     /// The secondary connection is established.
     Secondary(ConnectionRecord),
@@ -177,10 +177,7 @@ impl PeerState {
     }
 
     /// Returns `true` if the connection should be accepted by the transport manager.
-    pub fn on_connection_established(
-        &mut self,
-        connection: ConnectionRecord,
-    ) -> (bool, Option<(ConnectionId, HashSet<SupportedTransport>)>) {
+    pub fn on_connection_established(&mut self, connection: ConnectionRecord) -> bool {
         match self {
             // Transform the dial record into a secondary connection.
             Self::Connected {
@@ -193,7 +190,7 @@ impl PeerState {
                         secondary: Some(SecondaryOrDialing::Secondary(connection)),
                     };
 
-                    return (true, None);
+                    return true;
                 },
             // There's place for a secondary connection.
             Self::Connected {
@@ -204,7 +201,7 @@ impl PeerState {
                     secondary: Some(SecondaryOrDialing::Secondary(connection)),
                 };
 
-                return (true, None);
+                return true;
             }
 
             // Convert the dial record into a primary connection or preserve it.
@@ -217,36 +214,41 @@ impl PeerState {
                         record: connection.clone(),
                         secondary: None,
                     };
-                    return (true, None);
+                    return true;
                 } else {
                     *self = Self::Connected {
                         record: connection,
                         secondary: Some(SecondaryOrDialing::Dialing(dial_record.clone())),
                     };
-                    return (true, None);
+                    return true;
                 },
 
-            // Accept the incoming connection and cancel opening dials.
-            Self::Opening {
-                addresses,
-                connection_id,
-                transports,
-            } => {
+            Self::Disconnected { dial_record: None } => {
                 *self = Self::Connected {
                     record: connection,
                     secondary: None,
                 };
 
-                return (true, Some((*connection_id, transports.clone())));
+                return true;
+            }
+
+            // Accept the incoming connection.
+            Self::Opening { .. } => {
+                *self = Self::Connected {
+                    record: connection,
+                    secondary: None,
+                };
+
+                return true;
             }
 
             _ => {}
         };
 
-        return (false, None);
+        return false;
     }
 
-    /// Returns `true` if the connection was closed and the state was updated.
+    /// Returns `true` if the connection was closed.
     pub fn on_connection_closed(&mut self, connection_id: ConnectionId) -> bool {
         match self {
             Self::Connected { record, secondary } => {
@@ -265,13 +267,17 @@ impl PeerState {
                             *self = Self::Disconnected {
                                 dial_record: Some(dial_record.clone()),
                             };
+
+                            // This is the only case where the connection transitions from
+                            // [`PeerState::Connected`] to [`PeerState::Disconnected`].
+                            return true;
                         }
                         None => {
                             *self = Self::Disconnected { dial_record: None };
                         }
                     };
 
-                    return true;
+                    return false;
                 }
 
                 match secondary {
@@ -283,15 +289,14 @@ impl PeerState {
                             record: record.clone(),
                             secondary: None,
                         };
-                        return true;
                     }
-
-                    _ => return false,
+                    _ => (),
                 }
             }
-
-            _ => false,
+            _ => (),
         }
+
+        false
     }
 }
 
@@ -355,7 +360,7 @@ impl<'a> DisconnectedState<'a> {
 ///  - established outbound connections via [`PeerState::Connected`].
 ///  - established inbound connections via `PeerContext::secondary_connection`.
 #[allow(clippy::derived_hash_with_manual_eq)]
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone, Hash, PartialEq)]
 pub struct ConnectionRecord {
     /// Address of the connection.
     ///
