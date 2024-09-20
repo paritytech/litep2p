@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    transport::{common::listener::DialAddresses, manager::address::AddressStore, Endpoint},
+    transport::{manager::address::AddressStore, Endpoint},
     types::ConnectionId,
     Error, PeerId,
 };
@@ -245,6 +245,54 @@ impl PeerState {
 
         return (false, None);
     }
+
+    /// Returns `true` if the connection was closed and the state was updated.
+    pub fn on_connection_closed(&mut self, connection_id: ConnectionId) -> bool {
+        match self {
+            Self::Connected { record, secondary } => {
+                // Primary connection closed.
+                if record.connection_id == connection_id {
+                    match secondary {
+                        // Promote secondary connection to primary.
+                        Some(SecondaryOrDialing::Secondary(secondary)) => {
+                            *self = Self::Connected {
+                                record: secondary.clone(),
+                                secondary: None,
+                            };
+                        }
+                        // Preserve the dial record.
+                        Some(SecondaryOrDialing::Dialing(dial_record)) => {
+                            *self = Self::Disconnected {
+                                dial_record: Some(dial_record.clone()),
+                            };
+                        }
+                        None => {
+                            *self = Self::Disconnected { dial_record: None };
+                        }
+                    };
+
+                    return true;
+                }
+
+                match secondary {
+                    // Secondary connection closed.
+                    Some(SecondaryOrDialing::Secondary(secondary))
+                        if secondary.connection_id == connection_id =>
+                    {
+                        *self = Self::Connected {
+                            record: record.clone(),
+                            secondary: None,
+                        };
+                        return true;
+                    }
+
+                    _ => return false,
+                }
+            }
+
+            _ => false,
+        }
+    }
 }
 
 pub struct DisconnectedState<'a> {
@@ -272,9 +320,7 @@ impl<'a> DisconnectedState<'a> {
     ///
     /// [`PeerState::Disconnected`] -> [`PeerState::Dialing`]
     pub fn dial_record(self, dial_record: ConnectionRecord) {
-        *self.state = PeerState::Dialing {
-            record: dial_record,
-        };
+        *self.state = PeerState::Dialing { dial_record };
     }
 
     /// Dial the peer on multiple addresses.
