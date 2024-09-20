@@ -359,12 +359,12 @@ impl PeerState {
                                 dial_record: Some(dial_record.clone()),
                             };
 
-                            // This is the only case where the connection transitions from
-                            // [`PeerState::Connected`] to [`PeerState::Disconnected`].
                             return true;
                         }
                         None => {
                             *self = Self::Disconnected { dial_record: None };
+
+                            return true;
                         }
                     };
 
