@@ -3529,7 +3529,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn do_not_overwrite_dial_addresses() {
+    async fn persist_dial_addresses() {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
@@ -3573,8 +3573,11 @@ mod tests {
                 state => panic!("invalid state: {state:?}"),
             }
 
-            // The address is not saved yet.
-            assert!(!peer_context.addresses.addresses(usize::MAX).contains(&dial_address));
+            // The address is saved for future dials.
+            assert_eq!(
+                peer_context.addresses.addresses.get(&dial_address).unwrap().score(),
+                0
+            );
         }
 
         let second_address = Multiaddr::empty()
@@ -3598,8 +3601,15 @@ mod tests {
                 state => panic!("invalid state: {state:?}"),
             }
 
-            assert!(!peer_context.addresses.addresses(usize::MAX).contains(&dial_address));
-            assert!(!peer_context.addresses.addresses(usize::MAX).contains(&second_address));
+            // The address is still saved, even if a second dial is not initiated.
+            assert_eq!(
+                peer_context.addresses.addresses.get(&dial_address).unwrap().score(),
+                0
+            );
+            assert_eq!(
+                peer_context.addresses.addresses.get(&second_address).unwrap().score(),
+                0
+            );
         }
     }
 
