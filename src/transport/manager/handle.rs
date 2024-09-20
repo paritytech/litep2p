@@ -458,7 +458,7 @@ mod tests {
                         },
                         secondary: None,
                     },
-                    secondary_connection: None,
+
                     addresses: AddressStore::from_iter(
                         vec![Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
@@ -500,7 +500,7 @@ mod tests {
                             connection_id: ConnectionId::from(0),
                         },
                     },
-                    secondary_connection: None,
+
                     addresses: AddressStore::from_iter(
                         vec![Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
@@ -534,7 +534,6 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Disconnected { dial_record: None },
-                    secondary_connection: None,
                     addresses: AddressStore::new(),
                 },
             );
@@ -569,7 +568,7 @@ mod tests {
                             ConnectionId::from(0),
                         )),
                     },
-                    secondary_connection: None,
+
                     addresses: AddressStore::from_iter(
                         vec![Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))

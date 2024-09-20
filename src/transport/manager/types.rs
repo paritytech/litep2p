@@ -406,9 +406,6 @@ pub struct PeerContext {
     /// Peer state.
     pub state: PeerState,
 
-    /// Secondary connection, if it's open.
-    pub secondary_connection: Option<ConnectionRecord>,
-
     /// Known addresses of peer.
     pub addresses: AddressStore,
 }
@@ -417,7 +414,6 @@ impl Default for PeerContext {
     fn default() -> Self {
         Self {
             state: PeerState::Disconnected { dial_record: None },
-            secondary_connection: None,
             addresses: AddressStore::new(),
         }
     }
