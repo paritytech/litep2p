@@ -21,7 +21,7 @@
 use crate::{
     transport::{manager::address::AddressStore, Endpoint},
     types::ConnectionId,
-    Error, PeerId,
+    PeerId,
 };
 
 use multiaddr::{Multiaddr, Protocol};
@@ -105,7 +105,15 @@ pub enum SecondaryOrDialing {
     Dialing(ConnectionRecord),
 }
 
-pub type InitiateDialError = Result<(), Error>;
+/// Result of initiating a dial.
+pub enum InitiateDialResult<'a> {
+    /// The peer is already connected.
+    AlreadyConnected,
+    /// The dialing state is already in progress.
+    DialingInProgress,
+    /// The peer is disconnected, start dialing.
+    Disconnected(DisconnectedState<'a>),
+}
 
 impl PeerState {
     /// Provides a disconnected state object if the peer can initiate a dial.
@@ -113,23 +121,22 @@ impl PeerState {
     /// From the disconnected state, the peer can be dialed on a single address or multiple
     /// addresses. The provided state leverages the type system to ensure the peer
     /// can transition gracefully to the next state.
-    pub fn initiate_dial(&mut self) -> Result<DisconnectedState, InitiateDialError> {
+    pub fn initiate_dial(&mut self) -> InitiateDialResult {
         match self {
             // The peer is already connected, no need to dial again.
-            Self::Connected { .. } => {
-                return Err(Err(Error::AlreadyConnected));
-            }
+            Self::Connected { .. } => return InitiateDialResult::AlreadyConnected,
             // The dialing state is already in progress, an event will be emitted later.
             Self::Dialing { .. }
             | Self::Opening { .. }
             | Self::Disconnected {
                 dial_record: Some(_),
             } => {
-                return Err(Ok(()));
+                return InitiateDialResult::DialingInProgress;
             }
 
             // The peer is disconnected, start dialing.
-            Self::Disconnected { dial_record: None } => return Ok(DisconnectedState::new(self)),
+            Self::Disconnected { dial_record: None } =>
+                return InitiateDialResult::Disconnected(DisconnectedState::new(self)),
         }
     }
 

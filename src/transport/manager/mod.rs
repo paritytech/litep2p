@@ -29,7 +29,7 @@ use crate::{
         manager::{
             address::AddressRecord,
             handle::InnerTransportManagerCommand,
-            types::{ConnectionRecord, PeerContext, PeerState},
+            types::{ConnectionRecord, InitiateDialResult, PeerContext, PeerState},
         },
         Endpoint, Transport, TransportEvent,
     },
@@ -450,9 +450,9 @@ impl TransportManager {
         let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
 
         let disconnected_state = match context.state.initiate_dial() {
-            Ok(disconnected_peer) => disconnected_peer,
-            // Dialing from an invalid state, or another dial is in progress.
-            Err(immediate_result) => return immediate_result,
+            InitiateDialResult::AlreadyConnected => return Err(Error::AlreadyConnected),
+            InitiateDialResult::DialingInProgress => return Ok(()),
+            InitiateDialResult::Disconnected(disconnected_state) => disconnected_state,
         };
 
         // The addresses are sorted by score and contain the remote peer ID.
@@ -586,11 +586,13 @@ impl TransportManager {
             // Keep the provided record around for possible future dials.
             context.addresses.insert(address_record.clone());
 
-            match context.state.initiate_dial() {
-                Ok(disconnected_peer) => disconnected_peer.dial_record(dial_record),
-                // Dialing from an invalid state, or another dial is in progress.
-                Err(immediate_result) => return immediate_result,
+            let disconnected_state = match context.state.initiate_dial() {
+                InitiateDialResult::AlreadyConnected => return Err(Error::AlreadyConnected),
+                InitiateDialResult::DialingInProgress => return Ok(()),
+                InitiateDialResult::Disconnected(disconnected_state) => disconnected_state,
             };
+
+            disconnected_state.dial_record(dial_record);
         }
 
         self.transports
