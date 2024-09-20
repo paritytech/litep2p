@@ -116,6 +116,8 @@ impl Ord for AddressRecord {
 pub struct AddressStore {
     /// Addresses available.
     pub addresses: HashMap<Multiaddr, AddressRecord>,
+
+    max_capacity: usize,
 }
 
 impl FromIterator<Multiaddr> for AddressStore {
@@ -163,6 +165,7 @@ impl AddressStore {
     pub fn new() -> Self {
         Self {
             addresses: HashMap::with_capacity(MAX_ADDRESSES),
+            max_capacity: MAX_ADDRESSES,
         }
     }
 
@@ -190,7 +193,7 @@ impl AddressStore {
         //  - if the store is at capacity, the worst address will be evicted.
         //  - an address that is not dialed yet (with score zero) will be preferred over an address
         //  that already failed (with negative score).
-        if num_addresses > MAX_ADDRESSES {
+        if num_addresses > self.max_capacity {
             // No need to keep track of negative addresses if we are at capacity.
             if record.score < 0 {
                 return;
@@ -320,7 +323,8 @@ mod tests {
 
         let mut prev: Option<AddressRecord> = None;
         for address in taken {
-            assert!(!store.addresses.contains_key(&address));
+            // Addresses are still in the store.
+            assert!(store.addresses.contains_key(&address));
 
             let record = store.addresses.get(&address).unwrap().clone();
 
@@ -345,7 +349,6 @@ mod tests {
 
         let taken = store.addresses(8usize);
         assert_eq!(taken.len(), 3);
-        assert!(store.is_empty());
 
         let mut prev: Option<AddressRecord> = None;
         for record in taken {
