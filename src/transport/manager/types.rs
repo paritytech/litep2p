@@ -48,7 +48,55 @@ pub enum SupportedTransport {
     WebSocket,
 }
 
-/// Peer state.
+/// The peer state that tracks connections and dialing attempts.
+///
+/// # State Machine
+///
+/// ## [`PeerState::Disconnected`]
+///
+/// Initially, the peer is in the [`PeerState::Disconnected`] state without a
+/// [`PeerState::Disconnected::dial_record`]. This means the peer is fully disconnected.
+///
+/// Next states:
+/// - [`PeerState::Disconnected`] -> [`PeerState::Dialing`] (via [`PeerState::dial_single_address`])
+/// - [`PeerState::Disconnected`] -> [`PeerState::Opening`] (via [`PeerState::dial_addresses`])
+///
+/// ## [`PeerState::Dialing`]
+///
+/// The peer can transition to the [`PeerState::Dialing`] state when a dialing attempt is
+/// initiated. This only happens when the peer is dialed on a single address via
+/// [`PeerState::dial_single_address`].
+///
+/// The dialing state implies the peer is reached on the socket address provided, as well as
+/// negotiating noise and yamux protocols.
+///
+/// Next states:
+/// - [`PeerState::Dialing`] -> [`PeerState::Connected`] (via
+///   [`PeerState::on_connection_established`])
+/// - [`PeerState::Dialing`] -> [`PeerState::Disconnected`] (via [`PeerState::on_dial_failure`])
+///
+/// ## [`PeerState::Opening`]
+///
+/// The peer can transition to the [`PeerState::Opening`] state when a dialing attempt is
+/// initiated on multiple addresses via [`PeerState::dial_addresses`]. This takes into account
+/// the parallelism factor (8 maximum) of the dialing attempts.
+///
+/// The opening state holds information about which protocol is being dialed to properly report back
+/// errors.
+///
+/// The opening state is similar to the dial state, however the peer is only reached on a socket
+/// address. The noise and yamux protocols are not negotiated yet. This state transitions to
+/// [`PeerState::Dialing`] for the final part of the negotiation. Please note that it would be
+/// wasteful to negotiate the noise and yamux protocols on all addresses, since only one
+/// connection is kept around.
+///
+/// This is something we'll reconsider in the future if we encounter issues.
+///
+/// Next states:
+/// - [`PeerState::Opening`] -> [`PeerState::Dialing`] (via transport manager
+///   `on_connection_opened`)
+/// - [`PeerState::Opening`] -> [`PeerState::Disconnected`] (via transport manager
+///   `on_connection_opened` if negotiation cannot be started or via `on_open_failure`)
 #[derive(Debug, Clone, PartialEq)]
 pub enum PeerState {
     /// `Litep2p` is connected to peer.
@@ -155,10 +203,6 @@ impl PeerState {
     }
 
     /// Dial the peer on multiple addresses.
-    ///
-    /// # Transitions
-    ///
-    /// [`PeerState::Disconnected`] -> [`PeerState::Opening`]
     pub fn dial_addresses(
         &mut self,
         connection_id: ConnectionId,
@@ -188,19 +232,16 @@ impl PeerState {
 
     /// Handle dial failure.
     ///
-    /// Returns `true` if the dial record was cleared, false otherwise.
-    ///
     /// # Transitions
     /// - [`PeerState::Dialing`] (with record) -> [`PeerState::Disconnected`]
     /// - [`PeerState::Connected`] (with dial record) -> [`PeerState::Connected`]
     /// - [`PeerState::Disconnected`] (with dial record) -> [`PeerState::Disconnected`]
-    pub fn on_dial_failure(&mut self, connection_id: ConnectionId) -> bool {
+    pub fn on_dial_failure(&mut self, connection_id: ConnectionId) {
         match self {
             // Clear the dial record if the connection ID matches.
             Self::Dialing { dial_record } =>
                 if dial_record.connection_id == connection_id {
                     *self = Self::Disconnected { dial_record: None };
-                    return true;
                 },
 
             Self::Connected {
@@ -212,7 +253,6 @@ impl PeerState {
                         record: record.clone(),
                         secondary: None,
                     };
-                    return true;
                 },
 
             Self::Disconnected {
@@ -220,13 +260,10 @@ impl PeerState {
             } =>
                 if dial_record.connection_id == connection_id {
                     *self = Self::Disconnected { dial_record: None };
-                    return true;
                 },
 
             _ => (),
         };
-
-        return false;
     }
 
     /// Returns `true` if the connection should be accepted by the transport manager.
