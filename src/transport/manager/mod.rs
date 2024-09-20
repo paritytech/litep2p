@@ -3352,7 +3352,7 @@ mod tests {
         ));
 
         // Close one connection.
-        assert!(manager.on_connection_closed(peer, first_connection_id).is_none());
+        assert!(manager.on_connection_closed(peer, first_connection_id).is_some());
         // We can now dial again.
         manager.dial_address(first_addr.clone()).await.unwrap();
 
