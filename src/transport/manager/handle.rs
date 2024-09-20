@@ -331,6 +331,8 @@ impl TransportHandle {
 
 #[cfg(test)]
 mod tests {
+    use crate::transport::manager::{address::AddressStore, types::ConnectionRecord};
+
     use super::*;
     use multihash::Multihash;
     use parking_lot::lock_api::RwLock;
@@ -447,14 +449,14 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Connected {
-                        record: AddressRecord::from_multiaddr(
-                            Multiaddr::empty()
+                        record: ConnectionRecord {
+                            address: Multiaddr::empty()
                                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                                 .with(Protocol::Tcp(8888))
                                 .with(Protocol::P2p(Multihash::from(peer))),
-                        )
-                        .unwrap(),
-                        dial_record: None,
+                            connection_id: ConnectionId::from(0),
+                        },
+                        secondary: None,
                     },
                     secondary_connection: None,
                     addresses: AddressStore::from_iter(
@@ -490,13 +492,13 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Dialing {
-                        record: AddressRecord::from_multiaddr(
-                            Multiaddr::empty()
+                        dial_record: ConnectionRecord {
+                            address: Multiaddr::empty()
                                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                                 .with(Protocol::Tcp(8888))
                                 .with(Protocol::P2p(Multihash::from(peer))),
-                        )
-                        .unwrap(),
+                            connection_id: ConnectionId::from(0),
+                        },
                     },
                     secondary_connection: None,
                     addresses: AddressStore::from_iter(
@@ -558,15 +560,14 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Disconnected {
-                        dial_record: Some(
-                            AddressRecord::from_multiaddr(
-                                Multiaddr::empty()
-                                    .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
-                                    .with(Protocol::Tcp(8888))
-                                    .with(Protocol::P2p(Multihash::from(peer))),
-                            )
-                            .unwrap(),
-                        ),
+                        dial_record: Some(ConnectionRecord::new(
+                            peer,
+                            Multiaddr::empty()
+                                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                                .with(Protocol::Tcp(8888))
+                                .with(Protocol::P2p(Multihash::from(peer))),
+                            ConnectionId::from(0),
+                        )),
                     },
                     secondary_connection: None,
                     addresses: AddressStore::from_iter(

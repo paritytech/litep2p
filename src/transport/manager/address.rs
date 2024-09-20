@@ -311,16 +311,18 @@ mod tests {
             store.insert(quic_address_record(&mut rng));
         }
 
-        let known_addresses = store.by_address.len();
+        let known_addresses = store.addresses.len();
         assert!(known_addresses >= 3);
 
-        let taken = store.take(known_addresses - 2);
+        let taken = store.addresses(known_addresses - 2);
         assert_eq!(known_addresses - 2, taken.len());
         assert!(!store.is_empty());
 
         let mut prev: Option<AddressRecord> = None;
-        for record in taken {
-            assert!(!store.contains(record.address()));
+        for address in taken {
+            assert!(!store.addresses.contains_key(&address));
+
+            let record = store.addresses.get(&address).unwrap().clone();
 
             if let Some(previous) = prev {
                 assert!(previous.score > record.score);
@@ -339,14 +341,16 @@ mod tests {
         store.insert(ws_address_record(&mut rng));
         store.insert(quic_address_record(&mut rng));
 
-        assert_eq!(store.by_address.len(), 3);
+        assert_eq!(store.addresses.len(), 3);
 
-        let taken = store.take(8usize);
+        let taken = store.addresses(8usize);
         assert_eq!(taken.len(), 3);
         assert!(store.is_empty());
 
         let mut prev: Option<AddressRecord> = None;
         for record in taken {
+            let record = store.addresses.get(&record).unwrap().clone();
+
             if prev.is_none() {
                 prev = Some(record);
             } else {
@@ -381,10 +385,9 @@ mod tests {
             .collect::<HashMap<_, _>>();
         store.extend(records);
 
-        for record in store.by_score {
+        for record in store.addresses.values().cloned() {
             let stored = cloned.get(record.address()).unwrap();
             assert_eq!(stored.score(), record.score());
-            assert_eq!(stored.connection_id(), record.connection_id());
             assert_eq!(stored.address(), record.address());
         }
     }
@@ -413,10 +416,9 @@ mod tests {
         let cloned = records.iter().cloned().collect::<HashMap<_, _>>();
         store.extend(records.iter().map(|(_, record)| record));
 
-        for record in store.by_score {
+        for record in store.addresses.values().cloned() {
             let stored = cloned.get(record.address()).unwrap();
             assert_eq!(stored.score(), record.score());
-            assert_eq!(stored.connection_id(), record.connection_id());
             assert_eq!(stored.address(), record.address());
         }
     }

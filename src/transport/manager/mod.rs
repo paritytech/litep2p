@@ -563,7 +563,9 @@ impl TransportManager {
                 Protocol::QuicV1 => SupportedTransport::Quic,
                 _ => {
                     tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "expected `quic-v1`");
-                    return Err(Error::TransportNotSupported(record.address().clone()));
+                    return Err(Error::TransportNotSupported(
+                        address_record.address().clone(),
+                    ));
                 }
             },
             protocol => {
@@ -1347,6 +1349,7 @@ impl TransportManager {
 
 #[cfg(test)]
 mod tests {
+    use crate::transport::manager::{address::AddressStore, types::SecondaryOrDialing};
     use limits::ConnectionLimitsConfig;
 
     use multihash::Multihash;
@@ -1362,6 +1365,7 @@ mod tests {
     use std::{
         net::{Ipv4Addr, Ipv6Addr},
         sync::Arc,
+        usize,
     };
 
     /// Setup TCP address and connection id.
@@ -1812,8 +1816,8 @@ mod tests {
         assert_eq!(manager.pending_connections.len(), 1);
 
         match &manager.peers.read().get(&peer).unwrap().state {
-            PeerState::Dialing { record } => {
-                assert_eq!(record.address(), &dial_address);
+            PeerState::Dialing { dial_record } => {
+                assert_eq!(dial_record.address, dial_address);
             }
             state => panic!("invalid state for peer: {state:?}"),
         }
@@ -1833,9 +1837,9 @@ mod tests {
         let peer = peers.get(&peer).unwrap();
 
         match &peer.state {
-            PeerState::Connected { dial_record, .. } => {
-                assert!(dial_record.is_none());
-                assert!(peer.addresses.contains(&dial_address));
+            PeerState::Connected { secondary, .. } => {
+                assert!(secondary.is_none());
+                assert!(peer.addresses.addresses.contains_key(&dial_address));
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -1879,8 +1883,8 @@ mod tests {
         assert_eq!(manager.pending_connections.len(), 1);
 
         match &manager.peers.read().get(&peer).unwrap().state {
-            PeerState::Dialing { record } => {
-                assert_eq!(record.address(), &dial_address);
+            PeerState::Dialing { dial_record } => {
+                assert_eq!(dial_record.address, dial_address);
             }
             state => panic!("invalid state for peer: {state:?}"),
         }
@@ -1906,7 +1910,7 @@ mod tests {
                     dial_record: Some(dial_record),
                     ..
                 } => {
-                    assert_eq!(dial_record.address(), &dial_address);
+                    assert_eq!(dial_record.address, dial_address);
                 }
                 state => panic!("invalid state: {state:?}"),
             }
@@ -1922,7 +1926,7 @@ mod tests {
             PeerState::Disconnected {
                 dial_record: None, ..
             } => {
-                assert!(peer.addresses.contains(&dial_address));
+                assert!(peer.addresses.addresses.contains_key(&dial_address));
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -1966,8 +1970,8 @@ mod tests {
         assert_eq!(manager.pending_connections.len(), 1);
 
         match &manager.peers.read().get(&peer).unwrap().state {
-            PeerState::Dialing { record } => {
-                assert_eq!(record.address(), &dial_address);
+            PeerState::Dialing { dial_record } => {
+                assert_eq!(dial_record.address, dial_address);
             }
             state => panic!("invalid state for peer: {state:?}"),
         }
@@ -1993,7 +1997,7 @@ mod tests {
                     dial_record: Some(dial_record),
                     ..
                 } => {
-                    assert_eq!(dial_record.address(), &dial_address);
+                    assert_eq!(dial_record.address, dial_address);
                 }
                 state => panic!("invalid state: {state:?}"),
             }
@@ -2012,7 +2016,7 @@ mod tests {
 
         match &peer.state {
             PeerState::Connected {
-                dial_record: None, ..
+                secondary: None, ..
             } => {}
             state => panic!("invalid state: {state:?}"),
         }
@@ -2069,7 +2073,7 @@ mod tests {
 
             match &peer.state {
                 PeerState::Connected {
-                    dial_record: None, ..
+                    secondary: None, ..
                 } => {
                     assert!(peer.secondary_connection.is_none());
                 }
@@ -2091,11 +2095,10 @@ mod tests {
 
         match &context.state {
             PeerState::Connected {
-                dial_record: None, ..
+                secondary: None, ..
             } => {
                 let seconary_connection = context.secondary_connection.as_ref().unwrap();
-                assert_eq!(seconary_connection.address(), &address2);
-                assert_eq!(seconary_connection.score(), SCORE_CONNECT_SUCCESS);
+                assert_eq!(seconary_connection.address, address2);
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2115,12 +2118,11 @@ mod tests {
 
         match &peer.state {
             PeerState::Connected {
-                dial_record: None, ..
+                secondary: None, ..
             } => {
                 let seconary_connection = peer.secondary_connection.as_ref().unwrap();
-                assert_eq!(seconary_connection.address(), &address2);
-                assert_eq!(seconary_connection.score(), SCORE_CONNECT_SUCCESS);
-                assert!(peer.addresses.contains(&address3));
+                assert_eq!(seconary_connection.address, address2);
+                assert!(peer.addresses.addresses(usize::MAX).contains(&address3));
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2171,7 +2173,7 @@ mod tests {
 
             match &peer.state {
                 PeerState::Connected {
-                    dial_record: None, ..
+                    secondary: None, ..
                 } => {
                     assert!(peer.secondary_connection.is_none());
                 }
@@ -2189,11 +2191,10 @@ mod tests {
                 state => panic!("invalid state: {state:?}"),
             };
 
-            let dial_record = Some(AddressRecord::new(&peer, address2.clone(), 0));
-
+            let dial_record = ConnectionRecord::new(peer, address2.clone(), ConnectionId::from(0));
             peer_context.state = PeerState::Connected {
                 record,
-                dial_record,
+                secondary: Some(SecondaryOrDialing::Dialing(dial_record)),
             };
         }
 
@@ -2273,7 +2274,7 @@ mod tests {
 
             match &peer.state {
                 PeerState::Connected {
-                    dial_record: None, ..
+                    secondary: None, ..
                 } => {
                     assert!(peer.secondary_connection.is_none());
                 }
@@ -2298,18 +2299,17 @@ mod tests {
 
         match &context.state {
             PeerState::Connected {
-                dial_record: None, ..
+                secondary: None, ..
             } => {
                 let seconary_connection = context.secondary_connection.as_ref().unwrap();
-                assert_eq!(seconary_connection.address(), &address2);
-                assert_eq!(seconary_connection.score(), SCORE_CONNECT_SUCCESS);
+                assert_eq!(seconary_connection.address, address2);
             }
             state => panic!("invalid state: {state:?}"),
         }
         drop(peers);
 
         // close the secondary connection and verify that the peer remains connected
-        let emit_event = manager.on_connection_closed(peer, ConnectionId::from(1usize)).unwrap();
+        let emit_event = manager.on_connection_closed(peer, ConnectionId::from(1usize));
         assert!(emit_event.is_none());
 
         let peers = manager.peers.read();
@@ -2317,12 +2317,12 @@ mod tests {
 
         match &context.state {
             PeerState::Connected {
-                dial_record: None,
+                secondary: None,
                 record,
             } => {
                 assert!(context.secondary_connection.is_none());
-                assert!(context.addresses.contains(&address2));
-                assert_eq!(record.connection_id(), &Some(ConnectionId::from(0usize)));
+                assert!(context.addresses.addresses(usize::MAX).contains(&address2));
+                assert_eq!(record.connection_id, ConnectionId::from(0usize));
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2376,7 +2376,7 @@ mod tests {
 
             match &peer.state {
                 PeerState::Connected {
-                    dial_record: None, ..
+                    secondary: None, ..
                 } => {
                     assert!(peer.secondary_connection.is_none());
                 }
@@ -2401,11 +2401,10 @@ mod tests {
 
         match &context.state {
             PeerState::Connected {
-                dial_record: None, ..
+                secondary: None, ..
             } => {
                 let seconary_connection = context.secondary_connection.as_ref().unwrap();
-                assert_eq!(seconary_connection.address(), &address2);
-                assert_eq!(seconary_connection.score(), SCORE_CONNECT_SUCCESS);
+                assert_eq!(seconary_connection.address, address2);
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2413,7 +2412,7 @@ mod tests {
 
         // close the primary connection and verify that the peer remains connected
         // while the primary connection address is stored in peer addresses
-        let emit_event = manager.on_connection_closed(peer, ConnectionId::from(0usize)).unwrap();
+        let emit_event = manager.on_connection_closed(peer, ConnectionId::from(0usize));
         assert!(emit_event.is_none());
 
         let peers = manager.peers.read();
@@ -2421,12 +2420,12 @@ mod tests {
 
         match &context.state {
             PeerState::Connected {
-                dial_record: None,
+                secondary: None,
                 record,
             } => {
                 assert!(context.secondary_connection.is_none());
-                assert!(context.addresses.contains(&address1));
-                assert_eq!(record.connection_id(), &Some(ConnectionId::from(1usize)));
+                assert!(context.addresses.addresses(usize::MAX).contains(&address1));
+                assert_eq!(record.connection_id, ConnectionId::from(1usize));
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2489,7 +2488,7 @@ mod tests {
 
             match &peer.state {
                 PeerState::Connected {
-                    dial_record: None, ..
+                    secondary: None, ..
                 } => {
                     assert!(peer.secondary_connection.is_none());
                 }
@@ -2514,11 +2513,10 @@ mod tests {
 
         match &context.state {
             PeerState::Connected {
-                dial_record: None, ..
+                secondary: None, ..
             } => {
                 let seconary_connection = context.secondary_connection.as_ref().unwrap();
-                assert_eq!(seconary_connection.address(), &address2);
-                assert_eq!(seconary_connection.score(), SCORE_CONNECT_SUCCESS);
+                assert_eq!(seconary_connection.address, address2);
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2538,11 +2536,11 @@ mod tests {
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
-        assert!(context.addresses.contains(&address3));
+        assert!(context.addresses.addresses(usize::MAX).contains(&address3));
         drop(peers);
 
         // close the tertiary connection that was ignored
-        let emit_event = manager.on_connection_closed(peer, ConnectionId::from(2usize)).unwrap();
+        let emit_event = manager.on_connection_closed(peer, ConnectionId::from(2usize));
         assert!(emit_event.is_none());
 
         // verify that the state remains unchanged
@@ -2551,11 +2549,14 @@ mod tests {
 
         match &context.state {
             PeerState::Connected {
-                dial_record: None, ..
+                secondary: None, ..
             } => {
                 let seconary_connection = context.secondary_connection.as_ref().unwrap();
-                assert_eq!(seconary_connection.address(), &address2);
-                assert_eq!(seconary_connection.score(), SCORE_CONNECT_SUCCESS);
+                assert_eq!(seconary_connection.address, address2);
+                assert_eq!(
+                    context.addresses.addresses.get(&address2).unwrap().score(),
+                    scores::CONNECTION_ESTABLISHED
+                );
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2773,14 +2774,14 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Connected {
-                        record: AddressRecord::from_multiaddr(
-                            Multiaddr::empty()
+                        record: ConnectionRecord {
+                            address: Multiaddr::empty()
                                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                                 .with(Protocol::Tcp(8888))
                                 .with(Protocol::P2p(Multihash::from(peer))),
-                        )
-                        .unwrap(),
-                        dial_record: None,
+                            connection_id: ConnectionId::from(0usize),
+                        },
+                        secondary: None,
                     },
                     secondary_connection: None,
                     addresses: AddressStore::from_iter(
@@ -2821,13 +2822,13 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Dialing {
-                        record: AddressRecord::from_multiaddr(
-                            Multiaddr::empty()
+                        dial_record: ConnectionRecord {
+                            address: Multiaddr::empty()
                                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                                 .with(Protocol::Tcp(8888))
                                 .with(Protocol::P2p(Multihash::from(peer))),
-                        )
-                        .unwrap(),
+                            connection_id: ConnectionId::from(0usize),
+                        },
                     },
                     secondary_connection: None,
                     addresses: AddressStore::from_iter(
@@ -2852,10 +2853,10 @@ mod tests {
             let peer_context = peers.get(&peer).unwrap();
 
             match &peer_context.state {
-                PeerState::Dialing { record } => {
+                PeerState::Dialing { dial_record } => {
                     assert_eq!(
-                        record.address(),
-                        &Multiaddr::empty()
+                        dial_record.address,
+                        Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                             .with(Protocol::Tcp(8888))
                             .with(Protocol::P2p(Multihash::from(peer)))
@@ -2884,15 +2885,14 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Disconnected {
-                        dial_record: Some(
-                            AddressRecord::from_multiaddr(
-                                Multiaddr::empty()
-                                    .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
-                                    .with(Protocol::Tcp(8888))
-                                    .with(Protocol::P2p(Multihash::from(peer))),
-                            )
-                            .unwrap(),
-                        ),
+                        dial_record: Some(ConnectionRecord::new(
+                            peer,
+                            Multiaddr::empty()
+                                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                                .with(Protocol::Tcp(8888))
+                                .with(Protocol::P2p(Multihash::from(peer))),
+                            ConnectionId::from(0),
+                        )),
                     },
                     secondary_connection: None,
                     addresses: AddressStore::new(),
@@ -3100,19 +3100,15 @@ mod tests {
         let peers = manager.peers.read();
         match peers.get(&peer).unwrap() {
             PeerContext {
-                state:
-                    PeerState::Connected {
-                        record,
-                        dial_record,
-                    },
+                state: PeerState::Connected { record, secondary },
                 secondary_connection,
                 addresses,
             } => {
-                assert!(!addresses.contains(record.address()));
-                assert!(dial_record.is_none());
+                assert!(!addresses.addresses.contains_key(&record.address));
+                assert!(secondary.is_none());
                 assert!(secondary_connection.is_none());
-                assert_eq!(record.address(), &dial_address);
-                assert_eq!(record.connection_id(), &Some(connection_id));
+                assert_eq!(record.address, dial_address);
+                assert_eq!(record.connection_id, connection_id);
             }
             state => panic!("invalid peer state: {state:?}"),
         }
@@ -3192,19 +3188,15 @@ mod tests {
         let peers = manager.peers.read();
         match peers.get(&peer).unwrap() {
             PeerContext {
-                state:
-                    PeerState::Connected {
-                        record,
-                        dial_record,
-                    },
+                state: PeerState::Connected { record, secondary },
                 secondary_connection,
                 addresses,
             } => {
                 assert!(addresses.is_empty());
-                assert!(dial_record.is_none());
+                assert!(secondary.is_none());
                 assert!(secondary_connection.is_none());
-                assert_eq!(record.address(), &dial_address);
-                assert_eq!(record.connection_id(), &Some(connection_id));
+                assert_eq!(record.address, dial_address);
+                assert_eq!(record.connection_id, connection_id);
             }
             state => panic!("invalid peer state: {state:?}"),
         }
@@ -3392,7 +3384,7 @@ mod tests {
 
         // Random peer ID.
         let peer = PeerId::random();
-        let (first_addr, first_connection_id) = setup_dial_addr(peer, 0);
+        let (first_addr, _first_connection_id) = setup_dial_addr(peer, 0);
         let second_connection_id = ConnectionId::from(1);
         let different_connection_id = ConnectionId::from(2);
 
@@ -3401,8 +3393,12 @@ mod tests {
             let mut peers = manager.peers.write();
 
             let state = PeerState::Connected {
-                record: AddressRecord::new(&peer, first_addr.clone(), 0),
-                dial_record: Some(AddressRecord::new(&peer, first_addr.clone(), 0)),
+                record: ConnectionRecord::new(peer, first_addr.clone(), ConnectionId::from(0)),
+                secondary: Some(SecondaryOrDialing::Dialing(ConnectionRecord::new(
+                    peer,
+                    first_addr.clone(),
+                    ConnectionId::from(0),
+                ))),
             };
 
             let peer_context = PeerContext {
@@ -3466,8 +3462,8 @@ mod tests {
             let peers = manager.peers.read();
             let peer_context = peers.get(&peer).unwrap();
             match &peer_context.state {
-                PeerState::Dialing { record } => {
-                    assert_eq!(record.address(), &first_addr);
+                PeerState::Dialing { dial_record } => {
+                    assert_eq!(dial_record.address, first_addr);
                 }
                 state => panic!("invalid state: {state:?}"),
             }
@@ -3487,21 +3483,20 @@ mod tests {
             match &peer_context.state {
                 PeerState::Connected {
                     record,
-                    dial_record,
+                    secondary: Some(SecondaryOrDialing::Dialing(dial_record)),
                 } => {
-                    assert_eq!(record.address(), &remote_addr);
-                    assert_eq!(record.connection_id(), &Some(remote_connection_id));
+                    assert_eq!(record.address, remote_addr);
+                    assert_eq!(record.connection_id, remote_connection_id);
 
-                    let dial_record = dial_record.as_ref().unwrap();
-                    assert_eq!(dial_record.address(), &first_addr);
-                    assert_eq!(dial_record.connection_id(), &Some(first_connection_id))
+                    assert_eq!(dial_record.address, first_addr);
+                    assert_eq!(dial_record.connection_id, first_connection_id)
                 }
                 state => panic!("invalid state: {state:?}"),
             }
         }
 
         // Step 3. The peer disconnects while we have a dialing in flight.
-        let event = manager.on_connection_closed(peer, remote_connection_id).unwrap().unwrap();
+        let event = manager.on_connection_closed(peer, remote_connection_id).unwrap();
         match event {
             TransportEvent::ConnectionClosed {
                 peer: event_peer,
@@ -3518,8 +3513,8 @@ mod tests {
             match &peer_context.state {
                 PeerState::Disconnected { dial_record } => {
                     let dial_record = dial_record.as_ref().unwrap();
-                    assert_eq!(dial_record.address(), &first_addr);
-                    assert_eq!(dial_record.connection_id(), &Some(first_connection_id));
+                    assert_eq!(dial_record.address, first_addr);
+                    assert_eq!(dial_record.connection_id, first_connection_id);
                 }
                 state => panic!("invalid state: {state:?}"),
             }
@@ -3534,8 +3529,8 @@ mod tests {
             match &peer_context.state {
                 PeerState::Disconnected { dial_record } => {
                     let dial_record = dial_record.as_ref().unwrap();
-                    assert_eq!(dial_record.address(), &first_addr);
-                    assert_eq!(dial_record.connection_id(), &Some(first_connection_id));
+                    assert_eq!(dial_record.address, first_addr);
+                    assert_eq!(dial_record.connection_id, first_connection_id);
                 }
                 state => panic!("invalid state: {state:?}"),
             }
@@ -3555,15 +3550,14 @@ mod tests {
             match &peer_context.state {
                 PeerState::Connected {
                     record,
-                    dial_record,
+                    secondary: Some(SecondaryOrDialing::Dialing(dial_record)),
                 } => {
-                    assert_eq!(record.address(), &remote_addr);
-                    assert_eq!(record.connection_id(), &Some(remote_connection_id));
+                    assert_eq!(record.address, remote_addr);
+                    assert_eq!(record.connection_id, remote_connection_id);
 
                     // We have not overwritten the first dial record in step 4.
-                    let dial_record = dial_record.as_ref().unwrap();
-                    assert_eq!(dial_record.address(), &first_addr);
-                    assert_eq!(dial_record.connection_id(), &Some(first_connection_id));
+                    assert_eq!(dial_record.address, first_addr);
+                    assert_eq!(dial_record.connection_id, first_connection_id);
                 }
                 state => panic!("invalid state: {state:?}"),
             }
@@ -3618,14 +3612,14 @@ mod tests {
             let peers = manager.peers.read();
             let peer_context = peers.get(&peer).unwrap();
             match &peer_context.state {
-                PeerState::Dialing { record } => {
-                    assert_eq!(record.address(), &dial_address);
+                PeerState::Dialing { dial_record } => {
+                    assert_eq!(dial_record.address, dial_address);
                 }
                 state => panic!("invalid state: {state:?}"),
             }
 
             // The address is not saved yet.
-            assert!(!peer_context.addresses.contains(&dial_address));
+            assert!(!peer_context.addresses.addresses(usize::MAX).contains(&dial_address));
         }
 
         let second_address = Multiaddr::empty()
@@ -3643,14 +3637,14 @@ mod tests {
             let peer_context = peers.get(&peer).unwrap();
             match &peer_context.state {
                 // Must still be dialing the first address.
-                PeerState::Dialing { record } => {
-                    assert_eq!(record.address(), &dial_address);
+                PeerState::Dialing { dial_record } => {
+                    assert_eq!(dial_record.address, dial_address);
                 }
                 state => panic!("invalid state: {state:?}"),
             }
 
-            assert!(!peer_context.addresses.contains(&dial_address));
-            assert!(!peer_context.addresses.contains(&second_address));
+            assert!(!peer_context.addresses.addresses(usize::MAX).contains(&dial_address));
+            assert!(!peer_context.addresses.addresses(usize::MAX).contains(&second_address));
         }
     }
 
