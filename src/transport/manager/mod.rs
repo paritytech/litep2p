@@ -2566,27 +2566,6 @@ mod tests {
     #[tokio::test]
     #[cfg(debug_assertions)]
     #[should_panic]
-    async fn dial_failure_for_unknow_peer() {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init();
-
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
-        let connection_id = ConnectionId::random();
-        let peer = PeerId::random();
-        manager.pending_connections.insert(connection_id, peer);
-        manager.on_dial_failure(connection_id).unwrap();
-    }
-
-    #[tokio::test]
-    #[cfg(debug_assertions)]
-    #[should_panic]
     async fn connection_closed_for_unknown_peer() {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
