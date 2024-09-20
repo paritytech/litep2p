@@ -20,7 +20,7 @@
 
 use crate::PeerId;
 
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
@@ -42,6 +42,9 @@ pub mod scores {
     /// Score for a connection attempt that failed due to a timeout.
     pub const TIMEOUT_FAILURE: i32 = -50i32;
 }
+
+/// Remove the address from the store if the score is below this threshold.
+const REMOVE_THRESHOLD: i32 = scores::CONNECTION_FAILURE * 2;
 
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
@@ -196,8 +199,11 @@ impl AddressStore {
     pub fn insert(&mut self, record: AddressRecord) {
         let num_addresses = self.addresses.len();
 
-        if let Some(occupied) = self.addresses.get_mut(record.address()) {
-            occupied.update_score(record.score);
+        if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
+            occupied.get_mut().update_score(record.score);
+            if occupied.get().score <= REMOVE_THRESHOLD {
+                occupied.remove();
+            }
             return;
         }
 
@@ -333,6 +339,22 @@ mod tests {
         assert_eq!(store.addresses.len(), 1);
         let store_record = store.addresses.get(record.address()).unwrap();
         assert_eq!(store_record.score, record.score * 2);
+    }
+
+    #[test]
+    fn evict_below_threshold() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+
+        let mut record = tcp_address_record(&mut rng);
+        record.score = scores::CONNECTION_FAILURE;
+        store.insert(record.clone());
+
+        assert_eq!(store.addresses.len(), 1);
+
+        store.insert(record.clone());
+
+        assert_eq!(store.addresses.len(), 0);
     }
 
     #[test]
