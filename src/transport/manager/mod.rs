@@ -773,6 +773,8 @@ impl TransportManager {
         peer: PeerId,
         endpoint: &Endpoint,
     ) -> crate::Result<ConnectionEstablishedResult> {
+        self.update_address_on_connection_established(peer, &endpoint);
+
         if let Some(dialed_peer) = self.pending_connections.remove(&endpoint.connection_id()) {
             if dialed_peer != peer {
                 tracing::warn!(
@@ -1173,7 +1175,6 @@ impl TransportManager {
                         }
                         TransportEvent::ConnectionEstablished { peer, endpoint } => {
                             self.opening_errors.remove(&endpoint.connection_id());
-                            self.update_address_on_connection_established(peer, &endpoint);
 
                             match self.on_connection_established(peer, &endpoint) {
                                 Err(error) => {
@@ -2265,7 +2266,7 @@ mod tests {
             }
         }
 
-        // second connection is established, verify that the seconary connection is tracked
+        // second connection is established, verify that the secondary connection is tracked
         let emit_event = manager
             .on_connection_established(
                 peer,
@@ -2308,7 +2309,7 @@ mod tests {
                     context.addresses.addresses.get(&address2).unwrap().score(),
                     scores::CONNECTION_ESTABLISHED
                 );
-                assert_eq!(record.connection_id, ConnectionId::from(0usize));
+                assert_eq!(record.connection_id, ConnectionId::from(1usize));
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2456,13 +2457,20 @@ mod tests {
         let emit_event = manager
             .on_connection_established(
                 peer,
-                &Endpoint::listener(address1, ConnectionId::from(0usize)),
+                &Endpoint::listener(address1.clone(), ConnectionId::from(0usize)),
             )
             .unwrap();
         assert!(std::matches!(
             emit_event,
             ConnectionEstablishedResult::Accept
         ));
+
+        // The address1 should be ignored because it is an inbound connection
+        // initiated from an ephemeral port.
+        let peers = manager.peers.read();
+        let context = peers.get(&peer).unwrap();
+        assert!(!context.addresses.addresses.contains_key(&address1));
+        drop(peers);
 
         // verify that the peer state is `Connected` with no seconary connection
         {
@@ -2488,6 +2496,12 @@ mod tests {
             emit_event,
             ConnectionEstablishedResult::Accept
         ));
+
+        // Ensure we keep track of this address.
+        let peers = manager.peers.read();
+        let context = peers.get(&peer).unwrap();
+        assert!(context.addresses.addresses.contains_key(&address2));
+        drop(peers);
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
@@ -2517,7 +2531,9 @@ mod tests {
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
-        assert!(context.addresses.addresses(usize::MAX).contains(&address3));
+        // The tertiary connection should be ignored because it is an inbound connection
+        // initiated from an ephemeral port.
+        assert!(!context.addresses.addresses.contains_key(&address3));
         drop(peers);
 
         // close the tertiary connection that was ignored
@@ -3224,7 +3240,7 @@ mod tests {
         assert_eq!(result, ConnectionEstablishedResult::Reject);
 
         // Close one connection.
-        let _ = manager.on_connection_closed(peer, first_connection_id).unwrap();
+        assert!(manager.on_connection_closed(peer, first_connection_id).is_none());
 
         // The second peer can establish 2 inbounds now.
         let result = manager
@@ -3315,7 +3331,7 @@ mod tests {
         ));
 
         // Close one connection.
-        let _ = manager.on_connection_closed(peer, first_connection_id).unwrap();
+        assert!(manager.on_connection_closed(peer, first_connection_id).is_none());
         // We can now dial again.
         manager.dial_address(first_addr.clone()).await.unwrap();
 
