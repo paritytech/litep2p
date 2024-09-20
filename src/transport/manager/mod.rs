@@ -843,6 +843,14 @@ impl TransportManager {
 
                 // since an inbound connection was removed, the outbound connection can be
                 // removed from pending dials
+                //
+                // TODO: This may race in the following scenario:
+                //
+                // T0: we open address X on protocol TCP
+                // T1: remote peer opens a connection with us
+                // T2: address X is dialed and event is propagated from TCP to transport manager
+                // T3: `on_connection_established` is called for T1 and pending connections cleared
+                // T4: event from T2 is delivered.
                 self.pending_connections.remove(&connection_id);
             }
 

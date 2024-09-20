@@ -316,7 +316,10 @@ impl TransportHandle {
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::manager::{address::AddressStore, types::ConnectionRecord};
+    use crate::transport::manager::{
+        address::AddressStore,
+        types::{ConnectionRecord, PeerState},
+    };
 
     use super::*;
     use multihash::Multihash;
