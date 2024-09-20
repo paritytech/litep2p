@@ -214,7 +214,7 @@ impl AddressStore {
         //  - if the store is at capacity, the worst address will be evicted.
         //  - an address that is not dialed yet (with score zero) will be preferred over an address
         //  that already failed (with negative score).
-        if num_addresses > self.max_capacity {
+        if num_addresses >= self.max_capacity {
             // No need to keep track of negative addresses if we are at capacity.
             if record.score < 0 {
                 return;
@@ -228,6 +228,11 @@ impl AddressStore {
                 return;
             }
             self.addresses.remove(min_record.address());
+        }
+
+        // There's no need to keep track of this address if the score is below the threshold.
+        if record.score <= REMOVE_THRESHOLD {
+            return;
         }
 
         // Insert the record.
@@ -263,7 +268,7 @@ mod tests {
             ),
             rng.gen_range(1..=65535),
         ));
-        let score: i32 = rng.gen();
+        let score: i32 = rng.gen_range(10..=200);
 
         AddressRecord::new(
             &peer,
@@ -285,7 +290,7 @@ mod tests {
             ),
             rng.gen_range(1..=65535),
         ));
-        let score: i32 = rng.gen();
+        let score: i32 = rng.gen_range(10..=200);
 
         AddressRecord::new(
             &peer,
@@ -308,7 +313,7 @@ mod tests {
             ),
             rng.gen_range(1..=65535),
         ));
-        let score: i32 = rng.gen();
+        let score: i32 = rng.gen_range(10..=200);
 
         AddressRecord::new(
             &peer,
@@ -355,6 +360,42 @@ mod tests {
         store.insert(record.clone());
 
         assert_eq!(store.addresses.len(), 0);
+    }
+
+    #[test]
+    fn evict_on_capacity() {
+        let mut store = AddressStore {
+            addresses: HashMap::new(),
+            max_capacity: 2,
+        };
+
+        let mut rng = rand::thread_rng();
+        let mut first_record = tcp_address_record(&mut rng);
+        first_record.score = scores::CONNECTION_ESTABLISHED;
+        let mut second_record = ws_address_record(&mut rng);
+        second_record.score = 0;
+
+        store.insert(first_record.clone());
+        store.insert(second_record.clone());
+
+        assert_eq!(store.addresses.len(), 2);
+
+        // We have better addresses, ignore this one.
+        let mut third_record = quic_address_record(&mut rng);
+        third_record.score = scores::CONNECTION_FAILURE;
+        store.insert(third_record.clone());
+        assert_eq!(store.addresses.len(), 2);
+        assert!(store.addresses.contains_key(first_record.address()));
+        assert!(store.addresses.contains_key(second_record.address()));
+
+        // Evict the address with the lowest score.
+        let mut fourth_record = quic_address_record(&mut rng);
+        fourth_record.score = scores::DIFFERENT_PEER_ID;
+        store.insert(fourth_record.clone());
+
+        assert_eq!(store.addresses.len(), 2);
+        assert!(store.addresses.contains_key(first_record.address()));
+        assert!(store.addresses.contains_key(fourth_record.address()));
     }
 
     #[test]
