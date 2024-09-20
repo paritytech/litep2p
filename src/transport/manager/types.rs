@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    transport::{manager::address::AddressStore, Endpoint},
+    transport::{common::listener::DialAddresses, manager::address::AddressStore, Endpoint},
     types::ConnectionId,
     Error, PeerId,
 };
@@ -56,13 +56,13 @@ pub enum PeerState {
         /// The established record of the connection.
         record: ConnectionRecord,
 
-        /// Dial address, if it exists.
+        /// Secondary record, this can either be a dial record or an established connection.
         ///
         /// While the local node was dialing a remote peer, the remote peer might've dialed
         /// the local node and connection was established successfully. This dial address
         /// is stored for processing later when the dial attempt concluded as either
         /// successful/failed.
-        dial_record: Option<ConnectionRecord>,
+        secondary: Option<SecondaryOrDialing>,
     },
 
     /// Connection to peer is opening over one or more addresses.
@@ -80,7 +80,7 @@ pub enum PeerState {
     /// Peer is being dialed.
     Dialing {
         /// Address record.
-        record: ConnectionRecord,
+        dial_record: ConnectionRecord,
     },
 
     /// `Litep2p` is not connected to peer.
@@ -96,6 +96,15 @@ pub enum PeerState {
     },
 }
 
+/// The state of the secondary connection.
+#[derive(Debug)]
+pub enum SecondaryOrDialing {
+    /// The secondary connection is established.
+    Secondary(ConnectionRecord),
+    /// The primary connection is established, but the secondary connection is still dialing.
+    Dialing(ConnectionRecord),
+}
+
 pub type InitiateDialError = Result<(), Error>;
 
 impl PeerState {
@@ -106,7 +115,7 @@ impl PeerState {
     /// can transition gracefully to the next state.
     pub fn initiate_dial(&mut self) -> Result<DisconnectedState, InitiateDialError> {
         match self {
-            // The peer is already connected, no need to dial a second time.
+            // The peer is already connected, no need to dial again.
             Self::Connected { .. } => {
                 return Err(Err(Error::AlreadyConnected));
             }
@@ -135,20 +144,20 @@ impl PeerState {
     pub fn on_dial_failure(&mut self, connection_id: ConnectionId) -> bool {
         match self {
             // Clear the dial record if the connection ID matches.
-            Self::Dialing { record } =>
-                if record.connection_id == connection_id {
+            Self::Dialing { dial_record } =>
+                if dial_record.connection_id == connection_id {
                     *self = Self::Disconnected { dial_record: None };
                     return true;
                 },
 
             Self::Connected {
                 record,
-                dial_record: Some(dial_record),
+                secondary: Some(SecondaryOrDialing::Dialing(dial_record)),
             } =>
                 if dial_record.connection_id == connection_id {
                     *self = Self::Connected {
                         record: record.clone(),
-                        dial_record: None,
+                        secondary: None,
                     };
                     return true;
                 },
@@ -165,6 +174,76 @@ impl PeerState {
         };
 
         return false;
+    }
+
+    /// Returns `true` if the connection should be accepted by the transport manager.
+    pub fn on_connection_established(
+        &mut self,
+        connection: ConnectionRecord,
+    ) -> (bool, Option<(ConnectionId, HashSet<SupportedTransport>)>) {
+        match self {
+            // Transform the dial record into a secondary connection.
+            Self::Connected {
+                secondary: Some(SecondaryOrDialing::Dialing(dial_record)),
+                ..
+            } =>
+                if dial_record.connection_id == connection.connection_id {
+                    *self = Self::Connected {
+                        record: connection.clone(),
+                        secondary: Some(SecondaryOrDialing::Secondary(connection)),
+                    };
+
+                    return (true, None);
+                },
+            // There's place for a secondary connection.
+            Self::Connected {
+                secondary: None, ..
+            } => {
+                *self = Self::Connected {
+                    record: connection.clone(),
+                    secondary: Some(SecondaryOrDialing::Secondary(connection)),
+                };
+
+                return (true, None);
+            }
+
+            // Convert the dial record into a primary connection or preserve it.
+            Self::Dialing { dial_record }
+            | Self::Disconnected {
+                dial_record: Some(dial_record),
+            } =>
+                if dial_record.connection_id == connection.connection_id {
+                    *self = Self::Connected {
+                        record: connection.clone(),
+                        secondary: None,
+                    };
+                    return (true, None);
+                } else {
+                    *self = Self::Connected {
+                        record: connection,
+                        secondary: Some(SecondaryOrDialing::Dialing(dial_record.clone())),
+                    };
+                    return (true, None);
+                },
+
+            // Accept the incoming connection and cancel opening dials.
+            Self::Opening {
+                addresses,
+                connection_id,
+                transports,
+            } => {
+                *self = Self::Connected {
+                    record: connection,
+                    secondary: None,
+                };
+
+                return (true, Some((*connection_id, transports.clone())));
+            }
+
+            _ => {}
+        };
+
+        return (false, None);
     }
 }
 
