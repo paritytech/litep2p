@@ -502,4 +502,25 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn state_dial_addresses() {
+        let mut state = PeerState::Disconnected { dial_record: None };
+        assert_eq!(
+            state.dial_addresses(
+                ConnectionId::from(0),
+                Default::default(),
+                Default::default()
+            ),
+            StateDialResult::Ok
+        );
+        assert_eq!(
+            state,
+            PeerState::Opening {
+                addresses: Default::default(),
+                connection_id: ConnectionId::from(0),
+                transports: Default::default()
+            }
+        );
+    }
 }
