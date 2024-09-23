@@ -186,9 +186,9 @@ impl RoutingTable {
     }
 
     /// Get `limit` closest peers to `target` from the k-buckets.
-    pub fn closest<K: Clone>(&mut self, target: Key<K>, limit: usize) -> Vec<KademliaPeer> {
-        ClosestBucketsIter::new(self.local_key.distance(&target))
-            .flat_map(|index| self.buckets[index.get()].closest_iter(&target))
+    pub fn closest<K: Clone>(&mut self, target: &Key<K>, limit: usize) -> Vec<KademliaPeer> {
+        ClosestBucketsIter::new(self.local_key.distance(target))
+            .flat_map(|index| self.buckets[index.get()].closest_iter(target))
             .take(limit)
             .collect()
     }
@@ -299,7 +299,7 @@ mod tests {
         }
 
         let target = Key::from(PeerId::random());
-        let closest = table.closest(target.clone(), 60usize);
+        let closest = table.closest(&target, 60usize);
         let mut prev = None;
 
         for peer in &closest {

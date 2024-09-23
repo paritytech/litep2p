@@ -394,10 +394,7 @@ impl Kademlia {
         tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "handle message from peer");
 
         match KademliaMessage::from_bytes(message).ok_or(Error::InvalidData)? {
-            ref message @ KademliaMessage::FindNode {
-                ref target,
-                ref peers,
-            } => {
+            KademliaMessage::FindNode { target, peers } => {
                 match query_id {
                     Some(query_id) => {
                         tracing::trace!(
@@ -409,8 +406,12 @@ impl Kademlia {
                         );
 
                         // update routing table and inform user about the update
-                        self.update_routing_table(peers).await;
-                        self.engine.register_response(query_id, peer, message.clone());
+                        self.update_routing_table(&peers).await;
+                        self.engine.register_response(
+                            query_id,
+                            peer,
+                            KademliaMessage::FindNode { target, peers },
+                        );
                     }
                     None => {
                         tracing::trace!(
@@ -421,9 +422,9 @@ impl Kademlia {
                         );
 
                         let message = KademliaMessage::find_node_response(
-                            target,
+                            &target,
                             self.routing_table
-                                .closest(Key::from(target.clone()), self.replication_factor),
+                                .closest(&Key::new(target.as_ref()), self.replication_factor),
                         );
                         self.executor.send_message(peer, message.into(), substream);
                     }
@@ -443,13 +444,9 @@ impl Kademlia {
 
                 let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
             }
-            ref message @ KademliaMessage::GetRecord {
-                ref key,
-                ref record,
-                ref peers,
-            } => {
+            KademliaMessage::GetRecord { key, record, peers } => {
                 match (query_id, key) {
-                    (Some(query_id), _) => {
+                    (Some(query_id), key) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             ?peer,
@@ -460,8 +457,12 @@ impl Kademlia {
                         );
 
                         // update routing table and inform user about the update
-                        self.update_routing_table(peers).await;
-                        self.engine.register_response(query_id, peer, message.clone());
+                        self.update_routing_table(&peers).await;
+                        self.engine.register_response(
+                            query_id,
+                            peer,
+                            KademliaMessage::GetRecord { key, record, peers },
+                        );
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -471,22 +472,20 @@ impl Kademlia {
                             "handle `GET_VALUE` request",
                         );
 
-                        let value = self.store.get(key).cloned();
+                        let value = self.store.get(&key).cloned();
                         let closest_peers = self
                             .routing_table
-                            .closest(Key::from(key.to_vec()), self.replication_factor);
+                            .closest(&Key::new(key.as_ref()), self.replication_factor);
 
-                        let message = KademliaMessage::get_value_response(
-                            (*key).clone(),
-                            closest_peers,
-                            value,
-                        );
+                        let message =
+                            KademliaMessage::get_value_response(key, closest_peers, value);
                         self.executor.send_message(peer, message.into(), substream);
                     }
                     (None, None) => tracing::debug!(
                         target: LOG_TARGET,
                         ?peer,
-                        ?message,
+                        ?record,
+                        ?peers,
                         "unable to handle `GET_RECORD` request with empty key",
                     ),
                 }
@@ -527,10 +526,10 @@ impl Kademlia {
                     }
                 }
             }
-            ref message @ KademliaMessage::GetProviders {
-                ref key,
-                ref peers,
-                ref providers,
+            KademliaMessage::GetProviders {
+                key,
+                peers,
+                providers,
             } => {
                 match (query_id, key) {
                     (Some(query_id), key) => {
@@ -546,9 +545,17 @@ impl Kademlia {
                         );
 
                         // update routing table and inform user about the update
-                        self.update_routing_table(peers).await;
+                        self.update_routing_table(&peers).await;
 
-                        self.engine.register_response(query_id, peer, message.clone());
+                        self.engine.register_response(
+                            query_id,
+                            peer,
+                            KademliaMessage::GetProviders {
+                                key,
+                                peers,
+                                providers,
+                            },
+                        );
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -558,26 +565,24 @@ impl Kademlia {
                             "handle `GET_PROVIDERS` request",
                         );
 
-                        let providers = self.store.get_providers(key);
+                        let providers = self.store.get_providers(&key);
                         // TODO: if local peer is among the providers, update its `ProviderRecord`
                         //       to have up-to-date addresses.
                         //       Requires https://github.com/paritytech/litep2p/issues/211.
 
                         let closer_peers = self
                             .routing_table
-                            .closest(Key::from(key.to_vec()), self.replication_factor);
+                            .closest(&Key::new(key.as_ref()), self.replication_factor);
 
-                        let message = KademliaMessage::get_providers_response(
-                            key.clone(),
-                            providers,
-                            &closer_peers,
-                        );
+                        let message =
+                            KademliaMessage::get_providers_response(key, providers, &closer_peers);
                         self.executor.send_message(peer, message.into(), substream);
                     }
                     (None, None) => tracing::debug!(
                         target: LOG_TARGET,
                         ?peer,
-                        ?message,
+                        ?peers,
+                        ?providers,
                         "unable to handle `GET_PROVIDERS` request with empty key",
                     ),
                 }
@@ -858,7 +863,7 @@ impl Kademlia {
                             self.engine.start_find_node(
                                 query_id,
                                 peer,
-                                self.routing_table.closest(Key::from(peer), self.replication_factor).into()
+                                self.routing_table.closest(&Key::from(peer), self.replication_factor).into()
                             );
                         }
                         Some(KademliaCommand::PutRecord { mut record, query_id }) => {
@@ -877,7 +882,7 @@ impl Kademlia {
                             self.engine.start_put_record(
                                 query_id,
                                 record,
-                                self.routing_table.closest(key, self.replication_factor).into(),
+                                self.routing_table.closest(&key, self.replication_factor).into(),
                             );
                         }
                         Some(KademliaCommand::PutRecordToPeers { mut record, query_id, peers, update_local_store }) => {
@@ -923,7 +928,7 @@ impl Kademlia {
                                     self.engine.start_get_record(
                                         query_id,
                                         key.clone(),
-                                        self.routing_table.closest(Key::new(key.clone()), self.replication_factor).into(),
+                                        self.routing_table.closest(&Key::new(key.clone()), self.replication_factor).into(),
                                         quorum,
                                         if record.is_some() { 1 } else { 0 },
                                     );
