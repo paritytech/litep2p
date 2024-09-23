@@ -19,6 +19,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    error::{ImmediateDialError, SubstreamError},
+    multistream_select::ProtocolError,
     types::{protocol::ProtocolName, RequestId},
     Error, PeerId,
 };
@@ -31,6 +33,7 @@ use tokio::sync::{
 
 use std::{
     collections::HashMap,
+    io::ErrorKind,
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -43,10 +46,10 @@ use std::{
 const LOG_TARGET: &str = "litep2p::request-response::handle";
 
 /// Request-response error.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum RequestResponseError {
     /// Request was rejected.
-    Rejected,
+    Rejected(RejectReason),
 
     /// Request was canceled by the local node.
     Canceled,
@@ -54,7 +57,7 @@ pub enum RequestResponseError {
     /// Request timed out.
     Timeout,
 
-    /// Litep2p isn't connected to the peer.
+    /// The peer is not connected and the dialing option was [`DialOptions::Reject`].
     NotConnected,
 
     /// Too large payload.
@@ -64,7 +67,55 @@ pub enum RequestResponseError {
     UnsupportedProtocol,
 }
 
+/// The reason why a request was rejected.
+#[derive(Debug, PartialEq)]
+pub enum RejectReason {
+    /// Substream error.
+    SubstreamOpenError(SubstreamError),
+
+    /// The peer disconnected before the request was processed.
+    ConnectionClosed,
+
+    /// The substream was closed before the request was processed.
+    SubstreamClosed,
+
+    /// The dial failed.
+    ///
+    /// If the dial failure is immediate, the error is included.
+    ///
+    /// If the dialing process is happening in parallel on multiple
+    /// addresses (potentially with multiple protocols), the dialing
+    /// process is not considered immediate and the given errors are not
+    /// propagated for simplicity.
+    DialFailed(Option<ImmediateDialError>),
+}
+
+impl From<SubstreamError> for RejectReason {
+    fn from(error: SubstreamError) -> Self {
+        // Convert `ErrorKind::NotConnected` to `RejectReason::ConnectionClosed`.
+        match error {
+            SubstreamError::IoError(error) if error == ErrorKind::NotConnected =>
+                RejectReason::ConnectionClosed,
+            SubstreamError::YamuxError(crate::yamux::ConnectionError::Io(error), _)
+                if error.kind() == ErrorKind::NotConnected =>
+                RejectReason::ConnectionClosed,
+            SubstreamError::NegotiationError(crate::error::NegotiationError::IoError(error))
+                if error == ErrorKind::NotConnected =>
+                RejectReason::ConnectionClosed,
+            SubstreamError::NegotiationError(
+                crate::error::NegotiationError::MultistreamSelectError(
+                    crate::multistream_select::NegotiationError::ProtocolError(
+                        ProtocolError::IoError(error),
+                    ),
+                ),
+            ) if error.kind() == ErrorKind::NotConnected => RejectReason::ConnectionClosed,
+            error => RejectReason::SubstreamOpenError(error),
+        }
+    }
+}
+
 /// Request-response events.
+#[derive(Debug)]
 pub(super) enum InnerRequestResponseEvent {
     /// Request received from remote
     RequestReceived {
@@ -141,7 +192,7 @@ impl From<InnerRequestResponseEvent> for RequestResponseEvent {
 }
 
 /// Request-response events.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum RequestResponseEvent {
     /// Request received from remote
     RequestReceived {

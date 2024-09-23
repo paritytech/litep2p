@@ -22,8 +22,8 @@ use litep2p::{
     config::ConfigBuilder as Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::request_response::{
-        Config as RequestResponseConfig, ConfigBuilder, DialOptions, RequestResponseError,
-        RequestResponseEvent,
+        Config as RequestResponseConfig, ConfigBuilder, DialOptions, RejectReason,
+        RequestResponseError, RequestResponseEvent,
     },
     transport::tcp::config::Config as TcpConfig,
     types::{protocol::ProtocolName, RequestId},
@@ -314,7 +314,7 @@ async fn reject_request(transport1: Transport, transport2: Transport) {
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected
+            error: RequestResponseError::Rejected(RejectReason::SubstreamClosed)
         }
     );
 }
@@ -789,7 +789,7 @@ async fn connection_close_while_request_is_pending(transport1: Transport, transp
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected,
+            error: RequestResponseError::Rejected(RejectReason::ConnectionClosed),
         }
     );
 }
@@ -1005,7 +1005,7 @@ async fn response_too_big(transport1: Transport, transport2: Transport) {
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected,
+            error: RequestResponseError::Rejected(RejectReason::SubstreamClosed),
         }
     );
 }
@@ -1569,7 +1569,9 @@ async fn dial_peer_but_no_known_address(transport1: Transport, transport2: Trans
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected,
+            error: RequestResponseError::Rejected(RejectReason::DialFailed(Some(
+                litep2p::error::ImmediateDialError::NoAddressAvailable
+            ))),
         }
     );
 }
@@ -1916,7 +1918,7 @@ async fn excess_inbound_request_rejected(transport1: Transport, transport2: Tran
         RequestResponseEvent::RequestFailed {
             peer: peer2,
             request_id,
-            error: RequestResponseError::Rejected
+            error: RequestResponseError::Rejected(RejectReason::SubstreamClosed)
         }
     );
 }
@@ -2350,7 +2352,7 @@ async fn dial_failure(transport: Transport) {
         RequestResponseEvent::RequestFailed {
             peer,
             request_id,
-            error: RequestResponseError::Rejected
+            error: RequestResponseError::Rejected(RejectReason::DialFailed(None))
         }
     );
 }

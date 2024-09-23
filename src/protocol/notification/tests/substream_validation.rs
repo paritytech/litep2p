@@ -256,7 +256,7 @@ async fn accept_fails_due_to_closed_substream() {
     substream
         .expect_poll_ready()
         .times(1)
-        .return_once(|_| Poll::Ready(Err(Error::SubstreamError(SubstreamError::ConnectionClosed))));
+        .return_once(|_| Poll::Ready(Err(SubstreamError::ConnectionClosed)));
 
     let (proto_tx, _proto_rx) = channel(256);
     tx.send(InnerTransportEvent::ConnectionEstablished {

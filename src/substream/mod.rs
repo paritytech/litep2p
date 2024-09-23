@@ -22,11 +22,7 @@
 //! Substream-related helper code.
 
 use crate::{
-    codec::ProtocolCodec,
-    error::{Error, SubstreamError},
-    transport::tcp,
-    types::SubstreamId,
-    PeerId,
+    codec::ProtocolCodec, error::SubstreamError, transport::tcp, types::SubstreamId, PeerId,
 };
 
 #[cfg(feature = "quic")]
@@ -38,11 +34,12 @@ use crate::transport::websocket;
 
 use bytes::{Buf, Bytes, BytesMut};
 use futures::{Sink, Stream};
+use indexmap::{map::Entry, IndexMap};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use unsigned_varint::{decode, encode};
 
 use std::{
-    collections::{hash_map::Entry, HashMap, VecDeque},
+    collections::VecDeque,
     fmt,
     hash::Hash,
     io::ErrorKind,
@@ -160,7 +157,7 @@ macro_rules! check_size {
     ($max_size:expr, $size:expr) => {{
         if let Some(max_size) = $max_size {
             if $size > max_size {
-                return Err(Error::IoError(ErrorKind::PermissionDenied));
+                return Err(SubstreamError::IoError(ErrorKind::PermissionDenied).into());
             }
         }
     }};
@@ -362,14 +359,12 @@ impl Substream {
         io: &mut T,
         payload_size: usize,
         payload: Bytes,
-    ) -> crate::Result<()> {
+    ) -> Result<(), SubstreamError> {
         if payload.len() != payload_size {
-            return Err(Error::IoError(ErrorKind::PermissionDenied));
+            return Err(SubstreamError::IoError(ErrorKind::PermissionDenied));
         }
 
-        io.write_all(&payload)
-            .await
-            .map_err(|_| Error::SubstreamError(SubstreamError::ConnectionClosed))?;
+        io.write_all(&payload).await.map_err(|_| SubstreamError::ConnectionClosed)?;
 
         // Flush the stream.
         io.flush().await.map_err(From::from)
@@ -380,10 +375,10 @@ impl Substream {
         io: &mut T,
         bytes: Bytes,
         max_size: Option<usize>,
-    ) -> crate::Result<()> {
+    ) -> Result<(), SubstreamError> {
         if let Some(max_size) = max_size {
             if bytes.len() > max_size {
-                return Err(Error::IoError(ErrorKind::PermissionDenied));
+                return Err(SubstreamError::IoError(ErrorKind::PermissionDenied));
             }
         }
 
@@ -413,7 +408,7 @@ impl Substream {
     /// # Panics
     ///
     /// Panics if no codec is provided.
-    pub async fn send_framed(&mut self, bytes: Bytes) -> crate::Result<()> {
+    pub async fn send_framed(&mut self, bytes: Bytes) -> Result<(), SubstreamError> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
@@ -425,7 +420,7 @@ impl Substream {
         match &mut self.substream {
             #[cfg(test)]
             SubstreamType::Mock(ref mut substream) =>
-                futures::SinkExt::send(substream, bytes).await,
+                futures::SinkExt::send(substream, bytes).await.map_err(Into::into),
             SubstreamType::Tcp(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
                 ProtocolCodec::Identity(payload_size) =>
@@ -528,7 +523,7 @@ fn read_payload_size(buffer: &[u8]) -> Result<(usize, usize), ReadError> {
 }
 
 impl Stream for Substream {
-    type Item = crate::Result<BytesMut>;
+    type Item = Result<BytesMut, SubstreamError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = Pin::into_inner(self);
@@ -632,14 +627,20 @@ impl Stream for Substream {
                                         match read_payload_size(&this.size_vec[..this.offset]) {
                                             Err(ReadError::NotEnoughBytes) => continue,
                                             Err(_) =>
-                                                return Poll::Ready(Some(Err(Error::InvalidData))),
+                                                return Poll::Ready(Some(Err(
+                                                    SubstreamError::ReadFailure(Some(
+                                                        this.substream_id,
+                                                    )),
+                                                ))),
                                             Ok((size, num_bytes)) => {
                                                 debug_assert_eq!(num_bytes, this.offset);
 
                                                 if let Some(max_size) = max_size {
                                                     if size > max_size {
                                                         return Poll::Ready(Some(Err(
-                                                            Error::InvalidData,
+                                                            SubstreamError::ReadFailure(Some(
+                                                                this.substream_id,
+                                                            )),
                                                         )));
                                                     }
                                                 }
@@ -663,7 +664,7 @@ impl Stream for Substream {
 
 // TODO: this code can definitely be optimized
 impl Sink<Bytes> for Substream {
-    type Error = Error;
+    type Error = SubstreamError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         // `MockSubstream` implements `Sink` so calls to `poll_ready()` must be delegated
@@ -691,7 +692,7 @@ impl Sink<Bytes> for Substream {
         match self.codec {
             ProtocolCodec::Identity(payload_size) => {
                 if item.len() != payload_size {
-                    return Err(Error::IoError(ErrorKind::PermissionDenied));
+                    return Err(SubstreamError::IoError(ErrorKind::PermissionDenied));
                 }
 
                 self.pending_out_bytes += item.len();
@@ -763,10 +764,9 @@ impl<K: Hash + Unpin + fmt::Debug + PartialEq + Eq + Copy> SubstreamSetKey for K
 pub struct SubstreamSet<K, S>
 where
     K: SubstreamSetKey,
-    S: Stream<Item = crate::Result<BytesMut>> + Unpin,
+    S: Stream<Item = Result<BytesMut, SubstreamError>> + Unpin,
 {
-    substreams: HashMap<K, S>,
-    keys: Vec<K>,
+    substreams: IndexMap<K, S>,
     poll_index: usize,
     waker: Option<Waker>,
 }
@@ -774,13 +774,12 @@ where
 impl<K, S> SubstreamSet<K, S>
 where
     K: SubstreamSetKey,
-    S: Stream<Item = crate::Result<BytesMut>> + Unpin,
+    S: Stream<Item = Result<BytesMut, SubstreamError>> + Unpin,
 {
     /// Create new [`SubstreamSet`].
     pub fn new() -> Self {
         Self {
-            substreams: HashMap::new(),
-            keys: Vec::new(),
+            substreams: IndexMap::new(),
             poll_index: 0,
             waker: None,
         }
@@ -791,7 +790,6 @@ where
         match self.substreams.entry(key) {
             Entry::Vacant(entry) => {
                 entry.insert(substream);
-                self.keys.push(key);
                 self.waker.take().map(|waker| waker.wake());
             }
             Entry::Occupied(_) => {
@@ -803,12 +801,14 @@ where
 
     /// Remove substream from the set.
     pub fn remove(&mut self, key: &K) -> Option<S> {
-        let Some(substream) = self.substreams.remove(key) else {
+        // The `swap_remove()` changes the order of elements in the map,
+        // however it completes in O(1). This is acceptable since the
+        // alternative of calling `shift_remove()` would be O(n).
+        let Some(substream) = self.substreams.swap_remove(key) else {
             return None;
         };
 
         self.waker.take().map(|waker| waker.wake());
-        self.keys.retain(|k| k != key);
         Some(substream)
     }
 
@@ -832,35 +832,27 @@ where
 impl<K, S> Stream for SubstreamSet<K, S>
 where
     K: SubstreamSetKey,
-    S: Stream<Item = crate::Result<BytesMut>> + Unpin,
+    S: Stream<Item = Result<BytesMut, SubstreamError>> + Unpin,
 {
     type Item = (K, <S as Stream>::Item);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inner = Pin::into_inner(self);
 
-        let len = inner.keys.len();
-        for _ in 0..len {
-            inner.poll_index = (inner.poll_index + 1) % len;
-            let key = &inner.keys[inner.poll_index];
+        let len = inner.substreams.len();
 
-            let Some(mut substream) = inner.substreams.get_mut(key) else {
-                continue;
-            };
+        for _ in 0..len {
+            let index = inner.poll_index % len;
+            inner.poll_index = (inner.poll_index + 1) % len;
+
+            let (key, mut substream) =
+                inner.substreams.get_index_mut(index).expect("Index within range; qed");
 
             match Pin::new(&mut substream).poll_next(cx) {
-                Poll::Pending => {
-                    continue;
-                }
-                Poll::Ready(Some(data)) => {
-                    return Poll::Ready(Some((*key, data)));
-                }
-                Poll::Ready(None) => {
-                    return Poll::Ready(Some((
-                        *key,
-                        Err(Error::SubstreamError(SubstreamError::ConnectionClosed)),
-                    )));
-                }
+                Poll::Pending => continue,
+                Poll::Ready(Some(data)) => return Poll::Ready(Some((*key, data))),
+                Poll::Ready(None) =>
+                    return Poll::Ready(Some((*key, Err(SubstreamError::ConnectionClosed)))),
             }
         }
 
@@ -966,7 +958,7 @@ mod tests {
         assert_eq!(value.1.unwrap(), BytesMut::from(&b"hello"[..]));
 
         match set.next().await {
-            Some((exited_peer, Err(Error::SubstreamError(SubstreamError::ConnectionClosed)))) => {
+            Some((exited_peer, Err(SubstreamError::ConnectionClosed))) => {
                 assert_eq!(peer, exited_peer);
             }
             _ => panic!("inavlid event received"),
