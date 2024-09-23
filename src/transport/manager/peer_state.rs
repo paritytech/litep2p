@@ -523,4 +523,83 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn check_dial_failure() {
+        let record = ConnectionRecord::new(
+            PeerId::random(),
+            "/ip4/1.1.1.1/tcp/80".parse().unwrap(),
+            ConnectionId::from(0),
+        );
+
+        // Check from the dialing state.
+        {
+            let mut state = PeerState::Dialing {
+                dial_record: record.clone(),
+            };
+            let previous_state = state.clone();
+            // Check with different connection ID.
+            state.on_dial_failure(ConnectionId::from(1));
+            assert_eq!(state, previous_state);
+
+            // Check with the same connection ID.
+            state.on_dial_failure(ConnectionId::from(0));
+            assert_eq!(state, PeerState::Disconnected { dial_record: None });
+        }
+
+        // Check from the connected state without dialing state.
+        {
+            let mut state = PeerState::Connected {
+                record: record.clone(),
+                secondary: None,
+            };
+            let previous_state = state.clone();
+            // Check with different connection ID.
+            state.on_dial_failure(ConnectionId::from(1));
+            assert_eq!(state, previous_state);
+
+            // Check with the same connection ID.
+            // The connection ID is checked against dialing records, not established connections.
+            state.on_dial_failure(ConnectionId::from(0));
+            assert_eq!(state, previous_state);
+        }
+
+        // Check from the connected state with dialing state.
+        {
+            let mut state = PeerState::Connected {
+                record: record.clone(),
+                secondary: Some(SecondaryOrDialing::Dialing(record.clone())),
+            };
+            let previous_state = state.clone();
+            // Check with different connection ID.
+            state.on_dial_failure(ConnectionId::from(1));
+            assert_eq!(state, previous_state);
+
+            // Check with the same connection ID.
+            // Dial record is cleared.
+            state.on_dial_failure(ConnectionId::from(0));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: record.clone(),
+                    secondary: None,
+                }
+            );
+        }
+
+        // Check from the disconnected state.
+        {
+            let mut state = PeerState::Disconnected {
+                dial_record: Some(record.clone()),
+            };
+            let previous_state = state.clone();
+            // Check with different connection ID.
+            state.on_dial_failure(ConnectionId::from(1));
+            assert_eq!(state, previous_state);
+
+            // Check with the same connection ID.
+            state.on_dial_failure(ConnectionId::from(0));
+            assert_eq!(state, PeerState::Disconnected { dial_record: None });
+        }
+    }
 }
