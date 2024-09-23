@@ -37,7 +37,7 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
-use address::scores;
+use address::{scores, AddressStore};
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
@@ -612,39 +612,25 @@ impl TransportManager {
     fn update_address_on_dial_failure(&mut self, mut address: Multiaddr, error: &DialError) {
         let mut peers = self.peers.write();
 
-        let score = match error {
-            DialError::Timeout => scores::CONNECTION_ESTABLISHED,
-            DialError::AddressError(_) => scores::CONNECTION_FAILURE,
-            DialError::DnsError(_) => scores::CONNECTION_FAILURE,
-            DialError::NegotiationError(negotiation_error) => match negotiation_error {
-                // Check if the address corresponds to a different peer ID than the one we're
-                // dialing. This can happen if the node operation restarts the node.
-                //
-                // In this case the address is reachable, however the peer ID is different.
-                // Keep track of this address for future dials.
-                //
-                // Note: this is happening quite often in practice and is the primary reason
-                // of negotiation failures.
-                NegotiationError::PeerIdMismatch(_, provided) => {
-                    let context = peers.entry(*provided).or_insert_with(|| PeerContext::default());
+        let score = AddressStore::error_score(error);
 
-                    if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
-                        address.pop();
-                    }
-                    context.addresses.insert(AddressRecord::new(
-                        &provided,
-                        address.clone(),
-                        scores::DIFFERENT_PEER_ID,
-                    ));
+        // Check if the address corresponds to a different peer ID than the one we're
+        // dialing. This can happen if the node operation restarts the node.
+        //
+        // In this case the address is reachable, however the peer ID is different.
+        // Keep track of this address for future dials.
+        //
+        // Note: this is happening quite often in practice and is the primary reason
+        if let DialError::NegotiationError(NegotiationError::PeerIdMismatch(_, provided)) = error {
+            let context = peers.entry(*provided).or_insert_with(|| PeerContext::default());
 
-                    return;
-                }
-                // Timeout during the negotiation phase.
-                NegotiationError::Timeout => scores::TIMEOUT_FAILURE,
-                // Treat other errors as connection failures.
-                _ => scores::CONNECTION_FAILURE,
-            },
-        };
+            if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
+                address.pop();
+            }
+            context.addresses.insert(AddressRecord::new(&provided, address.clone(), score));
+
+            return;
+        }
 
         // Extract the peer ID at this point to give `NegotiationError::PeerIdMismatch` a chance to
         // propagate.

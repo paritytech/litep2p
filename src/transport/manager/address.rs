@@ -18,7 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::PeerId;
+use crate::{
+    error::{DialError, NegotiationError},
+    PeerId,
+};
 
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -184,6 +187,22 @@ impl AddressStore {
         Self {
             addresses: HashMap::with_capacity(MAX_ADDRESSES),
             max_capacity: MAX_ADDRESSES,
+        }
+    }
+
+    /// Get the score for a given error.
+    pub fn error_score(error: &DialError) -> i32 {
+        match error {
+            DialError::Timeout => scores::CONNECTION_ESTABLISHED,
+            DialError::AddressError(_) => scores::CONNECTION_FAILURE,
+            DialError::DnsError(_) => scores::CONNECTION_FAILURE,
+            DialError::NegotiationError(negotiation_error) => match negotiation_error {
+                NegotiationError::PeerIdMismatch(_, _) => scores::DIFFERENT_PEER_ID,
+                // Timeout during the negotiation phase.
+                NegotiationError::Timeout => scores::TIMEOUT_FAILURE,
+                // Treat other errors as connection failures.
+                _ => scores::CONNECTION_FAILURE,
+            },
         }
     }
 
