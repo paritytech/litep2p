@@ -26,7 +26,8 @@ use crate::{
     protocol::ProtocolSet,
     transport::manager::{
         address::AddressRecord,
-        types::{PeerContext, StateDialResult, SupportedTransport},
+        peer_state::StateDialResult,
+        types::{PeerContext, SupportedTransport},
         ProtocolContext, TransportManagerEvent, LOG_TARGET,
     },
     types::{protocol::ProtocolName, ConnectionId},
@@ -318,7 +319,7 @@ impl TransportHandle {
 mod tests {
     use crate::transport::manager::{
         address::AddressStore,
-        types::{ConnectionRecord, PeerState},
+        peer_state::{ConnectionRecord, PeerState},
     };
 
     use super::*;

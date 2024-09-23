@@ -29,7 +29,8 @@ use crate::{
         manager::{
             address::AddressRecord,
             handle::InnerTransportManagerCommand,
-            types::{ConnectionRecord, PeerContext, PeerState, StateDialResult},
+            peer_state::{ConnectionRecord, PeerState, StateDialResult},
+            types::PeerContext,
         },
         Endpoint, Transport, TransportEvent,
     },
@@ -61,6 +62,7 @@ pub use types::SupportedTransport;
 
 mod address;
 pub mod limits;
+mod peer_state;
 mod types;
 
 pub(crate) mod handle;
@@ -1301,7 +1303,7 @@ impl TransportManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::manager::{address::AddressStore, types::SecondaryOrDialing};
+    use crate::transport::manager::{address::AddressStore, peer_state::SecondaryOrDialing};
     use limits::ConnectionLimitsConfig;
 
     use multihash::Multihash;
