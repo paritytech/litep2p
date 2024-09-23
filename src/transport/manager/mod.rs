@@ -975,78 +975,41 @@ impl TransportManager {
         };
 
         let mut peers = self.peers.write();
-        let context = peers.get_mut(&peer).ok_or_else(|| {
+        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+
+        let previous_state = context.state.clone();
+        let last_transport = context.state.on_open_failure(transport);
+
+        if context.state == previous_state {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?peer,
                 ?connection_id,
-                "open failure but peer doesn't exist",
+                ?transport,
+                state = ?context.state,
+                "invalid state for a open failure",
             );
 
-            debug_assert!(false);
-            Error::InvalidState
-        })?;
-
-        match std::mem::replace(
-            &mut context.state,
-            PeerState::Disconnected { dial_record: None },
-        ) {
-            PeerState::Opening {
-                addresses,
-                connection_id,
-                mut transports,
-            } => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?connection_id,
-                    ?transport,
-                    "open failure for peer",
-                );
-                transports.remove(&transport);
-
-                if transports.is_empty() {
-                    for address in addresses {
-                        context.addresses.insert(AddressRecord::new(
-                            &peer,
-                            address,
-                            scores::CONNECTION_FAILURE,
-                        ));
-                    }
-
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?connection_id,
-                        "open failure for last transport",
-                    );
-
-                    return Ok(Some(peer));
-                }
-
-                self.pending_connections.insert(connection_id, peer);
-                context.state = PeerState::Opening {
-                    addresses,
-                    connection_id,
-                    transports,
-                };
-
-                Ok(None)
-            }
-            state => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?connection_id,
-                    ?state,
-                    "open failure but `PeerState` is not `Opening`",
-                );
-                context.state = state;
-
-                debug_assert!(false);
-                Err(Error::InvalidState)
-            }
+            return Err(Error::InvalidState);
         }
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?connection_id,
+            ?transport,
+            ?previous_state,
+            state = ?context.state,
+            "on open failure transition completed"
+        );
+
+        if last_transport {
+            tracing::trace!(target: LOG_TARGET, ?peer, ?connection_id, "open failure for last transport");
+            // Provide the peer to notify the open failure.
+            return Ok(Some(peer));
+        }
+
+        Ok(None)
     }
 
     /// Poll next event from [`crate::transport::manager::TransportManager`].

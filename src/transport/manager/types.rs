@@ -389,6 +389,23 @@ impl PeerState {
 
         false
     }
+
+    /// Returns `true` if the last transport failed to open.
+    pub fn on_open_failure(&mut self, transport: SupportedTransport) -> bool {
+        match self {
+            Self::Opening { transports, .. } => {
+                transports.remove(&transport);
+
+                if transports.is_empty() {
+                    *self = Self::Disconnected { dial_record: None };
+                    return true;
+                }
+
+                return false;
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The connection record keeps track of the connection ID and the address of the connection.
