@@ -442,3 +442,43 @@ impl ConnectionRecord {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_dial() {
+        let state = PeerState::Disconnected { dial_record: None };
+        assert_eq!(state.can_dial(), StateDialResult::Ok);
+
+        let record = ConnectionRecord::new(
+            PeerId::random(),
+            "/ip4/1.1.1.1/tcp/80".parse().unwrap(),
+            ConnectionId::from(0),
+        );
+
+        let state = PeerState::Disconnected {
+            dial_record: Some(record.clone()),
+        };
+        assert_eq!(state.can_dial(), StateDialResult::DialingInProgress);
+
+        let state = PeerState::Dialing {
+            dial_record: record.clone(),
+        };
+        assert_eq!(state.can_dial(), StateDialResult::DialingInProgress);
+
+        let state = PeerState::Opening {
+            addresses: Default::default(),
+            connection_id: ConnectionId::from(0),
+            transports: Default::default(),
+        };
+        assert_eq!(state.can_dial(), StateDialResult::DialingInProgress);
+
+        let state = PeerState::Connected {
+            record,
+            secondary: None,
+        };
+        assert_eq!(state.can_dial(), StateDialResult::AlreadyConnected);
+    }
+}
