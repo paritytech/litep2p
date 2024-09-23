@@ -1238,6 +1238,10 @@ impl TransportManager {
                             }
                         }
                         TransportEvent::OpenFailure { connection_id, errors } => {
+                            for (address, error) in &errors {
+                                self.update_address_on_dial_failure(address.clone(), error);
+                            }
+
                             match self.on_open_failure(transport, connection_id) {
                                 Err(error) => tracing::debug!(
                                     target: LOG_TARGET,
