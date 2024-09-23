@@ -448,7 +448,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn can_dial() {
+    fn state_can_dial() {
         let state = PeerState::Disconnected { dial_record: None };
         assert_eq!(state.can_dial(), StateDialResult::Ok);
 
@@ -480,5 +480,26 @@ mod tests {
             secondary: None,
         };
         assert_eq!(state.can_dial(), StateDialResult::AlreadyConnected);
+    }
+
+    #[test]
+    fn state_dial_single_address() {
+        let record = ConnectionRecord::new(
+            PeerId::random(),
+            "/ip4/1.1.1.1/tcp/80".parse().unwrap(),
+            ConnectionId::from(0),
+        );
+
+        let mut state = PeerState::Disconnected { dial_record: None };
+        assert_eq!(
+            state.dial_single_address(record.clone()),
+            StateDialResult::Ok
+        );
+        assert_eq!(
+            state,
+            PeerState::Dialing {
+                dial_record: record
+            }
+        );
     }
 }
