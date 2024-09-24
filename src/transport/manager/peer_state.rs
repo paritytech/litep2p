@@ -719,5 +719,35 @@ mod tests {
                 }
             );
         }
+
+        // Dialing with different dial record.
+        {
+            let mut state = PeerState::Dialing {
+                dial_record: record.clone(),
+            };
+            assert!(state.on_connection_established(second_record.clone()));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: second_record.clone(),
+                    secondary: Some(SecondaryOrDialing::Dialing(record.clone()))
+                }
+            );
+        }
+
+        // Dialing with the same dial record.
+        {
+            let mut state = PeerState::Dialing {
+                dial_record: record.clone(),
+            };
+            assert!(state.on_connection_established(record.clone()));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: record.clone(),
+                    secondary: None,
+                }
+            );
+        }
     }
 }
