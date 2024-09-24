@@ -511,19 +511,19 @@ impl TransportManager {
     pub async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
         self.connection_limits.on_dial_address()?;
 
-        let mut record = AddressRecord::from_multiaddr(address)
+        let address_record = AddressRecord::from_multiaddr(address)
             .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
 
-        if self.listen_addresses.read().contains(record.as_ref()) {
+        if self.listen_addresses.read().contains(address_record.as_ref()) {
             return Err(Error::TriedToDialSelf);
         }
 
-        tracing::debug!(target: LOG_TARGET, address = ?record.address(), "dial address");
+        tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "dial address");
 
-        let mut protocol_stack = record.as_ref().iter();
+        let mut protocol_stack = address_record.as_ref().iter();
         match protocol_stack
             .next()
-            .ok_or_else(|| Error::TransportNotSupported(record.address().clone()))?
+            .ok_or_else(|| Error::TransportNotSupported(address_record.address().clone()))?
         {
             Protocol::Ip4(_) | Protocol::Ip6(_) => {}
             Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_) => {}
@@ -533,29 +533,36 @@ impl TransportManager {
                     ?transport,
                     "invalid transport, expected `ip4`/`ip6`"
                 );
-                return Err(Error::TransportNotSupported(record.address().clone()));
+                return Err(Error::TransportNotSupported(
+                    address_record.address().clone(),
+                ));
             }
         };
 
         let supported_transport = match protocol_stack
             .next()
-            .ok_or_else(|| Error::TransportNotSupported(record.address().clone()))?
+            .ok_or_else(|| Error::TransportNotSupported(address_record.address().clone()))?
         {
             Protocol::Tcp(_) => match protocol_stack.next() {
                 #[cfg(feature = "websocket")]
                 Some(Protocol::Ws(_)) | Some(Protocol::Wss(_)) => SupportedTransport::WebSocket,
                 Some(Protocol::P2p(_)) => SupportedTransport::Tcp,
-                _ => return Err(Error::TransportNotSupported(record.address().clone())),
+                _ =>
+                    return Err(Error::TransportNotSupported(
+                        address_record.address().clone(),
+                    )),
             },
             #[cfg(feature = "quic")]
             Protocol::Udp(_) => match protocol_stack
                 .next()
-                .ok_or_else(|| Error::TransportNotSupported(record.address().clone()))?
+                .ok_or_else(|| Error::TransportNotSupported(address_record.address().clone()))?
             {
                 Protocol::QuicV1 => SupportedTransport::Quic,
                 _ => {
-                    tracing::debug!(target: LOG_TARGET, address = ?record.address(), "expected `quic-v1`");
-                    return Err(Error::TransportNotSupported(record.address().clone()));
+                    tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "expected `quic-v1`");
+                    return Err(Error::TransportNotSupported(
+                        address_record.address().clone(),
+                    ));
                 }
             },
             protocol => {
@@ -565,77 +572,44 @@ impl TransportManager {
                     "invalid protocol"
                 );
 
-                return Err(Error::TransportNotSupported(record.address().clone()));
+                return Err(Error::TransportNotSupported(
+                    address_record.address().clone(),
+                ));
             }
         };
 
         // when constructing `AddressRecord`, `PeerId` was verified to be part of the address
         let remote_peer_id =
-            PeerId::try_from_multiaddr(record.address()).expect("`PeerId` to exist");
+            PeerId::try_from_multiaddr(address_record.address()).expect("`PeerId` to exist");
 
         // set connection id for the address record and put peer into `Dialing` state
         let connection_id = self.next_connection_id();
-        record.set_connection_id(connection_id);
+        let dial_record = ConnectionRecord {
+            address: address_record.address().clone(),
+            connection_id,
+        };
 
         {
             let mut peers = self.peers.write();
 
-            match peers.entry(remote_peer_id) {
-                Entry::Occupied(occupied) => {
-                    let context = occupied.into_mut();
+            let context = peers.entry(remote_peer_id).or_insert_with(|| PeerContext::default());
 
-                    context.addresses.insert(record.clone());
+            // Keep the provided record around for possible future dials.
+            context.addresses.insert(address_record.clone());
 
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        peer = ?remote_peer_id,
-                        state = ?context.state,
-                        "peer state exists",
-                    );
-
-                    match context.state {
-                        PeerState::Connected { .. } => {
-                            return Err(Error::AlreadyConnected);
-                        }
-                        PeerState::Dialing { .. } | PeerState::Opening { .. } => {
-                            return Ok(());
-                        }
-                        PeerState::Disconnected {
-                            dial_record: Some(_),
-                        } => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                peer = ?remote_peer_id,
-                                state = ?context.state,
-                                "peer is already being dialed from a disconnected state"
-                            );
-                            return Ok(());
-                        }
-                        PeerState::Disconnected { dial_record: None } => {
-                            context.state = PeerState::Dialing {
-                                record: record.clone(),
-                            };
-                        }
-                    }
-                }
-                Entry::Vacant(vacant) => {
-                    let mut addresses = AddressStore::new();
-                    addresses.insert(record.clone());
-                    vacant.insert(PeerContext {
-                        state: PeerState::Dialing {
-                            record: record.clone(),
-                        },
-                        addresses,
-                        secondary_connection: None,
-                    });
-                }
+            match context.state.dial_single_address(dial_record) {
+                StateDialResult::AlreadyConnected => return Err(Error::AlreadyConnected),
+                StateDialResult::DialingInProgress => return Ok(()),
+                StateDialResult::Ok => {}
             };
         }
 
         self.transports
             .get_mut(&supported_transport)
-            .ok_or(Error::TransportNotSupported(record.address().clone()))?
-            .dial(connection_id, record.address().clone())?;
+            .ok_or(Error::TransportNotSupported(
+                address_record.address().clone(),
+            ))?
+            .dial(connection_id, address_record.address().clone())?;
         self.pending_connections.insert(connection_id, remote_peer_id);
 
         Ok(())
