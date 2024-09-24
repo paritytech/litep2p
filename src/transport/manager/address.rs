@@ -27,7 +27,7 @@ use crate::{
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{hash_map::Entry, BinaryHeap, HashMap, HashSet};
 
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
@@ -159,11 +159,10 @@ impl Ord for AddressRecord {
 /// Store for peer addresses.
 #[derive(Debug)]
 pub struct AddressStore {
-    //// Addresses sorted by score.
-    pub by_score: BinaryHeap<AddressRecord>,
-
-    /// Addresses queryable by hashing them for faster lookup.
-    pub by_address: HashSet<Multiaddr>,
+    /// Addresses available.
+    pub addresses: HashMap<Multiaddr, AddressRecord>,
+    /// Maximum capacity of the address store.
+    max_capacity: usize,
 }
 
 impl FromIterator<Multiaddr> for AddressStore {
@@ -183,8 +182,7 @@ impl FromIterator<AddressRecord> for AddressStore {
     fn from_iter<T: IntoIterator<Item = AddressRecord>>(iter: T) -> Self {
         let mut store = AddressStore::new();
         for record in iter {
-            store.by_address.insert(record.address.clone());
-            store.by_score.push(record);
+            store.insert(record);
         }
 
         store
@@ -211,8 +209,8 @@ impl AddressStore {
     /// Create new [`AddressStore`].
     pub fn new() -> Self {
         Self {
-            by_score: BinaryHeap::new(),
-            by_address: HashSet::new(),
+            addresses: HashMap::with_capacity(MAX_ADDRESSES),
+            max_capacity: MAX_ADDRESSES,
         }
     }
 
@@ -234,45 +232,61 @@ impl AddressStore {
 
     /// Check if [`AddressStore`] is empty.
     pub fn is_empty(&self) -> bool {
-        self.by_score.is_empty()
+        self.addresses.is_empty()
     }
 
-    /// Check if address is already in the a
-    pub fn contains(&self, address: &Multiaddr) -> bool {
-        self.by_address.contains(address)
-    }
+    /// Insert the address record into [`AddressStore`] with the provided score.
+    ///
+    /// If the address is not in the store, it will be inserted.
+    /// Otherwise, the score and connection ID will be updated.
+    pub fn insert(&mut self, record: AddressRecord) {
+        let num_addresses = self.addresses.len();
 
-    /// Insert new address record into [`AddressStore`] with default address score.
-    pub fn insert(&mut self, mut record: AddressRecord) {
-        if self.by_address.contains(record.address()) {
+        if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
+            occupied.get_mut().update_score(record.score);
+            if occupied.get().score <= REMOVE_THRESHOLD {
+                occupied.remove();
+            }
             return;
         }
 
-        record.connection_id = None;
-        self.by_address.insert(record.address.clone());
-        self.by_score.push(record);
-    }
-
-    /// Pop address with the highest score from [`AddressStore`].
-    pub fn pop(&mut self) -> Option<AddressRecord> {
-        self.by_score.pop().map(|record| {
-            self.by_address.remove(&record.address);
-            record
-        })
-    }
-
-    /// Take at most `limit` `AddressRecord`s from [`AddressStore`].
-    pub fn take(&mut self, limit: usize) -> Vec<AddressRecord> {
-        let mut records = Vec::new();
-
-        for _ in 0..limit {
-            match self.pop() {
-                Some(record) => records.push(record),
-                None => break,
+        // The eviction algorithm favours addresses with higher scores.
+        //
+        // This algorithm has the following implications:
+        //  - it keeps the best addresses in the store.
+        //  - if the store is at capacity, the worst address will be evicted.
+        //  - an address that is not dialed yet (with score zero) will be preferred over an address
+        //  that already failed (with negative score).
+        if num_addresses >= self.max_capacity {
+            // No need to keep track of negative addresses if we are at capacity.
+            if record.score < 0 {
+                return;
             }
+
+            let Some(min_record) = self.addresses.values().min().cloned() else {
+                return;
+            };
+            // The lowest score is better than the new record.
+            if record.score < min_record.score {
+                return;
+            }
+            self.addresses.remove(min_record.address());
         }
 
-        records
+        // There's no need to keep track of this address if the score is below the threshold.
+        if record.score <= REMOVE_THRESHOLD {
+            return;
+        }
+
+        // Insert the record.
+        self.addresses.insert(record.address.clone(), record);
+    }
+
+    /// Return the available addresses sorted by score.
+    pub fn addresses(&self, limit: usize) -> Vec<Multiaddr> {
+        let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
+        records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
+        records.into_iter().take(limit).map(|record| record.address).collect()
     }
 }
 
