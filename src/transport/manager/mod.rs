@@ -967,7 +967,7 @@ impl TransportManager {
         transport: SupportedTransport,
         connection_id: ConnectionId,
     ) -> crate::Result<Option<PeerId>> {
-        let Some(peer) = self.pending_connections.remove(&connection_id) else {
+        let Some(peer) = self.pending_connections.get(&connection_id).copied() else {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?connection_id,
@@ -1007,6 +1007,8 @@ impl TransportManager {
 
         if last_transport {
             tracing::trace!(target: LOG_TARGET, ?peer, ?connection_id, "open failure for last transport");
+            // Remove the pending connection.
+            self.pending_connections.remove(&connection_id);
             // Provide the peer to notify the open failure.
             return Ok(Some(peer));
         }
