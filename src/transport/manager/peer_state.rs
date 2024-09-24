@@ -389,6 +389,25 @@ impl PeerState {
             _ => false,
         }
     }
+
+    /// Returns `true` if the connection was opened.
+    pub fn on_connection_opened(&mut self, record: ConnectionRecord) -> bool {
+        match self {
+            Self::Opening { .. } => {
+                // TODO: Litep2p did not check previously if the
+                // connection record is valid or not, in terms of having
+                // the same connection ID and the address part of the
+                // address set.
+
+                *self = Self::Dialing {
+                    dial_record: record.clone(),
+                };
+
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The connection record keeps track of the connection ID and the address of the connection.

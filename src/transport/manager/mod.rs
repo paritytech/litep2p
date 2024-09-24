@@ -869,93 +869,80 @@ impl TransportManager {
 
         let mut peers = self.peers.write();
         let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        let previous_state = context.state.clone();
 
-        match std::mem::replace(
-            &mut context.state,
-            PeerState::Disconnected { dial_record: None },
-        ) {
-            PeerState::Opening {
-                connection_id,
-                transports,
-                ..
-            } => {
+        let record = ConnectionRecord::new(peer, address.clone(), connection_id);
+        let state_advanced = context.state.on_connection_opened(record);
+        if !state_advanced {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                state = ?context.state,
+                "connection opened but `PeerState` is not `Opening`",
+            );
+            return Err(Error::InvalidState);
+        }
+
+        // State advanced from `Opening` to `Dialing`.
+        let PeerState::Opening {
+            connection_id,
+            transports,
+            ..
+        } = previous_state
+        else {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                state = ?context.state,
+                "State missmatch in opening expected by peer state transition",
+            );
+            return Err(Error::InvalidState);
+        };
+
+        // Cancel open attempts for other transports as connection already exists.
+        for transport in transports.iter() {
+            self.transports
+                .get_mut(transport)
+                .expect("transport to exist")
+                .cancel(connection_id);
+        }
+
+        let negotiation = self
+            .transports
+            .get_mut(&transport)
+            .expect("transport to exist")
+            .negotiate(connection_id);
+
+        match negotiation {
+            Ok(()) => {
                 tracing::trace!(
                     target: LOG_TARGET,
                     ?peer,
                     ?connection_id,
-                    ?address,
                     ?transport,
-                    "connection opened to peer",
+                    "negotiation started"
                 );
 
-                // cancel open attempts for other transports as connection already exists
-                for transport in transports.iter() {
-                    self.transports
-                        .get_mut(transport)
-                        .expect("transport to exist")
-                        .cancel(connection_id);
-                }
+                self.pending_connections.insert(connection_id, peer);
+                context.addresses.insert(AddressRecord::new(
+                    &peer,
+                    address,
+                    scores::CONNECTION_ESTABLISHED,
+                ));
 
-                // negotiate the connection
-                match self
-                    .transports
-                    .get_mut(&transport)
-                    .expect("transport to exist")
-                    .negotiate(connection_id)
-                {
-                    Ok(()) => {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?connection_id,
-                            ?transport,
-                            "negotiation started"
-                        );
-
-                        self.pending_connections.insert(connection_id, peer);
-
-                        context.state = PeerState::Dialing {
-                            dial_record: ConnectionRecord::new(
-                                peer,
-                                address.clone(),
-                                connection_id,
-                            ),
-                        };
-
-                        context.addresses.insert(AddressRecord::new(
-                            &peer,
-                            address,
-                            scores::CONNECTION_ESTABLISHED,
-                        ));
-
-                        Ok(())
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?connection_id,
-                            ?error,
-                            "failed to negotiate connection",
-                        );
-                        context.state = PeerState::Disconnected { dial_record: None };
-
-                        debug_assert!(false);
-                        Err(Error::InvalidState)
-                    }
-                }
+                Ok(())
             }
-            state => {
+            Err(err) => {
                 tracing::warn!(
                     target: LOG_TARGET,
                     ?peer,
                     ?connection_id,
-                    ?state,
-                    "connection opened but `PeerState` is not `Opening`",
+                    ?err,
+                    "failed to negotiate connection",
                 );
-                context.state = state;
-
-                debug_assert!(false);
+                context.state = PeerState::Disconnected { dial_record: None };
                 Err(Error::InvalidState)
             }
         }
