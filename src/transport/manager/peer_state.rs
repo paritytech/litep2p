@@ -819,4 +819,66 @@ mod tests {
         assert!(state.on_open_failure(SupportedTransport::Tcp));
         assert_eq!(state, PeerState::Disconnected { dial_record: None });
     }
+
+    #[test]
+    fn check_full_lifecycle() {
+        let record = ConnectionRecord::new(
+            PeerId::random(),
+            "/ip4/1.1.1.1/tcp/80".parse().unwrap(),
+            ConnectionId::from(0),
+        );
+
+        let mut state = PeerState::Disconnected { dial_record: None };
+        // Dialing.
+        assert_eq!(
+            state.dial_single_address(record.clone()),
+            StateDialResult::Ok
+        );
+        assert_eq!(
+            state,
+            PeerState::Dialing {
+                dial_record: record.clone()
+            }
+        );
+
+        // Dialing failed.
+        state.on_dial_failure(ConnectionId::from(0));
+        assert_eq!(state, PeerState::Disconnected { dial_record: None });
+
+        // Opening.
+        assert_eq!(
+            state.dial_addresses(
+                ConnectionId::from(0),
+                Default::default(),
+                Default::default()
+            ),
+            StateDialResult::Ok
+        );
+
+        // Open failure.
+        assert!(state.on_open_failure(SupportedTransport::Tcp));
+        assert_eq!(state, PeerState::Disconnected { dial_record: None });
+
+        // Dial again.
+        assert_eq!(
+            state.dial_single_address(record.clone()),
+            StateDialResult::Ok
+        );
+        assert_eq!(
+            state,
+            PeerState::Dialing {
+                dial_record: record.clone()
+            }
+        );
+
+        // Successful dial.
+        assert!(state.on_connection_established(record.clone()));
+        assert_eq!(
+            state,
+            PeerState::Connected {
+                record: record.clone(),
+                secondary: None
+            }
+        );
+    }
 }
