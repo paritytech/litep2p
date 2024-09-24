@@ -806,4 +806,17 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn check_open_failure() {
+        let mut state = PeerState::Opening {
+            addresses: Default::default(),
+            connection_id: ConnectionId::from(0),
+            transports: [SupportedTransport::Tcp].into_iter().collect(),
+        };
+
+        // This is the last protocol
+        assert!(state.on_open_failure(SupportedTransport::Tcp));
+        assert_eq!(state, PeerState::Disconnected { dial_record: None });
+    }
 }
