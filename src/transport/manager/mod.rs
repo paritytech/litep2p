@@ -756,7 +756,6 @@ impl TransportManager {
             &peer,
             endpoint.address().clone(),
             scores::CONNECTION_ESTABLISHED,
-            None,
         );
 
         let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
@@ -800,239 +799,55 @@ impl TransportManager {
         }
 
         let mut peers = self.peers.write();
-        match peers.get_mut(&peer) {
-            Some(context) => match context.state {
-                PeerState::Connected {
-                    ref mut dial_record,
-                    ..
-                } => match context.secondary_connection {
-                    Some(_) => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            connection_id = ?endpoint.connection_id(),
-                            ?endpoint,
-                            "secondary connection already exists, ignoring connection",
-                        );
+        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
 
-                        return Ok(ConnectionEstablishedResult::Reject);
-                    }
-                    None => match dial_record.take() {
-                        Some(record)
-                            if record.connection_id() == &Some(endpoint.connection_id()) =>
-                        {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                connection_id = ?endpoint.connection_id(),
-                                address = ?endpoint.address(),
-                                "dialed connection opened as secondary connection",
-                            );
+        let previous_state = context.state.clone();
+        let connection_accepted = context
+            .state
+            .on_connection_established(ConnectionRecord::from_endpoint(peer, endpoint));
 
-                            context.secondary_connection = Some(AddressRecord::new(
-                                &peer,
-                                endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
-                                Some(endpoint.connection_id()),
-                            ));
-                        }
-                        None => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                connection_id = ?endpoint.connection_id(),
-                                address = ?endpoint.address(),
-                                "secondary connection",
-                            );
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?endpoint,
+            ?previous_state,
+            state = ?context.state,
+            "on connection established completed"
+        );
 
-                            context.secondary_connection = Some(AddressRecord::new(
-                                &peer,
-                                endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
-                                Some(endpoint.connection_id()),
-                            ));
-                        }
-                        Some(record) => {
-                            tracing::warn!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                connection_id = ?endpoint.connection_id(),
-                                address = ?endpoint.address(),
-                                dial_record = ?record,
-                                "unknown connection opened as secondary connection, discarding",
-                            );
+        if connection_accepted {
+            // Cancel all pending dials if the connection was established.
+            if let PeerState::Opening {
+                connection_id,
+                transports,
+                ..
+            } = previous_state
+            {
+                // cancel all pending dials
+                transports.iter().for_each(|transport| {
+                    self.transports
+                        .get_mut(transport)
+                        .expect("transport to exist")
+                        .cancel(connection_id);
+                });
 
-                            // Preserve the dial record.
-                            *dial_record = Some(record);
-
-                            return Ok(ConnectionEstablishedResult::Reject);
-                        }
-                    },
-                },
-                PeerState::Dialing { ref record, .. } => {
-                    match record.connection_id() == &Some(endpoint.connection_id()) {
-                        true => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                connection_id = ?endpoint.connection_id(),
-                                ?endpoint,
-                                ?record,
-                                "connection opened to remote",
-                            );
-
-                            context.state = PeerState::Connected {
-                                record: record.clone(),
-                                dial_record: None,
-                            };
-                        }
-                        false => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                connection_id = ?endpoint.connection_id(),
-                                ?endpoint,
-                                "connection opened by remote while local node was dialing",
-                            );
-
-                            context.state = PeerState::Connected {
-                                record: AddressRecord::new(
-                                    &peer,
-                                    endpoint.address().clone(),
-                                    SCORE_CONNECT_SUCCESS,
-                                    Some(endpoint.connection_id()),
-                                ),
-                                dial_record: Some(record.clone()),
-                            };
-                        }
-                    }
-                }
-                PeerState::Opening {
-                    ref mut records,
-                    connection_id,
-                    ref transports,
-                } => {
-                    debug_assert!(std::matches!(endpoint, &Endpoint::Listener { .. }));
-
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        dial_connection_id = ?connection_id,
-                        dial_records = ?records,
-                        dial_transports = ?transports,
-                        listener_endpoint = ?endpoint,
-                        "inbound connection while opening an outbound connection",
-                    );
-
-                    // cancel all pending dials
-                    transports.iter().for_each(|transport| {
-                        self.transports
-                            .get_mut(transport)
-                            .expect("transport to exist")
-                            .cancel(connection_id);
-                    });
-
-                    // since an inbound connection was removed, the outbound connection can be
-                    // removed from pending dials
-                    //
-                    // all records have the same `ConnectionId` so it doesn't matter which of them
-                    // is used to remove the pending dial
-                    self.pending_connections.remove(
-                        &records
-                            .iter()
-                            .next()
-                            .expect("record to exist")
-                            .1
-                            .connection_id()
-                            .expect("`ConnectionId` to exist"),
-                    );
-
-                    let record = match records.remove(endpoint.address()) {
-                        Some(mut record) => {
-                            record.update_score(SCORE_CONNECT_SUCCESS);
-                            record.set_connection_id(endpoint.connection_id());
-                            record
-                        }
-                        None => AddressRecord::new(
-                            &peer,
-                            endpoint.address().clone(),
-                            SCORE_CONNECT_SUCCESS,
-                            Some(endpoint.connection_id()),
-                        ),
-                    };
-                    context.addresses.extend(records.iter().map(|(_, record)| record));
-
-                    context.state = PeerState::Connected {
-                        record,
-                        dial_record: None,
-                    };
-                }
-                PeerState::Disconnected {
-                    ref mut dial_record,
-                } => {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        connection_id = ?endpoint.connection_id(),
-                        ?endpoint,
-                        ?dial_record,
-                        "connection opened by remote or delayed dial succeeded",
-                    );
-
-                    let (record, dial_record) = match dial_record.take() {
-                        Some(mut dial_record) =>
-                            if dial_record.address() == endpoint.address() {
-                                dial_record.set_connection_id(endpoint.connection_id());
-                                (dial_record, None)
-                            } else {
-                                (
-                                    AddressRecord::new(
-                                        &peer,
-                                        endpoint.address().clone(),
-                                        SCORE_CONNECT_SUCCESS,
-                                        Some(endpoint.connection_id()),
-                                    ),
-                                    Some(dial_record),
-                                )
-                            },
-                        None => (
-                            AddressRecord::new(
-                                &peer,
-                                endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
-                                Some(endpoint.connection_id()),
-                            ),
-                            None,
-                        ),
-                    };
-
-                    context.state = PeerState::Connected {
-                        record,
-                        dial_record,
-                    };
-                }
-            },
-            None => {
-                peers.insert(
-                    peer,
-                    PeerContext {
-                        state: PeerState::Connected {
-                            record: AddressRecord::new(
-                                &peer,
-                                endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
-                                Some(endpoint.connection_id()),
-                            ),
-                            dial_record: None,
-                        },
-                        addresses: AddressStore::new(),
-                        secondary_connection: None,
-                    },
-                );
+                // since an inbound connection was removed, the outbound connection can be
+                // removed from pending dials
+                //
+                // TODO: This may race in the following scenario:
+                //
+                // T0: we open address X on protocol TCP
+                // T1: remote peer opens a connection with us
+                // T2: address X is dialed and event is propagated from TCP to transport manager
+                // T3: `on_connection_established` is called for T1 and pending connections cleared
+                // T4: event from T2 is delivered.
+                self.pending_connections.remove(&connection_id);
             }
+
+            return Ok(ConnectionEstablishedResult::Accept);
         }
 
-        Ok(ConnectionEstablishedResult::Accept)
+        Ok(ConnectionEstablishedResult::Reject)
     }
 
     fn on_connection_opened(
