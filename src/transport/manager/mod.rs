@@ -435,7 +435,7 @@ impl TransportManager {
         let PeerContext {
             state,
             secondary_connection,
-            mut addresses,
+            addresses,
         } = match peers.remove(&peer) {
             None => return Err(Error::PeerDoesntExist(peer)),
             Some(
@@ -482,9 +482,9 @@ impl TransportManager {
         }
 
         let mut records: HashMap<_, _> = addresses
-            .take(limit)
+            .addresses(limit)
             .into_iter()
-            .map(|record| (record.address().clone(), record))
+            .map(|address| (address.clone(), AddressRecord::new(&peer, address, 0, None)))
             .collect();
 
         if records.is_empty() {
@@ -666,10 +666,7 @@ impl TransportManager {
                 Entry::Occupied(occupied) => {
                     let context = occupied.into_mut();
 
-                    // For a better address tacking, see:
-                    // https://github.com/paritytech/litep2p/issues/180
-                    //
-                    // TODO: context.addresses.insert(record.clone());
+                    context.addresses.insert(record.clone());
 
                     tracing::debug!(
                         target: LOG_TARGET,

@@ -210,9 +210,7 @@ impl TransportManagerHandle {
         match peers.get_mut(peer) {
             Some(context) =>
                 for record in addresses {
-                    if !context.addresses.contains(record.address()) {
-                        context.addresses.insert(record);
-                    }
+                    context.addresses.insert(record);
                 },
             None => {
                 peers.insert(

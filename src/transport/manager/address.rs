@@ -27,7 +27,7 @@ use crate::{
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
-use std::collections::{hash_map::Entry, BinaryHeap, HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap};
 
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
