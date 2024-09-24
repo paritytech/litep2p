@@ -25,6 +25,27 @@ use multihash::Multihash;
 
 use std::collections::{BinaryHeap, HashSet};
 
+/// Maximum number of addresses tracked for a peer.
+const MAX_ADDRESSES: usize = 64;
+
+/// Scores for address records.
+pub mod scores {
+    /// Score indicating that the connection was successfully established.
+    pub const CONNECTION_ESTABLISHED: i32 = 100i32;
+
+    /// Score for a connection with a peer using a different ID than expected.
+    pub const DIFFERENT_PEER_ID: i32 = 50i32;
+
+    /// Score for failing to connect due to an invalid or unreachable address.
+    pub const CONNECTION_FAILURE: i32 = -100i32;
+
+    /// Score for a connection attempt that failed due to a timeout.
+    pub const TIMEOUT_FAILURE: i32 = -50i32;
+}
+
+/// Remove the address from the store if the score is below this threshold.
+const REMOVE_THRESHOLD: i32 = scores::CONNECTION_FAILURE * 2;
+
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
 pub struct AddressRecord {
