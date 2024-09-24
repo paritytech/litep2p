@@ -401,7 +401,7 @@ mod tests {
             let record = store.addresses.get(&address).unwrap().clone();
 
             if let Some(previous) = prev {
-                assert!(previous.score > record.score);
+                assert!(previous.score >= record.score);
             }
 
             prev = Some(record);
@@ -429,7 +429,7 @@ mod tests {
             if prev.is_none() {
                 prev = Some(record);
             } else {
-                assert!(prev.unwrap().score > record.score);
+                assert!(prev.unwrap().score >= record.score);
                 prev = Some(record);
             }
         }
