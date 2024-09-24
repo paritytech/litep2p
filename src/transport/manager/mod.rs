@@ -704,140 +704,40 @@ impl TransportManager {
         &mut self,
         peer: PeerId,
         connection_id: ConnectionId,
-    ) -> crate::Result<Option<TransportEvent>> {
+    ) -> Option<TransportEvent> {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?connection_id, "connection closed");
+
         self.connection_limits.on_connection_closed(connection_id);
 
         let mut peers = self.peers.write();
-        let Some(context) = peers.get_mut(&peer) else {
+        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+
+        let previous_state = context.state.clone();
+        let connection_closed = context.state.on_connection_closed(connection_id);
+
+        if context.state == previous_state {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?peer,
                 ?connection_id,
-                "cannot handle closed connection: peer doesn't exist",
+                state = ?context.state,
+                "invalid state for a closed connection",
             );
-            debug_assert!(false);
-            return Err(Error::PeerDoesntExist(peer));
-        };
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?peer,
-            ?connection_id,
-            "connection closed",
-        );
-
-        match std::mem::replace(
-            &mut context.state,
-            PeerState::Disconnected { dial_record: None },
-        ) {
-            PeerState::Connected {
-                record,
-                dial_record: actual_dial_record,
-            } => match record.connection_id() == &Some(connection_id) {
-                // primary connection was closed
-                //
-                // if secondary connection exists, switch to using it while keeping peer in
-                // `Connected` state and if there's only one connection, set peer
-                // state to `Disconnected`
-                true => match context.secondary_connection.take() {
-                    None => {
-                        context.addresses.insert(record);
-                        context.state = PeerState::Disconnected {
-                            dial_record: actual_dial_record,
-                        };
-
-                        Ok(Some(TransportEvent::ConnectionClosed {
-                            peer,
-                            connection_id,
-                        }))
-                    }
-                    Some(secondary_connection) => {
-                        context.addresses.insert(record);
-                        context.state = PeerState::Connected {
-                            record: secondary_connection,
-                            dial_record: actual_dial_record,
-                        };
-
-                        Ok(None)
-                    }
-                },
-                // secondary connection was closed
-                false => match context.secondary_connection.take() {
-                    Some(secondary_connection) => {
-                        if secondary_connection.connection_id() != &Some(connection_id) {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?connection_id,
-                                "unknown connection was closed, potentially ignored tertiary connection",
-                            );
-
-                            context.secondary_connection = Some(secondary_connection);
-                            context.state = PeerState::Connected {
-                                record,
-                                dial_record: actual_dial_record,
-                            };
-
-                            return Ok(None);
-                        }
-
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?connection_id,
-                            "secondary connection closed",
-                        );
-
-                        context.addresses.insert(secondary_connection);
-                        context.state = PeerState::Connected {
-                            record,
-                            dial_record: actual_dial_record,
-                        };
-                        Ok(None)
-                    }
-                    None => {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?connection_id,
-                            "non-primary connection was closed but secondary connection doesn't exist",
-                        );
-
-                        debug_assert!(false);
-                        Err(Error::InvalidState)
-                    }
-                },
-            },
-            PeerState::Disconnected { dial_record } => match context.secondary_connection.take() {
-                Some(record) => {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?connection_id,
-                        ?record,
-                        ?dial_record,
-                        "peer is disconnected but secondary connection exists",
-                    );
-
-                    debug_assert!(false);
-                    context.state = PeerState::Disconnected { dial_record };
-                    Err(Error::InvalidState)
-                }
-                None => {
-                    context.state = PeerState::Disconnected { dial_record };
-
-                    Ok(Some(TransportEvent::ConnectionClosed {
-                        peer,
-                        connection_id,
-                    }))
-                }
-            },
-            state => {
-                tracing::warn!(target: LOG_TARGET, ?peer, ?connection_id, ?state, "invalid state for a closed connection");
-                debug_assert!(false);
-                Err(Error::InvalidState)
-            }
+        } else {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                ?previous_state,
+                state = ?context.state,
+                "on connection closed completed"
+            );
         }
+
+        connection_closed.then_some(TransportEvent::ConnectionClosed {
+            peer,
+            connection_id,
+        })
     }
 
     /// Update the address on a connection established.
