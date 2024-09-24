@@ -37,6 +37,7 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
+use address::scores;
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
@@ -1042,11 +1043,36 @@ impl TransportManager {
         }
     }
 
+    /// Update the address on a connection established.
+    fn update_address_on_connection_established(&mut self, peer: PeerId, endpoint: &Endpoint) {
+        // The connection can be inbound or outbound.
+        // For the inbound connection type, in most cases, the remote peer dialed
+        // with an ephemeral port which it might not be listening on.
+        // Therefore, we only insert the address into the store if we're the dialer.
+        if endpoint.is_listener() {
+            return;
+        }
+
+        let mut peers = self.peers.write();
+
+        let record = AddressRecord::new(
+            &peer,
+            endpoint.address().clone(),
+            scores::CONNECTION_ESTABLISHED,
+            None,
+        );
+
+        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        context.addresses.insert(record);
+    }
+
     fn on_connection_established(
         &mut self,
         peer: PeerId,
         endpoint: &Endpoint,
     ) -> crate::Result<ConnectionEstablishedResult> {
+        self.update_address_on_connection_established(peer, &endpoint);
+
         if let Some(dialed_peer) = self.pending_connections.remove(&endpoint.connection_id()) {
             if dialed_peer != peer {
                 tracing::warn!(
@@ -1091,19 +1117,6 @@ impl TransportManager {
                             ?endpoint,
                             "secondary connection already exists, ignoring connection",
                         );
-
-                        // insert address into the store only if we're the dialer
-                        //
-                        // if we're the listener, remote might have dialed with an ephemeral port
-                        // which it might not be listening, making this address useless
-                        if endpoint.is_listener() {
-                            context.addresses.insert(AddressRecord::new(
-                                &peer,
-                                endpoint.address().clone(),
-                                SCORE_CONNECT_SUCCESS,
-                                None,
-                            ))
-                        }
 
                         return Ok(ConnectionEstablishedResult::Reject);
                     }
