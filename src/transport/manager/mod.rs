@@ -702,11 +702,13 @@ impl TransportManager {
                     }
                 }
                 Entry::Vacant(vacant) => {
+                    let mut addresses = AddressStore::new();
+                    addresses.insert(record.clone());
                     vacant.insert(PeerContext {
                         state: PeerState::Dialing {
                             record: record.clone(),
                         },
-                        addresses: AddressStore::new(),
+                        addresses,
                         secondary_connection: None,
                     });
                 }
@@ -2332,7 +2334,7 @@ mod tests {
         match &peer.state {
             PeerState::Connected { dial_record, .. } => {
                 assert!(dial_record.is_none());
-                assert!(peer.addresses.contains(&dial_address));
+                assert!(peer.addresses.addresses.contains_key(&dial_address));
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2419,7 +2421,7 @@ mod tests {
             PeerState::Disconnected {
                 dial_record: None, ..
             } => {
-                assert!(peer.addresses.contains(&dial_address));
+                assert!(peer.addresses.addresses.contains_key(&dial_address));
             }
             state => panic!("invalid state: {state:?}"),
         }
@@ -2554,7 +2556,7 @@ mod tests {
         let established_result = manager
             .on_connection_established(
                 peer,
-                &Endpoint::listener(address1, ConnectionId::from(0usize)),
+                &Endpoint::dialer(address1.clone(), ConnectionId::from(0usize)),
             )
             .unwrap();
         assert_eq!(established_result, ConnectionEstablishedResult::Accept);
@@ -2614,15 +2616,21 @@ mod tests {
             PeerState::Connected {
                 dial_record: None, ..
             } => {
-                let seconary_connection = peer.secondary_connection.as_ref().unwrap();
-                assert_eq!(seconary_connection.address(), &address2);
-                assert_eq!(seconary_connection.score(), SCORE_CONNECT_SUCCESS);
-                assert!(peer.addresses.contains(&address3));
+                assert_eq!(
+                    peer.secondary_connection.as_ref().unwrap().address(),
+                    &address2
+                );
+                // Endpoint::listener addresses are not tracked.
+                assert!(!peer.addresses.addresses.contains_key(&address2));
+                assert!(!peer.addresses.addresses.contains_key(&address3));
+                assert_eq!(
+                    peer.addresses.addresses.get(&address1).unwrap().score(),
+                    scores::CONNECTION_ESTABLISHED
+                );
             }
             state => panic!("invalid state: {state:?}"),
         }
     }
-
     #[tokio::test]
     async fn secondary_connection_with_different_dial_endpoint_is_rejected() {
         let _ = tracing_subscriber::fmt()
@@ -2823,7 +2831,7 @@ mod tests {
                 record,
             } => {
                 assert!(context.secondary_connection.is_none());
-                assert!(context.addresses.contains(&address2));
+                assert!(context.addresses.addresses.contains_key(&address2));
                 assert_eq!(record.connection_id(), &Some(ConnectionId::from(0usize)));
             }
             state => panic!("invalid state: {state:?}"),
@@ -2927,7 +2935,7 @@ mod tests {
                 record,
             } => {
                 assert!(context.secondary_connection.is_none());
-                assert!(context.addresses.contains(&address1));
+                assert!(context.addresses.addresses.contains_key(&address1));
                 assert_eq!(record.connection_id(), &Some(ConnectionId::from(1usize)));
             }
             state => panic!("invalid state: {state:?}"),
@@ -2976,7 +2984,7 @@ mod tests {
         let emit_event = manager
             .on_connection_established(
                 peer,
-                &Endpoint::listener(address1, ConnectionId::from(0usize)),
+                &Endpoint::listener(address1.clone(), ConnectionId::from(0usize)),
             )
             .unwrap();
         assert!(std::matches!(
@@ -2984,19 +2992,23 @@ mod tests {
             ConnectionEstablishedResult::Accept
         ));
 
+        // The address1 should be ignored because it is an inbound connection
+        // initiated from an ephemeral port.
+        let peers = manager.peers.read();
+        let context = peers.get(&peer).unwrap();
+        assert!(!context.addresses.addresses.contains_key(&address1));
+        drop(peers);
+
         // verify that the peer state is `Connected` with no seconary connection
         {
             let peers = manager.peers.read();
             let peer = peers.get(&peer).unwrap();
 
             match &peer.state {
-                PeerState::Connected {
-                    dial_record: None, ..
-                } => {
-                    assert!(peer.secondary_connection.is_none());
-                }
+                PeerState::Connected { .. } => {}
                 state => panic!("invalid state: {state:?}"),
             }
+            assert!(peer.secondary_connection.is_none());
         }
 
         // second connection is established, verify that the seconary connection is tracked
@@ -3011,19 +3023,23 @@ mod tests {
             ConnectionEstablishedResult::Accept
         ));
 
+        // Ensure we keep track of this address.
+        let peers = manager.peers.read();
+        let context = peers.get(&peer).unwrap();
+        assert!(context.addresses.addresses.contains_key(&address2));
+        drop(peers);
+
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
 
         match &context.state {
-            PeerState::Connected {
-                dial_record: None, ..
-            } => {
-                let seconary_connection = context.secondary_connection.as_ref().unwrap();
-                assert_eq!(seconary_connection.address(), &address2);
-                assert_eq!(seconary_connection.score(), SCORE_CONNECT_SUCCESS);
-            }
+            PeerState::Connected { .. } => {}
             state => panic!("invalid state: {state:?}"),
         }
+        assert_eq!(
+            context.secondary_connection.as_ref().unwrap().address(),
+            &address2,
+        );
         drop(peers);
 
         // third connection is established, verify that it's discarded
@@ -3040,7 +3056,9 @@ mod tests {
 
         let peers = manager.peers.read();
         let context = peers.get(&peer).unwrap();
-        assert!(context.addresses.contains(&address3));
+        // The tertiary connection should be ignored because it is an inbound connection
+        // initiated from an ephemeral port.
+        assert!(!context.addresses.addresses.contains_key(&address3));
         drop(peers);
 
         // close the tertiary connection that was ignored
@@ -3052,18 +3070,20 @@ mod tests {
         let context = peers.get(&peer).unwrap();
 
         match &context.state {
-            PeerState::Connected {
-                dial_record: None, ..
-            } => {
-                let seconary_connection = context.secondary_connection.as_ref().unwrap();
-                assert_eq!(seconary_connection.address(), &address2);
-                assert_eq!(seconary_connection.score(), SCORE_CONNECT_SUCCESS);
-            }
+            PeerState::Connected { .. } => {}
             state => panic!("invalid state: {state:?}"),
         }
+        assert_eq!(
+            context.secondary_connection.as_ref().unwrap().address(),
+            &address2
+        );
+        assert_eq!(
+            context.addresses.addresses.get(&address2).unwrap().score(),
+            scores::CONNECTION_ESTABLISHED
+        );
+
         drop(peers);
     }
-
     #[tokio::test]
     #[cfg(debug_assertions)]
     #[should_panic]
@@ -3610,7 +3630,7 @@ mod tests {
                 secondary_connection,
                 addresses,
             } => {
-                assert!(!addresses.contains(record.address()));
+                assert!(!addresses.addresses.contains_key(record.address()));
                 assert!(dial_record.is_none());
                 assert!(secondary_connection.is_none());
                 assert_eq!(record.address(), &dial_address);
@@ -3694,16 +3714,13 @@ mod tests {
         let peers = manager.peers.read();
         match peers.get(&peer).unwrap() {
             PeerContext {
-                state:
-                    PeerState::Connected {
-                        record,
-                        dial_record,
-                    },
+                state: PeerState::Connected { record, .. },
                 secondary_connection,
                 addresses,
             } => {
-                assert!(addresses.is_empty());
-                assert!(dial_record.is_none());
+                // Saved from the dial attempt.
+                assert_eq!(addresses.addresses.get(&dial_address).unwrap().score(), 0);
+
                 assert!(secondary_connection.is_none());
                 assert_eq!(record.address(), &dial_address);
                 assert_eq!(record.connection_id(), &Some(connection_id));
@@ -4087,7 +4104,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn do_not_overwrite_dial_addresses() {
+    async fn persist_dial_addresses() {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
@@ -4131,8 +4148,11 @@ mod tests {
                 state => panic!("invalid state: {state:?}"),
             }
 
-            // The address is not saved yet.
-            assert!(!peer_context.addresses.contains(&dial_address));
+            // The address is saved for future dials.
+            assert_eq!(
+                peer_context.addresses.addresses.get(&dial_address).unwrap().score(),
+                0
+            );
         }
 
         let second_address = Multiaddr::empty()
@@ -4156,8 +4176,15 @@ mod tests {
                 state => panic!("invalid state: {state:?}"),
             }
 
-            assert!(!peer_context.addresses.contains(&dial_address));
-            assert!(!peer_context.addresses.contains(&second_address));
+            // The address is still saved, even if a second dial is not initiated.
+            assert_eq!(
+                peer_context.addresses.addresses.get(&dial_address).unwrap().score(),
+                0
+            );
+            assert_eq!(
+                peer_context.addresses.addresses.get(&second_address).unwrap().score(),
+                0
+            );
         }
     }
 
