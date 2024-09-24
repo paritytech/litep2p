@@ -750,4 +750,60 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn check_connection_closed() {
+        let record = ConnectionRecord::new(
+            PeerId::random(),
+            "/ip4/1.1.1.1/tcp/80".parse().unwrap(),
+            ConnectionId::from(0),
+        );
+        let second_record = ConnectionRecord::new(
+            PeerId::random(),
+            "/ip4/1.1.1.1/tcp/80".parse().unwrap(),
+            ConnectionId::from(1),
+        );
+
+        // Primary is closed
+        {
+            let mut state = PeerState::Connected {
+                record: record.clone(),
+                secondary: None,
+            };
+            assert!(state.on_connection_closed(ConnectionId::from(0)));
+            assert_eq!(state, PeerState::Disconnected { dial_record: None });
+        }
+
+        // Primary is closed with secondary promoted
+        {
+            let mut state = PeerState::Connected {
+                record: record.clone(),
+                secondary: Some(SecondaryOrDialing::Secondary(second_record.clone())),
+            };
+            // Peer is still connected.
+            assert!(!state.on_connection_closed(ConnectionId::from(0)));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: second_record.clone(),
+                    secondary: None,
+                }
+            );
+        }
+
+        // Primary is closed with secondary dial record
+        {
+            let mut state = PeerState::Connected {
+                record: record.clone(),
+                secondary: Some(SecondaryOrDialing::Dialing(second_record.clone())),
+            };
+            assert!(state.on_connection_closed(ConnectionId::from(0)));
+            assert_eq!(
+                state,
+                PeerState::Disconnected {
+                    dial_record: Some(second_record.clone())
+                }
+            );
+        }
+    }
 }
