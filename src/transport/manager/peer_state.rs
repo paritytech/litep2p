@@ -840,6 +840,23 @@ mod tests {
     }
 
     #[test]
+    fn check_open_connection() {
+        let record = ConnectionRecord::new(
+            PeerId::random(),
+            "/ip4/1.1.1.1/tcp/80".parse().unwrap(),
+            ConnectionId::from(0),
+        );
+
+        let mut state = PeerState::Opening {
+            addresses: Default::default(),
+            connection_id: ConnectionId::from(0),
+            transports: [SupportedTransport::Tcp].into_iter().collect(),
+        };
+
+        assert!(state.on_connection_opened(record.clone()));
+    }
+
+    #[test]
     fn check_full_lifecycle() {
         let record = ConnectionRecord::new(
             PeerId::random(),
