@@ -869,8 +869,15 @@ impl TransportManager {
 
         let mut peers = self.peers.write();
         let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
-        let previous_state = context.state.clone();
 
+        // Keep track of the address.
+        context.addresses.insert(AddressRecord::new(
+            &peer,
+            address.clone(),
+            scores::CONNECTION_ESTABLISHED,
+        ));
+
+        let previous_state = context.state.clone();
         let record = ConnectionRecord::new(peer, address.clone(), connection_id);
         let state_advanced = context.state.on_connection_opened(record);
         if !state_advanced {
@@ -926,11 +933,6 @@ impl TransportManager {
                 );
 
                 self.pending_connections.insert(connection_id, peer);
-                context.addresses.insert(AddressRecord::new(
-                    &peer,
-                    address,
-                    scores::CONNECTION_ESTABLISHED,
-                ));
 
                 Ok(())
             }
