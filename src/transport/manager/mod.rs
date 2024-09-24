@@ -439,7 +439,6 @@ impl TransportManager {
 
         transports
     }
-
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
@@ -455,157 +454,50 @@ impl TransportManager {
         }
         let mut peers = self.peers.write();
 
-        // if the peer is disconnected, return its context
-        //
-        // otherwise set the state back what it was and return dial status to caller
-        let PeerContext {
-            state,
-            secondary_connection,
-            addresses,
-        } = match peers.remove(&peer) {
-            None => return Err(Error::PeerDoesntExist(peer)),
-            Some(
-                context @ PeerContext {
-                    state: PeerState::Connected { .. },
-                    ..
-                },
-            ) => {
-                peers.insert(peer, context);
-                return Err(Error::AlreadyConnected);
-            }
-            Some(
-                context @ PeerContext {
-                    state: PeerState::Dialing { .. } | PeerState::Opening { .. },
-                    ..
-                },
-            ) => {
-                peers.insert(peer, context);
-                return Ok(());
-            }
-            Some(context) => context,
+        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+
+        // Check if dialing is possible before allocating addresses.
+        match context.state.can_dial() {
+            StateDialResult::AlreadyConnected => return Err(Error::AlreadyConnected),
+            StateDialResult::DialingInProgress => return Ok(()),
+            StateDialResult::Ok => {}
         };
 
-        if let PeerState::Disconnected {
-            dial_record: Some(_),
-        } = &state
-        {
-            tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                "peer is already being dialed",
-            );
-
-            peers.insert(
-                peer,
-                PeerContext {
-                    state,
-                    secondary_connection,
-                    addresses,
-                },
-            );
-
-            return Ok(());
-        }
-
-        let mut records: HashMap<_, _> = addresses
-            .addresses(limit)
-            .into_iter()
-            .map(|address| (address.clone(), AddressRecord::new(&peer, address, 0, None)))
-            .collect();
-
-        if records.is_empty() {
+        // The addresses are sorted by score and contain the remote peer ID.
+        // We double checked above that the remote peer is not the local peer.
+        let dial_addresses = context.addresses.addresses(limit);
+        if dial_addresses.is_empty() {
             return Err(Error::NoAddressAvailable(peer));
         }
-
-        let locked_addresses = self.listen_addresses.read();
-        for record in records.values() {
-            if locked_addresses.contains(record.as_ref()) {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?record,
-                    "tried to dial self",
-                );
-
-                debug_assert!(false);
-                return Err(Error::TriedToDialSelf);
-            }
-        }
-        drop(locked_addresses);
-
-        // set connection id for the address record and put peer into `Opening` state
-        let connection_id =
-            ConnectionId::from(self.next_connection_id.fetch_add(1usize, Ordering::Relaxed));
+        let connection_id = self.next_connection_id();
 
         tracing::debug!(
             target: LOG_TARGET,
             ?connection_id,
-            addresses = ?records,
+            addresses = ?dial_addresses,
             "dial remote peer",
         );
 
-        let mut transports = HashSet::new();
-        #[cfg(feature = "websocket")]
-        let mut websocket = Vec::new();
-        #[cfg(feature = "quic")]
-        let mut quic = Vec::new();
-        let mut tcp = Vec::new();
+        let transports = Self::open_addresses(&dial_addresses);
 
-        for (address, record) in &mut records {
-            record.set_connection_id(connection_id);
-
-            #[cfg(feature = "quic")]
-            if address.iter().any(|p| std::matches!(&p, Protocol::QuicV1)) {
-                quic.push(address.clone());
-                transports.insert(SupportedTransport::Quic);
-                continue;
-            }
-
-            #[cfg(feature = "websocket")]
-            if address.iter().any(|p| std::matches!(&p, Protocol::Ws(_) | Protocol::Wss(_))) {
-                websocket.push(address.clone());
-                transports.insert(SupportedTransport::WebSocket);
-                continue;
-            }
-
-            tcp.push(address.clone());
-            transports.insert(SupportedTransport::Tcp);
-        }
-
-        peers.insert(
-            peer,
-            PeerContext {
-                state: PeerState::Opening {
-                    records,
-                    connection_id,
-                    transports,
-                },
-                secondary_connection,
-                addresses,
-            },
+        // Dialing addresses will succeed because the `context.state.can_dial()` returned `Ok`.
+        let result = context.state.dial_addresses(
+            connection_id,
+            dial_addresses.iter().cloned().collect(),
+            transports.keys().cloned().collect(),
         );
+        assert_eq!(result, StateDialResult::Ok);
 
-        if !tcp.is_empty() {
-            self.transports
-                .get_mut(&SupportedTransport::Tcp)
-                .expect("transport to be supported")
-                .open(connection_id, tcp)?;
-        }
+        for (transport, addresses) in transports {
+            if addresses.is_empty() {
+                continue;
+            }
 
-        #[cfg(feature = "quic")]
-        if !quic.is_empty() {
-            self.transports
-                .get_mut(&SupportedTransport::Quic)
-                .expect("transport to be supported")
-                .open(connection_id, quic)?;
-        }
+            let Some(installed_transport) = self.transports.get_mut(&transport) else {
+                continue;
+            };
 
-        #[cfg(feature = "websocket")]
-        if !websocket.is_empty() {
-            self.transports
-                .get_mut(&SupportedTransport::WebSocket)
-                .expect("transport to be supported")
-                .open(connection_id, websocket)?;
+            installed_transport.open(connection_id, addresses)?;
         }
 
         self.pending_connections.insert(connection_id, peer);
