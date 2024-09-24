@@ -181,47 +181,58 @@ impl TransportManagerHandle {
         addresses: impl Iterator<Item = Multiaddr>,
     ) -> usize {
         let mut peers = self.peers.write();
-        let addresses = addresses
-            .filter_map(|address| {
-                (self.supported_transport(&address) && !self.is_local_address(&address))
-                    .then_some(AddressRecord::from_multiaddr(address)?)
-            })
-            .collect::<HashSet<_>>();
 
-        // if all of the added addresses belonged to unsupported transports, exit early
-        let num_added = addresses.len();
-        if num_added == 0 {
-            tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                "didn't add any addresses for peer because transport is not supported",
-            );
+        let mut peer_addresses = HashMap::new();
 
-            return 0usize;
+        for address in addresses {
+            // There is not supported transport configured that can dial this address.
+            if !self.supported_transport(&address) {
+                continue;
+            }
+            if self.is_local_address(&address) {
+                continue;
+            }
+
+            // Check the peer ID if present.
+            if let Some(Protocol::P2p(multihash)) = address.iter().last() {
+                // Ignore the address if the peer ID is invalid.
+                let Ok(peer_id) = PeerId::from_multihash(multihash.clone()) else {
+                    continue;
+                };
+
+                // This can correspond to the provided peerID or to a different one.
+                // It is important to keep track of all addresses to have a healthy
+                // address store to dial from.
+                peer_addresses.entry(peer_id).or_insert_with(HashSet::new).insert(address);
+                continue;
+            }
+
+            // Add the provided peer ID to the address.
+            let address = address.with(Protocol::P2p(multihash::Multihash::from(peer.clone())));
+            peer_addresses.entry(*peer).or_insert_with(HashSet::new).insert(address);
         }
+
+        let num_added = peer_addresses.get(peer).map_or(0, |addresses| addresses.len());
 
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
-            ?addresses,
+            ?peer_addresses,
             "add known addresses",
         );
 
-        match peers.get_mut(peer) {
-            Some(context) =>
-                for record in addresses {
-                    context.addresses.insert(record);
-                },
-            None => {
-                peers.insert(
-                    *peer,
-                    PeerContext {
-                        state: PeerState::Disconnected { dial_record: None },
-                        addresses: AddressStore::from_iter(addresses),
-                        secondary_connection: None,
-                    },
-                );
-            }
+        for (peer, addresses) in peer_addresses {
+            let entry = peers.entry(peer).or_insert_with(|| PeerContext {
+                state: PeerState::Disconnected { dial_record: None },
+                addresses: AddressStore::new(),
+                secondary_connection: None,
+            });
+
+            // All addresses should be valid at this point, since the peer ID was either added or
+            // double checked.
+            entry.addresses.extend(
+                addresses.into_iter().filter_map(|addr| AddressRecord::from_multiaddr(addr)),
+            );
         }
 
         num_added
