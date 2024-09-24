@@ -22,7 +22,7 @@ use crate::{
     addresses::PublicAddresses,
     codec::ProtocolCodec,
     crypto::ed25519::Keypair,
-    error::{AddressError, DialError, Error},
+    error::{AddressError, DialError, Error, NegotiationError},
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
     transport::{
@@ -719,6 +719,49 @@ impl TransportManager {
         self.pending_connections.insert(connection_id, remote_peer_id);
 
         Ok(())
+    }
+
+    // Update the address on a dial failure.
+    fn update_address_on_dial_failure(&mut self, mut address: Multiaddr, error: &DialError) {
+        let mut peers = self.peers.write();
+
+        let score = AddressStore::error_score(error);
+
+        // Check if the address corresponds to a different peer ID than the one we're
+        // dialing. This can happen if the node operation restarts the node.
+        //
+        // In this case the address is reachable, however the peer ID is different.
+        // Keep track of this address for future dials.
+        //
+        // Note: this is happening quite often in practice and is the primary reason
+        if let DialError::NegotiationError(NegotiationError::PeerIdMismatch(_, provided)) = error {
+            let context = peers.entry(*provided).or_insert_with(|| PeerContext::default());
+
+            if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
+                address.pop();
+            }
+            context
+                .addresses
+                .insert(AddressRecord::new(&provided, address.clone(), score, None));
+
+            return;
+        }
+
+        // Extract the peer ID at this point to give `NegotiationError::PeerIdMismatch` a chance to
+        // propagate.
+        let peer_id = match address.iter().last() {
+            Some(Protocol::P2p(hash)) => PeerId::from_multihash(hash).ok(),
+            _ => None,
+        };
+        let Some(peer_id) = peer_id else {
+            return;
+        };
+
+        // We need a valid context for this peer to keep track of failed addresses.
+        let context = peers.entry(peer_id).or_insert_with(|| PeerContext::default());
+        context
+            .addresses
+            .insert(AddressRecord::new(&peer_id, address.clone(), score, None));
     }
 
     /// Handle dial failure.
@@ -1538,6 +1581,11 @@ impl TransportManager {
                                 "failed to dial peer",
                             );
 
+                            // Update the addresses on dial failure regardless of the
+                            // internal peer context state. This ensures a robust address tracking
+                            // while taking into account the error type.
+                            self.update_address_on_dial_failure(address.clone(), &error);
+
                             if let Ok(()) = self.on_dial_failure(connection_id) {
                                 match address.iter().last() {
                                     Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
@@ -1683,6 +1731,10 @@ impl TransportManager {
                             }
                         }
                         TransportEvent::OpenFailure { connection_id, errors } => {
+                            for (address, error) in &errors {
+                                self.update_address_on_dial_failure(address.clone(), error);
+                            }
+
                             match self.on_open_failure(transport, connection_id) {
                                 Err(error) => tracing::debug!(
                                     target: LOG_TARGET,
