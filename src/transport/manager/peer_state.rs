@@ -602,4 +602,122 @@ mod tests {
             assert_eq!(state, PeerState::Disconnected { dial_record: None });
         }
     }
+
+    #[test]
+    fn check_connection_established() {
+        let record = ConnectionRecord::new(
+            PeerId::random(),
+            "/ip4/1.1.1.1/tcp/80".parse().unwrap(),
+            ConnectionId::from(0),
+        );
+        let second_record = ConnectionRecord::new(
+            PeerId::random(),
+            "/ip4/1.1.1.1/tcp/80".parse().unwrap(),
+            ConnectionId::from(1),
+        );
+
+        // Check from the connected state without secondary connection.
+        {
+            let mut state = PeerState::Connected {
+                record: record.clone(),
+                secondary: None,
+            };
+            // Secondary is established.
+            assert!(state.on_connection_established(record.clone()));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: record.clone(),
+                    secondary: Some(SecondaryOrDialing::Secondary(record.clone())),
+                }
+            );
+        }
+
+        // Check from the connected state with secondary dialing connection.
+        {
+            let mut state = PeerState::Connected {
+                record: record.clone(),
+                secondary: Some(SecondaryOrDialing::Dialing(record.clone())),
+            };
+            // Promote the secondary connection.
+            assert!(state.on_connection_established(record.clone()));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: record.clone(),
+                    secondary: Some(SecondaryOrDialing::Secondary(record.clone())),
+                }
+            );
+        }
+
+        // Check from the connected state with secondary established connection.
+        {
+            let mut state = PeerState::Connected {
+                record: record.clone(),
+                secondary: Some(SecondaryOrDialing::Secondary(record.clone())),
+            };
+            // No state to advance.
+            assert!(!state.on_connection_established(record.clone()));
+        }
+
+        // Opening state is completely wiped out.
+        {
+            let mut state = PeerState::Opening {
+                addresses: Default::default(),
+                connection_id: ConnectionId::from(0),
+                transports: Default::default(),
+            };
+            assert!(state.on_connection_established(record.clone()));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: record.clone(),
+                    secondary: None,
+                }
+            );
+        }
+
+        // Disconnected state with dial record.
+        {
+            let mut state = PeerState::Disconnected {
+                dial_record: Some(record.clone()),
+            };
+            assert!(state.on_connection_established(record.clone()));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: record.clone(),
+                    secondary: None,
+                }
+            );
+        }
+
+        // Disconnected with different dial record.
+        {
+            let mut state = PeerState::Disconnected {
+                dial_record: Some(record.clone()),
+            };
+            assert!(state.on_connection_established(second_record.clone()));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: second_record.clone(),
+                    secondary: Some(SecondaryOrDialing::Dialing(record.clone()))
+                }
+            );
+        }
+
+        // Disconnected without dial record.
+        {
+            let mut state = PeerState::Disconnected { dial_record: None };
+            assert!(state.on_connection_established(record.clone()));
+            assert_eq!(
+                state,
+                PeerState::Connected {
+                    record: record.clone(),
+                    secondary: None,
+                }
+            );
+        }
+    }
 }
