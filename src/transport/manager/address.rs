@@ -20,14 +20,13 @@
 
 use crate::{
     error::{DialError, NegotiationError},
-    types::ConnectionId,
     PeerId,
 };
 
+use std::collections::{hash_map::Entry, HashMap};
+
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
-
-use std::collections::{hash_map::Entry, HashMap};
 
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
@@ -58,9 +57,6 @@ pub struct AddressRecord {
 
     /// Address.
     address: Multiaddr,
-
-    /// Connection ID, if specified.
-    connection_id: Option<ConnectionId>,
 }
 
 impl AsRef<Multiaddr> for AddressRecord {
@@ -72,12 +68,7 @@ impl AsRef<Multiaddr> for AddressRecord {
 impl AddressRecord {
     /// Create new `AddressRecord` and if `address` doesn't contain `P2p`,
     /// append the provided `PeerId` to the address.
-    pub fn new(
-        peer: &PeerId,
-        address: Multiaddr,
-        score: i32,
-        connection_id: Option<ConnectionId>,
-    ) -> Self {
+    pub fn new(peer: &PeerId, address: Multiaddr, score: i32) -> Self {
         let address = if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
             address.with(Protocol::P2p(
                 Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
@@ -86,11 +77,7 @@ impl AddressRecord {
             address
         };
 
-        Self {
-            address,
-            score,
-            connection_id,
-        }
+        Self { address, score }
     }
 
     /// Create `AddressRecord` from `Multiaddr`.
@@ -105,7 +92,6 @@ impl AddressRecord {
         Some(AddressRecord {
             address,
             score: 0i32,
-            connection_id: None,
         })
     }
 
@@ -120,19 +106,9 @@ impl AddressRecord {
         &self.address
     }
 
-    /// Get connection ID.
-    pub fn connection_id(&self) -> &Option<ConnectionId> {
-        &self.connection_id
-    }
-
     /// Update score of an address.
     pub fn update_score(&mut self, score: i32) {
         self.score = self.score.saturating_add(score);
-    }
-
-    /// Set `ConnectionId` for the [`AddressRecord`].
-    pub fn set_connection_id(&mut self, connection_id: ConnectionId) {
-        self.connection_id = Some(connection_id);
     }
 }
 
@@ -161,7 +137,7 @@ impl Ord for AddressRecord {
 pub struct AddressStore {
     /// Addresses available.
     pub addresses: HashMap<Multiaddr, AddressRecord>,
-    /// Maximum capacity of the address store.
+
     max_capacity: usize,
 }
 
@@ -169,8 +145,8 @@ impl FromIterator<Multiaddr> for AddressStore {
     fn from_iter<T: IntoIterator<Item = Multiaddr>>(iter: T) -> Self {
         let mut store = AddressStore::new();
         for address in iter {
-            if let Some(address) = AddressRecord::from_multiaddr(address) {
-                store.insert(address);
+            if let Some(record) = AddressRecord::from_multiaddr(address) {
+                store.insert(record);
             }
         }
 
@@ -319,7 +295,6 @@ mod tests {
                 .with(Protocol::from(address.ip()))
                 .with(Protocol::Tcp(address.port())),
             score,
-            None,
         )
     }
 
@@ -343,7 +318,6 @@ mod tests {
                 .with(Protocol::Tcp(address.port()))
                 .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string()))),
             score,
-            None,
         )
     }
 
@@ -367,7 +341,6 @@ mod tests {
                 .with(Protocol::Udp(address.port()))
                 .with(Protocol::QuicV1),
             score,
-            None,
         )
     }
 
