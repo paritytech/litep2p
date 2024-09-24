@@ -634,9 +634,7 @@ impl TransportManager {
             if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
                 address.pop();
             }
-            context
-                .addresses
-                .insert(AddressRecord::new(&provided, address.clone(), score, None));
+            context.addresses.insert(AddressRecord::new(&provided, address.clone(), score));
 
             return;
         }
@@ -653,13 +651,15 @@ impl TransportManager {
 
         // We need a valid context for this peer to keep track of failed addresses.
         let context = peers.entry(peer_id).or_insert_with(|| PeerContext::default());
-        context
-            .addresses
-            .insert(AddressRecord::new(&peer_id, address.clone(), score, None));
+        context.addresses.insert(AddressRecord::new(&peer_id, address.clone(), score));
     }
 
     /// Handle dial failure.
+    ///
+    /// The main purpose of this function is to advance the internal `PeerState`.
     fn on_dial_failure(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        tracing::trace!(target: LOG_TARGET, ?connection_id, "on dial failure");
+
         let peer = self.pending_connections.remove(&connection_id).ok_or_else(|| {
             tracing::error!(
                 target: LOG_TARGET,
@@ -670,126 +670,30 @@ impl TransportManager {
         })?;
 
         let mut peers = self.peers.write();
-        let context = peers.get_mut(&peer).ok_or_else(|| {
-            tracing::error!(
+        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        let previous_state = context.state.clone();
+
+        if !context.state.on_dial_failure(connection_id) {
+            tracing::warn!(
                 target: LOG_TARGET,
                 ?peer,
                 ?connection_id,
-                "dial failed for a peer that doesn't exist",
+                state = ?context.state,
+                "invalid state for dial failure",
             );
-            debug_assert!(false);
-
-            Error::InvalidState
-        })?;
-
-        match std::mem::replace(
-            &mut context.state,
-            PeerState::Disconnected { dial_record: None },
-        ) {
-            PeerState::Dialing { ref mut record } => {
-                debug_assert_eq!(record.connection_id(), &Some(connection_id));
-                if record.connection_id() != &Some(connection_id) {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?connection_id,
-                        ?record,
-                        "unknown dial failure for a dialing peer",
-                    );
-
-                    context.state = PeerState::Dialing {
-                        record: record.clone(),
-                    };
-                    debug_assert!(false);
-                    return Ok(());
-                }
-
-                record.update_score(SCORE_CONNECT_FAILURE);
-                context.addresses.insert(record.clone());
-
-                context.state = PeerState::Disconnected { dial_record: None };
-                Ok(())
-            }
-            PeerState::Opening { .. } => {
-                todo!();
-            }
-            PeerState::Connected {
-                record,
-                dial_record: Some(mut dial_record),
-            } => {
-                if dial_record.connection_id() != &Some(connection_id) {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?connection_id,
-                        ?record,
-                        "unknown dial failure for a connected peer",
-                    );
-
-                    context.state = PeerState::Connected {
-                        record,
-                        dial_record: Some(dial_record),
-                    };
-                    debug_assert!(false);
-                    return Ok(());
-                }
-
-                dial_record.update_score(SCORE_CONNECT_FAILURE);
-                context.addresses.insert(dial_record);
-
-                context.state = PeerState::Connected {
-                    record,
-                    dial_record: None,
-                };
-                Ok(())
-            }
-            PeerState::Disconnected {
-                dial_record: Some(mut dial_record),
-            } => {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?connection_id,
-                    ?dial_record,
-                    "dial failed for a disconnected peer",
-                );
-
-                if dial_record.connection_id() != &Some(connection_id) {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?connection_id,
-                        ?dial_record,
-                        "unknown dial failure for a disconnected peer",
-                    );
-
-                    context.state = PeerState::Disconnected {
-                        dial_record: Some(dial_record),
-                    };
-                    debug_assert!(false);
-                    return Ok(());
-                }
-
-                dial_record.update_score(SCORE_CONNECT_FAILURE);
-                context.addresses.insert(dial_record);
-
-                Ok(())
-            }
-            state => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?connection_id,
-                    ?state,
-                    "invalid state for dial failure",
-                );
-                context.state = state;
-
-                debug_assert!(false);
-                Ok(())
-            }
+        } else {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                ?previous_state,
+                state = ?context.state,
+                "on dial failure completed"
+            );
         }
-    }
 
+        Ok(())
+    }
     fn on_pending_incoming_connection(&mut self) -> crate::Result<()> {
         self.connection_limits.on_incoming()?;
         Ok(())
