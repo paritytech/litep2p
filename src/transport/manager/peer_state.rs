@@ -20,6 +20,133 @@
 
 //! Peer state management.
 
+use crate::{
+    transport::{manager::SupportedTransport, Endpoint},
+    types::ConnectionId,
+    PeerId,
+};
+
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
+
+use std::collections::HashSet;
+
+/// The peer state that tracks connections and dialing attempts.
+///
+/// # State Machine
+///
+/// ## [`PeerState::Disconnected`]
+///
+/// Initially, the peer is in the [`PeerState::Disconnected`] state without a
+/// [`PeerState::Disconnected::dial_record`]. This means the peer is fully disconnected.
+///
+/// Next states:
+/// - [`PeerState::Disconnected`] -> [`PeerState::Dialing`] (via [`PeerState::dial_single_address`])
+/// - [`PeerState::Disconnected`] -> [`PeerState::Opening`] (via [`PeerState::dial_addresses`])
+///
+/// ## [`PeerState::Dialing`]
+///
+/// The peer can transition to the [`PeerState::Dialing`] state when a dialing attempt is
+/// initiated. This only happens when the peer is dialed on a single address via
+/// [`PeerState::dial_single_address`].
+///
+/// The dialing state implies the peer is reached on the socket address provided, as well as
+/// negotiating noise and yamux protocols.
+///
+/// Next states:
+/// - [`PeerState::Dialing`] -> [`PeerState::Connected`] (via
+///   [`PeerState::on_connection_established`])
+/// - [`PeerState::Dialing`] -> [`PeerState::Disconnected`] (via [`PeerState::on_dial_failure`])
+///
+/// ## [`PeerState::Opening`]
+///
+/// The peer can transition to the [`PeerState::Opening`] state when a dialing attempt is
+/// initiated on multiple addresses via [`PeerState::dial_addresses`]. This takes into account
+/// the parallelism factor (8 maximum) of the dialing attempts.
+///
+/// The opening state holds information about which protocol is being dialed to properly report back
+/// errors.
+///
+/// The opening state is similar to the dial state, however the peer is only reached on a socket
+/// address. The noise and yamux protocols are not negotiated yet. This state transitions to
+/// [`PeerState::Dialing`] for the final part of the negotiation. Please note that it would be
+/// wasteful to negotiate the noise and yamux protocols on all addresses, since only one
+/// connection is kept around.
+///
+/// This is something we'll reconsider in the future if we encounter issues.
+///
+/// Next states:
+/// - [`PeerState::Opening`] -> [`PeerState::Dialing`] (via transport manager
+///   `on_connection_opened`)
+/// - [`PeerState::Opening`] -> [`PeerState::Disconnected`] (via transport manager
+///   `on_connection_opened` if negotiation cannot be started or via `on_open_failure`)
+#[derive(Debug, Clone, PartialEq)]
+pub enum PeerState {
+    /// `Litep2p` is connected to peer.
+    Connected {
+        /// The established record of the connection.
+        record: ConnectionRecord,
+
+        /// Secondary record, this can either be a dial record or an established connection.
+        ///
+        /// While the local node was dialing a remote peer, the remote peer might've dialed
+        /// the local node and connection was established successfully. This dial address
+        /// is stored for processing later when the dial attempt concluded as either
+        /// successful/failed.
+        secondary: Option<SecondaryOrDialing>,
+    },
+
+    /// Connection to peer is opening over one or more addresses.
+    Opening {
+        /// Address records used for dialing.
+        addresses: HashSet<Multiaddr>,
+
+        /// Connection ID.
+        connection_id: ConnectionId,
+
+        /// Active transports.
+        transports: HashSet<SupportedTransport>,
+    },
+
+    /// Peer is being dialed.
+    Dialing {
+        /// Address record.
+        dial_record: ConnectionRecord,
+    },
+
+    /// `Litep2p` is not connected to peer.
+    Disconnected {
+        /// Dial address, if it exists.
+        ///
+        /// While the local node was dialing a remote peer, the remote peer might've dialed
+        /// the local node and connection was established successfully. The connection might've
+        /// been closed before the dial concluded which means that
+        /// [`crate::transport::manager::TransportManager`] must be prepared to handle the dial
+        /// failure even after the connection has been closed.
+        dial_record: Option<ConnectionRecord>,
+    },
+}
+
+/// The state of the secondary connection.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SecondaryOrDialing {
+    /// The secondary connection is established.
+    Secondary(ConnectionRecord),
+    /// The primary connection is established, but the secondary connection is still dialing.
+    Dialing(ConnectionRecord),
+}
+
+/// Result of initiating a dial.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StateDialResult {
+    /// The peer is already connected.
+    AlreadyConnected,
+    /// The dialing state is already in progress.
+    DialingInProgress,
+    /// The peer is disconnected, start dialing.
+    Ok,
+}
+
 /// The connection record keeps track of the connection ID and the address of the connection.
 ///
 /// The connection ID is used to track the connection in the transport layer.
