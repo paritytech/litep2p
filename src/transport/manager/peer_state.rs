@@ -216,15 +216,19 @@ impl PeerState {
     /// Handle dial failure.
     ///
     /// # Transitions
+    ///
     /// - [`PeerState::Dialing`] (with record) -> [`PeerState::Disconnected`]
     /// - [`PeerState::Connected`] (with dial record) -> [`PeerState::Connected`]
     /// - [`PeerState::Disconnected`] (with dial record) -> [`PeerState::Disconnected`]
-    pub fn on_dial_failure(&mut self, connection_id: ConnectionId) {
+    ///
+    /// Returns `true` if the connection was handled.
+    pub fn on_dial_failure(&mut self, connection_id: ConnectionId) -> bool {
         match self {
             // Clear the dial record if the connection ID matches.
             Self::Dialing { dial_record } =>
                 if dial_record.connection_id == connection_id {
                     *self = Self::Disconnected { dial_record: None };
+                    return true;
                 },
 
             Self::Connected {
@@ -236,6 +240,7 @@ impl PeerState {
                         record: record.clone(),
                         secondary: None,
                     };
+                    return true;
                 },
 
             Self::Disconnected {
@@ -243,10 +248,13 @@ impl PeerState {
             } =>
                 if dial_record.connection_id == connection_id {
                     *self = Self::Disconnected { dial_record: None };
+                    return true;
                 },
 
             _ => (),
         };
+
+        false
     }
 
     /// Returns `true` if the connection should be accepted by the transport manager.

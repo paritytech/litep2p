@@ -666,11 +666,9 @@ impl TransportManager {
 
         let mut peers = self.peers.write();
         let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
-
         let previous_state = context.state.clone();
-        context.state.on_dial_failure(connection_id);
 
-        if context.state == previous_state {
+        if !context.state.on_dial_failure(connection_id) {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?peer,
