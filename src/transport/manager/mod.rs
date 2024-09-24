@@ -27,9 +27,10 @@ use crate::{
     protocol::{InnerTransportEvent, TransportService},
     transport::{
         manager::{
-            address::{AddressRecord, AddressStore},
+            address::AddressRecord,
             handle::InnerTransportManagerCommand,
-            types::{PeerContext, PeerState},
+            peer_state::{ConnectionRecord, PeerState, StateDialResult},
+            types::PeerContext,
         },
         Endpoint, Transport, TransportEvent,
     },
@@ -37,7 +38,7 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
-use address::scores;
+use address::{scores, AddressStore};
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
@@ -46,7 +47,7 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -61,6 +62,7 @@ pub use types::SupportedTransport;
 
 mod address;
 pub mod limits;
+mod peer_state;
 mod types;
 
 pub(crate) mod handle;
@@ -413,6 +415,29 @@ impl TransportManager {
         address: impl Iterator<Item = Multiaddr>,
     ) -> usize {
         self.transport_manager_handle.add_known_address(&peer, address)
+    }
+
+    /// Return multiple addresses to dial on supported protocols.
+    fn open_addresses(addresses: &[Multiaddr]) -> HashMap<SupportedTransport, Vec<Multiaddr>> {
+        let mut transports = HashMap::<SupportedTransport, Vec<Multiaddr>>::new();
+
+        for address in addresses.iter().cloned() {
+            #[cfg(feature = "quic")]
+            if address.iter().any(|p| std::matches!(&p, Protocol::QuicV1)) {
+                transports.entry(SupportedTransport::Quic).or_default().push(address);
+                continue;
+            }
+
+            #[cfg(feature = "websocket")]
+            if address.iter().any(|p| std::matches!(&p, Protocol::Ws(_) | Protocol::Wss(_))) {
+                transports.entry(SupportedTransport::WebSocket).or_default().push(address);
+                continue;
+            }
+
+            transports.entry(SupportedTransport::Tcp).or_default().push(address);
+        }
+
+        transports
     }
 
     /// Dial peer using `PeerId`.
