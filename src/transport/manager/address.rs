@@ -497,4 +497,77 @@ mod tests {
             assert_eq!(stored.address(), record.address());
         }
     }
+
+    #[test]
+    fn insert_record() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+
+        let mut record = tcp_address_record(&mut rng);
+        record.score = 10;
+
+        store.insert(record.clone());
+
+        assert_eq!(store.addresses.len(), 1);
+        assert_eq!(store.addresses.get(record.address()).unwrap(), &record);
+
+        // This time the record is updated.
+        store.insert(record.clone());
+
+        assert_eq!(store.addresses.len(), 1);
+        let store_record = store.addresses.get(record.address()).unwrap();
+        assert_eq!(store_record.score, record.score * 2);
+    }
+
+    #[test]
+    fn evict_below_threshold() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+
+        let mut record = tcp_address_record(&mut rng);
+        record.score = scores::CONNECTION_FAILURE;
+        store.insert(record.clone());
+
+        assert_eq!(store.addresses.len(), 1);
+
+        store.insert(record.clone());
+
+        assert_eq!(store.addresses.len(), 0);
+    }
+
+    #[test]
+    fn evict_on_capacity() {
+        let mut store = AddressStore {
+            addresses: HashMap::new(),
+            max_capacity: 2,
+        };
+
+        let mut rng = rand::thread_rng();
+        let mut first_record = tcp_address_record(&mut rng);
+        first_record.score = scores::CONNECTION_ESTABLISHED;
+        let mut second_record = ws_address_record(&mut rng);
+        second_record.score = 0;
+
+        store.insert(first_record.clone());
+        store.insert(second_record.clone());
+
+        assert_eq!(store.addresses.len(), 2);
+
+        // We have better addresses, ignore this one.
+        let mut third_record = quic_address_record(&mut rng);
+        third_record.score = scores::CONNECTION_FAILURE;
+        store.insert(third_record.clone());
+        assert_eq!(store.addresses.len(), 2);
+        assert!(store.addresses.contains_key(first_record.address()));
+        assert!(store.addresses.contains_key(second_record.address()));
+
+        // Evict the address with the lowest score.
+        let mut fourth_record = quic_address_record(&mut rng);
+        fourth_record.score = scores::DIFFERENT_PEER_ID;
+        store.insert(fourth_record.clone());
+
+        assert_eq!(store.addresses.len(), 2);
+        assert!(store.addresses.contains_key(first_record.address()));
+        assert!(store.addresses.contains_key(fourth_record.address()));
+    }
 }
