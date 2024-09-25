@@ -36,7 +36,11 @@ use crate::{
     DialError, PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{
+    future::BoxFuture,
+    stream::{AbortHandle, FuturesUnordered},
+    Stream, StreamExt, TryFutureExt,
+};
 use multiaddr::{Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
 use std::net::SocketAddr;
@@ -71,6 +75,25 @@ struct PendingInboundConnection {
     address: SocketAddr,
 }
 
+#[derive(Debug)]
+enum RawConnectionResult {
+    /// The first successful connection.
+    Connected {
+        connection_id: ConnectionId,
+        address: Multiaddr,
+        stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    },
+
+    /// All connection attempts failed.
+    Failed {
+        connection_id: ConnectionId,
+        errors: Vec<(Multiaddr, DialError)>,
+    },
+
+    /// Future was canceled.
+    Canceled { connection_id: ConnectionId },
+}
+
 /// WebSocket transport.
 pub(crate) struct WebSocketTransport {
     /// Transport context.
@@ -97,25 +120,15 @@ pub(crate) struct WebSocketTransport {
     >,
 
     /// Pending raw, unnegotiated connections.
-    pending_raw_connections: FuturesUnordered<
-        BoxFuture<
-            'static,
-            Result<
-                (
-                    ConnectionId,
-                    Multiaddr,
-                    WebSocketStream<MaybeTlsStream<TcpStream>>,
-                ),
-                (ConnectionId, Vec<(Multiaddr, DialError)>),
-            >,
-        >,
-    >,
+    pending_raw_connections: FuturesUnordered<BoxFuture<'static, RawConnectionResult>>,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (WebSocketStream<MaybeTlsStream<TcpStream>>, Multiaddr)>,
 
     /// Canceled raw connections.
     canceled: HashSet<ConnectionId>,
+
+    cancel_futures: HashMap<ConnectionId, AbortHandle>,
 
     /// Negotiated connections waiting validation.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
@@ -315,6 +328,7 @@ impl TransportBuilder for WebSocketTransport {
                 pending_inbound_connections: HashMap::new(),
                 pending_connections: FuturesUnordered::new(),
                 pending_raw_connections: FuturesUnordered::new(),
+                cancel_futures: HashMap::new(),
             },
             listen_addresses,
         ))
@@ -458,12 +472,17 @@ impl Transport for WebSocketTransport {
             })
             .collect();
 
-        self.pending_raw_connections.push(Box::pin(async move {
+        // Future that will resolve to the first successful connection.
+        let future = async move {
             let mut errors = Vec::with_capacity(num_addresses);
-
             while let Some(result) = futures.next().await {
                 match result {
-                    Ok((address, stream)) => return Ok((connection_id, address, stream)),
+                    Ok((address, stream)) =>
+                        return RawConnectionResult::Connected {
+                            connection_id,
+                            address,
+                            stream,
+                        },
                     Err(error) => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -476,8 +495,16 @@ impl Transport for WebSocketTransport {
                 }
             }
 
-            Err((connection_id, errors))
-        }));
+            RawConnectionResult::Failed {
+                connection_id,
+                errors,
+            }
+        };
+
+        let (fut, handle) = futures::future::abortable(future);
+        let fut = fut.unwrap_or_else(move |_| RawConnectionResult::Canceled { connection_id });
+        self.pending_raw_connections.push(Box::pin(fut));
+        self.cancel_futures.insert(connection_id, handle);
 
         Ok(())
     }
@@ -536,6 +563,7 @@ impl Transport for WebSocketTransport {
 
     fn cancel(&mut self, connection_id: ConnectionId) {
         self.canceled.insert(connection_id);
+        self.cancel_futures.remove(&connection_id).map(|handle| handle.abort());
     }
 }
 
@@ -565,16 +593,14 @@ impl Stream for WebSocketTransport {
         }
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
-            match result {
-                Ok((connection_id, address, stream)) => {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?address,
-                        canceled = self.canceled.contains(&connection_id),
-                        "connection opened",
-                    );
+            tracing::trace!(target: LOG_TARGET, ?result, "raw connection result");
 
+            match result {
+                RawConnectionResult::Connected {
+                    connection_id,
+                    address,
+                    stream,
+                } =>
                     if !self.canceled.remove(&connection_id) {
                         self.opened_raw.insert(connection_id, (stream, address.clone()));
 
@@ -582,15 +608,20 @@ impl Stream for WebSocketTransport {
                             connection_id,
                             address,
                         }));
-                    }
-                }
-                Err((connection_id, errors)) =>
+                    },
+                RawConnectionResult::Failed {
+                    connection_id,
+                    errors,
+                } =>
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure {
                             connection_id,
                             errors,
                         }));
                     },
+                RawConnectionResult::Canceled { connection_id } => {
+                    self.canceled.remove(&connection_id);
+                }
             }
         }
 
