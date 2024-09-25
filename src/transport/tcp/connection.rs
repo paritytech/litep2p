@@ -493,6 +493,75 @@ impl TcpConnection {
         })
     }
 
+    /// Handles the yamux substream.
+    ///
+    /// Returns `true` if the connection handler should exit.
+    async fn handle_yamux_substream(
+        &mut self,
+        substream: Option<Result<crate::yamux::Stream, crate::yamux::ConnectionError>>,
+    ) -> crate::Result<bool> {
+        match substream {
+            Some(Ok(stream)) => {
+                let substream_id = {
+                    let substream_id = self.next_substream_id.fetch_add(1usize, Ordering::Relaxed);
+                    SubstreamId::from(substream_id)
+                };
+                let protocols = self.protocol_set.protocols();
+                let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
+                let open_timeout = self.substream_open_timeout;
+
+                self.pending_substreams.push(Box::pin(async move {
+                    match tokio::time::timeout(
+                        open_timeout,
+                        Self::accept_substream(
+                            stream,
+                            permit,
+                            substream_id,
+                            protocols,
+                            open_timeout,
+                        ),
+                    )
+                    .await
+                    {
+                        Ok(Ok(substream)) => Ok(substream),
+                        Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
+                            protocol: None,
+                            substream_id: None,
+                            error: SubstreamError::NegotiationError(error),
+                        }),
+                        Err(_) => Err(ConnectionError::Timeout {
+                            protocol: None,
+                            substream_id: None,
+                        }),
+                    }
+                }));
+
+                Ok(false)
+            }
+            Some(Err(error)) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?error,
+                    "connection closed with error",
+                );
+                self.protocol_set
+                    .report_connection_closed(self.peer, self.endpoint.connection_id())
+                    .await?;
+
+                return Ok(true);
+            }
+            None => {
+                tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
+                self.protocol_set
+                    .report_connection_closed(self.peer, self.endpoint.connection_id())
+                    .await?;
+
+                return Ok(true);
+            }
+        }
+    }
+
     /// Start connection event loop.
     pub(crate) async fn start(mut self) -> crate::Result<()> {
         self.protocol_set
@@ -501,52 +570,9 @@ impl TcpConnection {
 
         loop {
             tokio::select! {
-                substream = self.connection.next() => match substream {
-                    Some(Ok(stream)) => {
-                        let substream_id = {
-                            let substream_id = self.next_substream_id.fetch_add(1usize, Ordering::Relaxed);
-                            SubstreamId::from(substream_id)
-                        };
-                        let protocols = self.protocol_set.protocols();
-                        let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
-                        let open_timeout = self.substream_open_timeout;
-
-                        self.pending_substreams.push(Box::pin(async move {
-                            match tokio::time::timeout(
-                                open_timeout,
-                                Self::accept_substream(stream, permit, substream_id, protocols, open_timeout),
-                            )
-                            .await
-                            {
-                                Ok(Ok(substream)) => Ok(substream),
-                                Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
-                                    protocol: None,
-                                    substream_id: None,
-                                    error: SubstreamError::NegotiationError(error),
-                                }),
-                                Err(_) => Err(ConnectionError::Timeout {
-                                    protocol: None,
-                                    substream_id: None
-                                }),
-                            }
-                        }));
-                    },
-                    Some(Err(error)) => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            peer = ?self.peer,
-                            ?error,
-                            "connection closed with error",
-                        );
-                        self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await?;
-
-                        return Ok(())
-                    }
-                    None => {
-                        tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
-                        self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await?;
-
-                        return Ok(())
+                substream = self.connection.next() => {
+                    if self.handle_yamux_substream(substream).await? {
+                        return Ok(());
                     }
                 },
                 // TODO: move this to a function
