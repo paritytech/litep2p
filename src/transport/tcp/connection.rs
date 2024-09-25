@@ -495,11 +495,11 @@ impl TcpConnection {
 
     /// Handles the yamux substream.
     ///
-    /// Returns `Some` if the connection handler should exit.
+    /// Returns `true` if the connection handler should exit.
     async fn handle_yamux_substream(
         &mut self,
         substream: Option<Result<crate::yamux::Stream, crate::yamux::ConnectionError>>,
-    ) -> Option<crate::Result<()>> {
+    ) -> crate::Result<bool> {
         match substream {
             Some(Ok(stream)) => {
                 let substream_id = {
@@ -536,7 +536,7 @@ impl TcpConnection {
                     }
                 }));
 
-                None
+                Ok(false)
             }
             Some(Err(error)) => {
                 tracing::debug!(
@@ -546,19 +546,17 @@ impl TcpConnection {
                     "connection closed with error",
                 );
 
-                Some(
-                    self.protocol_set
-                        .report_connection_closed(self.peer, self.endpoint.connection_id())
-                        .await,
-                )
+                self.protocol_set
+                    .report_connection_closed(self.peer, self.endpoint.connection_id())
+                    .await?;
+                Ok(true)
             }
             None => {
                 tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
-                Some(
-                    self.protocol_set
-                        .report_connection_closed(self.peer, self.endpoint.connection_id())
-                        .await,
-                )
+                self.protocol_set
+                    .report_connection_closed(self.peer, self.endpoint.connection_id())
+                    .await?;
+                Ok(true)
             }
         }
     }
@@ -646,11 +644,11 @@ impl TcpConnection {
 
     /// Handles protocol command.
     ///
-    /// Returns `Some` if the connection handler should exit.
+    /// Returns `true` if the connection handler should exit.
     async fn handle_protocol_command(
         &mut self,
         command: Option<ProtocolCommand>,
-    ) -> Option<crate::Result<()>> {
+    ) -> crate::Result<bool> {
         match command {
             Some(ProtocolCommand::OpenSubstream {
                 protocol,
@@ -695,7 +693,7 @@ impl TcpConnection {
                     }
                 }));
 
-                None
+                Ok(false)
             }
             Some(ProtocolCommand::ForceClose) => {
                 tracing::debug!(
@@ -705,19 +703,17 @@ impl TcpConnection {
                     "force closing connection",
                 );
 
-                return Some(
-                    self.protocol_set
-                        .report_connection_closed(self.peer, self.endpoint.connection_id())
-                        .await,
-                );
+                self.protocol_set
+                    .report_connection_closed(self.peer, self.endpoint.connection_id())
+                    .await?;
+                Ok(true)
             }
             None => {
                 tracing::debug!(target: LOG_TARGET, "protocols have disconnected, closing connection");
-                return Some(
-                    self.protocol_set
-                        .report_connection_closed(self.peer, self.endpoint.connection_id())
-                        .await,
-                );
+                self.protocol_set
+                    .report_connection_closed(self.peer, self.endpoint.connection_id())
+                    .await?;
+                Ok(true)
             }
         }
     }
@@ -731,16 +727,16 @@ impl TcpConnection {
         loop {
             tokio::select! {
                 substream = self.connection.next() => {
-                    if let Some(result) = self.handle_yamux_substream(substream).await {
-                        return result;
+                    if self.handle_yamux_substream(substream).await? {
+                        return Ok(());
                     }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
                    self.handle_negotiated_substream(substream).await;
                 }
                 protocol = self.protocol_set.next() => {
-                    if let Some(result) = self.handle_protocol_command(protocol).await {
-                        return result;
+                    if self.handle_protocol_command(protocol).await? {
+                        return Ok(())
                     }
                 }
             }
