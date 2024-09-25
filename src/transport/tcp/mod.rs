@@ -39,6 +39,7 @@ use crate::{
 use futures::{
     future::BoxFuture,
     stream::{FuturesUnordered, Stream, StreamExt},
+    TryFutureExt,
 };
 use multiaddr::Multiaddr;
 use socket2::{Domain, Socket, Type};
@@ -70,6 +71,25 @@ struct PendingInboundConnection {
     address: SocketAddr,
 }
 
+#[derive(Debug)]
+enum RawConnectionResult {
+    /// The first successful connection.
+    Connected {
+        connection_id: ConnectionId,
+        address: Multiaddr,
+        stream: TcpStream,
+    },
+
+    /// All connection attempts failed.
+    Failed {
+        connection_id: ConnectionId,
+        errors: Vec<(Multiaddr, DialError)>,
+    },
+
+    /// Future was canceled.
+    Canceled,
+}
+
 /// TCP transport.
 pub(crate) struct TcpTransport {
     /// Transport context.
@@ -96,15 +116,7 @@ pub(crate) struct TcpTransport {
     >,
 
     /// Pending raw, unnegotiated connections.
-    pending_raw_connections: FuturesUnordered<
-        BoxFuture<
-            'static,
-            Result<
-                (ConnectionId, Multiaddr, TcpStream),
-                (ConnectionId, Vec<(Multiaddr, DialError)>),
-            >,
-        >,
-    >,
+    pending_raw_connections: FuturesUnordered<BoxFuture<'static, RawConnectionResult>>,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (TcpStream, Multiaddr)>,
@@ -412,11 +424,17 @@ impl Transport for TcpTransport {
             })
             .collect();
 
-        self.pending_raw_connections.push(Box::pin(async move {
+        // Future that will resolve to the first successful connection.
+        let future = async move {
             let mut errors = Vec::with_capacity(num_addresses);
             while let Some(result) = futures.next().await {
                 match result {
-                    Ok((address, stream)) => return Ok((connection_id, address, stream)),
+                    Ok((address, stream)) =>
+                        return RawConnectionResult::Connected {
+                            connection_id,
+                            address,
+                            stream,
+                        },
                     Err(error) => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -429,8 +447,15 @@ impl Transport for TcpTransport {
                 }
             }
 
-            Err((connection_id, errors))
-        }));
+            RawConnectionResult::Failed {
+                connection_id,
+                errors,
+            }
+        };
+
+        let (fut, handle) = futures::future::abortable(future);
+        let fut = fut.unwrap_or_else(|_| RawConnectionResult::Canceled);
+        self.pending_raw_connections.push(Box::pin(fut));
 
         Ok(())
     }
@@ -523,16 +548,14 @@ impl Stream for TcpTransport {
         }
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
-            match result {
-                Ok((connection_id, address, stream)) => {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?address,
-                        canceled = self.canceled.contains(&connection_id),
-                        "connection opened",
-                    );
+            tracing::trace!(target: LOG_TARGET, ?result, "raw connection result");
 
+            match result {
+                RawConnectionResult::Connected {
+                    connection_id,
+                    address,
+                    stream,
+                } =>
                     if !self.canceled.remove(&connection_id) {
                         self.opened_raw.insert(connection_id, (stream, address.clone()));
 
@@ -540,15 +563,18 @@ impl Stream for TcpTransport {
                             connection_id,
                             address,
                         }));
-                    }
-                }
-                Err((connection_id, errors)) =>
+                    },
+                RawConnectionResult::Failed {
+                    connection_id,
+                    errors,
+                } =>
                     if !self.canceled.remove(&connection_id) {
                         return Poll::Ready(Some(TransportEvent::OpenFailure {
                             connection_id,
                             errors,
                         }));
                     },
+                RawConnectionResult::Canceled => (),
             }
         }
 
