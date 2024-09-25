@@ -495,11 +495,11 @@ impl TcpConnection {
 
     /// Handles the yamux substream.
     ///
-    /// Returns `true` if the connection handler should exit.
+    /// Returns `Some` if the connection handler should exit.
     async fn handle_yamux_substream(
         &mut self,
         substream: Option<Result<crate::yamux::Stream, crate::yamux::ConnectionError>>,
-    ) -> crate::Result<bool> {
+    ) -> Option<crate::Result<()>> {
         match substream {
             Some(Ok(stream)) => {
                 let substream_id = {
@@ -536,7 +536,7 @@ impl TcpConnection {
                     }
                 }));
 
-                Ok(false)
+                None
             }
             Some(Err(error)) => {
                 tracing::debug!(
@@ -545,19 +545,20 @@ impl TcpConnection {
                     ?error,
                     "connection closed with error",
                 );
-                self.protocol_set
-                    .report_connection_closed(self.peer, self.endpoint.connection_id())
-                    .await?;
 
-                return Ok(true);
+                Some(
+                    self.protocol_set
+                        .report_connection_closed(self.peer, self.endpoint.connection_id())
+                        .await,
+                )
             }
             None => {
                 tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
-                self.protocol_set
-                    .report_connection_closed(self.peer, self.endpoint.connection_id())
-                    .await?;
-
-                return Ok(true);
+                Some(
+                    self.protocol_set
+                        .report_connection_closed(self.peer, self.endpoint.connection_id())
+                        .await,
+                )
             }
         }
     }
@@ -601,7 +602,7 @@ impl TcpConnection {
                         {
                             tracing::error!(
                                 target: LOG_TARGET,
-                                %protocol,
+                                ?protocol,
                                 ?error,
                                 "failed to register substream open failure to protocol"
                             );
@@ -631,12 +632,90 @@ impl TcpConnection {
                 {
                     tracing::error!(
                         target: LOG_TARGET,
-                        %protocol,
+                        ?protocol,
                         peer = ?self.peer,
                         ?error,
                         "failed to register opened substream to protocol",
                     );
                 }
+            }
+        }
+    }
+
+    /// Handles protocol command.
+    ///
+    /// Returns `Some` if the connection handler should exit.
+    async fn handle_protocol_command(
+        &mut self,
+        command: Option<ProtocolCommand>,
+    ) -> Option<crate::Result<()>> {
+        match command {
+            Some(ProtocolCommand::OpenSubstream {
+                protocol,
+                fallback_names,
+                substream_id,
+                permit,
+            }) => {
+                let control = self.control.clone();
+                let open_timeout = self.substream_open_timeout;
+
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    ?substream_id,
+                    "open substream",
+                );
+
+                self.pending_substreams.push(Box::pin(async move {
+                    match tokio::time::timeout(
+                        open_timeout,
+                        Self::open_substream(
+                            control,
+                            substream_id,
+                            permit,
+                            protocol.clone(),
+                            fallback_names,
+                            open_timeout,
+                        ),
+                    )
+                    .await
+                    {
+                        Ok(Ok(substream)) => Ok(substream),
+                        Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
+                            protocol: Some(protocol),
+                            substream_id: Some(substream_id),
+                            error,
+                        }),
+                        Err(_) => Err(ConnectionError::Timeout {
+                            protocol: Some(protocol),
+                            substream_id: Some(substream_id),
+                        }),
+                    }
+                }));
+
+                None
+            }
+            Some(ProtocolCommand::ForceClose) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    connection_id = ?self.endpoint.connection_id(),
+                    "force closing connection",
+                );
+
+                return Some(
+                    self.protocol_set
+                        .report_connection_closed(self.peer, self.endpoint.connection_id())
+                        .await,
+                );
+            }
+            None => {
+                tracing::debug!(target: LOG_TARGET, "protocols have disconnected, closing connection");
+                return Some(
+                    self.protocol_set
+                        .report_connection_closed(self.peer, self.endpoint.connection_id())
+                        .await,
+                );
             }
         }
     }
@@ -650,65 +729,16 @@ impl TcpConnection {
         loop {
             tokio::select! {
                 substream = self.connection.next() => {
-                    if self.handle_yamux_substream(substream).await? {
-                        return Ok(());
+                    if let Some(result) = self.handle_yamux_substream(substream).await {
+                        return result;
                     }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
                    self.handle_negotiated_substream(substream).await;
                 }
-                protocol = self.protocol_set.next() => match protocol {
-                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
-                        let control = self.control.clone();
-                        let open_timeout = self.substream_open_timeout;
-
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?protocol,
-                            ?substream_id,
-                            "open substream",
-                        );
-
-                        self.pending_substreams.push(Box::pin(async move {
-                            match tokio::time::timeout(
-                                open_timeout,
-                                Self::open_substream(
-                                    control,
-                                    substream_id,
-                                    permit,
-                                    protocol.clone(),
-                                    fallback_names,
-                                    open_timeout,
-                                ),
-                            )
-                            .await
-                            {
-                                Ok(Ok(substream)) => Ok(substream),
-                                Ok(Err(error)) => Err(ConnectionError::FailedToNegotiate {
-                                    protocol: Some(protocol),
-                                    substream_id: Some(substream_id),
-                                    error,
-                                }),
-                                Err(_) => Err(ConnectionError::Timeout {
-                                    protocol: Some(protocol),
-                                    substream_id: Some(substream_id)
-                                }),
-                            }
-                        }));
-                    }
-                    Some(ProtocolCommand::ForceClose) => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            peer = ?self.peer,
-                            connection_id = ?self.endpoint.connection_id(),
-                            "force closing connection",
-                        );
-
-                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await
-                    }
-                    None => {
-                        tracing::debug!(target: LOG_TARGET, "protocols have disconnected, closing connection");
-                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await
+                protocol = self.protocol_set.next() => {
+                    if let Some(result) = self.handle_protocol_command(protocol).await {
+                        return result;
                     }
                 }
             }
