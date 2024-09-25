@@ -15,7 +15,7 @@ use crate::yamux::{
         header::{Data, Header, StreamId, WindowUpdate, ACK},
         Frame,
     },
-    Config, WindowUpdateMode, DEFAULT_CREDIT,
+    Config, DEFAULT_CREDIT,
 };
 use futures::{
     channel::mpsc,

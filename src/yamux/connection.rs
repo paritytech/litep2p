@@ -94,7 +94,7 @@ use crate::yamux::{
         Frame,
     },
     tagged_stream::TaggedStream,
-    Config, Result, WindowUpdateMode, DEFAULT_CREDIT, MAX_ACK_BACKLOG,
+    Config, Result, DEFAULT_CREDIT, MAX_ACK_BACKLOG,
 };
 use cleanup::Cleanup;
 use closing::Closing;
@@ -391,7 +391,7 @@ pub(crate) enum StreamCommand {
 
 /// Possible actions as a result of incoming frame handling.
 #[derive(Debug)]
-enum Action {
+pub(crate) enum Action {
     /// Nothing to be done.
     None,
     /// A new stream has been opened by the remote.

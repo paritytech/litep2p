@@ -43,7 +43,6 @@ pub use crate::yamux::{
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
-const GIB: usize = MIB * 1024;
 
 pub const DEFAULT_CREDIT: u32 = 256 * 1024; // as per yamux specification
 
@@ -69,32 +68,6 @@ const MAX_ACK_BACKLOG: usize = 256;
 /// <https://github.com/paritytech/yamux/issues/100>.
 const DEFAULT_SPLIT_SEND_SIZE: usize = 16 * 1024;
 
-/// Specifies when window update frames are sent.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WindowUpdateMode {
-    /// Send window updates as soon as a [`Stream`]'s receive window drops to 0.
-    ///
-    /// This ensures that the sender can resume sending more data as soon as possible
-    /// but a slow reader on the receiving side may be overwhelmed, i.e. it accumulates
-    /// data in its buffer which may reach its limit (see `set_max_buffer_size`).
-    /// In this mode, window updates merely prevent head of line blocking but do not
-    /// effectively exercise back pressure on senders.
-    OnReceive,
-
-    /// Send window updates only when data is read on the receiving end.
-    ///
-    /// This ensures that senders do not overwhelm receivers and keeps buffer usage
-    /// low. However, depending on the protocol, there is a risk of deadlock, namely
-    /// if both endpoints want to send data larger than the receivers window and they
-    /// do not read before finishing their writes. Use this mode only if you are sure
-    /// that this will never happen, i.e. if
-    ///
-    /// - Endpoints *A* and *B* never write at the same time, *or*
-    /// - Endpoints *A* and *B* write at most *n* frames concurrently such that the sum of the
-    ///   frame lengths is less or equal to the available credit of *A* and *B* respectively.
-    OnRead,
-}
-
 /// Yamux configuration.
 ///
 /// The default configuration values are as follows:
@@ -108,9 +81,7 @@ pub enum WindowUpdateMode {
 #[derive(Debug, Clone)]
 pub struct Config {
     max_connection_receive_window: Option<usize>,
-
     max_num_streams: usize,
-    window_update_mode: WindowUpdateMode,
     read_after_close: bool,
     split_send_size: usize,
 }
@@ -120,7 +91,6 @@ impl Default for Config {
         Config {
             max_connection_receive_window: Some(1 * 1024 * 1024 * 1024), // 1 GiB
             max_num_streams: 512,
-            window_update_mode: WindowUpdateMode::OnRead,
             read_after_close: true,
             split_send_size: DEFAULT_SPLIT_SEND_SIZE,
         }
@@ -143,12 +113,6 @@ impl Config {
     /// Set the max. number of streams.
     pub fn set_max_num_streams(&mut self, n: usize) -> &mut Self {
         self.max_num_streams = n;
-        self
-    }
-
-    /// Set the window update mode to use.
-    pub fn set_window_update_mode(&mut self, m: WindowUpdateMode) -> &mut Self {
-        self.window_update_mode = m;
         self
     }
 
