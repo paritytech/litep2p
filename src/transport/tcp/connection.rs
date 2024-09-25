@@ -562,6 +562,85 @@ impl TcpConnection {
         }
     }
 
+    /// Handles negotiated substream results.
+    async fn handle_negotiated_substream(
+        &mut self,
+        result: Result<NegotiatedSubstream, ConnectionError>,
+    ) {
+        match result {
+            // TODO: return error to protocol
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to accept/open substream",
+                );
+
+                let (protocol, substream_id, error) = match error {
+                    ConnectionError::Timeout {
+                        protocol,
+                        substream_id,
+                    } => (
+                        protocol,
+                        substream_id,
+                        SubstreamError::NegotiationError(NegotiationError::Timeout),
+                    ),
+                    ConnectionError::FailedToNegotiate {
+                        protocol,
+                        substream_id,
+                        error,
+                    } => (protocol, substream_id, error),
+                };
+
+                match (protocol, substream_id) {
+                    (Some(protocol), Some(substream_id)) => {
+                        if let Err(error) = self
+                            .protocol_set
+                            .report_substream_open_failure(protocol.clone(), substream_id, error)
+                            .await
+                        {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                %protocol,
+                                ?error,
+                                "failed to register substream open failure to protocol"
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(substream) => {
+                let protocol = substream.protocol.clone();
+                let direction = substream.direction;
+                let substream_id = substream.substream_id;
+                let socket = FuturesAsyncReadCompatExt::compat(substream.io);
+                let bandwidth_sink = self.bandwidth_sink.clone();
+
+                let substream = substream::Substream::new_tcp(
+                    self.peer,
+                    substream_id,
+                    Substream::new(socket, bandwidth_sink, substream.permit),
+                    self.protocol_set.protocol_codec(&protocol),
+                );
+
+                if let Err(error) = self
+                    .protocol_set
+                    .report_substream_open(self.peer, protocol.clone(), direction, substream)
+                    .await
+                {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        %protocol,
+                        peer = ?self.peer,
+                        ?error,
+                        "failed to register opened substream to protocol",
+                    );
+                }
+            }
+        }
+    }
+
     /// Start connection event loop.
     pub(crate) async fn start(mut self) -> crate::Result<()> {
         self.protocol_set
@@ -575,68 +654,8 @@ impl TcpConnection {
                         return Ok(());
                     }
                 },
-                // TODO: move this to a function
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
-                    match substream {
-                        // TODO: return error to protocol
-                        Err(error) => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?error,
-                                "failed to accept/open substream",
-                            );
-
-                            let (protocol, substream_id, error) = match error {
-                                ConnectionError::Timeout { protocol, substream_id } => {
-                                    (protocol, substream_id, SubstreamError::NegotiationError(NegotiationError::Timeout))
-                                }
-                                ConnectionError::FailedToNegotiate { protocol, substream_id, error } => {
-                                    (protocol, substream_id, error)
-                                }
-                            };
-
-                            match (protocol, substream_id) {
-                                (Some(protocol), Some(substream_id)) => {
-                                    if let Err(error) = self.protocol_set
-                                        .report_substream_open_failure(protocol, substream_id, error)
-                                        .await
-                                    {
-                                        tracing::error!(
-                                            target: LOG_TARGET,
-                                            ?error,
-                                            "failed to register opened substream to protocol"
-                                        );
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        Ok(substream) => {
-                            let protocol = substream.protocol.clone();
-                            let direction = substream.direction;
-                            let substream_id = substream.substream_id;
-                            let socket = FuturesAsyncReadCompatExt::compat(substream.io);
-                            let bandwidth_sink = self.bandwidth_sink.clone();
-
-                            let substream = substream::Substream::new_tcp(
-                                self.peer,
-                                substream_id,
-                                Substream::new(socket, bandwidth_sink, substream.permit),
-                                self.protocol_set.protocol_codec(&protocol)
-                            );
-
-                            if let Err(error) = self.protocol_set
-                                .report_substream_open(self.peer, protocol, direction, substream)
-                                .await
-                            {
-                                tracing::error!(
-                                    target: LOG_TARGET,
-                                    ?error,
-                                    "failed to register opened substream to protocol",
-                                );
-                            }
-                        }
-                    }
+                   self.handle_negotiated_substream(substream).await;
                 }
                 protocol = self.protocol_set.next() => match protocol {
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
