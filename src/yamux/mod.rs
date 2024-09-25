@@ -41,6 +41,10 @@ pub use crate::yamux::{
     },
 };
 
+const KIB: usize = 1024;
+const MIB: usize = KIB * 1024;
+const GIB: usize = MIB * 1024;
+
 pub const DEFAULT_CREDIT: u32 = 256 * 1024; // as per yamux specification
 
 pub type Result<T> = std::result::Result<T, ConnectionError>;
@@ -103,8 +107,8 @@ pub enum WindowUpdateMode {
 /// - split send size = 16 KiB
 #[derive(Debug, Clone)]
 pub struct Config {
-    receive_window: u32,
-    max_buffer_size: usize,
+    max_connection_receive_window: Option<usize>,
+
     max_num_streams: usize,
     window_update_mode: WindowUpdateMode,
     read_after_close: bool,
@@ -114,9 +118,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            receive_window: DEFAULT_CREDIT,
-            max_buffer_size: 1024 * 1024,
-            max_num_streams: 8192,
+            max_connection_receive_window: Some(1 * 1024 * 1024 * 1024), // 1 GiB
+            max_num_streams: 512,
             window_update_mode: WindowUpdateMode::OnRead,
             read_after_close: true,
             split_send_size: DEFAULT_SPLIT_SEND_SIZE,
@@ -125,20 +128,15 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Set the receive window per stream (must be >= 256 KiB).
-    ///
-    /// # Panics
-    ///
-    /// If the given receive window is < 256 KiB.
-    pub fn set_receive_window(&mut self, n: u32) -> &mut Self {
-        assert!(n >= DEFAULT_CREDIT);
-        self.receive_window = n;
-        self
-    }
+    pub fn set_max_connection_receive_window(&mut self, n: Option<usize>) -> &mut Self {
+        self.max_connection_receive_window = n;
 
-    /// Set the max. buffer size per stream.
-    pub fn set_max_buffer_size(&mut self, n: usize) -> &mut Self {
-        self.max_buffer_size = n;
+        assert!(
+            self.max_connection_receive_window.unwrap_or(usize::MAX)
+                >= self.max_num_streams * DEFAULT_CREDIT as usize,
+            "`max_connection_receive_window` must be `>= 256 KiB * max_num_streams` to allow each
+            stream at least the Yamux default window size"
+        );
         self
     }
 
