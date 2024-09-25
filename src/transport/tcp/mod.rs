@@ -38,7 +38,7 @@ use crate::{
 
 use futures::{
     future::BoxFuture,
-    stream::{FuturesUnordered, Stream, StreamExt},
+    stream::{AbortHandle, FuturesUnordered, Stream, StreamExt},
     TryFutureExt,
 };
 use multiaddr::Multiaddr;
@@ -87,7 +87,7 @@ enum RawConnectionResult {
     },
 
     /// Future was canceled.
-    Canceled,
+    Canceled { connection_id: ConnectionId },
 }
 
 /// TCP transport.
@@ -123,6 +123,8 @@ pub(crate) struct TcpTransport {
 
     /// Canceled raw connections.
     canceled: HashSet<ConnectionId>,
+
+    cancel_futures: HashMap<ConnectionId, AbortHandle>,
 
     /// Connections which have been opened and negotiated but are being validated by the
     /// `TransportManager`.
@@ -296,6 +298,7 @@ impl TransportBuilder for TcpTransport {
                 pending_inbound_connections: HashMap::new(),
                 pending_connections: FuturesUnordered::new(),
                 pending_raw_connections: FuturesUnordered::new(),
+                cancel_futures: HashMap::new(),
             },
             listen_addresses,
         ))
@@ -454,8 +457,9 @@ impl Transport for TcpTransport {
         };
 
         let (fut, handle) = futures::future::abortable(future);
-        let fut = fut.unwrap_or_else(|_| RawConnectionResult::Canceled);
+        let fut = fut.unwrap_or_else(move |_| RawConnectionResult::Canceled { connection_id });
         self.pending_raw_connections.push(Box::pin(fut));
+        self.cancel_futures.insert(connection_id, handle);
 
         Ok(())
     }
@@ -513,6 +517,7 @@ impl Transport for TcpTransport {
 
     fn cancel(&mut self, connection_id: ConnectionId) {
         self.canceled.insert(connection_id);
+        self.cancel_futures.remove(&connection_id).map(|handle| handle.abort());
     }
 }
 
@@ -574,7 +579,9 @@ impl Stream for TcpTransport {
                             errors,
                         }));
                     },
-                RawConnectionResult::Canceled => (),
+                RawConnectionResult::Canceled { connection_id } => {
+                    self.canceled.remove(&connection_id);
+                }
             }
         }
 
