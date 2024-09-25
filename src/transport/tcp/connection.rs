@@ -603,6 +603,7 @@ impl TcpConnection {
                             tracing::error!(
                                 target: LOG_TARGET,
                                 ?protocol,
+                                endpoint = ?self.endpoint,
                                 ?error,
                                 "failed to register substream open failure to protocol"
                             );
@@ -634,6 +635,7 @@ impl TcpConnection {
                         target: LOG_TARGET,
                         ?protocol,
                         peer = ?self.peer,
+                        endpoint = ?self.endpoint,
                         ?error,
                         "failed to register opened substream to protocol",
                     );
