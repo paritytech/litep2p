@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::yamux::{
-    connection::Action,
+    connection::{Action, LOG_TARGET},
     frame::{header::Ping, Frame},
 };
 
@@ -39,7 +39,7 @@ impl Rtt {
             sent_at: Instant::now(),
             nonce,
         };
-        tracing::debug!("sending ping {nonce}");
+        tracing::debug!(target: LOG_TARGET, "sending ping {nonce}");
         Some(Frame::ping(nonce))
     }
 
@@ -48,20 +48,26 @@ impl Rtt {
 
         let (sent_at, expected_nonce) = match inner.state {
             RttState::Waiting { .. } => {
-                tracing::error!("received unexpected pong {received_nonce}");
+                tracing::error!(target: LOG_TARGET, "received unexpected pong {received_nonce}");
                 return Action::Terminate(Frame::protocol_error());
             }
             RttState::AwaitingPong { sent_at, nonce } => (sent_at, nonce),
         };
 
         if received_nonce != expected_nonce {
-            tracing::error!("received pong with {received_nonce} but expected {expected_nonce}");
+            tracing::error!(
+                target: LOG_TARGET,
+                "received pong with {received_nonce} but expected {expected_nonce}"
+            );
             return Action::Terminate(Frame::protocol_error());
         }
 
         let rtt = sent_at.elapsed();
         inner.rtt = Some(rtt);
-        tracing::debug!("received pong {received_nonce}, estimated round-trip-time {rtt:?}");
+        tracing::debug!(
+            target: LOG_TARGET,
+            "received pong {received_nonce}, estimated round-trip-time {rtt:?}"
+        );
 
         inner.state = RttState::Waiting {
             next: Instant::now() + PING_INTERVAL,

@@ -501,6 +501,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                 match self.stream_receivers.poll_next_unpin(cx) {
                     Poll::Ready(Some((_, Some(StreamCommand::SendFrame(frame))))) => {
                         tracing::trace!(
+                            target: LOG_TARGET,
                             "{}/{}: sending: {}",
                             self.id,
                             frame.header().stream_id(),
@@ -510,13 +511,19 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                         continue;
                     }
                     Poll::Ready(Some((id, Some(StreamCommand::CloseStream { ack })))) => {
-                        tracing::trace!("{}/{}: sending close", self.id, id);
+                        tracing::trace!(target: LOG_TARGET, "{}/{}: sending close", self.id, id);
                         self.pending_write_frame.replace(Frame::close_stream(id, ack).into());
                         continue;
                     }
                     Poll::Ready(Some((id, None))) => {
                         if let Some(frame) = self.on_drop_stream(id) {
-                            tracing::trace!("{}/{}: sending: {}", self.id, id, frame.header());
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                "{}/{}: sending: {}",
+                                self.id,
+                                id,
+                                frame.header()
+                            );
                             self.pending_write_frame.replace(frame);
                         };
                         continue;
@@ -534,15 +541,26 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Active<T> {
                         match self.on_frame(frame?)? {
                             Action::None => {}
                             Action::New(stream) => {
-                                tracing::trace!("{}: new inbound {} of {}", self.id, stream, self);
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    "{}: new inbound {} of {}",
+                                    self.id,
+                                    stream,
+                                    self
+                                );
                                 return Poll::Ready(Ok(stream));
                             }
                             Action::Ping(f) => {
-                                tracing::trace!("{}/{}: pong", self.id, f.header().stream_id());
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    "{}/{}: pong",
+                                    self.id,
+                                    f.header().stream_id()
+                                );
                                 self.pending_read_frame.replace(f.into());
                             }
                             Action::Terminate(f) => {
-                                tracing::trace!("{}: sending term", self.id);
+                                tracing::trace!(target: LOG_TARGET, "{}: sending term", self.id);
                                 self.pending_read_frame.replace(f.into());
                             }
                         }

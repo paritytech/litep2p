@@ -3,7 +3,10 @@ use std::{cmp, sync::Arc};
 use parking_lot::Mutex;
 use std::time::Instant;
 
-use crate::yamux::{connection::rtt::Rtt, Config, DEFAULT_CREDIT, MIB};
+use crate::yamux::{
+    connection::{rtt::Rtt, LOG_TARGET},
+    Config, DEFAULT_CREDIT, MIB,
+};
 
 #[derive(Debug)]
 pub(crate) struct FlowController {
@@ -54,6 +57,7 @@ impl FlowController {
         }
 
         tracing::trace!(
+            target: LOG_TARGET,
             "received {} mb in {} seconds ({} mbit/s)",
             next_window_update as f64 / MIB as f64,
             self.last_window_update.elapsed().as_secs_f64(),
@@ -108,6 +112,7 @@ impl FlowController {
             drop(accumulated_max_stream_windows);
 
             tracing::debug!(
+                target: LOG_TARGET,
                 "old window_max: {} mb, new window_max: {} mb",
                 self.max_receive_window as f64 / MIB as f64,
                 new_max as f64 / MIB as f64
