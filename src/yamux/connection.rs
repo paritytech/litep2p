@@ -373,11 +373,7 @@ struct Active<T> {
     new_outbound_stream_waker: Option<Waker>,
 
     rtt: rtt::Rtt,
-
-    /// A stream's `max_stream_receive_window` can grow beyond [`DEFAULT_CREDIT`], see
-    /// [`Stream::next_window_update`]. This field is the sum of the bytes by which all streams'
-    /// `max_stream_receive_window` have each exceeded [`DEFAULT_CREDIT`]. Used to enforce
-    /// [`Config::max_connection_receive_window`].
+    ///Used to enforce [`Config::max_connection_receive_window`].
     accumulated_max_stream_windows: Arc<Mutex<usize>>,
 }
 

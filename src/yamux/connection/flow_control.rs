@@ -12,9 +12,7 @@ use crate::yamux::{
 pub(crate) struct FlowController {
     config: Arc<Config>,
     last_window_update: Instant,
-    /// See [`Connection::rtt`].
     rtt: Rtt,
-    /// See [`Connection::accumulated_max_stream_windows`].
     accumulated_max_stream_windows: Arc<Mutex<usize>>,
     receive_window: u32,
     max_receive_window: u32,
