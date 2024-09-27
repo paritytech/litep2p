@@ -149,6 +149,16 @@ impl KeepAliveTracker {
         self.inner_on_connection_established(peer, connection_id, self.keep_alive_timeout);
     }
 
+    /// Called on connection closed event.
+    pub fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
+        if let Entry::Occupied(mut entry) = self.last_activity.entry(peer) {
+            entry.get_mut().remove(&connection_id);
+            if entry.get().is_empty() {
+                entry.remove();
+            }
+        }
+    }
+
     /// Called on substream opened event to track the last activity.
     pub fn substream_activity(&mut self, peer: PeerId, connection_id: ConnectionId) {
         // Keep track of the connection ID and the time the substream was opened.
@@ -237,13 +247,7 @@ pub struct TransportService {
     next_substream_id: Arc<AtomicUsize>,
 
     /// Close the connection if no substreams are open within this time frame.
-    keep_alive_timeout: Duration,
-
-    /// Pending keep-alive timeouts.
-    pending_keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
-
-    /// Track substream last activity.
-    last_activity: HashMap<PeerId, HashMap<ConnectionId, Instant>>,
+    keep_alive_tracker: KeepAliveTracker,
 }
 
 impl TransportService {
@@ -258,6 +262,8 @@ impl TransportService {
     ) -> (Self, Sender<InnerTransportEvent>) {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
+        let keep_alive_tracker = KeepAliveTracker::new(keep_alive_timeout);
+
         (
             Self {
                 rx,
@@ -267,9 +273,7 @@ impl TransportService {
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
-                keep_alive_timeout,
-                pending_keep_alive_timeouts: FuturesUnordered::new(),
-                last_activity: HashMap::new(),
+                keep_alive_tracker,
             },
             tx,
         )
@@ -301,7 +305,6 @@ impl TransportService {
             ?connection_id,
             "connection established",
         );
-        let keep_alive_timeout = self.keep_alive_timeout;
 
         match self.connections.get_mut(&peer) {
             Some(context) => match context.secondary {
@@ -316,10 +319,8 @@ impl TransportService {
                     None
                 }
                 None => {
-                    self.pending_keep_alive_timeouts.push(Box::pin(async move {
-                        tokio::time::sleep(keep_alive_timeout).await;
-                        (peer, connection_id)
-                    }));
+                    self.keep_alive_tracker.on_connection_established(peer, connection_id);
+
                     context.secondary = Some(handle);
 
                     None
@@ -327,10 +328,8 @@ impl TransportService {
             },
             None => {
                 self.connections.insert(peer, ConnectionContext::new(handle));
-                self.pending_keep_alive_timeouts.push(Box::pin(async move {
-                    tokio::time::sleep(keep_alive_timeout).await;
-                    (peer, connection_id)
-                }));
+
+                self.keep_alive_tracker.on_connection_established(peer, connection_id);
 
                 Some(TransportEvent::ConnectionEstablished { peer, endpoint })
             }
@@ -343,12 +342,7 @@ impl TransportService {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> Option<TransportEvent> {
-        if let Entry::Occupied(mut entry) = self.last_activity.entry(peer) {
-            entry.get_mut().remove(&connection_id);
-            if entry.get().is_empty() {
-                entry.remove();
-            }
-        }
+        self.keep_alive_tracker.on_connection_closed(peer, connection_id);
 
         let Some(context) = self.connections.get_mut(&peer) else {
             tracing::warn!(
@@ -515,25 +509,7 @@ impl Stream for TransportService {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let protocol_name = self.protocol.clone();
-        let duration = self.keep_alive_timeout;
-
-        // let event = self.rx.poll_recv(cx);
-        // let pending_event = self.pending_keep_alive_timeouts.poll_next_unpin(cx);
-
-        // if let Poll::Ready(Some((peer, connection_id))) = pending_event {
-        //     if let Some(context) = self.connections.get_mut(&peer) {
-        //         tracing::error!(
-        //             target: LOG_TARGET,
-        //             ?peer,
-        //             ?connection_id,
-        //             protocol = ?protocol_name,
-        //             ?duration,
-        //             "keep-alive timeout over, downgrade connection",
-        //         );
-
-        //         context.downgrade(&connection_id);
-        //     }
-        // }
+        let duration = self.keep_alive_tracker.keep_alive_timeout;
 
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
@@ -567,11 +543,7 @@ impl Stream for TransportService {
                     connection_id,
                 }) => {
                     if protocol == self.protocol {
-                        // Keep track of the connection ID and the time the substream was opened.
-                        self.last_activity
-                            .entry(peer)
-                            .or_default()
-                            .insert(connection_id.clone(), Instant::now());
+                        self.keep_alive_tracker.substream_activity(peer, connection_id);
                     }
 
                     return Poll::Ready(Some(TransportEvent::SubstreamOpened {
@@ -587,22 +559,8 @@ impl Stream for TransportService {
         }
 
         while let Poll::Ready(Some((peer, connection_id))) =
-            self.pending_keep_alive_timeouts.poll_next_unpin(cx)
+            self.keep_alive_tracker.poll_next_unpin(cx)
         {
-            // Check for any activity since the timeout was started.
-            if let Some(last) = self.last_activity.get(&peer) {
-                for (con, when) in last.iter() {
-                    if connection_id == *con && when.elapsed() < self.keep_alive_timeout {
-                        self.pending_keep_alive_timeouts.push(Box::pin(async move {
-                            tokio::time::sleep(duration).await;
-                            (peer, connection_id)
-                        }));
-
-                        continue;
-                    }
-                }
-            }
-
             if let Some(context) = self.connections.get_mut(&peer) {
                 tracing::error!(
                     target: LOG_TARGET,
