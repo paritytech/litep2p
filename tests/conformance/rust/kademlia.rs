@@ -419,6 +419,7 @@ async fn litep2p_add_provider_to_libp2p() {
     let (mut litep2p, mut litep2p_kad) = initialize_litep2p();
     let mut libp2p = initialize_libp2p();
 
+    // Drive libp2p a little bit to get the listen address.
     let get_libp2p_listen_addr = async {
         loop {
             if let SwarmEvent::NewListenAddr { address, .. } = libp2p.select_next_some().await {
@@ -426,7 +427,6 @@ async fn litep2p_add_provider_to_libp2p() {
             }
         }
     };
-
     let libp2p_listen_addr = tokio::time::timeout(Duration::from_secs(10), get_libp2p_listen_addr)
         .await
         .expect("didn't get libp2p listen address in 10 seconds");
@@ -484,7 +484,7 @@ async fn libp2p_add_provider_to_litep2p() {
     let litep2p_address = litep2p.listen_addresses().next().unwrap().clone();
     libp2p.behaviour_mut().kad.add_address(&litep2p_peerid, litep2p_address);
 
-    // Start provifing
+    // Start providing
     let key = vec![1u8, 2u8, 3u8];
     libp2p.behaviour_mut().kad.start_providing(key.clone().into()).unwrap();
 
@@ -500,6 +500,94 @@ async fn libp2p_add_provider_to_litep2p() {
                     assert_eq!(provided_key, key.clone().into());
                     assert_eq!(provider.peer, libp2p_peerid);
                     assert_eq!(provider.addresses, vec![libp2p_public_addr]);
+
+                    break
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn litep2p_get_providers_from_libp2p() {
+    let (mut litep2p, mut litep2p_kad) = initialize_litep2p();
+    let mut libp2p = initialize_libp2p();
+
+    let libp2p_peerid = litep2p::PeerId::from_bytes(&libp2p.local_peer_id().to_bytes()).unwrap();
+    let libp2p_public_addr: Multiaddr = "/ip4/1.1.1.1/tcp/10000".parse().unwrap();
+    libp2p.add_external_address(libp2p_public_addr.clone(), AddressScore::Infinite);
+
+    // Start providing
+    let key = vec![1u8, 2u8, 3u8];
+    let query_id = libp2p.behaviour_mut().kad.start_providing(key.clone().into()).unwrap();
+
+    let mut libp2p_listen_addr = None;
+    let mut provider_stored = false;
+
+    // Drive libp2p a little bit to get listen address and make sure the provider was store
+    // loacally.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match libp2p.select_next_some().await {
+                SwarmEvent::Behaviour(BehaviourEvent::Kad(
+                    Libp2pKademliaEvent::OutboundQueryProgressed { id, result, .. },
+                )) => {
+                    assert_eq!(id, query_id);
+                    assert!(
+                        matches!(result, QueryResult::StartProviding(Ok(AddProviderOk { key }))
+                                if key == Libp2pRecordKey::from(key.clone()))
+                    );
+
+                    provider_stored = true;
+
+                    if libp2p_listen_addr.is_some() {
+                        break;
+                    }
+                }
+                SwarmEvent::NewListenAddr { address, .. } => {
+                    libp2p_listen_addr = Some(address);
+
+                    if provider_stored {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("failed to store provider and get listen address in 10 seconds");
+
+    let libp2p_listen_addr = libp2p_listen_addr.unwrap();
+
+    // `GET_PROVIDERS`
+    litep2p_kad
+        .add_known_peer(libp2p_peerid, vec![libp2p_listen_addr.clone()])
+        .await;
+    let original_query_id = litep2p_kad.get_providers(key.clone().into()).await;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("provider was not added in 10 secs")
+            }
+            _ = litep2p.next_event() => {}
+            _ = libp2p.select_next_some() => {}
+            event = litep2p_kad.next() => {
+                if let Some(KademliaEvent::GetProvidersSuccess {
+                    query_id,
+                    provided_key,
+                    mut providers,
+                }) = event {
+                    assert_eq!(query_id, original_query_id);
+                    assert_eq!(provided_key, key.clone().into());
+                    assert_eq!(providers.len(), 1);
+
+                    let provider = providers.pop().unwrap();
+                    assert_eq!(provider.peer, libp2p_peerid);
+                    assert_eq!(provider.addresses.len(), 2);
+                    assert!(provider.addresses.contains(&libp2p_listen_addr));
+                    assert!(provider.addresses.contains(&libp2p_public_addr));
 
                     break
                 }
