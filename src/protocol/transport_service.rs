@@ -483,7 +483,7 @@ impl TransportService {
         let connection =
             &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?;
 
-        tracing::error!(
+        tracing::trace!(
             target: LOG_TARGET,
             ?peer,
             protocol = %self.protocol,
@@ -562,7 +562,7 @@ impl Stream for TransportService {
             self.keep_alive_tracker.poll_next_unpin(cx)
         {
             if let Some(context) = self.connections.get_mut(&peer) {
-                tracing::error!(
+                tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
                     ?connection_id,
@@ -959,7 +959,10 @@ mod tests {
         };
 
         // verify the first connection state is correct
-        assert_eq!(service.pending_keep_alive_timeouts.len(), 1);
+        assert_eq!(
+            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
+            1
+        );
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
@@ -994,7 +997,10 @@ mod tests {
         // doesn't exist anymore
         //
         // the peer is removed because there is no connection to them
-        assert_eq!(service.pending_keep_alive_timeouts.len(), 1);
+        assert_eq!(
+            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
+            1
+        );
         assert!(service.connections.get(&peer).is_none());
 
         // register new primary connection but verify that there are now two pending keep-alive
@@ -1022,7 +1028,10 @@ mod tests {
         };
 
         // verify the first connection state is correct
-        assert_eq!(service.pending_keep_alive_timeouts.len(), 2);
+        assert_eq!(
+            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
+            2
+        );
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
