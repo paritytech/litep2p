@@ -20,15 +20,13 @@
 // DEALINGS IN THE SOFTWARE.
 
 use futures::StreamExt;
-use hickory_resolver::proto::serialize::binary::BinEncodable;
 use libp2p::{
     identify, identity,
     kad::{
-        self, store::RecordStore, AddProviderOk, AddProviderResult, InboundRequest,
-        KademliaEvent as Libp2pKademliaEvent, KademliaStoreInserts,
-        ProviderRecord as Libp2pProviderRecord, QueryResult, RecordKey as Libp2pRecordKey,
+        self, store::RecordStore, AddProviderOk, GetProvidersOk, InboundRequest,
+        KademliaEvent as Libp2pKademliaEvent, QueryResult, RecordKey as Libp2pRecordKey,
     },
-    swarm::{behaviour, keep_alive, AddressScore, NetworkBehaviour, SwarmBuilder, SwarmEvent},
+    swarm::{keep_alive, AddressScore, NetworkBehaviour, SwarmBuilder, SwarmEvent},
     PeerId, Swarm,
 };
 use litep2p::{
@@ -592,6 +590,62 @@ async fn litep2p_get_providers_from_libp2p() {
                     break
                 }
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn libp2p_get_providers_from_litep2p() {
+    let (mut litep2p, mut litep2p_kad) = initialize_litep2p();
+    let mut libp2p = initialize_libp2p();
+
+    let litep2p_peerid = PeerId::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap();
+    let litep2p_listen_address = litep2p.listen_addresses().next().unwrap().clone();
+    let litep2p_public_address: Multiaddr = "/ip4/1.1.1.1/tcp/10000".parse().unwrap();
+    litep2p.public_addresses().add_address(litep2p_public_address).unwrap();
+
+    // Store provider locally in litep2p.
+    let original_key = vec![1u8, 2u8, 3u8];
+    litep2p_kad.start_providing(original_key.clone().into()).await;
+
+    // Drive litep2p a little bit to make sure the provider record is stored and no `ADD_PROVIDER`
+    // requests are generated (because no peers are know yet).
+    tokio::time::timeout(Duration::from_secs(2), async {
+        litep2p.next_event().await;
+    })
+    .await
+    .unwrap_err();
+
+    libp2p.behaviour_mut().kad.add_address(&litep2p_peerid, litep2p_listen_address);
+    let query_id = libp2p.behaviour_mut().kad.get_providers(original_key.clone().into());
+
+    loop {
+        tokio::select! {
+            event = libp2p.select_next_some() => {
+                match event {
+                    SwarmEvent::Behaviour(BehaviourEvent::Kad(
+                        Libp2pKademliaEvent::OutboundQueryProgressed { id, result, .. })
+                    ) => {
+                        assert_eq!(id, query_id);
+                        if let QueryResult::GetProviders(Ok(
+                            GetProvidersOk::FoundProviders { key, providers }
+                        )) = result {
+                            assert_eq!(key, original_key.clone().into());
+                            assert_eq!(providers.len(), 1);
+                            assert!(providers.contains(&litep2p_peerid));
+                            // It looks like `libp2p` discards the cached provider addresses received
+                            // in `GET_PROVIDERS` response, so we can't check it here.
+                            // The addresses are neither used to extend the `libp2p` routing table.
+                            break
+                        } else {
+                            panic!("invalid query result")
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ = litep2p.next_event() => {}
+            _ = litep2p_kad.next() => {}
         }
     }
 }
