@@ -20,13 +20,15 @@
 // DEALINGS IN THE SOFTWARE.
 
 use futures::StreamExt;
+use hickory_resolver::proto::serialize::binary::BinEncodable;
 use libp2p::{
     identify, identity,
     kad::{
-        self, store::RecordStore, InboundRequest, KademliaEvent as Libp2pKademliaEvent,
-        KademliaStoreInserts, ProviderRecord as Libp2pProviderRecord,
+        self, store::RecordStore, AddProviderOk, AddProviderResult, InboundRequest,
+        KademliaEvent as Libp2pKademliaEvent, KademliaStoreInserts,
+        ProviderRecord as Libp2pProviderRecord, QueryResult, RecordKey as Libp2pRecordKey,
     },
-    swarm::{keep_alive, NetworkBehaviour, SwarmBuilder, SwarmEvent},
+    swarm::{behaviour, keep_alive, AddressScore, NetworkBehaviour, SwarmBuilder, SwarmEvent},
     PeerId, Swarm,
 };
 use litep2p::{
@@ -444,7 +446,7 @@ async fn litep2p_add_provider_to_libp2p() {
     loop {
         tokio::select! {
             _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
-                panic!("provider was not retrieved in 10 secs")
+                panic!("provider was not added in 10 secs")
             }
             _ = litep2p.next_event() => {}
             _ = litep2p_kad.next() => {}
@@ -463,6 +465,43 @@ async fn litep2p_add_provider_to_libp2p() {
                             break
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn libp2p_add_provider_to_litep2p() {
+    let (mut litep2p, mut litep2p_kad) = initialize_litep2p();
+    let mut libp2p = initialize_libp2p();
+
+    let libp2p_peerid = litep2p::PeerId::from_bytes(&libp2p.local_peer_id().to_bytes()).unwrap();
+    let libp2p_public_addr: Multiaddr = "/ip4/1.1.1.1/tcp/10000".parse().unwrap();
+    libp2p.add_external_address(libp2p_public_addr.clone(), AddressScore::Infinite);
+
+    let litep2p_peerid = PeerId::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap();
+    let litep2p_address = litep2p.listen_addresses().next().unwrap().clone();
+    libp2p.behaviour_mut().kad.add_address(&litep2p_peerid, litep2p_address);
+
+    // Start provifing
+    let key = vec![1u8, 2u8, 3u8];
+    libp2p.behaviour_mut().kad.start_providing(key.clone().into()).unwrap();
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("provider was not added in 10 secs")
+            }
+            _ = litep2p.next_event() => {}
+            _ = libp2p.select_next_some() => {}
+            event = litep2p_kad.next() => {
+                if let Some(KademliaEvent::IncomingProvider{ provided_key, provider }) = event {
+                    assert_eq!(provided_key, key.clone().into());
+                    assert_eq!(provider.peer, libp2p_peerid);
+                    assert_eq!(provider.addresses, vec![libp2p_public_addr]);
+
+                    break
                 }
             }
         }
