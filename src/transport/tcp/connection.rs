@@ -169,6 +169,9 @@ pub struct TcpConnection {
     /// Pending substreams.
     pending_substreams:
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
+
+    /// Connection ID.
+    connection_id: ConnectionId,
 }
 
 impl fmt::Debug for TcpConnection {
@@ -187,6 +190,7 @@ impl TcpConnection {
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
         next_substream_id: Arc<AtomicUsize>,
+        connection_id: ConnectionId,
     ) -> Self {
         let NegotiatedConnection {
             connection,
@@ -206,6 +210,7 @@ impl TcpConnection {
             next_substream_id,
             pending_substreams: FuturesUnordered::new(),
             substream_open_timeout,
+            connection_id,
         }
     }
 
@@ -539,7 +544,7 @@ impl TcpConnection {
                 Ok(false)
             }
             Some(Err(error)) => {
-                tracing::debug!(
+                tracing::error!(
                     target: LOG_TARGET,
                     peer = ?self.peer,
                     ?error,
@@ -552,7 +557,7 @@ impl TcpConnection {
                 Ok(true)
             }
             None => {
-                tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
+                tracing::error!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
                 self.protocol_set
                     .report_connection_closed(self.peer, self.endpoint.connection_id())
                     .await?;
@@ -654,8 +659,19 @@ impl TcpConnection {
                 protocol,
                 fallback_names,
                 substream_id,
+                connection_id,
                 permit,
             }) => {
+                if self.connection_id != connection_id {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        ?substream_id,
+                        ?connection_id,
+                        "connection id mismatch",
+                    );
+                }
+
                 let control = self.control.clone();
                 let open_timeout = self.substream_open_timeout;
 
@@ -663,6 +679,7 @@ impl TcpConnection {
                     target: LOG_TARGET,
                     ?protocol,
                     ?substream_id,
+                    ?connection_id,
                     "open substream",
                 );
 

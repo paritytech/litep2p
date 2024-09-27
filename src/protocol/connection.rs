@@ -120,6 +120,7 @@ impl ConnectionHandle {
             protocol: protocol.clone(),
             fallback_names,
             substream_id,
+            connection_id: self.connection_id.clone(),
             permit,
         })
         .map_err(|error| match error {
@@ -144,7 +145,7 @@ impl ConnectionHandle {
 }
 
 /// Type which allows the connection to be kept open.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Permit {
     /// Active connection.
     _connection: Sender<ProtocolCommand>,

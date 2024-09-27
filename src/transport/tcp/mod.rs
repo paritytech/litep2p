@@ -346,10 +346,15 @@ impl Transport for TcpTransport {
         );
 
         self.context.executor.run(Box::pin(async move {
-            if let Err(error) =
-                TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
-                    .start()
-                    .await
+            if let Err(error) = TcpConnection::new(
+                context,
+                protocol_set,
+                bandwidth_sink,
+                next_substream_id,
+                connection_id,
+            )
+            .start()
+            .await
             {
                 tracing::debug!(
                     target: LOG_TARGET,
