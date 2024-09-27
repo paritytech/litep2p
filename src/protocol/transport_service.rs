@@ -33,15 +33,15 @@ use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Debug,
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    task::{Context, Poll},
-    time::Duration,
+    task::{Context, Poll, Waker},
+    time::{Duration, Instant},
 };
 
 /// Logging target for the file.
@@ -98,6 +98,119 @@ impl ConnectionContext {
     }
 }
 
+/// Tracks connection keep-alive timeouts.
+///
+/// A connection keep-alive timeout is started when a connection is established.
+/// If no substreams are opened over the connection within the timeout,
+/// the connection is downgraded. However, if a substream is opened over the connection,
+/// the timeout is reset.
+#[derive(Debug)]
+struct KeepAliveTracker {
+    /// Close the connection if no substreams are open within this time frame.
+    keep_alive_timeout: Duration,
+
+    /// Pending keep-alive timeouts.
+    pending_keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
+
+    /// Track substream last activity.
+    last_activity: HashMap<PeerId, HashMap<ConnectionId, Instant>>,
+
+    /// Saved waker.
+    waker: Option<Waker>,
+}
+
+impl KeepAliveTracker {
+    /// Create new [`KeepAliveTracker`].
+    pub fn new(keep_alive_timeout: Duration) -> Self {
+        Self {
+            keep_alive_timeout,
+            pending_keep_alive_timeouts: FuturesUnordered::new(),
+            last_activity: HashMap::new(),
+            waker: None,
+        }
+    }
+
+    fn inner_on_connection_established(
+        &mut self,
+        peer: PeerId,
+        connection_id: ConnectionId,
+        keep_alive_timeout: Duration,
+    ) {
+        self.pending_keep_alive_timeouts.push(Box::pin(async move {
+            tokio::time::sleep(keep_alive_timeout).await;
+            (peer, connection_id)
+        }));
+
+        self.waker.take().map(|waker| waker.wake());
+    }
+
+    /// Called on connection established event to add a new keep-alive timeout.
+    pub fn on_connection_established(&mut self, peer: PeerId, connection_id: ConnectionId) {
+        self.inner_on_connection_established(peer, connection_id, self.keep_alive_timeout);
+    }
+
+    /// Called on substream opened event to track the last activity.
+    pub fn substream_activity(&mut self, peer: PeerId, connection_id: ConnectionId) {
+        // Keep track of the connection ID and the time the substream was opened.
+        self.last_activity
+            .entry(peer)
+            .or_default()
+            .insert(connection_id.clone(), Instant::now());
+    }
+}
+
+impl Stream for KeepAliveTracker {
+    type Item = (PeerId, ConnectionId);
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+
+        if this.pending_keep_alive_timeouts.is_empty() {
+            // Save current waker.
+            this.waker = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
+
+        if let Poll::Ready(event) = this.pending_keep_alive_timeouts.poll_next_unpin(cx) {
+            let Some((peer, connection_id)) = event else {
+                return Poll::Ready(None);
+            };
+
+            // Keep-alive timeout triggered for this connection. Double check if there is any
+            // activity since the timeout was started for this connection.
+            let next_keep_alive = this
+                .last_activity
+                .get(&peer)
+                .map(|activities| {
+                    activities.iter().find_map(|(connection, when)| {
+                        if connection_id == *connection && when.elapsed() < this.keep_alive_timeout
+                        {
+                            Some((
+                                peer,
+                                connection_id,
+                                this.keep_alive_timeout - when.elapsed(),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .flatten();
+
+            if let Some((peer, connection_id, keep_alive_timeout)) = next_keep_alive {
+                this.inner_on_connection_established(peer, connection_id, keep_alive_timeout);
+                this.waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
+
+            return Poll::Ready(Some((peer, connection_id)));
+        }
+
+        this.waker = Some(cx.waker().clone());
+        return Poll::Pending;
+    }
+}
+
 /// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact
 /// with the underlying transport protocols.
 #[derive(Debug)]
@@ -128,6 +241,9 @@ pub struct TransportService {
 
     /// Pending keep-alive timeouts.
     pending_keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
+
+    /// Track substream last activity.
+    last_activity: HashMap<PeerId, HashMap<ConnectionId, Instant>>,
 }
 
 impl TransportService {
@@ -153,6 +269,7 @@ impl TransportService {
                 connections: HashMap::new(),
                 keep_alive_timeout,
                 pending_keep_alive_timeouts: FuturesUnordered::new(),
+                last_activity: HashMap::new(),
             },
             tx,
         )
@@ -189,7 +306,7 @@ impl TransportService {
         match self.connections.get_mut(&peer) {
             Some(context) => match context.secondary {
                 Some(_) => {
-                    tracing::debug!(
+                    tracing::error!(
                         target: LOG_TARGET,
                         ?peer,
                         ?connection_id,
@@ -226,6 +343,13 @@ impl TransportService {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> Option<TransportEvent> {
+        if let Entry::Occupied(mut entry) = self.last_activity.entry(peer) {
+            entry.get_mut().remove(&connection_id);
+            if entry.get().is_empty() {
+                entry.remove();
+            }
+        }
+
         let Some(context) = self.connections.get_mut(&peer) else {
             tracing::warn!(
                 target: LOG_TARGET,
@@ -335,6 +459,8 @@ impl TransportService {
             .ok_or(SubstreamError::PeerDoesNotExist(peer))?
             .primary;
 
+        let connection_id = connection.connection_id().clone();
+
         let permit = connection.try_get_permit().ok_or(SubstreamError::ConnectionClosed)?;
         let substream_id =
             SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
@@ -344,6 +470,7 @@ impl TransportService {
             ?peer,
             protocol = %self.protocol,
             ?substream_id,
+            ?connection_id,
             "open substream",
         );
 
@@ -362,7 +489,7 @@ impl TransportService {
         let connection =
             &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?;
 
-        tracing::debug!(
+        tracing::error!(
             target: LOG_TARGET,
             ?peer,
             protocol = %self.protocol,
@@ -387,6 +514,27 @@ impl Stream for TransportService {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let protocol_name = self.protocol.clone();
+        let duration = self.keep_alive_timeout;
+
+        // let event = self.rx.poll_recv(cx);
+        // let pending_event = self.pending_keep_alive_timeouts.poll_next_unpin(cx);
+
+        // if let Poll::Ready(Some((peer, connection_id))) = pending_event {
+        //     if let Some(context) = self.connections.get_mut(&peer) {
+        //         tracing::error!(
+        //             target: LOG_TARGET,
+        //             ?peer,
+        //             ?connection_id,
+        //             protocol = ?protocol_name,
+        //             ?duration,
+        //             "keep-alive timeout over, downgrade connection",
+        //         );
+
+        //         context.downgrade(&connection_id);
+        //     }
+        // }
+
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
                 None => {
@@ -410,6 +558,30 @@ impl Stream for TransportService {
                         return Poll::Ready(Some(event));
                     }
                 }
+                Some(InnerTransportEvent::SubstreamOpened {
+                    peer,
+                    protocol,
+                    fallback,
+                    direction,
+                    substream,
+                    connection_id,
+                }) => {
+                    if protocol == self.protocol {
+                        // Keep track of the connection ID and the time the substream was opened.
+                        self.last_activity
+                            .entry(peer)
+                            .or_default()
+                            .insert(connection_id.clone(), Instant::now());
+                    }
+
+                    return Poll::Ready(Some(TransportEvent::SubstreamOpened {
+                        peer,
+                        protocol,
+                        fallback,
+                        direction,
+                        substream,
+                    }));
+                }
                 Some(event) => return Poll::Ready(Some(event.into())),
             }
         }
@@ -417,11 +589,27 @@ impl Stream for TransportService {
         while let Poll::Ready(Some((peer, connection_id))) =
             self.pending_keep_alive_timeouts.poll_next_unpin(cx)
         {
+            // Check for any activity since the timeout was started.
+            if let Some(last) = self.last_activity.get(&peer) {
+                for (con, when) in last.iter() {
+                    if connection_id == *con && when.elapsed() < self.keep_alive_timeout {
+                        self.pending_keep_alive_timeouts.push(Box::pin(async move {
+                            tokio::time::sleep(duration).await;
+                            (peer, connection_id)
+                        }));
+
+                        continue;
+                    }
+                }
+            }
+
             if let Some(context) = self.connections.get_mut(&peer) {
-                tracing::trace!(
+                tracing::error!(
                     target: LOG_TARGET,
                     ?peer,
                     ?connection_id,
+                    protocol = ?protocol_name,
+                    ?duration,
                     "keep-alive timeout over, downgrade connection",
                 );
 
