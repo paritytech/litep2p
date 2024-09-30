@@ -155,7 +155,7 @@ async fn cancel_unknown_request() {
 
     let request_id = RequestId::from(1337usize);
     assert!(!protocol.pending_outbound_cancels.contains_key(&request_id));
-    assert!(protocol.on_cancel_request(request_id).await.is_ok());
+    assert!(protocol.on_cancel_request(request_id).is_ok());
 }
 
 #[tokio::test]
@@ -278,16 +278,17 @@ async fn request_failure_reported_once() {
     // initiate outbound request
     //
     // since the peer wasn't properly registered, opening substream to them will fail
-    protocol
+    let request_id = RequestId::from(1337usize);
+    let error = protocol
         .on_send_request(
             peer,
-            RequestId::from(1337usize),
+            request_id,
             vec![1, 2, 3, 4],
             DialOptions::Reject,
             None,
         )
-        .await
-        .unwrap();
+        .unwrap_err();
+    protocol.report_request_failure(peer, request_id, error).await.unwrap();
 
     match handle.next().await {
         Some(RequestResponseEvent::RequestFailed {
