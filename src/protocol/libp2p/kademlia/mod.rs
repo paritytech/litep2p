@@ -31,7 +31,7 @@ use crate::{
             query::{QueryAction, QueryEngine},
             record::ProviderRecord,
             routing_table::RoutingTable,
-            store::MemoryStore,
+            store::{MemoryStore, MemoryStoreAction, MemoryStoreConfig},
             types::{ConnectionType, KademliaPeer, Key},
         },
         Direction, TransportEvent, TransportService,
@@ -48,6 +48,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
     collections::{hash_map::Entry, HashMap},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -68,6 +72,7 @@ const PARALLELISM_FACTOR: usize = 3;
 mod bucket;
 mod config;
 mod executor;
+mod futures_stream;
 mod handle;
 mod message;
 mod query;
@@ -133,6 +138,9 @@ pub(crate) struct Kademlia {
     /// RX channel for receiving commands from `KademliaHandle`.
     cmd_rx: Receiver<KademliaCommand>,
 
+    /// Next query ID.
+    next_query_id: Arc<AtomicUsize>,
+
     /// Routing table.
     routing_table: RoutingTable,
 
@@ -181,12 +189,21 @@ impl Kademlia {
             service.add_known_address(&peer, addresses.into_iter());
         }
 
+        let store = MemoryStore::with_config(
+            local_peer_id,
+            MemoryStoreConfig {
+                provider_refresh_interval: config.provider_refresh_interval,
+                ..Default::default()
+            },
+        );
+
         Self {
             service,
             routing_table,
             peers: HashMap::new(),
             cmd_rx: config.cmd_rx,
-            store: MemoryStore::new(),
+            next_query_id: config.next_query_id,
+            store,
             event_tx: config.event_tx,
             local_key,
             pending_dials: HashMap::new(),
@@ -199,6 +216,13 @@ impl Kademlia {
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
         }
+    }
+
+    /// Allocate next query ID.
+    fn next_query_id(&mut self) -> QueryId {
+        let query_id = self.next_query_id.fetch_add(1, Ordering::Relaxed);
+
+        QueryId(query_id)
     }
 
     /// Connection established to remote peer.
@@ -912,7 +936,7 @@ impl Kademlia {
                             self.disconnect_peer(peer, query_id).await;
                         }
                     }
-                }
+                },
                 command = self.cmd_rx.recv() => {
                     match command {
                         Some(KademliaCommand::FindNode { peer, query_id }) => {
@@ -1084,6 +1108,31 @@ impl Kademlia {
                         None => return Err(Error::EssentialTaskClosed),
                     }
                 },
+                action = self.store.next_action() => match action {
+                    Some(MemoryStoreAction::RefreshProvider { mut provider }) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            key = ?provider.key,
+                            "republishing local provider",
+                        );
+
+                        // Make sure to roll expiration time.
+                        provider.expires = Instant::now() + self.provider_ttl;
+
+                        self.store.put_provider(provider.clone());
+
+                        let key = provider.key.clone();
+                        let query_id = self.next_query_id();
+                        self.engine.start_add_provider(
+                            query_id,
+                            provider,
+                            self.routing_table
+                                .closest(Key::new(key), self.replication_factor)
+                                .into(),
+                        );
+                    }
+                    None => {}
+                }
             }
         }
     }
@@ -1132,6 +1181,7 @@ mod tests {
         );
         let (event_tx, event_rx) = channel(64);
         let (_cmd_tx, cmd_rx) = channel(64);
+        let next_query_id = Arc::new(AtomicUsize::new(0usize));
 
         let config = Config {
             protocol_names: vec![ProtocolName::from("/kad/1")],
@@ -1142,8 +1192,10 @@ mod tests {
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: Duration::from_secs(36 * 60 * 60),
             provider_ttl: Duration::from_secs(48 * 60 * 60),
+            provider_refresh_interval: Duration::from_secs(22 * 60 * 60),
             event_tx,
             cmd_rx,
+            next_query_id,
         };
 
         (
