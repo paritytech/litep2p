@@ -24,8 +24,8 @@ use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{QueryAction, QueryId},
-        record::Key as RecordKey,
-        types::{ConnectionType, Distance, KademliaPeer, Key},
+        record::{ContentProvider, Key as RecordKey},
+        types::{Distance, KademliaPeer, Key},
     },
     types::multiaddr::Multiaddr,
     PeerId,
@@ -50,6 +50,9 @@ pub struct GetProvidersConfig {
 
     /// Target key.
     pub target: Key<RecordKey>,
+
+    /// Known providers from the local store.
+    pub known_providers: Vec<KademliaPeer>,
 }
 
 #[derive(Debug)]
@@ -100,30 +103,35 @@ impl GetProvidersContext {
     }
 
     /// Get the found providers.
-    pub fn found_providers(self) -> Vec<KademliaPeer> {
+    pub fn found_providers(self) -> Vec<ContentProvider> {
+        Self::merge_and_sort_providers(
+            self.config.known_providers.into_iter().chain(self.found_providers),
+            self.config.target,
+        )
+    }
+
+    fn merge_and_sort_providers(
+        found_providers: impl IntoIterator<Item = KademliaPeer>,
+        target: Key<RecordKey>,
+    ) -> Vec<ContentProvider> {
         // Merge addresses of different provider records of the same peer.
         let mut providers = HashMap::<PeerId, HashSet<Multiaddr>>::new();
-        self.found_providers.into_iter().for_each(|provider| {
-            providers
-                .entry(provider.peer)
-                .or_default()
-                .extend(provider.addresses.into_iter())
+        found_providers.into_iter().for_each(|provider| {
+            providers.entry(provider.peer).or_default().extend(provider.addresses)
         });
 
         // Convert into `Vec<KademliaPeer>`
         let mut providers = providers
             .into_iter()
-            .map(|(peer, addresses)| KademliaPeer {
-                key: Key::from(peer.clone()),
+            .map(|(peer, addresses)| ContentProvider {
                 peer,
                 addresses: addresses.into_iter().collect(),
-                connection: ConnectionType::NotConnected,
             })
             .collect::<Vec<_>>();
 
         // Sort by the provider distance to the target key.
         providers.sort_unstable_by(|p1, p2| {
-            p1.key.distance(&self.config.target).cmp(&p2.key.distance(&self.config.target))
+            Key::from(p1.peer).distance(&target).cmp(&Key::from(p2.peer).distance(&target))
         });
 
         providers
@@ -168,7 +176,7 @@ impl GetProvidersContext {
             return;
         };
 
-        self.found_providers.extend(providers.into_iter());
+        self.found_providers.extend(providers);
 
         // Add the queried peer to `queried` and all new peers which haven't been
         // queried to `candidates`

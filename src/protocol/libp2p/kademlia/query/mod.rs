@@ -26,7 +26,7 @@ use crate::{
             get_providers::{GetProvidersConfig, GetProvidersContext},
             get_record::{GetRecordConfig, GetRecordContext},
         },
-        record::{Key as RecordKey, ProviderRecord, Record},
+        record::{ContentProvider, Key as RecordKey, Record},
         types::{KademliaPeer, Key},
         PeerRecord, Quorum,
     },
@@ -86,8 +86,11 @@ enum QueryType {
 
     /// `ADD_PROVIDER` query.
     AddProvider {
+        /// Provided key.
+        provided_key: RecordKey,
+
         /// Provider record that need to be stored.
-        provider: ProviderRecord,
+        provider: ContentProvider,
 
         /// Context for the `FIND_NODE` query.
         context: FindNodeContext<RecordKey>,
@@ -139,8 +142,11 @@ pub enum QueryAction {
 
     /// Add the provider record to nodes closest to the target key.
     AddProviderToFoundNodes {
+        /// Provided key.
+        provided_key: RecordKey,
+
         /// Provider record.
-        provider: ProviderRecord,
+        provider: ContentProvider,
 
         /// Peers for whom the `ADD_PROVIDER` must be sent to.
         peers: Vec<KademliaPeer>,
@@ -160,8 +166,11 @@ pub enum QueryAction {
         /// Query ID.
         query_id: QueryId,
 
+        /// Provided key.
+        provided_key: RecordKey,
+
         /// Found providers.
-        providers: Vec<KademliaPeer>,
+        providers: Vec<ContentProvider>,
     },
 
     /// Query succeeded.
@@ -344,7 +353,8 @@ impl QueryEngine {
     pub fn start_add_provider(
         &mut self,
         query_id: QueryId,
-        provider: ProviderRecord,
+        provided_key: RecordKey,
+        provider: ContentProvider,
         candidates: VecDeque<KademliaPeer>,
     ) -> QueryId {
         tracing::debug!(
@@ -355,18 +365,18 @@ impl QueryEngine {
             "start `ADD_PROVIDER` query",
         );
 
-        let target = Key::new(provider.key.clone());
         let config = FindNodeConfig {
             local_peer_id: self.local_peer_id,
             replication_factor: self.replication_factor,
             parallelism_factor: self.parallelism_factor,
             query: query_id,
-            target,
+            target: Key::new(provided_key.clone()),
         };
 
         self.queries.insert(
             query_id,
             QueryType::AddProvider {
+                provided_key,
                 provider,
                 context: FindNodeContext::new(config, candidates),
             },
@@ -381,6 +391,7 @@ impl QueryEngine {
         query_id: QueryId,
         key: RecordKey,
         candidates: VecDeque<KademliaPeer>,
+        known_providers: Vec<ContentProvider>,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -396,6 +407,7 @@ impl QueryEngine {
             parallelism_factor: self.parallelism_factor,
             query: query_id,
             target,
+            known_providers: known_providers.into_iter().map(Into::into).collect(),
         };
 
         self.queries.insert(
@@ -527,12 +539,18 @@ impl QueryEngine {
                 query_id: context.config.query,
                 records: context.found_records(),
             },
-            QueryType::AddProvider { provider, context } => QueryAction::AddProviderToFoundNodes {
+            QueryType::AddProvider {
+                provided_key,
+                provider,
+                context,
+            } => QueryAction::AddProviderToFoundNodes {
+                provided_key,
                 provider,
                 peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::GetProviders { context } => QueryAction::GetProvidersQueryDone {
                 query_id: context.config.query,
+                provided_key: context.config.target.clone().into_preimage(),
                 providers: context.found_providers(),
             },
         }

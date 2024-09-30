@@ -41,7 +41,7 @@ use std::{
 const DEFAULT_TTL: Duration = Duration::from_secs(36 * 60 * 60);
 
 /// Default provider record TTL.
-const DEFAULT_PROVIDER_TTL: Duration = Duration::from_secs(48 * 60 * 60);
+pub(super) const DEFAULT_PROVIDER_TTL: Duration = Duration::from_secs(48 * 60 * 60);
 
 /// Default provider republish interval.
 pub(super) const DEFAULT_PROVIDER_REFRESH_INTERVAL: Duration = Duration::from_secs(22 * 60 * 60);

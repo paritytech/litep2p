@@ -20,7 +20,7 @@
 
 use crate::{
     protocol::libp2p::kademlia::{
-        record::{Key as RecordKey, ProviderRecord, Record},
+        record::{ContentProvider, Key as RecordKey, Record},
         schema,
         types::{ConnectionType, KademliaPeer},
     },
@@ -172,14 +172,14 @@ impl KademliaMessage {
     }
 
     /// Create `ADD_PROVIDER` message with `provider`.
-    pub fn add_provider(provider: ProviderRecord) -> Bytes {
+    pub fn add_provider(provided_key: RecordKey, provider: ContentProvider) -> Bytes {
         let peer = KademliaPeer::new(
-            provider.provider,
+            provider.peer,
             provider.addresses,
             ConnectionType::CanConnect, // ignored by message recipient
         );
         let message = schema::kademlia::Message {
-            key: provider.key.clone().to_vec(),
+            key: provided_key.clone().to_vec(),
             cluster_level_raw: 10,
             r#type: schema::kademlia::MessageType::AddProvider.into(),
             provider_peers: std::iter::once((&peer).into()).collect(),
@@ -209,16 +209,17 @@ impl KademliaMessage {
 
     /// Create `GET_PROVIDERS` response.
     pub fn get_providers_response(
-        providers: Vec<ProviderRecord>,
+        providers: Vec<ContentProvider>,
         closer_peers: &[KademliaPeer],
     ) -> Vec<u8> {
         let provider_peers = providers
             .into_iter()
             .map(|p| {
                 KademliaPeer::new(
-                    p.provider,
+                    p.peer,
                     p.addresses,
-                    ConnectionType::CanConnect, // ignored by recipient
+                    // `ConnectionType` is ignored by a recipient
+                    ConnectionType::NotConnected,
                 )
             })
             .map(|p| (&p).into())
