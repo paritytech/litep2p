@@ -96,6 +96,29 @@ impl ConnectionContext {
             "connection doesn't exist, cannot downgrade",
         );
     }
+
+    /// Try to upgrade the connection to active state.
+    fn try_upgrade(&mut self, connection_id: &ConnectionId) {
+        if self.primary.connection_id() == connection_id {
+            self.primary.try_open();
+            return;
+        }
+
+        if let Some(handle) = &mut self.secondary {
+            if handle.connection_id() == connection_id {
+                handle.try_open();
+                return;
+            }
+        }
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            primary = ?self.primary.connection_id(),
+            secondary = ?self.secondary.as_ref().map(|handle| handle.connection_id()),
+            ?connection_id,
+            "connection doesn't exist, cannot upgrade",
+        );
+    }
 }
 
 /// Tracks connection keep-alive timeouts.
@@ -524,6 +547,9 @@ impl Stream for TransportService {
                 }) => {
                     if protocol == self.protocol {
                         self.keep_alive_tracker.substream_activity(peer, connection_id);
+                        if let Some(context) = self.connections.get_mut(&peer) {
+                            context.try_upgrade(&connection_id);
+                        }
                     }
 
                     return Poll::Ready(Some(TransportEvent::SubstreamOpened {
