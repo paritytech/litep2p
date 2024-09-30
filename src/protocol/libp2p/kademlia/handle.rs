@@ -155,6 +155,12 @@ pub(crate) enum KademliaCommand {
         query_id: QueryId,
     },
 
+    /// Stop providing the key locally and refreshing the provider.
+    StopProviding {
+        /// Provided key.
+        key: RecordKey,
+    },
+
     /// Store record locally.
     StoreRecord {
         // Record.
@@ -362,6 +368,15 @@ impl KademliaHandle {
             .await;
 
         query_id
+    }
+
+    /// Stop providing the key on the DHT.
+    ///
+    /// This will stop republishing the provider, but won't
+    /// remove it instantly from the nodes. It will be removed from them after the provider TTL
+    /// expires, set by default to 48 hours.
+    pub async fn stop_providing(&mut self, key: RecordKey) {
+        let _ = self.cmd_tx.send(KademliaCommand::StopProviding { key }).await;
     }
 
     /// Get providers from DHT.
