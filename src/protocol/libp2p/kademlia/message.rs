@@ -172,8 +172,7 @@ impl KademliaMessage {
     }
 
     /// Create `ADD_PROVIDER` message with `provider`.
-    #[allow(unused)]
-    pub fn add_provider(provider: ProviderRecord) -> Vec<u8> {
+    pub fn add_provider(provider: ProviderRecord) -> Bytes {
         let peer = KademliaPeer::new(
             provider.provider,
             provider.addresses,
@@ -187,10 +186,10 @@ impl KademliaMessage {
             ..Default::default()
         };
 
-        let mut buf = Vec::with_capacity(message.encoded_len());
+        let mut buf = BytesMut::with_capacity(message.encoded_len());
         message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
 
-        buf
+        buf.freeze()
     }
 
     /// Create `GET_PROVIDERS` request for `key`.

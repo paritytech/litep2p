@@ -25,7 +25,7 @@ use crate::{
             find_node::{FindNodeConfig, FindNodeContext},
             get_record::{GetRecordConfig, GetRecordContext},
         },
-        record::{Key as RecordKey, Record},
+        record::{Key as RecordKey, ProviderRecord, Record},
         types::{KademliaPeer, Key},
         PeerRecord, Quorum,
     },
@@ -45,8 +45,6 @@ mod get_record;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
 
-// TODO: store record key instead of the actual record
-
 /// Type representing a query ID.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct QueryId(pub usize);
@@ -56,7 +54,7 @@ pub struct QueryId(pub usize);
 enum QueryType {
     /// `FIND_NODE` query.
     FindNode {
-        /// Context for the `FIND_NODE` query
+        /// Context for the `FIND_NODE` query.
         context: FindNodeContext<PeerId>,
     },
 
@@ -65,7 +63,7 @@ enum QueryType {
         /// Record that needs to be stored.
         record: Record,
 
-        /// Context for the `FIND_NODE` query
+        /// Context for the `FIND_NODE` query.
         context: FindNodeContext<RecordKey>,
     },
 
@@ -82,6 +80,15 @@ enum QueryType {
     GetRecord {
         /// Context for the `GET_VALUE` query.
         context: GetRecordContext,
+    },
+
+    /// `ADD_PROVIDER` query.
+    AddProvider {
+        /// Provider record that need to be stored.
+        provider: ProviderRecord,
+
+        /// Context for the `FIND_NODE` query.
+        context: FindNodeContext<RecordKey>,
     },
 }
 
@@ -122,6 +129,15 @@ pub enum QueryAction {
         peers: Vec<KademliaPeer>,
     },
 
+    /// Add the provider record to nodes closest to the target key.
+    AddProviderToFoundNodes {
+        /// Provider record.
+        provider: ProviderRecord,
+
+        /// Peers for whom the `ADD_PROVIDER` must be sent to.
+        peers: Vec<KademliaPeer>,
+    },
+
     /// `GET_VALUE` query succeeded.
     GetRecordQueryDone {
         /// Query ID.
@@ -131,7 +147,6 @@ pub enum QueryAction {
         records: Vec<PeerRecord>,
     },
 
-    // TODO: remove
     /// Query succeeded.
     QuerySucceeded {
         /// ID of the query that succeeded.
@@ -308,6 +323,41 @@ impl QueryEngine {
         query_id
     }
 
+    /// Start `ADD_PROVIDER` query.
+    pub fn start_add_provider(
+        &mut self,
+        query_id: QueryId,
+        provider: ProviderRecord,
+        candidates: VecDeque<KademliaPeer>,
+    ) -> QueryId {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            ?provider,
+            num_peers = ?candidates.len(),
+            "start `ADD_PROVIDER` query",
+        );
+
+        let target = Key::new(provider.key.clone());
+        let config = FindNodeConfig {
+            local_peer_id: self.local_peer_id,
+            replication_factor: self.replication_factor,
+            parallelism_factor: self.parallelism_factor,
+            query: query_id,
+            target,
+        };
+
+        self.queries.insert(
+            query_id,
+            QueryType::AddProvider {
+                provider,
+                context: FindNodeContext::new(config, candidates),
+            },
+        );
+
+        query_id
+    }
+
     /// Register response failure from a queried peer.
     pub fn register_response_failure(&mut self, query: QueryId, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response failure");
@@ -326,6 +376,9 @@ impl QueryEngine {
                 context.register_response_failure(peer);
             }
             Some(QueryType::GetRecord { context }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::AddProvider { context, .. }) => {
                 context.register_response_failure(peer);
             }
         }
@@ -363,6 +416,12 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
+            Some(QueryType::AddProvider { context, .. }) => match message {
+                KademliaMessage::FindNode { peers, .. } => {
+                    context.register_response(peer, peers);
+                }
+                _ => unreachable!(),
+            },
         }
     }
 
@@ -379,6 +438,7 @@ impl QueryEngine {
             Some(QueryType::PutRecord { context, .. }) => context.next_peer_action(peer),
             Some(QueryType::PutRecordToPeers { context, .. }) => context.next_peer_action(peer),
             Some(QueryType::GetRecord { context }) => context.next_peer_action(peer),
+            Some(QueryType::AddProvider { context, .. }) => context.next_peer_action(peer),
         }
     }
 
@@ -403,6 +463,10 @@ impl QueryEngine {
                 query_id: context.config.query,
                 records: context.found_records(),
             },
+            QueryType::AddProvider { provider, context } => QueryAction::AddProviderToFoundNodes {
+                provider,
+                peers: context.responses.into_values().collect::<Vec<_>>(),
+            },
         }
     }
 
@@ -422,6 +486,7 @@ impl QueryEngine {
                 QueryType::PutRecord { context, .. } => context.next_action(),
                 QueryType::PutRecordToPeers { context, .. } => context.next_action(),
                 QueryType::GetRecord { context } => context.next_action(),
+                QueryType::AddProvider { context, .. } => context.next_action(),
             };
 
             match action {

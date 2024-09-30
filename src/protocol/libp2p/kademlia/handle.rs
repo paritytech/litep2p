@@ -130,6 +130,18 @@ pub(crate) enum KademliaCommand {
         query_id: QueryId,
     },
 
+    /// Register as a content provider for `key`.
+    StartProviding {
+        /// Provided key.
+        key: RecordKey,
+
+        /// Our external addresses to publish.
+        public_addresses: Vec<Multiaddr>,
+
+        /// Query ID for the query.
+        query_id: QueryId,
+    },
+
     /// Store record locally.
     StoreRecord {
         // Record.
@@ -175,7 +187,8 @@ pub enum KademliaEvent {
     },
 
     /// `PUT_VALUE` query succeeded.
-    PutRecordSucess {
+    // TODO: this is never emitted. Implement + add `AddProviderSuccess`.
+    PutRecordSuccess {
         /// Query ID.
         query_id: QueryId,
 
@@ -292,6 +305,27 @@ impl KademliaHandle {
             .send(KademliaCommand::GetRecord {
                 key,
                 quorum,
+                query_id,
+            })
+            .await;
+
+        query_id
+    }
+
+    /// Register as a content provider on the DHT.
+    ///
+    /// Register the local peer ID & its `public_addresses` as a provider for a given `key`.
+    pub async fn start_providing(
+        &mut self,
+        key: RecordKey,
+        public_addresses: Vec<Multiaddr>,
+    ) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::StartProviding {
+                key,
+                public_addresses,
                 query_id,
             })
             .await;
