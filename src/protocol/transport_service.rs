@@ -33,7 +33,7 @@ use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     fmt::Debug,
     pin::Pin,
     sync::{
@@ -113,7 +113,7 @@ struct KeepAliveTracker {
     pending_keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
 
     /// Track substream last activity.
-    last_activity: HashMap<PeerId, HashMap<ConnectionId, Instant>>,
+    last_activity: HashMap<(PeerId, ConnectionId), Instant>,
 
     /// Saved waker.
     waker: Option<Waker>,
@@ -151,21 +151,13 @@ impl KeepAliveTracker {
 
     /// Called on connection closed event.
     pub fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
-        if let Entry::Occupied(mut entry) = self.last_activity.entry(peer) {
-            entry.get_mut().remove(&connection_id);
-            if entry.get().is_empty() {
-                entry.remove();
-            }
-        }
+        self.last_activity.remove(&(peer, connection_id));
     }
 
     /// Called on substream opened event to track the last activity.
     pub fn substream_activity(&mut self, peer: PeerId, connection_id: ConnectionId) {
         // Keep track of the connection ID and the time the substream was opened.
-        self.last_activity
-            .entry(peer)
-            .or_default()
-            .insert(connection_id.clone(), Instant::now());
+        self.last_activity.insert((peer, connection_id), Instant::now());
     }
 }
 
@@ -190,20 +182,17 @@ impl Stream for KeepAliveTracker {
             // activity since the timeout was started for this connection.
             let next_keep_alive = this
                 .last_activity
-                .get(&peer)
-                .map(|activities| {
-                    activities.iter().find_map(|(connection, when)| {
-                        if connection_id == *connection && when.elapsed() < this.keep_alive_timeout
-                        {
-                            Some((
-                                peer,
-                                connection_id,
-                                this.keep_alive_timeout - when.elapsed(),
-                            ))
-                        } else {
-                            None
-                        }
-                    })
+                .get(&(peer, connection_id))
+                .map(|when| {
+                    if when.elapsed() < this.keep_alive_timeout {
+                        Some((
+                            peer,
+                            connection_id,
+                            this.keep_alive_timeout - when.elapsed(),
+                        ))
+                    } else {
+                        None
+                    }
                 })
                 .flatten();
 
