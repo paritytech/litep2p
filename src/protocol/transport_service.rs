@@ -599,7 +599,7 @@ impl Stream for TransportService {
 mod tests {
     use super::*;
     use crate::{
-        protocol::TransportService,
+        protocol::{ProtocolCommand, TransportService},
         transport::{
             manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
             KEEP_ALIVE_TIMEOUT,
@@ -1253,5 +1253,96 @@ mod tests {
             }
             None => panic!("expected {peer} to exist"),
         }
+    }
+
+    #[tokio::test]
+    async fn downgraded_connection_without_substreams_is_closed() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1337usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1337usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            endpoint,
+        }) = service.next().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(
+            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
+            1
+        );
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is still active.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        // Open a substream to the peer.
+        let substream_id = service.open_substream(peer).unwrap();
+
+        // Simulate keep-alive timeout expiration.
+        service
+            .connections
+            .get_mut(&peer)
+            .unwrap()
+            .downgrade(&ConnectionId::from(1337usize));
+
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        // ProtocolCommand
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(substream_id, opened_substream_id);
+
+                // Individual transports like TCP will open a substream
+                // and then will generate a `SubstreamOpened` event via
+                // the protocol-set handler.
+                //
+                // The substream is used by individual protocols and then
+                // is closed. This simulates the substream being closed.
+                drop(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Open a substream to the peer.
+        // However, the connection was downgraded and all substreams are closed.
+        assert_eq!(
+            service.open_substream(peer),
+            Err(SubstreamError::ConnectionClosed)
+        );
     }
 }
