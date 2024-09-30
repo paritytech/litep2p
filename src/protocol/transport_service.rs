@@ -208,6 +208,13 @@ impl Stream for KeepAliveTracker {
                 .flatten();
 
             if let Some((peer, connection_id, keep_alive_timeout)) = next_keep_alive {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?connection_id,
+                    ?keep_alive_timeout,
+                    "keep-alive timeout extended",
+                );
                 this.inner_on_connection_established(peer, connection_id, keep_alive_timeout);
                 this.waker = Some(cx.waker().clone());
                 return Poll::Pending;
@@ -932,6 +939,10 @@ mod tests {
 
     #[tokio::test]
     async fn keep_alive_timeout_expires_for_a_stale_connection() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
         let (mut service, sender, _) = transport_service();
         let peer = PeerId::random();
 
@@ -1046,6 +1057,85 @@ mod tests {
         match tokio::time::timeout(Duration::from_secs(10), service.next()).await {
             Ok(event) => panic!("didn't expect an event: {event:?}"),
             Err(_) => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn keep_alive_timeout_downgrades_connections() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1337usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1337usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            endpoint,
+        }) = service.next().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(
+            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
+            1
+        );
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is still active.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        // Verify the connection is downgraded.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is not active.
+                assert!(!context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
         }
     }
 }

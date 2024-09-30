@@ -142,6 +142,11 @@ impl ConnectionHandle {
             TrySendError::Closed(_) => Error::ConnectionClosed,
         })
     }
+
+    /// Check if the connection is active.
+    pub fn is_active(&self) -> bool {
+        matches!(self.connection, ConnectionType::Active(_))
+    }
 }
 
 /// Type which allows the connection to be kept open.
