@@ -115,6 +115,7 @@ impl From<SubstreamError> for RejectReason {
 }
 
 /// Request-response events.
+#[derive(Debug)]
 pub(super) enum InnerRequestResponseEvent {
     /// Request received from remote
     RequestReceived {
