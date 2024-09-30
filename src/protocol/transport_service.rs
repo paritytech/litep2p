@@ -1305,8 +1305,9 @@ mod tests {
             None => panic!("expected {peer} to exist"),
         }
 
-        // Open a substream to the peer.
+        // Open substreams to the peer.
         let substream_id = service.open_substream(peer).unwrap();
+        let second_substream_id = service.open_substream(peer).unwrap();
 
         // Simulate keep-alive timeout expiration.
         service
@@ -1315,8 +1316,10 @@ mod tests {
             .unwrap()
             .downgrade(&ConnectionId::from(1337usize));
 
+        let mut permits = Vec::new();
+
+        // First substream.
         let protocol_command = cmd_rx1.recv().await.unwrap();
-        // ProtocolCommand
         match protocol_command {
             ProtocolCommand::OpenSubstream {
                 protocol,
@@ -1327,19 +1330,67 @@ mod tests {
                 assert_eq!(protocol, ProtocolName::from("/notif/1"));
                 assert_eq!(substream_id, opened_substream_id);
 
-                // Individual transports like TCP will open a substream
-                // and then will generate a `SubstreamOpened` event via
-                // the protocol-set handler.
-                //
-                // The substream is used by individual protocols and then
-                // is closed. This simulates the substream being closed.
-                drop(permit);
+                // Save the substream permit for later.
+                permits.push(permit);
             }
             _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
         }
 
-        // Open a substream to the peer.
-        // However, the connection was downgraded and all substreams are closed.
+        // Second substream.
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(second_substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Drop one permit.
+        let permit = permits.pop();
+        // Individual transports like TCP will open a substream
+        // and then will generate a `SubstreamOpened` event via
+        // the protocol-set handler.
+        //
+        // The substream is used by individual protocols and then
+        // is closed. This simulates the substream being closed.
+        drop(permit);
+
+        // Open a new substream to the peer. This will succeed as long as we still have
+        // one substream open.
+        let substream_id = service.open_substream(peer).unwrap();
+        // Handle the substream.
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Drop all substreams.
+        drop(permits);
+
+        // Cannot open a new substream because:
+        // 1. connection was downgraded by keep-alive timeout
+        // 2. all substreams were dropped.
         assert_eq!(
             service.open_substream(peer),
             Err(SubstreamError::ConnectionClosed)
