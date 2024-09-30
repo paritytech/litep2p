@@ -44,6 +44,12 @@ impl<F> FuturesStream<F> {
         }
     }
 
+    /// Number of futeres in the stream.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.futures.len()
+    }
+
     /// Push a future for processing.
     pub fn push(&mut self, future: F) {
         self.futures.push(future);
