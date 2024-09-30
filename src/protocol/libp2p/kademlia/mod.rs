@@ -599,11 +599,8 @@ impl Kademlia {
                             .routing_table
                             .closest(Key::from(key.to_vec()), self.replication_factor);
 
-                        let message = KademliaMessage::get_providers_response(
-                            key.clone(),
-                            providers,
-                            &closer_peers,
-                        );
+                        let message =
+                            KademliaMessage::get_providers_response(providers, &closer_peers);
                         self.executor.send_message(peer, message.into(), substream);
                     }
                     (None, None) => tracing::debug!(
@@ -829,6 +826,19 @@ impl Kademlia {
                     .await;
                 Ok(())
             }
+            QueryAction::GetProvidersQueryDone {
+                query_id,
+                providers,
+            } => {
+                let _ = self
+                    .event_tx
+                    .send(KademliaEvent::GetProvidersSuccess {
+                        query_id,
+                        providers,
+                    })
+                    .await;
+                Ok(())
+            }
             QueryAction::QueryFailed { query } => {
                 tracing::debug!(target: LOG_TARGET, ?query, "query failed");
 
@@ -963,7 +973,8 @@ impl Kademlia {
                                 "store record to DHT",
                             );
 
-                            // For `PUT_VALUE` requests originating locally we are always the publisher.
+                            // For `PUT_VALUE` requests originating locally we are always the
+                            // publisher.
                             record.publisher = Some(self.local_key.clone().into_preimage());
 
                             // Make sure TTL is set.
@@ -1060,20 +1071,36 @@ impl Kademlia {
                                 (Some(record), Quorum::One) => {
                                     let _ = self
                                         .event_tx
-                                        .send(KademliaEvent::GetRecordSuccess { query_id, records: RecordsType::LocalStore(record.clone()) })
+                                        .send(KademliaEvent::GetRecordSuccess {
+                                            query_id,
+                                            records: RecordsType::LocalStore(record.clone()),
+                                        })
                                         .await;
                                 }
                                 (record, _) => {
                                     self.engine.start_get_record(
                                         query_id,
                                         key.clone(),
-                                        self.routing_table.closest(Key::new(key.clone()), self.replication_factor).into(),
+                                        self.routing_table
+                                            .closest(Key::new(key), self.replication_factor)
+                                            .into(),
                                         quorum,
                                         if record.is_some() { 1 } else { 0 },
                                     );
                                 }
                             }
 
+                        }
+                        Some(KademliaCommand::GetProviders { key, query_id }) => {
+                            tracing::debug!(target: LOG_TARGET, ?key, "get providers from DHT");
+
+                            self.engine.start_get_providers(
+                                query_id,
+                                key.clone(),
+                                self.routing_table
+                                    .closest(Key::new(key), self.replication_factor)
+                                    .into(),
+                            );
                         }
                         Some(KademliaCommand::AddKnownPeer { peer, addresses }) => {
                             tracing::trace!(
@@ -1088,7 +1115,10 @@ impl Kademlia {
                                 addresses.clone(),
                                 self.peers
                                     .get(&peer)
-                                    .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
+                                    .map_or(
+                                        ConnectionType::NotConnected,
+                                        |_| ConnectionType::Connected,
+                                    ),
                             );
                             self.service.add_known_address(&peer, addresses.into_iter());
 
@@ -1101,7 +1131,8 @@ impl Kademlia {
                             );
 
                             // Make sure TTL is set.
-                            record.expires = record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
+                            record.expires =
+                                record.expires.or_else(|| Some(Instant::now() + self.record_ttl));
 
                             self.store.put(record);
                         }

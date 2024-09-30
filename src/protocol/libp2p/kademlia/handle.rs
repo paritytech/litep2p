@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{PeerRecord, QueryId, Record, RecordKey},
+    protocol::libp2p::kademlia::{KademliaPeer, PeerRecord, QueryId, Record, RecordKey},
     PeerId,
 };
 
@@ -134,6 +134,15 @@ pub(crate) enum KademliaCommand {
         query_id: QueryId,
     },
 
+    /// Get providers from DHT.
+    GetProviders {
+        /// Provided key.
+        key: RecordKey,
+
+        /// Query ID for the query.
+        query_id: QueryId,
+    },
+
     /// Register as a content provider for `key`.
     StartProviding {
         /// Provided key.
@@ -188,6 +197,16 @@ pub enum KademliaEvent {
 
         /// Found records.
         records: RecordsType,
+    },
+
+    /// `GET_PROVIDERS` query succeeded.
+    GetProvidersSuccess {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Found providers with cached addresses. Returned providers are sorted by distane to the
+        /// provided key.
+        providers: Vec<KademliaPeer>,
     },
 
     /// `PUT_VALUE` query succeeded.
@@ -284,6 +303,8 @@ impl KademliaHandle {
     }
 
     /// Store record to DHT to the given peers.
+    ///
+    /// Returns [`Err`] only if `Kademlia` is terminating.
     pub async fn put_record_to_peers(
         &mut self,
         record: Record,
@@ -305,6 +326,8 @@ impl KademliaHandle {
     }
 
     /// Get record from DHT.
+    ///
+    /// Returns [`Err`] only if `Kademlia` is terminating.
     pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) -> QueryId {
         let query_id = self.next_query_id();
         let _ = self
@@ -322,6 +345,7 @@ impl KademliaHandle {
     /// Register as a content provider on the DHT.
     ///
     /// Register the local peer ID & its `public_addresses` as a provider for a given `key`.
+    /// Returns [`Err`] only if `Kademlia` is terminating.
     pub async fn start_providing(
         &mut self,
         key: RecordKey,
@@ -336,6 +360,16 @@ impl KademliaHandle {
                 query_id,
             })
             .await;
+
+        query_id
+    }
+
+    /// Get providers from DHT.
+    ///
+    /// Returns [`Err`] only if `Kademlia` is terminating.
+    pub async fn get_providers(&mut self, key: RecordKey) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::GetProviders { key, query_id }).await;
 
         query_id
     }

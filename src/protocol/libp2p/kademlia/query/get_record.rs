@@ -135,7 +135,12 @@ impl GetRecordContext {
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist");
+            tracing::debug!(
+                target: LOG_TARGET,
+                query = ?self.config.query,
+                ?peer,
+                "`GetRecordContext`: pending peer doesn't exist",
+            );
             return;
         };
 
@@ -149,10 +154,20 @@ impl GetRecordContext {
         record: Option<Record>,
         peers: Vec<KademliaPeer>,
     ) {
-        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer");
+        tracing::trace!(
+            target: LOG_TARGET,
+            query = ?self.config.query,
+            ?peer,
+            "`GetRecordContext`: received response from peer",
+        );
 
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer but didn't expect it");
+            tracing::debug!(
+                target: LOG_TARGET,
+                query = ?self.config.query,
+                ?peer,
+                "`GetRecordContext`: received response from peer but didn't expect it",
+            );
             return;
         };
 
@@ -206,12 +221,21 @@ impl GetRecordContext {
 
     /// Schedule next peer for outbound `GET_VALUE` query.
     fn schedule_next_peer(&mut self) -> Option<QueryAction> {
-        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, "get next peer");
+        tracing::trace!(
+            target: LOG_TARGET,
+            query = ?self.config.query,
+            "`GetRecordContext`: get next peer",
+        );
 
         let (_, candidate) = self.candidates.pop_first()?;
         let peer = candidate.peer;
 
-        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "current candidate");
+        tracing::trace!(
+            target: LOG_TARGET,
+            query = ?self.config.query,
+            ?peer,
+            "`GetRecordContext`: current candidate",
+        );
         self.pending.insert(candidate.peer, candidate);
 
         Some(QueryAction::SendMessage {
