@@ -220,6 +220,13 @@ impl Stream for KeepAliveTracker {
                 return Poll::Pending;
             }
 
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                "keep-alive timeout triggered",
+            );
+
             return Poll::Ready(Some((peer, connection_id)));
         }
 
@@ -1062,6 +1069,14 @@ mod tests {
         }
     }
 
+    async fn poll_service(service: &mut TransportService) {
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+    }
+
     #[tokio::test]
     async fn keep_alive_timeout_downgrades_connections() {
         let _ = tracing_subscriber::fmt()
@@ -1112,19 +1127,9 @@ mod tests {
             None => panic!("expected {peer} to exist"),
         }
 
-        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
-            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
-            std::task::Poll::Pending => std::task::Poll::Ready(()),
-        })
-        .await;
-
+        poll_service(&mut service).await;
         tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
-
-        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
-            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
-            std::task::Poll::Pending => std::task::Poll::Ready(()),
-        })
-        .await;
+        poll_service(&mut service).await;
 
         // Verify the connection is downgraded.
         match service.connections.get(&peer) {
@@ -1191,32 +1196,26 @@ mod tests {
             None => panic!("expected {peer} to exist"),
         }
 
-        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
-            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
-            std::task::Poll::Pending => std::task::Poll::Ready(()),
-        })
-        .await;
-
-        tokio::time::sleep(KEEP_ALIVE_TIMEOUT / 2).await;
+        poll_service(&mut service).await;
+        // Sleep for almost the entire keep-alive timeout.
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
         // This ensures we reset the keep-alive timer when other protocols
         // want to open a substream.
         service.open_substream(peer).unwrap();
+        assert_eq!(
+            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
+            1
+        );
 
-        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
-            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
-            std::task::Poll::Pending => std::task::Poll::Ready(()),
-        })
-        .await;
-
-        tokio::time::sleep(KEEP_ALIVE_TIMEOUT / 2 + std::time::Duration::from_secs(1)).await;
-
-        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
-            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
-            std::task::Poll::Pending => std::task::Poll::Ready(()),
-        })
-        .await;
-
+        poll_service(&mut service).await;
+        // The keep alive timeout should be advanced.
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        poll_service(&mut service).await;
+        assert_eq!(
+            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
+            1
+        );
         // If the `service.open_substream` wasn't called, the connection would have been downgraded.
         // Instead the keep-alive was forwarded `KEEP_ALIVE_TIMEOUT` seconds into the future.
         // Verify the connection is still active.
@@ -1232,13 +1231,14 @@ mod tests {
             None => panic!("expected {peer} to exist"),
         }
 
+        poll_service(&mut service).await;
         tokio::time::sleep(KEEP_ALIVE_TIMEOUT).await;
+        poll_service(&mut service).await;
 
-        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
-            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
-            std::task::Poll::Pending => std::task::Poll::Ready(()),
-        })
-        .await;
+        assert_eq!(
+            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
+            0
+        );
 
         // The connection had no substream activity for `KEEP_ALIVE_TIMEOUT` seconds.
         // Verify the connection is downgraded.
