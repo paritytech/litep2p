@@ -369,9 +369,7 @@ impl KademliaHandle {
     /// Returns [`Err`] only if [`super::Kademlia`] is terminating.
     pub async fn get_providers(&mut self, key: RecordKey) -> QueryId {
         let query_id = self.next_query_id();
-        let _ = self.cmd_tx
-            .send(KademliaCommand::GetProviders { key, query_id })
-            .await;
+        let _ = self.cmd_tx.send(KademliaCommand::GetProviders { key, query_id }).await;
 
         query_id
     }
