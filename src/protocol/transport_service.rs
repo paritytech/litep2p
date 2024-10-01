@@ -198,22 +198,17 @@ impl KeepAliveTracker {
         // Wake any pending poll.
         self.waker.take().map(|waker| waker.wake());
     }
-}
 
-impl Stream for KeepAliveTracker {
-    type Item = (PeerId, ConnectionId);
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-
+    /// Get the next ordered key element.
+    ///
+    /// The returned element is no longer part of the `last_activity_order` queue.
+    /// The method ensures that the oldest instant is at the front of the queue and
+    /// that the returned element corresponds to a connection that is still active.
+    fn get_next_ordered(&mut self) -> Option<(PeerId, ConnectionId)> {
         loop {
-            let Some(key) = this.last_activity_order.pop_front() else {
-                // No elements are tracked in the last activity order. Wait for connections.
-                this.waker = Some(cx.waker().clone());
-                return Poll::Pending;
-            };
-            let Some(when) = this.last_activity.get(&key) else {
-                // The key does not correspond to an active connection.
+            let key = self.last_activity_order.pop_front()?;
+            // Key corresponds to a connection that is no longer active.
+            let Some(when) = self.last_activity.get(&key) else {
                 continue;
             };
 
@@ -221,13 +216,13 @@ impl Stream for KeepAliveTracker {
             // - (1). identical keys are discarded
             // - (2). the oldest instant is at the front of the queue (preserve ordering)
             // - (3). stale connections are ignored
-            if let Some(next_key) = this.last_activity_order.front() {
+            if let Some(next_key) = self.last_activity_order.front() {
                 // (1). Handle multiple inserts for the same connection.
                 if &key == next_key {
                     continue;
                 }
 
-                if let Some(next_when) = this.last_activity.get(next_key) {
+                if let Some(next_when) = self.last_activity.get(next_key) {
                     // (2). If the next key is older, we'll discard the current key.
                     // The current key corresponds to a more recent entry that will be polled later.
                     if next_when < when {
@@ -237,13 +232,32 @@ impl Stream for KeepAliveTracker {
                     // (3). Preserve the current key if the next key corresponds to stale
                     // connection. We can't ensure (1) or (2) at this point if the connection
                     // is stale. We'll handle this in the next iteration.
-                    this.last_activity_order.push_front(key);
+                    self.last_activity_order.push_front(key);
                     continue;
                 }
             }
 
+            return Some(key);
+        }
+    }
+}
+
+impl Stream for KeepAliveTracker {
+    type Item = (PeerId, ConnectionId);
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+
+        loop {
+            let Some(key) = this.get_next_ordered() else {
+                // No more keys to process.
+                this.waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            };
+
+            let when = this.last_activity.get(&key).expect("key exists; qed by get_next_ordered");
+            // No keep-alive timeout reached yet.
             if when.elapsed() < this.keep_alive_timeout {
-                // No keep-alive timeout reached yet.
                 this.last_activity_order.push_front(key);
                 this.waker = Some(cx.waker().clone());
                 return Poll::Pending;
@@ -256,7 +270,6 @@ impl Stream for KeepAliveTracker {
                 connection_id = ?key.1,
                 "keep-alive timeout triggered",
             );
-            this.last_activity_order.pop_front();
             this.last_activity.remove(&key);
 
             return Poll::Ready(Some(key));
