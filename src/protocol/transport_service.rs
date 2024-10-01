@@ -139,6 +139,25 @@ struct KeepAliveTracker {
     /// Since the time added to the `last_activity` hashmap is always monotonically increasing,
     /// we can use this to optimize the search for the next keep-alive timeout. This
     /// results in fewer polls.
+    ///
+    /// # Notes
+    ///
+    /// We might have a situation where the connection is updated multiple times:
+    ///
+    /// - (peerA, id0): SubstreamA, instant T0
+    /// - (peerA, id0): SubstreamC, instant T2
+    ///
+    /// // Peer B opens in between the updates the following substream:
+    /// - (peerB, id1): SubstreamZ, instant T3
+    ///
+    /// - (peerA, id0): SubstreamB, instant T4
+    ///
+    /// For this example, the insertion order contains the following keys:
+    /// `[(peerA, id0), (peerA, id0), (peerB, id1), (peerA, id0)]`.
+    ///
+    /// To ensure a correct ordering, we'll discard elements that expire after the next element in
+    /// the order. This ensures that we always have the most recent activity at the front of the
+    /// queue.
     last_activity_order: VecDeque<(PeerId, ConnectionId)>,
 
     /// Saved waker.
@@ -188,20 +207,44 @@ impl Stream for KeepAliveTracker {
         let this = self.get_mut();
 
         loop {
-            let Some(key) = this.last_activity_order.iter().next() else {
+            let Some(key) = this.last_activity_order.pop_front() else {
                 // No elements are tracked in the last activity order. Wait for connections.
                 this.waker = Some(cx.waker().clone());
                 return Poll::Pending;
             };
-
-            let Some(when) = this.last_activity.get(key) else {
-                // The key does not correspond to an active connection. Remove it from the order.
-                this.last_activity_order.pop_front();
+            let Some(when) = this.last_activity.get(&key) else {
+                // The key does not correspond to an active connection.
                 continue;
             };
 
+            // Compare with the next key to ensure:
+            // - (1). identical keys are discarded
+            // - (2). the oldest instant is at the front of the queue (preserve ordering)
+            // - (3). stale connections are ignored
+            if let Some(next_key) = this.last_activity_order.front() {
+                // (1). Handle multiple inserts for the same connection.
+                if &key == next_key {
+                    continue;
+                }
+
+                if let Some(next_when) = this.last_activity.get(next_key) {
+                    // (2). If the next key is older, we'll discard the current key.
+                    // The current key corresponds to a more recent entry that will be polled later.
+                    if next_when < when {
+                        continue;
+                    }
+                } else {
+                    // (3). Preserve the current key if the next key corresponds to stale
+                    // connection. We can't ensure (1) or (2) at this point if the connection
+                    // is stale. We'll handle this in the next iteration.
+                    this.last_activity_order.push_front(key);
+                    continue;
+                }
+            }
+
             if when.elapsed() < this.keep_alive_timeout {
                 // No keep-alive timeout reached yet.
+                this.last_activity_order.push_front(key);
                 this.waker = Some(cx.waker().clone());
                 return Poll::Pending;
             }
@@ -213,7 +256,6 @@ impl Stream for KeepAliveTracker {
                 connection_id = ?key.1,
                 "keep-alive timeout triggered",
             );
-            let key = *key;
             this.last_activity_order.pop_front();
             this.last_activity.remove(&key);
 
