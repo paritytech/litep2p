@@ -229,9 +229,11 @@ impl KeepAliveTracker {
                         continue;
                     }
                 } else {
-                    // (3). Preserve the current key if the next key corresponds to stale
-                    // connection. We can't ensure (1) or (2) at this point if the connection
+                    // (3). Remove the next key if it corresponds to a stale connection
+                    // and preserve the current key.
+                    // We can't ensure (1) or (2) at this point if the next connection
                     // is stale. We'll handle this in the next iteration.
+                    self.last_activity_order.pop_front();
                     self.last_activity_order.push_front(key);
                     continue;
                 }
@@ -819,7 +821,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn secondary_closing_doesnt_emit_event() {
+    async fn secondary_closing_does_not_emit_event() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
         let (mut service, sender, _) = transport_service();
         let peer = PeerId::random();
 
@@ -1024,10 +1030,7 @@ mod tests {
         };
 
         // verify the first connection state is correct
-        assert_eq!(
-            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
-            1
-        );
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
@@ -1058,18 +1061,12 @@ mod tests {
             panic!("expected event from `TransportService`");
         }
 
-        // verify that the keep-alive timeout still exists for the peer but the peer itself
-        // doesn't exist anymore
-        //
-        // the peer is removed because there is no connection to them
-        assert_eq!(
-            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
-            1
-        );
+        // Because the connection was closed, the peer is no longer tracked for keep-alive.
+        // This leads to better tracking overall since we don't have to track stale connections.
+        assert!(service.keep_alive_tracker.last_activity.is_empty());
         assert!(service.connections.get(&peer).is_none());
 
-        // register new primary connection but verify that there are now two pending keep-alive
-        // timeouts
+        // Register new primary connection.
         let (cmd_tx1, _cmd_rx1) = channel(64);
         sender
             .send(InnerTransportEvent::ConnectionEstablished {
@@ -1092,11 +1089,7 @@ mod tests {
             panic!("expected event from `TransportService`");
         };
 
-        // verify the first connection state is correct
-        assert_eq!(
-            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
-            2
-        );
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
@@ -1155,10 +1148,7 @@ mod tests {
         };
 
         // verify the first connection state is correct
-        assert_eq!(
-            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
-            1
-        );
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
@@ -1189,6 +1179,8 @@ mod tests {
             }
             None => panic!("expected {peer} to exist"),
         }
+
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 0);
     }
 
     #[tokio::test]
@@ -1224,10 +1216,7 @@ mod tests {
         };
 
         // verify the first connection state is correct
-        assert_eq!(
-            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
-            1
-        );
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
@@ -1247,20 +1236,15 @@ mod tests {
 
         // This ensures we reset the keep-alive timer when other protocols
         // want to open a substream.
+        // We are still tracking the same peer.
         service.open_substream(peer).unwrap();
-        assert_eq!(
-            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
-            1
-        );
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
 
         poll_service(&mut service).await;
         // The keep alive timeout should be advanced.
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         poll_service(&mut service).await;
-        assert_eq!(
-            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
-            1
-        );
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
         // If the `service.open_substream` wasn't called, the connection would have been downgraded.
         // Instead the keep-alive was forwarded `KEEP_ALIVE_TIMEOUT` seconds into the future.
         // Verify the connection is still active.
@@ -1280,10 +1264,7 @@ mod tests {
         tokio::time::sleep(KEEP_ALIVE_TIMEOUT).await;
         poll_service(&mut service).await;
 
-        assert_eq!(
-            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
-            0
-        );
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 0);
 
         // The connection had no substream activity for `KEEP_ALIVE_TIMEOUT` seconds.
         // Verify the connection is downgraded.
@@ -1333,10 +1314,7 @@ mod tests {
         };
 
         // verify the first connection state is correct
-        assert_eq!(
-            service.keep_alive_tracker.pending_keep_alive_timeouts.len(),
-            1
-        );
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
