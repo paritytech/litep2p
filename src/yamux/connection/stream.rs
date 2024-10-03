@@ -10,12 +10,12 @@
 
 use crate::yamux::{
     chunks::Chunks,
-    connection::{self, StreamCommand},
+    connection::{self, rtt, StreamCommand},
     frame::{
         header::{Data, Header, StreamId, WindowUpdate, ACK},
         Frame,
     },
-    Config, WindowUpdateMode, DEFAULT_CREDIT,
+    Config, DEFAULT_CREDIT,
 };
 use futures::{
     channel::mpsc,
@@ -31,6 +31,8 @@ use std::{
     sync::Arc,
     task::{Context, Poll, Waker},
 };
+
+use super::{flow_control::FlowController, rtt::Rtt};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::yamux";
@@ -118,16 +120,24 @@ impl Stream {
         id: StreamId,
         conn: connection::Id,
         config: Arc<Config>,
-        credit: u32,
+        send_window: u32,
         sender: mpsc::Sender<StreamCommand>,
+        rtt: rtt::Rtt,
+        accumulated_max_stream_windows: Arc<Mutex<usize>>,
     ) -> Self {
         Self {
             id,
             conn,
             config: config.clone(),
             sender,
-            flag: Flag::None,
-            shared: Arc::new(Mutex::new(Shared::new(DEFAULT_CREDIT, credit, config))),
+            flag: Flag::Ack,
+            shared: Arc::new(Mutex::new(Shared::new(
+                DEFAULT_CREDIT,
+                send_window,
+                accumulated_max_stream_windows,
+                rtt,
+                config,
+            ))),
         }
     }
 
@@ -135,16 +145,23 @@ impl Stream {
         id: StreamId,
         conn: connection::Id,
         config: Arc<Config>,
-        window: u32,
         sender: mpsc::Sender<StreamCommand>,
+        rtt: rtt::Rtt,
+        accumulated_max_stream_windows: Arc<Mutex<usize>>,
     ) -> Self {
         Self {
             id,
             conn,
             config: config.clone(),
             sender,
-            flag: Flag::None,
-            shared: Arc::new(Mutex::new(Shared::new(window, DEFAULT_CREDIT, config))),
+            flag: Flag::Syn,
+            shared: Arc::new(Mutex::new(Shared::new(
+                DEFAULT_CREDIT,
+                DEFAULT_CREDIT,
+                accumulated_max_stream_windows,
+                rtt,
+                config,
+            ))),
         }
     }
 
@@ -164,11 +181,6 @@ impl Stream {
     /// Whether we are still waiting for the remote to acknowledge this stream.
     pub fn is_pending_ack(&self) -> bool {
         self.shared().is_pending_ack()
-    }
-
-    /// Set the flag that should be set on the next outbound frame header.
-    pub(crate) fn set_flag(&mut self, flag: Flag) {
-        self.flag = flag
     }
 
     pub(crate) fn shared(&self) -> MutexGuard<'_, Shared> {
@@ -202,25 +214,20 @@ impl Stream {
     /// Send new credit to the sending side via a window update message if
     /// permitted.
     fn send_window_update(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
-        // When using [`WindowUpdateMode::OnReceive`] window update messages are
-        // send early on data receival (see [`crate::Connection::on_frame`]).
-        if matches!(self.config.window_update_mode, WindowUpdateMode::OnReceive) {
+        if !self.shared.lock().state.can_read() {
             return Poll::Ready(Ok(()));
         }
 
-        let mut shared = self.shared.lock();
+        ready!(self.sender.poll_ready(cx).map_err(|_| self.write_zero_err())?);
 
-        if let Some(credit) = shared.next_window_update() {
-            ready!(self.sender.poll_ready(cx).map_err(|_| self.write_zero_err())?);
+        let Some(credit) = self.shared.lock().next_window_update() else {
+            return Poll::Ready(Ok(()));
+        };
 
-            shared.window += credit;
-            drop(shared);
-
-            let mut frame = Frame::window_update(self.id, credit).right();
-            self.add_flag(frame.header_mut());
-            let cmd = StreamCommand::SendFrame(frame);
-            self.sender.start_send(cmd).map_err(|_| self.write_zero_err())?;
-        }
+        let mut frame = Frame::window_update(self.id, credit).right();
+        self.add_flag(frame.header_mut());
+        let cmd = StreamCommand::SendFrame(frame);
+        self.sender.start_send(cmd).map_err(|_| self.write_zero_err())?;
 
         Poll::Ready(Ok(()))
     }
@@ -354,15 +361,21 @@ impl AsyncWrite for Stream {
                 tracing::debug!(target: LOG_TARGET,"{}/{}: can no longer write", self.conn, self.id);
                 return Poll::Ready(Err(self.write_zero_err()));
             }
-            if shared.credit == 0 {
+            if shared.send_window() == 0 {
                 tracing::trace!(target: LOG_TARGET,"{}/{}: no more credit left", self.conn, self.id);
                 shared.writer = Some(cx.waker().clone());
                 return Poll::Pending;
             }
-            let k = std::cmp::min(shared.credit as usize, buf.len());
-            let k = std::cmp::min(k, self.config.split_send_size);
-            shared.credit = shared.credit.saturating_sub(k as u32);
-            Vec::from(&buf[..k])
+            let k = std::cmp::min(
+                shared.send_window(),
+                buf.len().try_into().unwrap_or(u32::MAX),
+            );
+            let k = std::cmp::min(
+                k,
+                self.config.split_send_size.try_into().unwrap_or(u32::MAX),
+            );
+            shared.consume_send_window(k);
+            Vec::from(&buf[..k as usize])
         };
         let n = body.len();
         let mut frame = Frame::data(self.id, body).expect("body <= u32::MAX").left();
@@ -410,26 +423,34 @@ impl AsyncWrite for Stream {
 #[derive(Debug)]
 pub(crate) struct Shared {
     state: State,
-    pub(crate) window: u32,
-    pub(crate) credit: u32,
     pub(crate) buffer: Chunks,
     pub(crate) reader: Option<Waker>,
+    flow_controller: FlowController,
     pub(crate) writer: Option<Waker>,
-    config: Arc<Config>,
 }
 
 impl Shared {
-    fn new(window: u32, credit: u32, config: Arc<Config>) -> Self {
+    fn new(
+        receive_window: u32,
+        send_window: u32,
+        accumulated_max_stream_windows: Arc<Mutex<usize>>,
+        rtt: Rtt,
+        config: Arc<Config>,
+    ) -> Self {
         Shared {
             state: State::Open {
                 acknowledged: false,
             },
-            window,
-            credit,
+            flow_controller: FlowController::new(
+                receive_window,
+                send_window,
+                accumulated_max_stream_windows,
+                rtt,
+                config,
+            ),
             buffer: Chunks::new(),
             reader: None,
             writer: None,
-            config,
         }
     }
 
@@ -481,35 +502,7 @@ impl Shared {
     /// Note: Once a caller successfully sent a window update message, the
     /// locally tracked window size needs to be updated manually by the caller.
     pub(crate) fn next_window_update(&mut self) -> Option<u32> {
-        if !self.state.can_read() {
-            return None;
-        }
-
-        let new_credit = match self.config.window_update_mode {
-            WindowUpdateMode::OnReceive => {
-                debug_assert!(self.config.receive_window >= self.window);
-
-                self.config.receive_window.saturating_sub(self.window)
-            }
-            WindowUpdateMode::OnRead => {
-                debug_assert!(self.config.receive_window >= self.window);
-                let bytes_received = self.config.receive_window.saturating_sub(self.window);
-                let buffer_len: u32 = self.buffer.len().try_into().unwrap_or(u32::MAX);
-
-                bytes_received.saturating_sub(buffer_len)
-            }
-        };
-
-        // Send WindowUpdate message when half or more of the configured receive
-        // window can be granted as additional credit to the sender.
-        //
-        // See https://github.com/paritytech/yamux/issues/100 for a detailed
-        // discussion.
-        if new_credit >= self.config.receive_window / 2 {
-            Some(new_credit)
-        } else {
-            None
-        }
+        self.flow_controller.next_window_update(self.buffer.len())
     }
 
     /// Whether we are still waiting for the remote to acknowledge this stream.
@@ -520,5 +513,25 @@ impl Shared {
                 acknowledged: false
             }
         )
+    }
+
+    pub(crate) fn send_window(&self) -> u32 {
+        self.flow_controller.send_window()
+    }
+
+    pub(crate) fn consume_send_window(&mut self, i: u32) {
+        self.flow_controller.consume_send_window(i)
+    }
+
+    pub(crate) fn increase_send_window_by(&mut self, i: u32) {
+        self.flow_controller.increase_send_window_by(i)
+    }
+
+    pub(crate) fn receive_window(&self) -> u32 {
+        self.flow_controller.receive_window()
+    }
+
+    pub(crate) fn consume_receive_window(&mut self, i: u32) {
+        self.flow_controller.consume_receive_window(i)
     }
 }

@@ -41,6 +41,9 @@ pub use crate::yamux::{
     },
 };
 
+const KIB: usize = 1024;
+const MIB: usize = KIB * 1024;
+
 pub const DEFAULT_CREDIT: u32 = 256 * 1024; // as per yamux specification
 
 pub type Result<T> = std::result::Result<T, ConnectionError>;
@@ -65,32 +68,6 @@ const MAX_ACK_BACKLOG: usize = 256;
 /// <https://github.com/paritytech/yamux/issues/100>.
 const DEFAULT_SPLIT_SEND_SIZE: usize = 16 * 1024;
 
-/// Specifies when window update frames are sent.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WindowUpdateMode {
-    /// Send window updates as soon as a [`Stream`]'s receive window drops to 0.
-    ///
-    /// This ensures that the sender can resume sending more data as soon as possible
-    /// but a slow reader on the receiving side may be overwhelmed, i.e. it accumulates
-    /// data in its buffer which may reach its limit (see `set_max_buffer_size`).
-    /// In this mode, window updates merely prevent head of line blocking but do not
-    /// effectively exercise back pressure on senders.
-    OnReceive,
-
-    /// Send window updates only when data is read on the receiving end.
-    ///
-    /// This ensures that senders do not overwhelm receivers and keeps buffer usage
-    /// low. However, depending on the protocol, there is a risk of deadlock, namely
-    /// if both endpoints want to send data larger than the receivers window and they
-    /// do not read before finishing their writes. Use this mode only if you are sure
-    /// that this will never happen, i.e. if
-    ///
-    /// - Endpoints *A* and *B* never write at the same time, *or*
-    /// - Endpoints *A* and *B* write at most *n* frames concurrently such that the sum of the
-    ///   frame lengths is less or equal to the available credit of *A* and *B* respectively.
-    OnRead,
-}
-
 /// Yamux configuration.
 ///
 /// The default configuration values are as follows:
@@ -103,10 +80,8 @@ pub enum WindowUpdateMode {
 /// - split send size = 16 KiB
 #[derive(Debug, Clone)]
 pub struct Config {
-    receive_window: u32,
-    max_buffer_size: usize,
+    max_connection_receive_window: Option<usize>,
     max_num_streams: usize,
-    window_update_mode: WindowUpdateMode,
     read_after_close: bool,
     split_send_size: usize,
 }
@@ -114,10 +89,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            receive_window: DEFAULT_CREDIT,
-            max_buffer_size: 1024 * 1024,
-            max_num_streams: 8192,
-            window_update_mode: WindowUpdateMode::OnRead,
+            max_connection_receive_window: Some(1 * 1024 * 1024 * 1024), // 1 GiB
+            max_num_streams: 512,
             read_after_close: true,
             split_send_size: DEFAULT_SPLIT_SEND_SIZE,
         }
@@ -125,32 +98,21 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Set the receive window per stream (must be >= 256 KiB).
-    ///
-    /// # Panics
-    ///
-    /// If the given receive window is < 256 KiB.
-    pub fn set_receive_window(&mut self, n: u32) -> &mut Self {
-        assert!(n >= DEFAULT_CREDIT);
-        self.receive_window = n;
-        self
-    }
+    pub fn set_max_connection_receive_window(&mut self, n: Option<usize>) -> &mut Self {
+        self.max_connection_receive_window = n;
 
-    /// Set the max. buffer size per stream.
-    pub fn set_max_buffer_size(&mut self, n: usize) -> &mut Self {
-        self.max_buffer_size = n;
+        assert!(
+            self.max_connection_receive_window.unwrap_or(usize::MAX)
+                >= self.max_num_streams * DEFAULT_CREDIT as usize,
+            "`max_connection_receive_window` must be `>= 256 KiB * max_num_streams` to allow each
+            stream at least the Yamux default window size"
+        );
         self
     }
 
     /// Set the max. number of streams.
     pub fn set_max_num_streams(&mut self, n: usize) -> &mut Self {
         self.max_num_streams = n;
-        self
-    }
-
-    /// Set the window update mode to use.
-    pub fn set_window_update_mode(&mut self, m: WindowUpdateMode) -> &mut Self {
-        self.window_update_mode = m;
         self
     }
 
