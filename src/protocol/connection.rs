@@ -94,6 +94,15 @@ impl ConnectionHandle {
         }
     }
 
+    /// Try to upgrade the connection to active state.
+    pub fn try_open(&mut self) {
+        if let ConnectionType::Inactive(inactive) = &self.connection {
+            if let Some(active) = inactive.upgrade() {
+                self.connection = ConnectionType::Active(active);
+            }
+        }
+    }
+
     /// Attempt to acquire permit which will keep the connection open for indefinite time.
     pub fn try_get_permit(&self) -> Option<Permit> {
         match &self.connection {
