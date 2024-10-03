@@ -527,6 +527,7 @@ impl TransportService {
         );
 
         self.keep_alive_tracker.substream_activity(peer, connection_id);
+        connection.try_open();
 
         connection
             .open_substream(
@@ -1421,6 +1422,197 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn substream_opening_upgrades_connection_and_resets_keep_alive() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1337usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1337usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            endpoint,
+        }) = service.next().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is still active.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        // Open substreams to the peer.
+        let substream_id = service.open_substream(peer).unwrap();
+        let second_substream_id = service.open_substream(peer).unwrap();
+
+        let mut permits = Vec::new();
+        // First substream.
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Second substream.
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(second_substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Sleep to trigger keep-alive timeout.
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        poll_service(&mut service).await;
+
+        // Verify the connection is downgraded.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is not active.
+                assert!(!context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 0);
+
+        // Open a new substream to the peer. This will succeed as long as we still have
+        // at least substream permit.
+        let substream_id = service.open_substream(peer).unwrap();
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        poll_service(&mut service).await;
+
+        // Verify the connection is upgraded and keep-alive is tracked.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is active, because it was upgraded by the last substream.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+
+        // Drop all substreams
+        drop(permits);
+
+        // The connection is still active, because it was upgraded by the last substream open.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is active, because it was upgraded by the last substream.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+
+        // Sleep to trigger keep-alive timeout.
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        poll_service(&mut service).await;
+
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // No longer active because it was downgraded by keep-alive and no
+                // substream opens were made.
+                assert!(!context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        // Cannot open a new substream because:
+        // 1. connection was downgraded by keep-alive timeout
+        // 2. all substreams were dropped.
+        assert_eq!(
+            service.open_substream(peer),
+            Err(SubstreamError::ConnectionClosed)
+        );
+    }
+
+    #[tokio::test]
     async fn keep_alive_pop_elements() {
         let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
 
@@ -1476,7 +1668,6 @@ mod tests {
         let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
 
         let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
-        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
 
         // T0.
         tracker.substream_activity(peer1, connection1);
