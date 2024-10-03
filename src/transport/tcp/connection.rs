@@ -654,6 +654,7 @@ impl TcpConnection {
                 protocol,
                 fallback_names,
                 substream_id,
+                connection_id,
                 permit,
             }) => {
                 let control = self.control.clone();
@@ -663,6 +664,7 @@ impl TcpConnection {
                     target: LOG_TARGET,
                     ?protocol,
                     ?substream_id,
+                    ?connection_id,
                     "open substream",
                 );
 

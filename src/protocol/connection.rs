@@ -120,6 +120,7 @@ impl ConnectionHandle {
             protocol: protocol.clone(),
             fallback_names,
             substream_id,
+            connection_id: self.connection_id.clone(),
             permit,
         })
         .map_err(|error| match error {
@@ -141,10 +142,15 @@ impl ConnectionHandle {
             TrySendError::Closed(_) => Error::ConnectionClosed,
         })
     }
+
+    /// Check if the connection is active.
+    pub fn is_active(&self) -> bool {
+        matches!(self.connection, ConnectionType::Active(_))
+    }
 }
 
 /// Type which allows the connection to be kept open.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Permit {
     /// Active connection.
     _connection: Sender<ProtocolCommand>,
