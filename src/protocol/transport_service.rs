@@ -367,7 +367,7 @@ impl TransportService {
         match self.connections.get_mut(&peer) {
             Some(context) => match context.secondary {
                 Some(_) => {
-                    tracing::error!(
+                    tracing::debug!(
                         target: LOG_TARGET,
                         ?peer,
                         ?connection_id,
@@ -1334,11 +1334,9 @@ mod tests {
         let second_substream_id = service.open_substream(peer).unwrap();
 
         // Simulate keep-alive timeout expiration.
-        service
-            .connections
-            .get_mut(&peer)
-            .unwrap()
-            .downgrade(&ConnectionId::from(1337usize));
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        poll_service(&mut service).await;
 
         let mut permits = Vec::new();
 
@@ -1411,6 +1409,10 @@ mod tests {
 
         // Drop all substreams.
         drop(permits);
+
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        poll_service(&mut service).await;
 
         // Cannot open a new substream because:
         // 1. connection was downgraded by keep-alive timeout
