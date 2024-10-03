@@ -1441,4 +1441,80 @@ mod tests {
             Err(SubstreamError::ConnectionClosed)
         );
     }
+
+    #[tokio::test]
+    async fn keep_alive_pop_elements() {
+        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
+
+        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
+        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
+
+        tracker.substream_activity(peer1, connection1);
+        tracker.substream_activity(peer2, connection2);
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer1, connection1));
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer2, connection2));
+
+        // No more elements.
+        assert!(tracker.get_next_ordered().is_none());
+        assert!(tracker.last_activity_order.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keep_alive_pop_multiple_elements_in_order() {
+        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
+
+        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
+        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
+
+        // T0.
+        tracker.substream_activity(peer1, connection1);
+        // T1 update.
+        tracker.substream_activity(peer1, connection1);
+        // Different peer on T2.
+        tracker.substream_activity(peer2, connection2);
+        // T3 update for peer1.
+        tracker.substream_activity(peer1, connection1);
+
+        // This setup effectively tracks:
+        // [ (peer2, connection2) -> T2; (peer1, connection1) -> T3 ]
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer2, connection2));
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer1, connection1));
+
+        // No more elements.
+        assert!(tracker.get_next_ordered().is_none());
+        assert!(tracker.last_activity_order.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keep_alive_pop_multiple_elements_in_order_last_element() {
+        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
+
+        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
+        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
+
+        // T0.
+        tracker.substream_activity(peer1, connection1);
+        // T1 update.
+        tracker.substream_activity(peer1, connection1);
+        // T2 update.
+        tracker.substream_activity(peer1, connection1);
+
+        // This setup effectively tracks:
+        // [ (peer1, connection1) -> T3 ]
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer1, connection1));
+
+        // No more elements.
+        assert!(tracker.get_next_ordered().is_none());
+        assert!(tracker.last_activity_order.is_empty());
+    }
 }
