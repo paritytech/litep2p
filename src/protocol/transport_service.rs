@@ -1686,4 +1686,26 @@ mod tests {
         assert!(tracker.get_next_ordered().is_none());
         assert!(tracker.last_activity_order.is_empty());
     }
+
+    #[tokio::test]
+    async fn keep_alive_remove_next_stale_key() {
+        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
+
+        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
+        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
+
+        // [ (peer1, connection1) -> T0; (peer2, connection2) -> T1 ]
+        // However, the connection2 is closed.
+        tracker.substream_activity(peer1, connection1);
+        tracker.substream_activity(peer2, connection2);
+
+        tracker.on_connection_closed(peer2, connection2);
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer1, connection1));
+
+        // No more elements.
+        assert!(tracker.get_next_ordered().is_none());
+        assert!(tracker.last_activity_order.is_empty());
+    }
 }
