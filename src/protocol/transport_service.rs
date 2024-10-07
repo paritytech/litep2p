@@ -27,21 +27,21 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    task::{Context, Poll},
-    time::Duration,
+    task::{Context, Poll, Waker},
+    time::{Duration, Instant},
 };
 
 /// Logging target for the file.
@@ -96,6 +96,187 @@ impl ConnectionContext {
             "connection doesn't exist, cannot downgrade",
         );
     }
+
+    /// Try to upgrade the connection to active state.
+    fn try_upgrade(&mut self, connection_id: &ConnectionId) {
+        if self.primary.connection_id() == connection_id {
+            self.primary.try_open();
+            return;
+        }
+
+        if let Some(handle) = &mut self.secondary {
+            if handle.connection_id() == connection_id {
+                handle.try_open();
+                return;
+            }
+        }
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            primary = ?self.primary.connection_id(),
+            secondary = ?self.secondary.as_ref().map(|handle| handle.connection_id()),
+            ?connection_id,
+            "connection doesn't exist, cannot upgrade",
+        );
+    }
+}
+
+/// Tracks connection keep-alive timeouts.
+///
+/// A connection keep-alive timeout is started when a connection is established.
+/// If no substreams are opened over the connection within the timeout,
+/// the connection is downgraded. However, if a substream is opened over the connection,
+/// the timeout is reset.
+#[derive(Debug)]
+struct KeepAliveTracker {
+    /// Close the connection if no substreams are open within this time frame.
+    keep_alive_timeout: Duration,
+
+    /// Track substream last activity.
+    last_activity: HashMap<(PeerId, ConnectionId), Instant>,
+    /// Insertion order of the last activity.
+    ///
+    /// Since the time added to the `last_activity` hashmap is always monotonically increasing,
+    /// we can use this to optimize the search for the next keep-alive timeout. This
+    /// results in fewer polls.
+    ///
+    /// # Notes
+    ///
+    /// We might have a situation where the connection is updated multiple times:
+    ///
+    /// - (peerA, id0): SubstreamA, instant T0
+    /// - (peerA, id0): SubstreamC, instant T2
+    ///
+    /// // Peer B opens in between the updates the following substream:
+    /// - (peerB, id1): SubstreamZ, instant T3
+    ///
+    /// - (peerA, id0): SubstreamB, instant T4
+    ///
+    /// For this example, the insertion order contains the following keys:
+    /// `[(peerA, id0), (peerA, id0), (peerB, id1), (peerA, id0)]`.
+    ///
+    /// To ensure a correct ordering, we'll discard elements that expire after the next element in
+    /// the order. This ensures that we always have the most recent activity at the front of the
+    /// queue.
+    last_activity_order: VecDeque<(PeerId, ConnectionId)>,
+
+    /// Saved waker.
+    waker: Option<Waker>,
+}
+
+impl KeepAliveTracker {
+    /// Create new [`KeepAliveTracker`].
+    pub fn new(keep_alive_timeout: Duration) -> Self {
+        Self {
+            keep_alive_timeout,
+            last_activity: HashMap::new(),
+            last_activity_order: VecDeque::new(),
+            waker: None,
+        }
+    }
+
+    /// Called on connection established event to add a new keep-alive timeout.
+    pub fn on_connection_established(&mut self, peer: PeerId, connection_id: ConnectionId) {
+        self.substream_activity(peer, connection_id);
+    }
+
+    /// Called on connection closed event.
+    pub fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
+        // The connection is closed, we'll pop the `last_activity_order` elements
+        // in the poll method. This ensures we leverage the `VecDeque` ordering
+        // instead of searching and allocating for a new vector here.
+        self.last_activity.remove(&(peer, connection_id));
+    }
+
+    /// Called on substream opened event to track the last activity.
+    pub fn substream_activity(&mut self, peer: PeerId, connection_id: ConnectionId) {
+        // Keep track of the connection ID and the time the substream was opened.
+        self.last_activity.insert((peer, connection_id), Instant::now());
+        // Keep track of the order of the last activity insertions.
+        self.last_activity_order.push_back((peer, connection_id));
+
+        // Wake any pending poll.
+        self.waker.take().map(|waker| waker.wake());
+    }
+
+    /// Get the next ordered key element.
+    ///
+    /// The returned element is no longer part of the `last_activity_order` queue.
+    /// The method ensures that the oldest instant is at the front of the queue and
+    /// that the returned element corresponds to a connection that is still active.
+    fn get_next_ordered(&mut self) -> Option<(PeerId, ConnectionId)> {
+        loop {
+            let key = self.last_activity_order.pop_front()?;
+            // Key corresponds to a connection that is no longer active.
+            let Some(when) = self.last_activity.get(&key) else {
+                continue;
+            };
+
+            // Compare with the next key to ensure:
+            // - (1). identical keys are discarded
+            // - (2). the oldest instant is at the front of the queue (preserve ordering)
+            // - (3). stale connections are ignored
+            if let Some(next_key) = self.last_activity_order.front() {
+                // (1). Handle multiple inserts for the same connection.
+                if &key == next_key {
+                    continue;
+                }
+
+                if let Some(next_when) = self.last_activity.get(next_key) {
+                    // (2). If the next key is older, we'll discard the current key.
+                    // The current key corresponds to a more recent entry that will be polled later.
+                    if next_when < when {
+                        continue;
+                    }
+                } else {
+                    // (3). Remove the next key if it corresponds to a stale connection
+                    // and preserve the current key.
+                    // We can't ensure (1) or (2) at this point if the next connection
+                    // is stale. We'll handle this in the next iteration.
+                    self.last_activity_order.pop_front();
+                    self.last_activity_order.push_front(key);
+                    continue;
+                }
+            }
+
+            return Some(key);
+        }
+    }
+}
+
+impl Stream for KeepAliveTracker {
+    type Item = (PeerId, ConnectionId);
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+
+        loop {
+            let Some(key) = this.get_next_ordered() else {
+                // No more keys to process.
+                this.waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            };
+
+            let when = this.last_activity.get(&key).expect("key exists; qed by get_next_ordered");
+            // No keep-alive timeout reached yet.
+            if when.elapsed() < this.keep_alive_timeout {
+                this.last_activity_order.push_front(key);
+                this.waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
+
+            // Keep-alive timeout reached.
+            tracing::trace!(
+                target: LOG_TARGET,
+                peer = ?key.0,
+                connection_id = ?key.1,
+                "keep-alive timeout triggered",
+            );
+            this.last_activity.remove(&key);
+
+            return Poll::Ready(Some(key));
+        }
+    }
 }
 
 /// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact
@@ -124,10 +305,7 @@ pub struct TransportService {
     next_substream_id: Arc<AtomicUsize>,
 
     /// Close the connection if no substreams are open within this time frame.
-    keep_alive_timeout: Duration,
-
-    /// Pending keep-alive timeouts.
-    pending_keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
+    keep_alive_tracker: KeepAliveTracker,
 }
 
 impl TransportService {
@@ -142,6 +320,8 @@ impl TransportService {
     ) -> (Self, Sender<InnerTransportEvent>) {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
+        let keep_alive_tracker = KeepAliveTracker::new(keep_alive_timeout);
+
         (
             Self {
                 rx,
@@ -151,8 +331,7 @@ impl TransportService {
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
-                keep_alive_timeout,
-                pending_keep_alive_timeouts: FuturesUnordered::new(),
+                keep_alive_tracker,
             },
             tx,
         )
@@ -184,7 +363,6 @@ impl TransportService {
             ?connection_id,
             "connection established",
         );
-        let keep_alive_timeout = self.keep_alive_timeout;
 
         match self.connections.get_mut(&peer) {
             Some(context) => match context.secondary {
@@ -199,10 +377,8 @@ impl TransportService {
                     None
                 }
                 None => {
-                    self.pending_keep_alive_timeouts.push(Box::pin(async move {
-                        tokio::time::sleep(keep_alive_timeout).await;
-                        (peer, connection_id)
-                    }));
+                    self.keep_alive_tracker.on_connection_established(peer, connection_id);
+
                     context.secondary = Some(handle);
 
                     None
@@ -210,10 +386,8 @@ impl TransportService {
             },
             None => {
                 self.connections.insert(peer, ConnectionContext::new(handle));
-                self.pending_keep_alive_timeouts.push(Box::pin(async move {
-                    tokio::time::sleep(keep_alive_timeout).await;
-                    (peer, connection_id)
-                }));
+
+                self.keep_alive_tracker.on_connection_established(peer, connection_id);
 
                 Some(TransportEvent::ConnectionEstablished { peer, endpoint })
             }
@@ -226,6 +400,8 @@ impl TransportService {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> Option<TransportEvent> {
+        self.keep_alive_tracker.on_connection_closed(peer, connection_id);
+
         let Some(context) = self.connections.get_mut(&peer) else {
             tracing::warn!(
                 target: LOG_TARGET,
@@ -335,6 +511,8 @@ impl TransportService {
             .ok_or(SubstreamError::PeerDoesNotExist(peer))?
             .primary;
 
+        let connection_id = connection.connection_id().clone();
+
         let permit = connection.try_get_permit().ok_or(SubstreamError::ConnectionClosed)?;
         let substream_id =
             SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
@@ -344,8 +522,12 @@ impl TransportService {
             ?peer,
             protocol = %self.protocol,
             ?substream_id,
+            ?connection_id,
             "open substream",
         );
+
+        self.keep_alive_tracker.substream_activity(peer, connection_id);
+        connection.try_open();
 
         connection
             .open_substream(
@@ -362,7 +544,7 @@ impl TransportService {
         let connection =
             &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?;
 
-        tracing::debug!(
+        tracing::trace!(
             target: LOG_TARGET,
             ?peer,
             protocol = %self.protocol,
@@ -387,6 +569,9 @@ impl Stream for TransportService {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let protocol_name = self.protocol.clone();
+        let duration = self.keep_alive_tracker.keep_alive_timeout;
+
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
                 None => {
@@ -410,18 +595,43 @@ impl Stream for TransportService {
                         return Poll::Ready(Some(event));
                     }
                 }
+                Some(InnerTransportEvent::SubstreamOpened {
+                    peer,
+                    protocol,
+                    fallback,
+                    direction,
+                    substream,
+                    connection_id,
+                }) => {
+                    if protocol == self.protocol {
+                        self.keep_alive_tracker.substream_activity(peer, connection_id);
+                        if let Some(context) = self.connections.get_mut(&peer) {
+                            context.try_upgrade(&connection_id);
+                        }
+                    }
+
+                    return Poll::Ready(Some(TransportEvent::SubstreamOpened {
+                        peer,
+                        protocol,
+                        fallback,
+                        direction,
+                        substream,
+                    }));
+                }
                 Some(event) => return Poll::Ready(Some(event.into())),
             }
         }
 
         while let Poll::Ready(Some((peer, connection_id))) =
-            self.pending_keep_alive_timeouts.poll_next_unpin(cx)
+            self.keep_alive_tracker.poll_next_unpin(cx)
         {
             if let Some(context) = self.connections.get_mut(&peer) {
-                tracing::trace!(
+                tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
                     ?connection_id,
+                    protocol = ?protocol_name,
+                    ?duration,
                     "keep-alive timeout over, downgrade connection",
                 );
 
@@ -437,7 +647,7 @@ impl Stream for TransportService {
 mod tests {
     use super::*;
     use crate::{
-        protocol::TransportService,
+        protocol::{ProtocolCommand, TransportService},
         transport::{
             manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
             KEEP_ALIVE_TIMEOUT,
@@ -612,7 +822,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn secondary_closing_doesnt_emit_event() {
+    async fn secondary_closing_does_not_emit_event() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
         let (mut service, sender, _) = transport_service();
         let peer = PeerId::random();
 
@@ -786,6 +1000,10 @@ mod tests {
 
     #[tokio::test]
     async fn keep_alive_timeout_expires_for_a_stale_connection() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
         let (mut service, sender, _) = transport_service();
         let peer = PeerId::random();
 
@@ -813,7 +1031,7 @@ mod tests {
         };
 
         // verify the first connection state is correct
-        assert_eq!(service.pending_keep_alive_timeouts.len(), 1);
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
@@ -844,15 +1062,12 @@ mod tests {
             panic!("expected event from `TransportService`");
         }
 
-        // verify that the keep-alive timeout still exists for the peer but the peer itself
-        // doesn't exist anymore
-        //
-        // the peer is removed because there is no connection to them
-        assert_eq!(service.pending_keep_alive_timeouts.len(), 1);
+        // Because the connection was closed, the peer is no longer tracked for keep-alive.
+        // This leads to better tracking overall since we don't have to track stale connections.
+        assert!(service.keep_alive_tracker.last_activity.is_empty());
         assert!(service.connections.get(&peer).is_none());
 
-        // register new primary connection but verify that there are now two pending keep-alive
-        // timeouts
+        // Register new primary connection.
         let (cmd_tx1, _cmd_rx1) = channel(64);
         sender
             .send(InnerTransportEvent::ConnectionEstablished {
@@ -875,8 +1090,7 @@ mod tests {
             panic!("expected event from `TransportService`");
         };
 
-        // verify the first connection state is correct
-        assert_eq!(service.pending_keep_alive_timeouts.len(), 2);
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
         match service.connections.get(&peer) {
             Some(context) => {
                 assert_eq!(
@@ -892,5 +1106,608 @@ mod tests {
             Ok(event) => panic!("didn't expect an event: {event:?}"),
             Err(_) => {}
         }
+    }
+
+    async fn poll_service(service: &mut TransportService) {
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn keep_alive_timeout_downgrades_connections() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1337usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1337usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            endpoint,
+        }) = service.next().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is still active.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        poll_service(&mut service).await;
+
+        // Verify the connection is downgraded.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is not active.
+                assert!(!context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn keep_alive_timeout_reset_when_user_opens_substream() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, _cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1337usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1337usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            endpoint,
+        }) = service.next().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is still active.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        poll_service(&mut service).await;
+        // Sleep for almost the entire keep-alive timeout.
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        // This ensures we reset the keep-alive timer when other protocols
+        // want to open a substream.
+        // We are still tracking the same peer.
+        service.open_substream(peer).unwrap();
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+
+        poll_service(&mut service).await;
+        // The keep alive timeout should be advanced.
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        poll_service(&mut service).await;
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+        // If the `service.open_substream` wasn't called, the connection would have been downgraded.
+        // Instead the keep-alive was forwarded `KEEP_ALIVE_TIMEOUT` seconds into the future.
+        // Verify the connection is still active.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT).await;
+        poll_service(&mut service).await;
+
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 0);
+
+        // The connection had no substream activity for `KEEP_ALIVE_TIMEOUT` seconds.
+        // Verify the connection is downgraded.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                assert!(!context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+    }
+
+    #[tokio::test]
+    async fn downgraded_connection_without_substreams_is_closed() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1337usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1337usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            endpoint,
+        }) = service.next().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is still active.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        // Open substreams to the peer.
+        let substream_id = service.open_substream(peer).unwrap();
+        let second_substream_id = service.open_substream(peer).unwrap();
+
+        // Simulate keep-alive timeout expiration.
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        poll_service(&mut service).await;
+
+        let mut permits = Vec::new();
+
+        // First substream.
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Second substream.
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(second_substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Drop one permit.
+        let permit = permits.pop();
+        // Individual transports like TCP will open a substream
+        // and then will generate a `SubstreamOpened` event via
+        // the protocol-set handler.
+        //
+        // The substream is used by individual protocols and then
+        // is closed. This simulates the substream being closed.
+        drop(permit);
+
+        // Open a new substream to the peer. This will succeed as long as we still have
+        // one substream open.
+        let substream_id = service.open_substream(peer).unwrap();
+        // Handle the substream.
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Drop all substreams.
+        drop(permits);
+
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        poll_service(&mut service).await;
+
+        // Cannot open a new substream because:
+        // 1. connection was downgraded by keep-alive timeout
+        // 2. all substreams were dropped.
+        assert_eq!(
+            service.open_substream(peer),
+            Err(SubstreamError::ConnectionClosed)
+        );
+    }
+
+    #[tokio::test]
+    async fn substream_opening_upgrades_connection_and_resets_keep_alive() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register first connection
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1337usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1337usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1337usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        if let Some(TransportEvent::ConnectionEstablished {
+            peer: connected_peer,
+            endpoint,
+        }) = service.next().await
+        {
+            assert_eq!(connected_peer, peer);
+            assert_eq!(endpoint.address(), &Multiaddr::empty());
+        } else {
+            panic!("expected event from `TransportService`");
+        };
+
+        // verify the first connection state is correct
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is still active.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        // Open substreams to the peer.
+        let substream_id = service.open_substream(peer).unwrap();
+        let second_substream_id = service.open_substream(peer).unwrap();
+
+        let mut permits = Vec::new();
+        // First substream.
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Second substream.
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(second_substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        // Sleep to trigger keep-alive timeout.
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        poll_service(&mut service).await;
+
+        // Verify the connection is downgraded.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is not active.
+                assert!(!context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 0);
+
+        // Open a new substream to the peer. This will succeed as long as we still have
+        // at least substream permit.
+        let substream_id = service.open_substream(peer).unwrap();
+        let protocol_command = cmd_rx1.recv().await.unwrap();
+        match protocol_command {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened_substream_id,
+                permit,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(substream_id, opened_substream_id);
+
+                // Save the substream permit for later.
+                permits.push(permit);
+            }
+            _ => panic!("expected `ProtocolCommand::OpenSubstream`"),
+        }
+
+        poll_service(&mut service).await;
+
+        // Verify the connection is upgraded and keep-alive is tracked.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is active, because it was upgraded by the last substream.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+
+        // Drop all substreams
+        drop(permits);
+
+        // The connection is still active, because it was upgraded by the last substream open.
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // Check the connection is active, because it was upgraded by the last substream.
+                assert!(context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+        assert_eq!(service.keep_alive_tracker.last_activity.len(), 1);
+
+        // Sleep to trigger keep-alive timeout.
+        poll_service(&mut service).await;
+        tokio::time::sleep(KEEP_ALIVE_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        poll_service(&mut service).await;
+
+        match service.connections.get(&peer) {
+            Some(context) => {
+                assert_eq!(
+                    context.primary.connection_id(),
+                    &ConnectionId::from(1337usize)
+                );
+                // No longer active because it was downgraded by keep-alive and no
+                // substream opens were made.
+                assert!(!context.primary.is_active());
+                assert!(context.secondary.is_none());
+            }
+            None => panic!("expected {peer} to exist"),
+        }
+
+        // Cannot open a new substream because:
+        // 1. connection was downgraded by keep-alive timeout
+        // 2. all substreams were dropped.
+        assert_eq!(
+            service.open_substream(peer),
+            Err(SubstreamError::ConnectionClosed)
+        );
+    }
+
+    #[tokio::test]
+    async fn keep_alive_pop_elements() {
+        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
+
+        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
+        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
+
+        tracker.substream_activity(peer1, connection1);
+        tracker.substream_activity(peer2, connection2);
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer1, connection1));
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer2, connection2));
+
+        // No more elements.
+        assert!(tracker.get_next_ordered().is_none());
+        assert!(tracker.last_activity_order.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keep_alive_pop_multiple_elements_in_order() {
+        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
+
+        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
+        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
+
+        // T0.
+        tracker.substream_activity(peer1, connection1);
+        // T1 update.
+        tracker.substream_activity(peer1, connection1);
+        // Different peer on T2.
+        tracker.substream_activity(peer2, connection2);
+        // T3 update for peer1.
+        tracker.substream_activity(peer1, connection1);
+
+        // This setup effectively tracks:
+        // [ (peer2, connection2) -> T2; (peer1, connection1) -> T3 ]
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer2, connection2));
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer1, connection1));
+
+        // No more elements.
+        assert!(tracker.get_next_ordered().is_none());
+        assert!(tracker.last_activity_order.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keep_alive_pop_multiple_elements_in_order_last_element() {
+        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
+
+        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
+
+        // T0.
+        tracker.substream_activity(peer1, connection1);
+        // T1 update.
+        tracker.substream_activity(peer1, connection1);
+        // T2 update.
+        tracker.substream_activity(peer1, connection1);
+
+        // This setup effectively tracks:
+        // [ (peer1, connection1) -> T3 ]
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer1, connection1));
+
+        // No more elements.
+        assert!(tracker.get_next_ordered().is_none());
+        assert!(tracker.last_activity_order.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keep_alive_remove_next_stale_key() {
+        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
+
+        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
+        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
+
+        // [ (peer1, connection1) -> T0; (peer2, connection2) -> T1 ]
+        // However, the connection2 is closed.
+        tracker.substream_activity(peer1, connection1);
+        tracker.substream_activity(peer2, connection2);
+
+        tracker.on_connection_closed(peer2, connection2);
+
+        let key = tracker.get_next_ordered().unwrap();
+        assert_eq!(key, (peer1, connection1));
+
+        // No more elements.
+        assert!(tracker.get_next_ordered().is_none());
+        assert!(tracker.last_activity_order.is_empty());
     }
 }

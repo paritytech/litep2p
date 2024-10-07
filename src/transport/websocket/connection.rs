@@ -520,7 +520,7 @@ impl WebSocketConnection {
                     }
                 }
                 protocol = self.protocol_set.next() => match protocol {
-                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit, .. }) => {
                         let control = self.control.clone();
                         let substream_open_timeout = self.substream_open_timeout;
 

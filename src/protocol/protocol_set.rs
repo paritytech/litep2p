@@ -122,6 +122,9 @@ pub enum InnerTransportEvent {
         /// distinguish between different outbound substreams.
         direction: Direction,
 
+        /// Connection ID.
+        connection_id: ConnectionId,
+
         /// Substream.
         substream: Substream,
     },
@@ -149,6 +152,7 @@ impl From<InnerTransportEvent> for TransportEvent {
                 fallback,
                 direction,
                 substream,
+                ..
             } => TransportEvent::SubstreamOpened {
                 peer,
                 protocol,
@@ -164,7 +168,7 @@ impl From<InnerTransportEvent> for TransportEvent {
 }
 
 /// Events emitted by the installed protocols to transport.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProtocolCommand {
     /// Open substream.
     OpenSubstream {
@@ -191,6 +195,9 @@ pub enum ProtocolCommand {
         /// This allows the protocol to distinguish inbound substreams from outbound substreams
         /// and associate incoming substreams with whatever logic it has.
         substream_id: SubstreamId,
+
+        /// Connection ID.
+        connection_id: ConnectionId,
 
         /// Connection permit.
         ///
@@ -300,6 +307,7 @@ impl ProtocolSet {
             fallback,
             direction,
             substream,
+            connection_id: self.connection.connection_id().clone(),
         };
 
         protocol_context

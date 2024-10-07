@@ -816,7 +816,7 @@ impl WebRtcConnection {
                         );
                         return self.on_connection_closed().await;
                     }
-                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit, .. }) => {
                         self.on_open_substream(protocol, fallback_names, substream_id, permit);
                     }
                 },
