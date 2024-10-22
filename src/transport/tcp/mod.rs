@@ -46,7 +46,7 @@ use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
@@ -121,9 +121,9 @@ pub(crate) struct TcpTransport {
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (TcpStream, Multiaddr)>,
 
-    /// Canceled raw connections.
-    canceled: HashSet<ConnectionId>,
-
+    /// Cancel raw connections futures.
+    ///
+    /// This is cancelling `Self::pending_raw_connections`.
     cancel_futures: HashMap<ConnectionId, AbortHandle>,
 
     /// Connections which have been opened and negotiated but are being validated by the
@@ -291,7 +291,6 @@ impl TransportBuilder for TcpTransport {
                 config,
                 context,
                 dial_addresses,
-                canceled: HashSet::new(),
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
@@ -516,8 +515,11 @@ impl Transport for TcpTransport {
     }
 
     fn cancel(&mut self, connection_id: ConnectionId) {
-        self.canceled.insert(connection_id);
-        self.cancel_futures.remove(&connection_id).map(|handle| handle.abort());
+        // Cancel the future if it exists.
+        // State clean-up happens inside the `poll_next`.
+        if let Some(handle) = self.cancel_futures.get(&connection_id) {
+            handle.abort();
+        }
     }
 }
 
@@ -560,27 +562,56 @@ impl Stream for TcpTransport {
                     connection_id,
                     address,
                     stream,
-                } =>
-                    if !self.canceled.remove(&connection_id) {
+                } => {
+                    let Some(handle) = self.cancel_futures.remove(&connection_id) else {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?address,
+                            "raw connection without a cancel handle",
+                        );
+                        continue;
+                    };
+
+                    if !handle.is_aborted() {
                         self.opened_raw.insert(connection_id, (stream, address.clone()));
 
                         return Poll::Ready(Some(TransportEvent::ConnectionOpened {
                             connection_id,
                             address,
                         }));
-                    },
+                    }
+                }
+
                 RawConnectionResult::Failed {
                     connection_id,
                     errors,
-                } =>
-                    if !self.canceled.remove(&connection_id) {
+                } => {
+                    let Some(handle) = self.cancel_futures.remove(&connection_id) else {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?errors,
+                            "raw connection without a cancel handle",
+                        );
+                        continue;
+                    };
+
+                    if !handle.is_aborted() {
                         return Poll::Ready(Some(TransportEvent::OpenFailure {
                             connection_id,
                             errors,
                         }));
-                    },
+                    }
+                }
                 RawConnectionResult::Canceled { connection_id } => {
-                    self.canceled.remove(&connection_id);
+                    if self.cancel_futures.remove(&connection_id).is_none() {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            "raw cancelled connection without a handle",
+                        );
+                    }
                 }
             }
         }
