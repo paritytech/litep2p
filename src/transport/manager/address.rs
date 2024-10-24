@@ -239,11 +239,6 @@ impl AddressStore {
         //  - an address that is not dialed yet (with score zero) will be preferred over an address
         //  that already failed (with negative score).
         if num_addresses >= self.max_capacity {
-            // No need to keep track of negative addresses if we are at capacity.
-            if record.score < 0 {
-                return;
-            }
-
             let Some(min_record) = self.addresses.values().min().cloned() else {
                 return;
             };
