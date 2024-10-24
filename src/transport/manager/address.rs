@@ -47,9 +47,6 @@ pub mod scores {
     pub const TIMEOUT_FAILURE: i32 = -50i32;
 }
 
-/// Remove the address from the store if the score is below this threshold.
-const REMOVE_THRESHOLD: i32 = scores::CONNECTION_FAILURE * 2;
-
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
 pub struct AddressRecord {
@@ -244,9 +241,6 @@ impl AddressStore {
 
         if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
             occupied.get_mut().update_score(record.score);
-            if occupied.get().score <= REMOVE_THRESHOLD {
-                occupied.remove();
-            }
             return;
         }
 
@@ -271,11 +265,6 @@ impl AddressStore {
                 return;
             }
             self.addresses.remove(min_record.address());
-        }
-
-        // There's no need to keep track of this address if the score is below the threshold.
-        if record.score <= REMOVE_THRESHOLD {
-            return;
         }
 
         // Insert the record.
@@ -517,22 +506,6 @@ mod tests {
         assert_eq!(store.addresses.len(), 1);
         let store_record = store.addresses.get(record.address()).unwrap();
         assert_eq!(store_record.score, record.score * 2);
-    }
-
-    #[test]
-    fn evict_below_threshold() {
-        let mut store = AddressStore::new();
-        let mut rng = rand::thread_rng();
-
-        let mut record = tcp_address_record(&mut rng);
-        record.score = scores::CONNECTION_FAILURE;
-        store.insert(record.clone());
-
-        assert_eq!(store.addresses.len(), 1);
-
-        store.insert(record.clone());
-
-        assert_eq!(store.addresses.len(), 0);
     }
 
     #[test]
