@@ -181,9 +181,6 @@ pub(crate) struct Identify {
     protocols: Vec<String>,
 
     /// Pending outbound substreams.
-    pending_opens: HashMap<SubstreamId, PeerId>,
-
-    /// Pending outbound substreams.
     pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
 
     /// Pending inbound substreams.
@@ -200,7 +197,6 @@ impl Identify {
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
-            pending_opens: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
             pending_outbound: FuturesUnordered::new(),
             protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
@@ -211,8 +207,7 @@ impl Identify {
     fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, ?endpoint, "connection established");
 
-        let substream_id = self.service.open_substream(peer)?;
-        self.pending_opens.insert(substream_id, peer);
+        self.service.open_substream(peer)?;
         self.peers.insert(peer, endpoint);
 
         Ok(())

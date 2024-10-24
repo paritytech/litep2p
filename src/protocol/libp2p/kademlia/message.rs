@@ -20,7 +20,7 @@
 
 use crate::{
     protocol::libp2p::kademlia::{
-        record::{Key as RecordKey, ProviderRecord, Record},
+        record::{ContentProvider, Key as RecordKey, Record},
         schema,
         types::{ConnectionType, KademliaPeer},
     },
@@ -172,30 +172,28 @@ impl KademliaMessage {
     }
 
     /// Create `ADD_PROVIDER` message with `provider`.
-    #[allow(unused)]
-    pub fn add_provider(provider: ProviderRecord) -> Vec<u8> {
+    pub fn add_provider(provided_key: RecordKey, provider: ContentProvider) -> Bytes {
         let peer = KademliaPeer::new(
-            provider.provider,
+            provider.peer,
             provider.addresses,
             ConnectionType::CanConnect, // ignored by message recipient
         );
         let message = schema::kademlia::Message {
-            key: provider.key.clone().to_vec(),
+            key: provided_key.clone().to_vec(),
             cluster_level_raw: 10,
             r#type: schema::kademlia::MessageType::AddProvider.into(),
             provider_peers: std::iter::once((&peer).into()).collect(),
             ..Default::default()
         };
 
-        let mut buf = Vec::with_capacity(message.encoded_len());
-        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
+        let mut buf = BytesMut::with_capacity(message.encoded_len());
+        message.encode(&mut buf).expect("BytesMut to provide needed capacity");
 
-        buf
+        buf.freeze()
     }
 
     /// Create `GET_PROVIDERS` request for `key`.
-    #[allow(unused)]
-    pub fn get_providers_request(key: RecordKey) -> Vec<u8> {
+    pub fn get_providers_request(key: RecordKey) -> Bytes {
         let message = schema::kademlia::Message {
             key: key.to_vec(),
             cluster_level_raw: 10,
@@ -203,34 +201,31 @@ impl KademliaMessage {
             ..Default::default()
         };
 
-        let mut buf = Vec::with_capacity(message.encoded_len());
-        message.encode(&mut buf).expect("Vec<u8> to provide needed capacity");
+        let mut buf = BytesMut::with_capacity(message.encoded_len());
+        message.encode(&mut buf).expect("BytesMut to provide needed capacity");
 
-        buf
+        buf.freeze()
     }
 
     /// Create `GET_PROVIDERS` response.
     pub fn get_providers_response(
-        key: RecordKey,
-        providers: Vec<ProviderRecord>,
+        providers: Vec<ContentProvider>,
         closer_peers: &[KademliaPeer],
     ) -> Vec<u8> {
-        debug_assert!(providers.iter().all(|p| p.key == key));
-
         let provider_peers = providers
             .into_iter()
             .map(|p| {
                 KademliaPeer::new(
-                    p.provider,
+                    p.peer,
                     p.addresses,
-                    ConnectionType::CanConnect, // ignored by recipient
+                    // `ConnectionType` is ignored by a recipient
+                    ConnectionType::NotConnected,
                 )
             })
             .map(|p| (&p).into())
             .collect();
 
         let message = schema::kademlia::Message {
-            key: key.to_vec(),
             cluster_level_raw: 10,
             r#type: schema::kademlia::MessageType::GetProviders.into(),
             closer_peers: closer_peers.iter().map(Into::into).collect(),
