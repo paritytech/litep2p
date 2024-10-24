@@ -106,3 +106,13 @@ pub struct PeerContext {
     /// Known addresses of peer.
     pub addresses: AddressStore,
 }
+
+impl Default for PeerContext {
+    fn default() -> Self {
+        Self {
+            state: PeerState::Disconnected { dial_record: None },
+            secondary_connection: None,
+            addresses: AddressStore::new(),
+        }
+    }
+}
