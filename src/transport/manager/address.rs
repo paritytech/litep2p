@@ -214,7 +214,7 @@ impl AddressStore {
     /// Get the score for a given error.
     pub fn error_score(error: &DialError) -> i32 {
         match error {
-            DialError::Timeout => scores::CONNECTION_ESTABLISHED,
+            DialError::Timeout => scores::TIMEOUT_FAILURE,
             DialError::AddressError(_) => scores::CONNECTION_FAILURE,
             DialError::DnsError(_) => scores::CONNECTION_FAILURE,
             DialError::NegotiationError(negotiation_error) => match negotiation_error {
