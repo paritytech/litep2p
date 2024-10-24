@@ -199,6 +199,15 @@ impl TransportManagerHandle {
                 };
 
                 // This can correspond to the provided peerID or to a different one.
+                if peer_id != *peer {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?address,
+                        "Added known address that corresponds to a different peer ID",
+                    );
+                }
+
                 // It is important to keep track of all addresses to have a healthy
                 // address store to dial from.
                 peer_addresses.entry(peer_id).or_insert_with(HashSet::new).insert(address);
