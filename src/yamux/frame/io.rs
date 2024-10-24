@@ -23,6 +23,13 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::yamux";
 
+/// Maximum Yamux frame body length
+///
+/// Limits the amount of bytes a remote can cause the local node to allocate at once when reading.
+///
+/// Chosen based on intuition in past iterations.
+const MAX_FRAME_BODY_LEN: usize = 1024 * 1024;
+
 /// A [`Stream`] and writer of [`Frame`] values.
 #[derive(Debug)]
 pub(crate) struct Io<T> {
@@ -30,17 +37,15 @@ pub(crate) struct Io<T> {
     io: T,
     read_state: ReadState,
     write_state: WriteState,
-    max_body_len: usize,
 }
 
 impl<T: AsyncRead + AsyncWrite + Unpin> Io<T> {
-    pub(crate) fn new(id: Id, io: T, max_frame_body_len: usize) -> Self {
+    pub(crate) fn new(id: Id, io: T) -> Self {
         Io {
             id,
             io,
             read_state: ReadState::Init,
             write_state: WriteState::Init,
-            max_body_len: max_frame_body_len,
         }
     }
 }
@@ -203,7 +208,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for Io<T> {
 
                         let body_len = header.len().val() as usize;
 
-                        if body_len > this.max_body_len {
+                        if body_len > MAX_FRAME_BODY_LEN {
                             return Poll::Ready(Some(Err(FrameDecodeError::FrameTooLarge(
                                 body_len,
                             ))));
@@ -363,7 +368,7 @@ mod tests {
         fn property(f: Frame<()>) -> bool {
             futures::executor::block_on(async move {
                 let id = crate::yamux::connection::Id::random();
-                let mut io = Io::new(id, futures::io::Cursor::new(Vec::new()), f.body.len());
+                let mut io = Io::new(id, futures::io::Cursor::new(Vec::new()));
                 if io.send(f.clone()).await.is_err() {
                     return false;
                 }
