@@ -18,11 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    error::{DialError, NegotiationError},
-    types::ConnectionId,
-    PeerId,
-};
+use crate::{error::DialError, types::ConnectionId, PeerId};
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;

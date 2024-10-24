@@ -211,12 +211,11 @@ impl TransportManagerHandle {
                 // It is important to keep track of all addresses to have a healthy
                 // address store to dial from.
                 peer_addresses.entry(peer_id).or_insert_with(HashSet::new).insert(address);
-                continue;
+            } else {
+                // Add the provided peer ID to the address.
+                let address = address.with(Protocol::P2p(multihash::Multihash::from(peer.clone())));
+                peer_addresses.entry(*peer).or_insert_with(HashSet::new).insert(address);
             }
-
-            // Add the provided peer ID to the address.
-            let address = address.with(Protocol::P2p(multihash::Multihash::from(peer.clone())));
-            peer_addresses.entry(*peer).or_insert_with(HashSet::new).insert(address);
         }
 
         let num_added = peer_addresses.get(peer).map_or(0, |addresses| addresses.len());
