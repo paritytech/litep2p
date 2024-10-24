@@ -330,7 +330,7 @@ impl QuicConnection {
                         );
                         return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await;
                     }
-                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit, .. }) => {
                         let connection = self.connection.clone();
                         let substream_open_timeout = self.substream_open_timeout;
 
