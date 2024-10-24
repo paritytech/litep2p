@@ -37,14 +37,13 @@ pub mod scores {
     /// Score indicating that the connection was successfully established.
     pub const CONNECTION_ESTABLISHED: i32 = 100i32;
 
-    /// Score for a connection with a peer using a different ID than expected.
-    pub const DIFFERENT_PEER_ID: i32 = 50i32;
-
     /// Score for failing to connect due to an invalid or unreachable address.
     pub const CONNECTION_FAILURE: i32 = -100i32;
 
-    /// Score for a connection attempt that failed due to a timeout.
-    pub const TIMEOUT_FAILURE: i32 = -50i32;
+    /// Score for providing an invalid address.
+    ///
+    /// This address can never be reached.
+    pub const ADDRESS_FAILURE: i32 = 5 * CONNECTION_FAILURE;
 }
 
 #[allow(clippy::derived_hash_with_manual_eq)]
@@ -214,16 +213,8 @@ impl AddressStore {
     /// Get the score for a given error.
     pub fn error_score(error: &DialError) -> i32 {
         match error {
-            DialError::Timeout => scores::TIMEOUT_FAILURE,
-            DialError::AddressError(_) => scores::CONNECTION_FAILURE,
-            DialError::DnsError(_) => scores::CONNECTION_FAILURE,
-            DialError::NegotiationError(negotiation_error) => match negotiation_error {
-                NegotiationError::PeerIdMismatch(_, _) => scores::DIFFERENT_PEER_ID,
-                // Timeout during the negotiation phase.
-                NegotiationError::Timeout => scores::TIMEOUT_FAILURE,
-                // Treat other errors as connection failures.
-                _ => scores::CONNECTION_FAILURE,
-            },
+            DialError::AddressError(_) => scores::ADDRESS_FAILURE,
+            _ => scores::CONNECTION_FAILURE,
         }
     }
 
