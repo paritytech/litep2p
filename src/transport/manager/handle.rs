@@ -200,7 +200,7 @@ impl TransportManagerHandle {
 
                 // This can correspond to the provided peerID or to a different one.
                 if peer_id != *peer {
-                    tracing::trace!(
+                    tracing::warn!(
                         target: LOG_TARGET,
                         ?peer,
                         ?address,
