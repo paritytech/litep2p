@@ -736,7 +736,8 @@ impl TransportManager {
         // In this case the address is reachable, however the peer ID is different.
         // Keep track of this address for future dials.
         //
-        // Note: this is happening quite often in practice and is the primary reason
+        // Note: this is happening quite often in practice and is one of the primary reasons of
+        // connection errors.
         if let DialError::NegotiationError(NegotiationError::PeerIdMismatch(_, provided)) = error {
             let context = peers.entry(*provided).or_insert_with(|| PeerContext::default());
 
