@@ -517,8 +517,9 @@ mod tests {
         assert!(store.addresses.contains_key(second_record.address()));
 
         // Evict the address with the lowest score.
+        // Store contains scores: [100, 0].
         let mut fourth_record = quic_address_record(&mut rng);
-        fourth_record.score = scores::DIFFERENT_PEER_ID;
+        fourth_record.score = 1;
         store.insert(fourth_record.clone());
 
         assert_eq!(store.addresses.len(), 2);
