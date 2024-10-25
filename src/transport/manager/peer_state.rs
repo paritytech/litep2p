@@ -74,8 +74,6 @@ use std::collections::HashSet;
 /// wasteful to negotiate the noise and yamux protocols on all addresses, since only one
 /// connection is kept around.
 ///
-/// This is something we'll reconsider in the future if we encounter issues.
-///
 /// Next states:
 /// - [`PeerState::Opening`] -> [`PeerState::Dialing`] (via transport manager
 ///   `on_connection_opened`)
