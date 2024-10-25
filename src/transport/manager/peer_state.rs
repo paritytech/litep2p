@@ -172,7 +172,7 @@ impl PeerState {
                 *self = PeerState::Dialing { dial_record };
                 StateDialResult::Ok
             }
-            reason => reason
+            reason => reason,
         }
     }
 
@@ -192,7 +192,7 @@ impl PeerState {
                 };
                 StateDialResult::Ok
             }
-            reason => reason
+            reason => reason,
         }
     }
 
