@@ -468,13 +468,27 @@ impl ConnectionRecord {
     }
 
     /// Ensures the peer ID is present in the address.
-    fn ensure_peer_id(peer: PeerId, address: Multiaddr) -> Multiaddr {
-        if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
+    fn ensure_peer_id(peer: PeerId, mut address: Multiaddr) -> Multiaddr {
+        if let Some(Protocol::P2p(multihash)) = address.iter().last() {
+            if multihash != *peer.as_ref() {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?address,
+                    ?peer,
+                    "Peer ID mismatch in address",
+                );
+
+                address.pop();
+                address.push(Protocol::P2p(
+                    Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
+                ));
+            }
+
+            address
+        } else {
             address.with(Protocol::P2p(
                 Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
             ))
-        } else {
-            address
         }
     }
 }
