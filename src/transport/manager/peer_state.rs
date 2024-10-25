@@ -167,20 +167,12 @@ impl PeerState {
 
     /// Dial the peer on a single address.
     pub fn dial_single_address(&mut self, dial_record: ConnectionRecord) -> StateDialResult {
-        let check = self.can_dial();
-        if check != StateDialResult::Ok {
-            return check;
-        }
-
-        match self {
-            Self::Disconnected { dial_record: None } => {
+        match self.can_dial() {
+            StateDialResult::Ok => {
                 *self = PeerState::Dialing { dial_record };
-                return StateDialResult::Ok;
+                StateDialResult::Ok
             }
-            state => panic!(
-                "unexpected state: {:?} validated by Self::can_dial; qed",
-                state
-            ),
+            reason => reason
         }
     }
 
