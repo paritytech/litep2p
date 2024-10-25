@@ -204,7 +204,7 @@ impl TransportManagerHandle {
                         target: LOG_TARGET,
                         ?peer,
                         ?address,
-                        "Added known address that corresponds to a different peer ID",
+                        "Refusing to add known address that corresponds to a different peer ID",
                     );
 
                     continue;
