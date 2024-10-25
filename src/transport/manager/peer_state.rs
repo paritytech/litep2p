@@ -242,7 +242,7 @@ impl PeerState {
                     return true;
                 },
 
-            _ => (),
+            Self::Opening { .. } => (),
         };
 
         false
