@@ -89,9 +89,9 @@ pub enum PeerState {
         /// Secondary record, this can either be a dial record or an established connection.
         ///
         /// While the local node was dialing a remote peer, the remote peer might've dialed
-        /// the local node and connection was established successfully. This dial address
-        /// is stored for processing later when the dial attempt concluded as either
-        /// successful/failed.
+        /// the local node and connection was established successfully. The original dial
+        /// address is stored for processing later when the dial attempt concludes as
+        /// either successful/failed.
         secondary: Option<SecondaryOrDialing>,
     },
 
