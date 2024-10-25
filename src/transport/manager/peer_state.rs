@@ -234,7 +234,8 @@ impl PeerState {
                     return true;
                 },
 
-            Self::Opening { .. } => (),
+            Self::Opening { .. } | Self::Connected { .. } | Self::Disconnected { .. } =>
+                return false,
         };
 
         false
