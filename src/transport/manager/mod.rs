@@ -22,7 +22,7 @@ use crate::{
     addresses::PublicAddresses,
     codec::ProtocolCodec,
     crypto::ed25519::Keypair,
-    error::{AddressError, DialError, Error, NegotiationError},
+    error::{AddressError, DialError, Error},
     executor::Executor,
     protocol::{InnerTransportEvent, TransportService},
     transport::{
@@ -619,28 +619,10 @@ impl TransportManager {
     }
 
     // Update the address on a dial failure.
-    fn update_address_on_dial_failure(&mut self, mut address: Multiaddr, error: &DialError) {
+    fn update_address_on_dial_failure(&mut self, address: Multiaddr, error: &DialError) {
         let mut peers = self.peers.write();
 
         let score = AddressStore::error_score(error);
-
-        // Check if the address corresponds to a different peer ID than the one we're
-        // dialing. This can happen if the node operation restarts the node.
-        //
-        // In this case the address is reachable, however the peer ID is different.
-        // Keep track of this address for future dials.
-        //
-        // Note: this is happening quite often in practice and is the primary reason
-        if let DialError::NegotiationError(NegotiationError::PeerIdMismatch(_, provided)) = error {
-            let context = peers.entry(*provided).or_insert_with(|| PeerContext::default());
-
-            if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
-                address.pop();
-            }
-            context.addresses.insert(AddressRecord::new(&provided, address.clone(), score));
-
-            return;
-        }
 
         // Extract the peer ID at this point to give `NegotiationError::PeerIdMismatch` a chance to
         // propagate.
@@ -2081,7 +2063,6 @@ mod tests {
             state => panic!("invalid state: {state:?}"),
         }
     }
-
     #[tokio::test]
     async fn secondary_connection_with_different_dial_endpoint_is_rejected() {
         let _ = tracing_subscriber::fmt()
@@ -2530,9 +2511,9 @@ mod tests {
             }
             state => panic!("invalid state: {state:?}"),
         }
+
         drop(peers);
     }
-
     #[tokio::test]
     #[cfg(debug_assertions)]
     #[should_panic]

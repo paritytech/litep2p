@@ -18,15 +18,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    error::{DialError, NegotiationError},
-    PeerId,
-};
-
-use std::collections::{hash_map::Entry, HashMap};
+use crate::{error::DialError, PeerId};
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
+
+use std::collections::{hash_map::Entry, HashMap};
 
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
@@ -36,18 +33,14 @@ pub mod scores {
     /// Score indicating that the connection was successfully established.
     pub const CONNECTION_ESTABLISHED: i32 = 100i32;
 
-    /// Score for a connection with a peer using a different ID than expected.
-    pub const DIFFERENT_PEER_ID: i32 = 50i32;
-
     /// Score for failing to connect due to an invalid or unreachable address.
     pub const CONNECTION_FAILURE: i32 = -100i32;
 
-    /// Score for a connection attempt that failed due to a timeout.
-    pub const TIMEOUT_FAILURE: i32 = -50i32;
+    /// Score for providing an invalid address.
+    ///
+    /// This address can never be reached.
+    pub const ADDRESS_FAILURE: i32 = i32::MIN;
 }
-
-/// Remove the address from the store if the score is below this threshold.
-const REMOVE_THRESHOLD: i32 = scores::CONNECTION_FAILURE * 2;
 
 #[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Debug, Clone, Hash)]
@@ -137,7 +130,7 @@ impl Ord for AddressRecord {
 pub struct AddressStore {
     /// Addresses available.
     pub addresses: HashMap<Multiaddr, AddressRecord>,
-
+    /// Maximum capacity of the address store.
     max_capacity: usize,
 }
 
@@ -193,16 +186,8 @@ impl AddressStore {
     /// Get the score for a given error.
     pub fn error_score(error: &DialError) -> i32 {
         match error {
-            DialError::Timeout => scores::CONNECTION_ESTABLISHED,
-            DialError::AddressError(_) => scores::CONNECTION_FAILURE,
-            DialError::DnsError(_) => scores::CONNECTION_FAILURE,
-            DialError::NegotiationError(negotiation_error) => match negotiation_error {
-                NegotiationError::PeerIdMismatch(_, _) => scores::DIFFERENT_PEER_ID,
-                // Timeout during the negotiation phase.
-                NegotiationError::Timeout => scores::TIMEOUT_FAILURE,
-                // Treat other errors as connection failures.
-                _ => scores::CONNECTION_FAILURE,
-            },
+            DialError::AddressError(_) => scores::ADDRESS_FAILURE,
+            _ => scores::CONNECTION_FAILURE,
         }
     }
 
@@ -216,13 +201,8 @@ impl AddressStore {
     /// If the address is not in the store, it will be inserted.
     /// Otherwise, the score and connection ID will be updated.
     pub fn insert(&mut self, record: AddressRecord) {
-        let num_addresses = self.addresses.len();
-
         if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
             occupied.get_mut().update_score(record.score);
-            if occupied.get().score <= REMOVE_THRESHOLD {
-                occupied.remove();
-            }
             return;
         }
 
@@ -233,25 +213,19 @@ impl AddressStore {
         //  - if the store is at capacity, the worst address will be evicted.
         //  - an address that is not dialed yet (with score zero) will be preferred over an address
         //  that already failed (with negative score).
-        if num_addresses >= self.max_capacity {
-            // No need to keep track of negative addresses if we are at capacity.
-            if record.score < 0 {
-                return;
-            }
+        if self.addresses.len() >= self.max_capacity {
+            let min_record = self
+                .addresses
+                .values()
+                .min()
+                .cloned()
+                .expect("There is at least one element checked above; qed");
 
-            let Some(min_record) = self.addresses.values().min().cloned() else {
-                return;
-            };
             // The lowest score is better than the new record.
             if record.score < min_record.score {
                 return;
             }
             self.addresses.remove(min_record.address());
-        }
-
-        // There's no need to keep track of this address if the score is below the threshold.
-        if record.score <= REMOVE_THRESHOLD {
-            return;
         }
 
         // Insert the record.
@@ -374,7 +348,7 @@ mod tests {
             let record = store.addresses.get(&address).unwrap().clone();
 
             if let Some(previous) = prev {
-                assert!(previous.score > record.score);
+                assert!(previous.score >= record.score);
             }
 
             prev = Some(record);
@@ -402,7 +376,7 @@ mod tests {
             if prev.is_none() {
                 prev = Some(record);
             } else {
-                assert!(prev.unwrap().score > record.score);
+                assert!(prev.unwrap().score >= record.score);
                 prev = Some(record);
             }
         }
@@ -493,22 +467,6 @@ mod tests {
     }
 
     #[test]
-    fn evict_below_threshold() {
-        let mut store = AddressStore::new();
-        let mut rng = rand::thread_rng();
-
-        let mut record = tcp_address_record(&mut rng);
-        record.score = scores::CONNECTION_FAILURE;
-        store.insert(record.clone());
-
-        assert_eq!(store.addresses.len(), 1);
-
-        store.insert(record.clone());
-
-        assert_eq!(store.addresses.len(), 0);
-    }
-
-    #[test]
     fn evict_on_capacity() {
         let mut store = AddressStore {
             addresses: HashMap::new(),
@@ -535,8 +493,9 @@ mod tests {
         assert!(store.addresses.contains_key(second_record.address()));
 
         // Evict the address with the lowest score.
+        // Store contains scores: [100, 0].
         let mut fourth_record = quic_address_record(&mut rng);
-        fourth_record.score = scores::DIFFERENT_PEER_ID;
+        fourth_record.score = 1;
         store.insert(fourth_record.clone());
 
         assert_eq!(store.addresses.len(), 2);

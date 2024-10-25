@@ -389,7 +389,10 @@ impl Stream for TransportService {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
-                None => return Poll::Ready(None),
+                None => {
+                    tracing::warn!(target: LOG_TARGET, "transport service closed");
+                    return Poll::Ready(None);
+                }
                 Some(InnerTransportEvent::ConnectionEstablished {
                     peer,
                     endpoint,
