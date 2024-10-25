@@ -48,7 +48,8 @@ use std::collections::HashSet;
 ///
 /// The peer can transition to the [`PeerState::Dialing`] state when a dialing attempt is
 /// initiated. This only happens when the peer is dialed on a single address via
-/// [`PeerState::dial_single_address`].
+/// [`PeerState::dial_single_address`], or when a socket connection established
+/// in [`PeerState::Opening`] is upgraded to noise and yamux negotiation phase.
 ///
 /// The dialing state implies the peer is reached on the socket address provided, as well as
 /// negotiating noise and yamux protocols.
