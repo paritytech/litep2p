@@ -21,7 +21,10 @@
 //! Peer state management.
 
 use crate::{
-    transport::{manager::SupportedTransport, Endpoint},
+    transport::{
+        manager::{SupportedTransport, LOG_TARGET},
+        Endpoint,
+    },
     types::ConnectionId,
     PeerId,
 };
@@ -386,11 +389,20 @@ impl PeerState {
     /// Returns `true` if the connection was opened.
     pub fn on_connection_opened(&mut self, record: ConnectionRecord) -> bool {
         match self {
-            Self::Opening { .. } => {
-                // TODO: Litep2p did not check previously if the
-                // connection record is valid or not, in terms of having
-                // the same connection ID and the address part of the
-                // address set.
+            Self::Opening {
+                addresses,
+                connection_id,
+                ..
+            } => {
+                if record.connection_id != *connection_id || !addresses.contains(&record.address) {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?record,
+                        ?addresses,
+                        ?connection_id,
+                        "Connection opened for unknown address or connection ID",
+                    );
+                }
 
                 *self = Self::Dialing {
                     dial_record: record.clone(),
