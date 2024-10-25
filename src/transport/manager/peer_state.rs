@@ -264,6 +264,7 @@ impl PeerState {
 
                     return true;
                 },
+
             // There's place for a secondary connection.
             Self::Connected {
                 record,
