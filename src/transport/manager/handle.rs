@@ -193,13 +193,8 @@ impl TransportManagerHandle {
 
             // Check the peer ID if present.
             if let Some(Protocol::P2p(multihash)) = address.iter().last() {
-                // Ignore the address if the peer ID is invalid.
-                let Ok(peer_id) = PeerId::from_multihash(multihash.clone()) else {
-                    continue;
-                };
-
                 // This can correspond to the provided peerID or to a different one.
-                if peer_id != *peer {
+                if multihash != *peer.as_ref() {
                     tracing::warn!(
                         target: LOG_TARGET,
                         ?peer,
