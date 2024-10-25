@@ -82,6 +82,8 @@ use std::collections::HashSet;
 ///   `on_connection_opened`)
 /// - [`PeerState::Opening`] -> [`PeerState::Disconnected`] (via transport manager
 ///   `on_connection_opened` if negotiation cannot be started or via `on_open_failure`)
+/// - [`PeerState::Opening`] -> [`PeerState::Connected`] (via transport manager
+///   `on_connection_established` when an incoming connection is accepted)
 #[derive(Debug, Clone, PartialEq)]
 pub enum PeerState {
     /// `Litep2p` is connected to peer.
@@ -308,7 +310,7 @@ impl PeerState {
                 connection_id,
                 ..
             } => {
-                tracing::warn!(
+                tracing::trace!(
                     target: LOG_TARGET,
                     ?connection,
                     opening_addresses = ?addresses,
