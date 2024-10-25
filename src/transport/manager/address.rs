@@ -224,8 +224,6 @@ impl AddressStore {
     /// If the address is not in the store, it will be inserted.
     /// Otherwise, the score and connection ID will be updated.
     pub fn insert(&mut self, record: AddressRecord) {
-        let num_addresses = self.addresses.len();
-
         if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
             occupied.get_mut().update_score(record.score);
             return;
@@ -238,7 +236,7 @@ impl AddressStore {
         //  - if the store is at capacity, the worst address will be evicted.
         //  - an address that is not dialed yet (with score zero) will be preferred over an address
         //  that already failed (with negative score).
-        if num_addresses >= self.max_capacity {
+        if self.addresses.len() >= self.max_capacity {
             let Some(min_record) = self.addresses.values().min().cloned() else {
                 return;
             };
