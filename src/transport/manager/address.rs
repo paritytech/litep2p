@@ -39,7 +39,7 @@ pub mod scores {
     /// Score for providing an invalid address.
     ///
     /// This address can never be reached.
-    pub const ADDRESS_FAILURE: i32 = 5 * CONNECTION_FAILURE;
+    pub const ADDRESS_FAILURE: i32 = i32::MIN;
 }
 
 #[allow(clippy::derived_hash_with_manual_eq)]
