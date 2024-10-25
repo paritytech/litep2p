@@ -481,7 +481,15 @@ impl TransportManager {
             dial_addresses.iter().cloned().collect(),
             transports.keys().cloned().collect(),
         );
-        assert_eq!(result, StateDialResult::Ok);
+        if result != StateDialResult::Ok {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                state = ?context.state,
+                "invalid state for dialing",
+            );
+        }
 
         for (transport, addresses) in transports {
             if addresses.is_empty() {
