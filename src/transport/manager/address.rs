@@ -237,9 +237,13 @@ impl AddressStore {
         //  - an address that is not dialed yet (with score zero) will be preferred over an address
         //  that already failed (with negative score).
         if self.addresses.len() >= self.max_capacity {
-            let Some(min_record) = self.addresses.values().min().cloned() else {
-                return;
-            };
+            let min_record = self
+                .addresses
+                .values()
+                .min()
+                .cloned()
+                .expect("There is at least one element checked above; qed");
+
             // The lowest score is better than the new record.
             if record.score < min_record.score {
                 return;
