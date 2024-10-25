@@ -303,7 +303,19 @@ impl PeerState {
             }
 
             // Accept the incoming connection.
-            Self::Opening { .. } => {
+            Self::Opening {
+                addresses,
+                connection_id,
+                ..
+            } => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?connection,
+                    opening_addresses = ?addresses,
+                    opening_connection_id = ?connection_id,
+                    "Connection established while opening"
+                );
+
                 *self = Self::Connected {
                     record: connection,
                     secondary: None,
