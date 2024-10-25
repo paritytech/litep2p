@@ -901,7 +901,7 @@ impl TransportManager {
                 ?peer,
                 ?connection_id,
                 state = ?context.state,
-                "State missmatch in opening expected by peer state transition",
+                "State mismatch in opening expected by peer state transition",
             );
             return Err(Error::InvalidState);
         };
