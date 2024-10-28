@@ -30,7 +30,6 @@ use crate::{
 };
 
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 
 use std::collections::HashSet;
 
@@ -481,16 +480,12 @@ impl ConnectionRecord {
                 );
 
                 address.pop();
-                address.push(Protocol::P2p(
-                    Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
-                ));
+                address.push(Protocol::P2p(*peer.as_ref()));
             }
 
             address
         } else {
-            address.with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
-            ))
+            address.with(Protocol::P2p(*peer.as_ref()))
         }
     }
 }
