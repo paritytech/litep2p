@@ -175,6 +175,16 @@ impl KeepAliveTracker {
             }));
         }
 
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?connection_id,
+            ?self.keep_alive_timeout,
+            last_activity = ?self.last_activity,
+            pending_keep_alive_timeouts = ?self.pending_keep_alive_timeouts.len(),
+            "substream activity",
+        );
+
         // Wake any pending poll.
         self.waker.take().map(|waker| waker.wake());
     }
@@ -183,19 +193,17 @@ impl KeepAliveTracker {
 impl Stream for KeepAliveTracker {
     type Item = (PeerId, ConnectionId);
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-
-        if this.pending_keep_alive_timeouts.is_empty() {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.pending_keep_alive_timeouts.is_empty() {
             // No pending keep-alive timeouts.
-            this.waker = Some(cx.waker().clone());
+            self.waker = Some(cx.waker().clone());
             return Poll::Pending;
         }
 
-        match this.pending_keep_alive_timeouts.poll_next_unpin(cx) {
+        match self.pending_keep_alive_timeouts.poll_next_unpin(cx) {
             Poll::Ready(Some(key)) => {
                 // Check last-activity time.
-                let Some(when) = this.last_activity.get(&key) else {
+                let Some(when) = self.last_activity.get(&key) else {
                     tracing::debug!(
                         target: LOG_TARGET,
                         peer = ?key.0,
@@ -203,20 +211,34 @@ impl Stream for KeepAliveTracker {
                         "Last activity no longer tracks the connection (closed event triggered)",
                     );
 
-                    this.waker = Some(cx.waker().clone());
+                    // We have effectively ignored this `Poll::Ready` event. To prevent the
+                    // future from getting stuck, we need to tell the executor to poll again
+                    // for more events.
+                    cx.waker().wake_by_ref();
                     return Poll::Pending;
                 };
 
                 // Keep-alive timeout not reached yet.
-                if when.elapsed() < this.keep_alive_timeout {
+                if when.elapsed() < self.keep_alive_timeout {
+                    let timeout = self.keep_alive_timeout - when.elapsed();
+
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?key.0,
+                        connection_id = ?key.1,
+                        ?timeout,
+                        "keep-alive timeout not yet reached",
+                    );
+
                     // Refill the keep alive timeouts.
-                    let timeout = this.keep_alive_timeout - when.elapsed();
-                    this.pending_keep_alive_timeouts.push(Box::pin(async move {
+                    self.pending_keep_alive_timeouts.push(Box::pin(async move {
                         tokio::time::sleep(timeout).await;
                         key
                     }));
 
-                    this.waker = Some(cx.waker().clone());
+                    // This is similar to the `last_activity` check above, we need to inform
+                    // the executor that this object may produce more events.
+                    cx.waker().wake_by_ref();
                     return Poll::Pending;
                 }
 
@@ -227,11 +249,10 @@ impl Stream for KeepAliveTracker {
                     connection_id = ?key.1,
                     "keep-alive timeout triggered",
                 );
-                this.last_activity.remove(&key);
+                self.last_activity.remove(&key);
                 return Poll::Ready(Some(key));
             }
             Poll::Ready(None) | Poll::Pending => {
-                this.waker = Some(cx.waker().clone());
                 return Poll::Pending;
             }
         }
