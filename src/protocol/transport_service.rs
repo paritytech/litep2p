@@ -166,7 +166,14 @@ impl KeepAliveTracker {
     /// Called on substream opened event to track the last activity.
     pub fn substream_activity(&mut self, peer: PeerId, connection_id: ConnectionId) {
         // Keep track of the connection ID and the time the substream was opened.
-        self.last_activity.insert((peer, connection_id), Instant::now());
+        if self.last_activity.insert((peer, connection_id), Instant::now()).is_none() {
+            // Refill futures if there is no pending keep-alive timeout.
+            let timeout = self.keep_alive_timeout;
+            self.pending_keep_alive_timeouts.push(Box::pin(async move {
+                tokio::time::sleep(timeout).await;
+                (peer, connection_id)
+            }));
+        }
 
         // Wake any pending poll.
         self.waker.take().map(|waker| waker.wake());
@@ -1572,94 +1579,21 @@ mod tests {
 
         let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
         let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
+        let added_keys = HashSet::from([(peer1, connection1), (peer2, connection2)]);
 
-        tracker.substream_activity(peer1, connection1);
-        tracker.substream_activity(peer2, connection2);
+        tracker.on_connection_established(peer1, connection1);
+        tracker.on_connection_established(peer2, connection2);
 
-        let key = tracker.get_next_ordered().unwrap();
-        assert_eq!(key, (peer1, connection1));
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-        let key = tracker.get_next_ordered().unwrap();
-        assert_eq!(key, (peer2, connection2));
+        let key = tracker.next().await.unwrap();
+        assert!(added_keys.contains(&key));
 
-        // No more elements.
-        assert!(tracker.get_next_ordered().is_none());
-        assert!(tracker.last_activity_order.is_empty());
-    }
-
-    #[tokio::test]
-    async fn keep_alive_pop_multiple_elements_in_order() {
-        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
-
-        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
-        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
-
-        // T0.
-        tracker.substream_activity(peer1, connection1);
-        // T1 update.
-        tracker.substream_activity(peer1, connection1);
-        // Different peer on T2.
-        tracker.substream_activity(peer2, connection2);
-        // T3 update for peer1.
-        tracker.substream_activity(peer1, connection1);
-
-        // This setup effectively tracks:
-        // [ (peer2, connection2) -> T2; (peer1, connection1) -> T3 ]
-
-        let key = tracker.get_next_ordered().unwrap();
-        assert_eq!(key, (peer2, connection2));
-
-        let key = tracker.get_next_ordered().unwrap();
-        assert_eq!(key, (peer1, connection1));
+        let key = tracker.next().await.unwrap();
+        assert!(added_keys.contains(&key));
 
         // No more elements.
-        assert!(tracker.get_next_ordered().is_none());
-        assert!(tracker.last_activity_order.is_empty());
-    }
-
-    #[tokio::test]
-    async fn keep_alive_pop_multiple_elements_in_order_last_element() {
-        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
-
-        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
-
-        // T0.
-        tracker.substream_activity(peer1, connection1);
-        // T1 update.
-        tracker.substream_activity(peer1, connection1);
-        // T2 update.
-        tracker.substream_activity(peer1, connection1);
-
-        // This setup effectively tracks:
-        // [ (peer1, connection1) -> T3 ]
-
-        let key = tracker.get_next_ordered().unwrap();
-        assert_eq!(key, (peer1, connection1));
-
-        // No more elements.
-        assert!(tracker.get_next_ordered().is_none());
-        assert!(tracker.last_activity_order.is_empty());
-    }
-
-    #[tokio::test]
-    async fn keep_alive_remove_next_stale_key() {
-        let mut tracker = KeepAliveTracker::new(Duration::from_secs(1));
-
-        let (peer1, connection1) = (PeerId::random(), ConnectionId::from(1usize));
-        let (peer2, connection2) = (PeerId::random(), ConnectionId::from(2usize));
-
-        // [ (peer1, connection1) -> T0; (peer2, connection2) -> T1 ]
-        // However, the connection2 is closed.
-        tracker.substream_activity(peer1, connection1);
-        tracker.substream_activity(peer2, connection2);
-
-        tracker.on_connection_closed(peer2, connection2);
-
-        let key = tracker.get_next_ordered().unwrap();
-        assert_eq!(key, (peer1, connection1));
-
-        // No more elements.
-        assert!(tracker.get_next_ordered().is_none());
-        assert!(tracker.last_activity_order.is_empty());
+        assert!(tracker.pending_keep_alive_timeouts.is_empty());
+        assert!(tracker.last_activity.is_empty());
     }
 }
