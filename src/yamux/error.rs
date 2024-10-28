@@ -26,6 +26,19 @@ pub enum ConnectionError {
     TooManyStreams,
 }
 
+impl PartialEq for ConnectionError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ConnectionError::Io(e1), ConnectionError::Io(e2)) => e1.kind() == e2.kind(),
+            (ConnectionError::Decode(e1), ConnectionError::Decode(e2)) => e1 == e2,
+            (ConnectionError::NoMoreStreamIds, ConnectionError::NoMoreStreamIds)
+            | (ConnectionError::Closed, ConnectionError::Closed)
+            | (ConnectionError::TooManyStreams, ConnectionError::TooManyStreams) => true,
+            _ => false,
+        }
+    }
+}
+
 impl std::fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {

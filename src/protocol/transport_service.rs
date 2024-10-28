@@ -19,7 +19,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::Error,
+    addresses::PublicAddresses,
+    error::{Error, ImmediateDialError, SubstreamError},
     protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -150,11 +151,21 @@ impl TransportService {
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
-                keep_alive_timeout: keep_alive_timeout,
+                keep_alive_timeout,
                 pending_keep_alive_timeouts: FuturesUnordered::new(),
             },
             tx,
         )
+    }
+
+    /// Get the list of public addresses of the node.
+    pub fn public_addresses(&self) -> PublicAddresses {
+        self.transport_handle.public_addresses()
+    }
+
+    /// Get the list of listen addresses of the node.
+    pub fn listen_addresses(&self) -> HashSet<Multiaddr> {
+        self.transport_handle.listen_addresses()
     }
 
     /// Handle connection established event.
@@ -279,7 +290,7 @@ impl TransportService {
     /// Dial `peer` using `PeerId`.
     ///
     /// Call fails if `Litep2p` doesn't have a known address for the peer.
-    pub fn dial(&mut self, peer: &PeerId) -> crate::Result<()> {
+    pub fn dial(&mut self, peer: &PeerId) -> Result<(), ImmediateDialError> {
         self.transport_handle.dial(peer)
     }
 
@@ -291,7 +302,7 @@ impl TransportService {
     /// Calling this function is only necessary for those addresses that are discovered out-of-band
     /// since `Litep2p` internally keeps track of all peer addresses it has learned through user
     /// calling this function, Kademlia peer discoveries and `Identify` responses.
-    pub fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
+    pub fn dial_address(&mut self, address: Multiaddr) -> Result<(), ImmediateDialError> {
         self.transport_handle.dial_address(address)
     }
 
@@ -316,12 +327,15 @@ impl TransportService {
     ///
     /// Call fails if there is no connection open to `peer` or the channel towards
     /// the connection is clogged.
-    pub fn open_substream(&mut self, peer: PeerId) -> crate::Result<SubstreamId> {
+    pub fn open_substream(&mut self, peer: PeerId) -> Result<SubstreamId, SubstreamError> {
         // always prefer the primary connection
-        let connection =
-            &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?.primary;
+        let connection = &mut self
+            .connections
+            .get_mut(&peer)
+            .ok_or(SubstreamError::PeerDoesNotExist(peer))?
+            .primary;
 
-        let permit = connection.try_get_permit().ok_or(Error::ConnectionClosed)?;
+        let permit = connection.try_get_permit().ok_or(SubstreamError::ConnectionClosed)?;
         let substream_id =
             SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
 
@@ -375,7 +389,10 @@ impl Stream for TransportService {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
-                None => return Poll::Ready(None),
+                None => {
+                    tracing::warn!(target: LOG_TARGET, "transport service closed");
+                    return Poll::Ready(None);
+                }
                 Some(InnerTransportEvent::ConnectionEstablished {
                     peer,
                     endpoint,
@@ -445,6 +462,7 @@ mod tests {
             cmd_tx,
             HashSet::new(),
             Default::default(),
+            PublicAddresses::new(peer),
         );
 
         let (service, sender) = TransportService::new(

@@ -48,7 +48,7 @@ mod protocol_set;
 mod transport_service;
 
 /// Substream direction.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub enum Direction {
     /// Substream was opened by the remote peer.
     Inbound,
