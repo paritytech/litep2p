@@ -32,7 +32,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use tokio::sync::mpsc::Sender;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     time::{Duration, Instant},
 };
 
@@ -73,9 +73,6 @@ pub(crate) struct Ping {
     peers: HashSet<PeerId>,
 
     /// Pending outbound substreams.
-    pending_opens: HashMap<SubstreamId, PeerId>,
-
-    /// Pending outbound substreams.
     pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<(PeerId, Duration)>>>,
 
     /// Pending inbound substreams.
@@ -89,7 +86,6 @@ impl Ping {
             service,
             tx: config.tx_event,
             peers: HashSet::new(),
-            pending_opens: HashMap::new(),
             pending_outbound: FuturesUnordered::new(),
             pending_inbound: FuturesUnordered::new(),
             _max_failures: config.max_failures,
@@ -100,8 +96,7 @@ impl Ping {
     fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-        let substream_id = self.service.open_substream(peer)?;
-        self.pending_opens.insert(substream_id, peer);
+        self.service.open_substream(peer)?;
         self.peers.insert(peer);
 
         Ok(())
@@ -191,19 +186,7 @@ impl Ping {
                             self.on_inbound_substream(peer, substream);
                         }
                         Direction::Outbound(substream_id) => {
-                            match self.pending_opens.remove(&substream_id) {
-                                Some(stored_peer) => {
-                                    debug_assert!(peer == stored_peer);
-                                    self.on_outbound_substream(peer, substream_id, substream);
-                                }
-                                None => {
-                                    tracing::warn!(
-                                        target: LOG_TARGET,
-                                        ?substream_id,
-                                        "outbound ping substream ID does not exist",
-                                    );
-                                }
-                            }
+                            self.on_outbound_substream(peer, substream_id, substream);
                         }
                     },
                     Some(_) => {}
