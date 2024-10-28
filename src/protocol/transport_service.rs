@@ -27,13 +27,13 @@ use crate::{
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{Stream, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     fmt::Debug,
     pin::Pin,
     sync::{
@@ -134,31 +134,9 @@ struct KeepAliveTracker {
 
     /// Track substream last activity.
     last_activity: HashMap<(PeerId, ConnectionId), Instant>,
-    /// Insertion order of the last activity.
-    ///
-    /// Since the time added to the `last_activity` hashmap is always monotonically increasing,
-    /// we can use this to optimize the search for the next keep-alive timeout. This
-    /// results in fewer polls.
-    ///
-    /// # Notes
-    ///
-    /// We might have a situation where the connection is updated multiple times:
-    ///
-    /// - (peerA, id0): SubstreamA, instant T0
-    /// - (peerA, id0): SubstreamC, instant T2
-    ///
-    /// // Peer B opens in between the updates the following substream:
-    /// - (peerB, id1): SubstreamZ, instant T3
-    ///
-    /// - (peerA, id0): SubstreamB, instant T4
-    ///
-    /// For this example, the insertion order contains the following keys:
-    /// `[(peerA, id0), (peerA, id0), (peerB, id1), (peerA, id0)]`.
-    ///
-    /// To ensure a correct ordering, we'll discard elements that expire after the next element in
-    /// the order. This ensures that we always have the most recent activity at the front of the
-    /// queue.
-    last_activity_order: VecDeque<(PeerId, ConnectionId)>,
+
+    /// Pending keep-alive timeouts.
+    pending_keep_alive_timeouts: FuturesUnordered<BoxFuture<'static, (PeerId, ConnectionId)>>,
 
     /// Saved waker.
     waker: Option<Waker>,
@@ -170,7 +148,7 @@ impl KeepAliveTracker {
         Self {
             keep_alive_timeout,
             last_activity: HashMap::new(),
-            last_activity_order: VecDeque::new(),
+            pending_keep_alive_timeouts: FuturesUnordered::new(),
             waker: None,
         }
     }
@@ -182,9 +160,6 @@ impl KeepAliveTracker {
 
     /// Called on connection closed event.
     pub fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
-        // The connection is closed, we'll pop the `last_activity_order` elements
-        // in the poll method. This ensures we leverage the `VecDeque` ordering
-        // instead of searching and allocating for a new vector here.
         self.last_activity.remove(&(peer, connection_id));
     }
 
@@ -192,55 +167,9 @@ impl KeepAliveTracker {
     pub fn substream_activity(&mut self, peer: PeerId, connection_id: ConnectionId) {
         // Keep track of the connection ID and the time the substream was opened.
         self.last_activity.insert((peer, connection_id), Instant::now());
-        // Keep track of the order of the last activity insertions.
-        self.last_activity_order.push_back((peer, connection_id));
 
         // Wake any pending poll.
         self.waker.take().map(|waker| waker.wake());
-    }
-
-    /// Get the next ordered key element.
-    ///
-    /// The returned element is no longer part of the `last_activity_order` queue.
-    /// The method ensures that the oldest instant is at the front of the queue and
-    /// that the returned element corresponds to a connection that is still active.
-    fn get_next_ordered(&mut self) -> Option<(PeerId, ConnectionId)> {
-        loop {
-            let key = self.last_activity_order.pop_front()?;
-            // Key corresponds to a connection that is no longer active.
-            let Some(when) = self.last_activity.get(&key) else {
-                continue;
-            };
-
-            // Compare with the next key to ensure:
-            // - (1). identical keys are discarded
-            // - (2). the oldest instant is at the front of the queue (preserve ordering)
-            // - (3). stale connections are ignored
-            if let Some(next_key) = self.last_activity_order.front() {
-                // (1). Handle multiple inserts for the same connection.
-                if &key == next_key {
-                    continue;
-                }
-
-                if let Some(next_when) = self.last_activity.get(next_key) {
-                    // (2). If the next key is older, we'll discard the current key.
-                    // The current key corresponds to a more recent entry that will be polled later.
-                    if next_when < when {
-                        continue;
-                    }
-                } else {
-                    // (3). Remove the next key if it corresponds to a stale connection
-                    // and preserve the current key.
-                    // We can't ensure (1) or (2) at this point if the next connection
-                    // is stale. We'll handle this in the next iteration.
-                    self.last_activity_order.pop_front();
-                    self.last_activity_order.push_front(key);
-                    continue;
-                }
-            }
-
-            return Some(key);
-        }
     }
 }
 
@@ -250,31 +179,54 @@ impl Stream for KeepAliveTracker {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        loop {
-            let Some(key) = this.get_next_ordered() else {
-                // No more keys to process.
-                this.waker = Some(cx.waker().clone());
-                return Poll::Pending;
-            };
+        if this.pending_keep_alive_timeouts.is_empty() {
+            // No pending keep-alive timeouts.
+            this.waker = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
 
-            let when = this.last_activity.get(&key).expect("key exists; qed by get_next_ordered");
-            // No keep-alive timeout reached yet.
-            if when.elapsed() < this.keep_alive_timeout {
-                this.last_activity_order.push_front(key);
+        match this.pending_keep_alive_timeouts.poll_next_unpin(cx) {
+            Poll::Ready(Some(key)) => {
+                // Check last-activity time.
+                let Some(when) = this.last_activity.get(&key) else {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?key.0,
+                        connection_id = ?key.1,
+                        "Last activity no longer tracks the connection (closed event triggered)",
+                    );
+
+                    this.waker = Some(cx.waker().clone());
+                    return Poll::Pending;
+                };
+
+                // Keep-alive timeout not reached yet.
+                if when.elapsed() < this.keep_alive_timeout {
+                    // Refill the keep alive timeouts.
+                    let timeout = this.keep_alive_timeout - when.elapsed();
+                    this.pending_keep_alive_timeouts.push(Box::pin(async move {
+                        tokio::time::sleep(timeout).await;
+                        key
+                    }));
+
+                    this.waker = Some(cx.waker().clone());
+                    return Poll::Pending;
+                }
+
+                // Keep-alive timeout reached.
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    peer = ?key.0,
+                    connection_id = ?key.1,
+                    "keep-alive timeout triggered",
+                );
+                this.last_activity.remove(&key);
+                return Poll::Ready(Some(key));
+            }
+            Poll::Ready(None) | Poll::Pending => {
                 this.waker = Some(cx.waker().clone());
                 return Poll::Pending;
             }
-
-            // Keep-alive timeout reached.
-            tracing::trace!(
-                target: LOG_TARGET,
-                peer = ?key.0,
-                connection_id = ?key.1,
-                "keep-alive timeout triggered",
-            );
-            this.last_activity.remove(&key);
-
-            return Poll::Ready(Some(key));
         }
     }
 }
