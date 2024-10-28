@@ -412,7 +412,9 @@ impl TransportManager {
     }
 
     /// Return multiple addresses to dial on supported protocols.
-    fn open_addresses(addresses: &[Multiaddr]) -> HashMap<SupportedTransport, Vec<Multiaddr>> {
+    fn supported_transports_addresses(
+        addresses: &[Multiaddr],
+    ) -> HashMap<SupportedTransport, Vec<Multiaddr>> {
         let mut transports = HashMap::<SupportedTransport, Vec<Multiaddr>>::new();
 
         for address in addresses.iter().cloned() {
@@ -473,7 +475,7 @@ impl TransportManager {
             "dial remote peer",
         );
 
-        let transports = Self::open_addresses(&dial_addresses);
+        let transports = Self::supported_transports_addresses(&dial_addresses);
 
         // Dialing addresses will succeed because the `context.state.can_dial()` returned `Ok`.
         let result = context.state.dial_addresses(
