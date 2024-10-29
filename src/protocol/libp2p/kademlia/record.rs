@@ -32,7 +32,6 @@ use multihash::Multihash;
 use std::{borrow::Borrow, time::Instant};
 
 /// The (opaque) key of a record.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Key(Bytes);
 
