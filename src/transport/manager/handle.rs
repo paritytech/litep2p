@@ -25,8 +25,9 @@ use crate::{
     executor::Executor,
     protocol::ProtocolSet,
     transport::manager::{
-        address::{AddressRecord, AddressStore},
-        types::{PeerContext, PeerState, SupportedTransport},
+        address::AddressRecord,
+        peer_state::StateDialResult,
+        types::{PeerContext, SupportedTransport},
         ProtocolContext, TransportManagerEvent, LOG_TARGET,
     },
     types::{protocol::ProtocolName, ConnectionId},
@@ -180,51 +181,58 @@ impl TransportManagerHandle {
         peer: &PeerId,
         addresses: impl Iterator<Item = Multiaddr>,
     ) -> usize {
-        let mut peers = self.peers.write();
-        let addresses = addresses
-            .filter_map(|address| {
-                (self.supported_transport(&address) && !self.is_local_address(&address))
-                    .then_some(AddressRecord::from_multiaddr(address)?)
-            })
-            .collect::<HashSet<_>>();
+        let mut peer_addresses = HashSet::new();
 
-        // if all of the added addresses belonged to unsupported transports, exit early
-        let num_added = addresses.len();
-        if num_added == 0 {
-            tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                "didn't add any addresses for peer because transport is not supported",
-            );
+        for address in addresses {
+            // There is not supported transport configured that can dial this address.
+            if !self.supported_transport(&address) {
+                continue;
+            }
+            if self.is_local_address(&address) {
+                continue;
+            }
 
-            return 0usize;
+            // Check the peer ID if present.
+            if let Some(Protocol::P2p(multihash)) = address.iter().last() {
+                // This can correspond to the provided peerID or to a different one.
+                if multihash != *peer.as_ref() {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?address,
+                        "Refusing to add known address that corresponds to a different peer ID",
+                    );
+
+                    continue;
+                }
+
+                peer_addresses.insert(address);
+            } else {
+                // Add the provided peer ID to the address.
+                let address = address.with(Protocol::P2p(multihash::Multihash::from(peer.clone())));
+                peer_addresses.insert(address);
+            }
         }
+
+        let num_added = peer_addresses.len();
 
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
-            ?addresses,
+            ?peer_addresses,
             "add known addresses",
         );
 
-        match peers.get_mut(peer) {
-            Some(context) =>
-                for record in addresses {
-                    if !context.addresses.contains(record.address()) {
-                        context.addresses.insert(record);
-                    }
-                },
-            None => {
-                peers.insert(
-                    *peer,
-                    PeerContext {
-                        state: PeerState::Disconnected { dial_record: None },
-                        addresses: AddressStore::from_iter(addresses),
-                        secondary_connection: None,
-                    },
-                );
-            }
-        }
+        let mut peers = self.peers.write();
+        let entry = peers.entry(*peer).or_insert_with(|| PeerContext::default());
+
+        // All addresses should be valid at this point, since the peer ID was either added or
+        // double checked.
+        entry.addresses.extend(
+            peer_addresses
+                .into_iter()
+                .filter_map(|addr| AddressRecord::from_multiaddr(addr)),
+        );
 
         num_added
     }
@@ -238,36 +246,21 @@ impl TransportManagerHandle {
         }
 
         {
-            match self.peers.read().get(peer) {
-                Some(PeerContext {
-                    state: PeerState::Connected { .. },
-                    ..
-                }) => return Err(ImmediateDialError::AlreadyConnected),
-                Some(PeerContext {
-                    state: PeerState::Disconnected { dial_record },
-                    addresses,
-                    ..
-                }) => {
-                    if addresses.is_empty() {
-                        return Err(ImmediateDialError::NoAddressAvailable);
-                    }
+            let peers = self.peers.read();
+            let Some(PeerContext { state, addresses }) = peers.get(peer) else {
+                return Err(ImmediateDialError::NoAddressAvailable);
+            };
 
-                    // peer is already being dialed, don't dial again until the first dial concluded
-                    if dial_record.is_some() {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?dial_record,
-                            "peer is aready being dialed",
-                        );
-                        return Ok(());
-                    }
-                }
-                Some(PeerContext {
-                    state: PeerState::Dialing { .. } | PeerState::Opening { .. },
-                    ..
-                }) => return Ok(()),
-                None => return Err(ImmediateDialError::NoAddressAvailable),
+            match state.can_dial() {
+                StateDialResult::AlreadyConnected =>
+                    return Err(ImmediateDialError::AlreadyConnected),
+                StateDialResult::DialingInProgress => return Ok(()),
+                StateDialResult::Ok => {}
+            };
+
+            // Check if we have enough addresses to dial.
+            if addresses.is_empty() {
+                return Err(ImmediateDialError::NoAddressAvailable);
             }
         }
 
@@ -327,6 +320,11 @@ impl TransportHandle {
 
 #[cfg(test)]
 mod tests {
+    use crate::transport::manager::{
+        address::AddressStore,
+        peer_state::{ConnectionRecord, PeerState},
+    };
+
     use super::*;
     use multihash::Multihash;
     use parking_lot::lock_api::RwLock;
@@ -443,16 +441,16 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Connected {
-                        record: AddressRecord::from_multiaddr(
-                            Multiaddr::empty()
+                        record: ConnectionRecord {
+                            address: Multiaddr::empty()
                                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                                 .with(Protocol::Tcp(8888))
                                 .with(Protocol::P2p(Multihash::from(peer))),
-                        )
-                        .unwrap(),
-                        dial_record: None,
+                            connection_id: ConnectionId::from(0),
+                        },
+                        secondary: None,
                     },
-                    secondary_connection: None,
+
                     addresses: AddressStore::from_iter(
                         vec![Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
@@ -486,15 +484,15 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Dialing {
-                        record: AddressRecord::from_multiaddr(
-                            Multiaddr::empty()
+                        dial_record: ConnectionRecord {
+                            address: Multiaddr::empty()
                                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                                 .with(Protocol::Tcp(8888))
                                 .with(Protocol::P2p(Multihash::from(peer))),
-                        )
-                        .unwrap(),
+                            connection_id: ConnectionId::from(0),
+                        },
                     },
-                    secondary_connection: None,
+
                     addresses: AddressStore::from_iter(
                         vec![Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
@@ -528,7 +526,6 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Disconnected { dial_record: None },
-                    secondary_connection: None,
                     addresses: AddressStore::new(),
                 },
             );
@@ -554,17 +551,16 @@ mod tests {
                 peer,
                 PeerContext {
                     state: PeerState::Disconnected {
-                        dial_record: Some(
-                            AddressRecord::from_multiaddr(
-                                Multiaddr::empty()
-                                    .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
-                                    .with(Protocol::Tcp(8888))
-                                    .with(Protocol::P2p(Multihash::from(peer))),
-                            )
-                            .unwrap(),
-                        ),
+                        dial_record: Some(ConnectionRecord::new(
+                            peer,
+                            Multiaddr::empty()
+                                .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+                                .with(Protocol::Tcp(8888))
+                                .with(Protocol::P2p(Multihash::from(peer))),
+                            ConnectionId::from(0),
+                        )),
                     },
-                    secondary_connection: None,
+
                     addresses: AddressStore::from_iter(
                         vec![Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))

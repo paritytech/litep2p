@@ -29,11 +29,8 @@
 use futures::StreamExt;
 use litep2p::{
     config::ConfigBuilder,
-    protocol::{libp2p::ping, request_response::ConfigBuilder},
-    transport::{
-        quic::config::Config as QuicConfig,
-        tcp::config::Config as TcpConfig,
-    },
+    protocol::{libp2p::ping, request_response::ConfigBuilder as RequestResponseConfigBuilder},
+    transport::{quic::config::Config as QuicConfig, tcp::config::Config as TcpConfig},
     Litep2p, ProtocolName,
 };
 
@@ -46,7 +43,9 @@ async fn main() {
 
     // enable `/request/1` request-response protocol
     let (req_resp_config, mut req_resp_handle) =
-        ConfigBuilder::new(ProtocolName::from("/request/1")).with_max_size(1024).build();
+        RequestResponseConfigBuilder::new(ProtocolName::Static("/request/1"))
+            .with_max_size(1024)
+            .build();
 
     // build `Litep2pConfig` object
     let config = ConfigBuilder::new()
@@ -58,14 +57,17 @@ async fn main() {
             ..Default::default()
         })
         .with_quic(QuicConfig {
-            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().expect("valid address")],
+            listen_addresses: vec!["/ip4/127.0.0.1/udp/0/quic-v1"
+                .parse()
+                .expect("valid address")],
+            ..Default::default()
         })
         .with_libp2p_ping(ping_config)
         .with_request_response_protocol(req_resp_config)
         .build();
 
     // build `Litep2p` object
-    let mut litep2p = Litep2p::new(config).await.unwrap();
+    let mut litep2p = Litep2p::new(config).unwrap();
 
     loop {
         tokio::select! {

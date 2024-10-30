@@ -661,6 +661,7 @@ impl Stream for WebSocketTransport {
                 Ok(connection) => {
                     let peer = connection.peer();
                     let endpoint = connection.endpoint();
+                    self.pending_dials.remove(&connection.connection_id());
                     self.pending_open.insert(connection.connection_id(), connection);
 
                     return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
