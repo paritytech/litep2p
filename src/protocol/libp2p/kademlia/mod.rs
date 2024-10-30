@@ -1118,7 +1118,7 @@ impl Kademlia {
                                             .closest(&Key::new(key), self.replication_factor)
                                             .into(),
                                         quorum,
-                                        if record.is_some() { 1 } else { 0 },
+                                        record.cloned(),
                                     );
                                 }
                             }
