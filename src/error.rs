@@ -214,6 +214,9 @@ pub enum NegotiationError {
     /// The peer ID was not provided by the noise handshake.
     #[error("`PeerId` missing from Noise handshake")]
     PeerIdMissing,
+    /// The remote peer ID is not the same as the one expected.
+    #[error("The signature of the remote identity's public key does not verify")]
+    BadSignature,
     /// The negotiation operation timed out.
     #[error("Operation timed out")]
     Timeout,
