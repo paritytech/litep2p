@@ -671,7 +671,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
 }
 
 /// Parse the `PeerId` from received `NoiseHandshakePayload` and verify the payload signature.
-fn parse_peer_id(
+fn parse_and_verify_peer_id(
     payload: handshake_schema::NoiseHandshakePayload,
     keypair_public: &[u8],
 ) -> Result<PeerId, NegotiationError> {
@@ -753,7 +753,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     };
 
     let dh_remote_pubkey = noise.get_handshake_dh_remote_pubkey()?;
-    let peer = parse_peer_id(payload, dh_remote_pubkey)?;
+    let peer = parse_and_verify_peer_id(payload, dh_remote_pubkey)?;
 
     Ok((
         NoiseSocket::new(
@@ -832,7 +832,12 @@ mod tests {
 
     #[test]
     fn invalid_peer_id_schema() {
-        match parse_peer_id(&vec![1, 2, 3, 4], &[0]).unwrap_err() {
+        let payload = handshake_schema::NoiseHandshakePayload {
+            identity_key: Some(vec![1, 2, 3, 4]),
+            identity_sig: None,
+            extensions: None,
+        };
+        match parse_and_verify_peer_id(payload, &[0]).unwrap_err() {
             NegotiationError::ParseError(_) => {}
             _ => panic!("invalid error"),
         }
