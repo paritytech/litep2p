@@ -29,7 +29,9 @@
 #![allow(clippy::match_like_matches_macro)]
 
 use crate::{
+    addresses::PublicAddresses,
     config::Litep2pConfig,
+    error::DialError,
     protocol::{
         libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
         mdns::Mdns,
@@ -50,7 +52,6 @@ use crate::transport::webrtc::WebRtcTransport;
 #[cfg(feature = "websocket")]
 use crate::transport::websocket::WebSocketTransport;
 
-use error::DialError;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use transport::Endpoint;
@@ -65,6 +66,7 @@ pub use types::protocol::ProtocolName;
 
 pub(crate) mod peer_id;
 
+pub mod addresses;
 pub mod codec;
 pub mod config;
 pub mod crypto;
@@ -387,7 +389,7 @@ impl Litep2p {
         // if identify was enabled, give it the enabled protocols and listen addresses and start it
         if let Some((service, mut identify_config)) = identify_info.take() {
             identify_config.protocols = transport_manager.protocols().cloned().collect();
-            let identify = Identify::new(service, identify_config, listen_addresses.clone());
+            let identify = Identify::new(service, identify_config);
 
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = identify.run().await;
@@ -450,7 +452,12 @@ impl Litep2p {
         &self.local_peer_id
     }
 
-    /// Get listen address of litep2p.
+    /// Get the list of public addresses of the node.
+    pub fn public_addresses(&self) -> PublicAddresses {
+        self.transport_manager.public_addresses()
+    }
+
+    /// Get the list of listen addresses of the node.
     pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
         self.listen_addresses.iter()
     }
@@ -473,7 +480,7 @@ impl Litep2p {
     /// Add one ore more known addresses for peer.
     ///
     /// Return value denotes how many addresses were added for the peer.
-    // Addresses belonging to disabled/unsupported transports will be ignored.
+    /// Addresses belonging to disabled/unsupported transports will be ignored.
     pub fn add_known_address(
         &mut self,
         peer: PeerId,

@@ -5,6 +5,146 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2024-09-05
+
+This release introduces several new features, improvements, and fixes to the litep2p library. Key updates include enhanced error handling, configurable connection limits, and a new API for managing public addresses.
+
+### [Exposing Public Addresses API](https://github.com/paritytech/litep2p/pull/212)
+
+A new `PublicAddresses` API has been added, enabling users to manage the node's public addresses. This API allows developers to add, remove, and retrieve public addresses, which are shared with peers through the Identify protocol.
+
+```rust
+    // Public addresses are accessible from the main litep2p instance.
+    let public_addresses = litep2p.public_addresses();
+
+    // Add a new public address to the node.
+    if let Err(err) = public_addresses.add_address(multiaddr) {
+        eprintln!("Failed to add public address: {:?}", err);
+    }
+
+    // Remove a public address from the node.
+    public_addresses.remove_address(&multiaddr);
+
+    // Retrieve all public addresses of the node.
+    for address in public_addresses.get_addresses() {
+        println!("Public address: {}", address);
+    }
+```
+
+**Breaking Change**: The Identify protocol no longer includes public addresses in its configuration. Instead, use the new `PublicAddresses` API.
+
+Migration Guide:
+
+```rust
+    // Before:
+    let (identify_config, identify_event_stream) = IdentifyConfig::new(
+        "/substrate/1.0".to_string(),
+        Some(user_agent),
+        config.public_addresses,
+    );
+
+    // After:
+    let (identify_config, identify_event_stream) =
+        IdentifyConfig::new("/substrate/1.0".to_string(), Some(user_agent));
+    // Public addresses must now be added using the `PublicAddresses` API:
+    for address in config.public_addresses {
+        if let Err(err) = public_addresses.add_address(address) {
+            eprintln!("Failed to add public address: {:?}", err);
+        }
+    }
+```
+
+### [Dial Error and List Dial Failures Event](https://github.com/paritytech/litep2p/pull/206)
+
+The `DialFailure` event has been enhanced with a new `DialError` enum for more precise error reporting when a dial attempt fails. Additionally, a `ListDialFailures` event has been introduced, listing all dialed addresses and their corresponding errors when multiple addresses are involved.
+
+Other litep2p errors, such as `ParseError`, `AddressError`, and `NegotiationError`, have been refactored for improved error propagation.
+
+### [Immediate Dial Error and Request-Response Rejection Reasons](https://github.com/paritytech/litep2p/pull/227)
+
+This new feature paves the way for better error handling in the `litep2p` library and moves away from the overarching `litep2p::error::Error` enum.
+
+The newly added `ImmediateDialError` enum captures errors occurring before a dial request is sent (e.g., missing peer IDs). It also enhances the `RejectReason` enum for request-response protocols, offering more detailed rejection reasons.
+
+
+```rust
+match error {
+    RequestResponseError::Rejected(reason) => {
+        match reason {
+            RejectReason::ConnectionClosed => "connection-closed",
+            RejectReason::DialFailed(Some(ImmediateDialError::AlreadyConnected)) => "already-connected",
+            _ => "other",
+        }
+    }
+    _ => "other",
+}
+```
+
+### [Connection Limits](https://github.com/paritytech/litep2p/pull/185)
+
+Developers can now set limits on the number of inbound and outbound connections to manage resources and optimize performance.
+
+```rust
+    // Configure connection limits for inbound and outbound established connections.
+    let litep2p_config = Config::default()
+        .with_connection_limits(ConnectionLimitsConfig::default()
+            .max_incoming_connections(Some(3))
+            .max_outgoing_connections(Some(2))
+        );
+```
+
+### [Feature Flags for Optional Transports](https://github.com/paritytech/litep2p/pull/192)
+
+The library now supports feature flags to selectively enable or disable transport protocols. By default, only the `TCP` transport is enabled. Optional transports include:
+
+- `quic` - Enables QUIC transport.
+- `websocket` - Enables WebSocket transport.
+- `webrtc` - Enables WebRTC transport.
+
+### [Configurable Keep-Alive Timeout](https://github.com/paritytech/litep2p/pull/155)
+
+The keep-alive timeout for connections is now configurable, providing more control over connection lifecycles.
+
+```rust
+    // Set keep alive timeout for connections.
+    let litep2p_config = Config::default()
+        .with_keep_alive_timeout(Duration::from_secs(30));
+```
+
+Thanks for contributing to this @[Ma233](https://github.com/Ma233)!
+
+### Added
+
+- errors: Introduce immediate dial error and request-response rejection reasons  ([#227](https://github.com/paritytech/litep2p/pull/227))
+- Expose API for `PublicAddresses`  ([#212](https://github.com/paritytech/litep2p/pull/212))
+- transport: Implement `TransportService::local_peer_id()`  ([#224](https://github.com/paritytech/litep2p/pull/224))
+- find_node: Optimize parallelism factor for slow to respond peers  ([#220](https://github.com/paritytech/litep2p/pull/220))
+- kad: Handle `ADD_PROVIDER` & `GET_PROVIDERS` network requests  ([#213](https://github.com/paritytech/litep2p/pull/213))
+- errors: Add `DialError` error and `ListDialFailures` event for better error reporting  ([#206](https://github.com/paritytech/litep2p/pull/206))
+- kad: Add support for provider records to `MemoryStore`  ([#200](https://github.com/paritytech/litep2p/pull/200))
+- transport: Add accept_pending/reject_pending for inbound connections and introduce inbound limits  ([#194](https://github.com/paritytech/litep2p/pull/194))
+- transport/manager: Add connection limits for inbound and outbound established connections  ([#185](https://github.com/paritytech/litep2p/pull/185))
+- kad: Add query id to log messages  ([#174](https://github.com/paritytech/litep2p/pull/174))
+
+### Changed
+
+- transport: Replace trust_dns_resolver with hickory_resolver  ([#223](https://github.com/paritytech/litep2p/pull/223))
+- crypto/noise: Generate keypair only for Curve25519  ([#214](https://github.com/paritytech/litep2p/pull/214))
+- transport: Allow manual setting of keep-alive timeout  ([#155](https://github.com/paritytech/litep2p/pull/155))
+- kad: Update connection status of an existing bucket entry  ([#181](https://github.com/paritytech/litep2p/pull/181))
+- Make transports optional  ([#192](https://github.com/paritytech/litep2p/pull/192))
+
+### Fixed
+
+- kad: Fix substream opening and dialing race  ([#222](https://github.com/paritytech/litep2p/pull/222))
+- query-executor: Save the task waker on empty futures  ([#219](https://github.com/paritytech/litep2p/pull/219))
+- substream: Use write_all instead of manually writing bytes  ([#217](https://github.com/paritytech/litep2p/pull/217))
+- minor: fix tests without `websocket` feature  ([#215](https://github.com/paritytech/litep2p/pull/215))
+- Fix TCP, WebSocket, QUIC leaking connection IDs in `reject()`  ([#198](https://github.com/paritytech/litep2p/pull/198))
+- transport: Fix double lock and state overwrite on disconnected peers  ([#179](https://github.com/paritytech/litep2p/pull/179))
+- kad: Do not update memory store on incoming `GetRecordSuccess`  ([#190](https://github.com/paritytech/litep2p/pull/190))
+- transport: Reject secondary connections with different connection IDs  ([#176](https://github.com/paritytech/litep2p/pull/176))
+
 ## [0.6.2] - 2024-06-26
 
 This is a bug fixing release. Kademlia now correctly sets and forwards publisher & ttl in the DHT records.

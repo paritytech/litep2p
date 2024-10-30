@@ -328,7 +328,6 @@ mod tests {
     use crate::{
         mock::substream::{DummySubstream, MockSubstream},
         types::SubstreamId,
-        Error,
     };
     use futures::StreamExt;
 
@@ -344,7 +343,10 @@ mod tests {
 
         let mut substream = MockSubstream::new();
         substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
-        substream.expect_start_send().times(1).return_once(|_| Err(Error::Unknown));
+        substream
+            .expect_start_send()
+            .times(1)
+            .return_once(|_| Err(crate::error::SubstreamError::ConnectionClosed));
 
         let peer = PeerId::random();
         let substream = Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream));
@@ -382,7 +384,7 @@ mod tests {
         substream
             .expect_poll_flush()
             .times(1)
-            .return_once(|_| Poll::Ready(Err(Error::Unknown)));
+            .return_once(|_| Poll::Ready(Err(crate::error::SubstreamError::ConnectionClosed)));
 
         let peer = PeerId::random();
         let substream = Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream));

@@ -79,9 +79,6 @@ pub struct Config {
     /// Protocols supported by the local node, filled by `Litep2p`.
     pub(crate) protocols: Vec<ProtocolName>,
 
-    /// Public addresses.
-    pub(crate) public_addresses: Vec<Multiaddr>,
-
     /// Protocol version.
     pub(crate) protocol_version: String,
 
@@ -97,7 +94,6 @@ impl Config {
     pub fn new(
         protocol_version: String,
         user_agent: Option<String>,
-        public_addresses: Vec<Multiaddr>,
     ) -> (Self, Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -105,7 +101,6 @@ impl Config {
             Self {
                 tx_event,
                 public: None,
-                public_addresses,
                 protocol_version,
                 user_agent,
                 codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
@@ -182,14 +177,8 @@ pub(crate) struct Identify {
     /// User agent.
     user_agent: String,
 
-    /// Public addresses.
-    listen_addresses: HashSet<Multiaddr>,
-
     /// Protocols supported by the local node, filled by `Litep2p`.
     protocols: Vec<String>,
-
-    /// Pending outbound substreams.
-    pending_opens: HashMap<SubstreamId, PeerId>,
 
     /// Pending outbound substreams.
     pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
@@ -200,20 +189,14 @@ pub(crate) struct Identify {
 
 impl Identify {
     /// Create new [`Identify`] protocol.
-    pub(crate) fn new(
-        service: TransportService,
-        config: Config,
-        listen_addresses: Vec<Multiaddr>,
-    ) -> Self {
+    pub(crate) fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            listen_addresses: config.public_addresses.into_iter().chain(listen_addresses).collect(),
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
-            pending_opens: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
             pending_outbound: FuturesUnordered::new(),
             protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
@@ -224,8 +207,7 @@ impl Identify {
     fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, ?endpoint, "connection established");
 
-        let substream_id = self.service.open_substream(peer)?;
-        self.pending_opens.insert(substream_id, peer);
+        self.service.open_substream(peer)?;
         self.peers.insert(peer, endpoint);
 
         Ok(())
@@ -265,15 +247,16 @@ impl Identify {
             }
         };
 
+        let mut listen_addr: HashSet<_> =
+            self.service.listen_addresses().into_iter().map(|addr| addr.to_vec()).collect();
+        listen_addr
+            .extend(self.service.public_addresses().inner.read().iter().map(|addr| addr.to_vec()));
+
         let identify = identify_schema::Identify {
             protocol_version: Some(self.protocol_version.clone()),
             agent_version: Some(self.user_agent.clone()),
             public_key: Some(self.public.to_protobuf_encoding()),
-            listen_addrs: self
-                .listen_addresses
-                .iter()
-                .map(|address| address.to_vec())
-                .collect::<Vec<_>>(),
+            listen_addrs: listen_addr.into_iter().collect(),
             observed_addr,
             protocols: self.protocols.clone(),
         };
@@ -337,7 +320,7 @@ impl Identify {
                         return Err(Error::SubstreamError(SubstreamError::ReadFailure(Some(
                             substream_id,
                         )))),
-                    Ok(Some(Err(error))) => return Err(error),
+                    Ok(Some(Err(error))) => return Err(error.into()),
                     Ok(Some(Ok(payload))) => payload,
                 };
 
@@ -408,6 +391,77 @@ impl Identify {
                     }
                     Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
                     None => return,
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::ConfigBuilder, transport::tcp::config::Config as TcpConfig, Litep2p};
+    use multiaddr::{Multiaddr, Protocol};
+
+    fn create_litep2p() -> (
+        Litep2p,
+        Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>,
+        PeerId,
+    ) {
+        let (identify_config, identify) =
+            Config::new("1.0.0".to_string(), Some("litep2p/1.0.0".to_string()));
+
+        let keypair = crate::crypto::ed25519::Keypair::generate();
+        let peer = PeerId::from_public_key(&crate::crypto::PublicKey::Ed25519(keypair.public()));
+        let config = ConfigBuilder::new()
+            .with_keypair(keypair)
+            .with_tcp(TcpConfig {
+                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+                ..Default::default()
+            })
+            .with_libp2p_identify(identify_config)
+            .build();
+
+        (Litep2p::new(config).unwrap(), identify, peer)
+    }
+
+    #[tokio::test]
+    async fn update_identify_addresses() {
+        // Create two instances of litep2p
+        let (mut litep2p1, mut event_stream1, peer1) = create_litep2p();
+        let (mut litep2p2, mut event_stream2, _peer2) = create_litep2p();
+        let litep2p1_address = litep2p1.listen_addresses().into_iter().next().unwrap();
+
+        let multiaddr: Multiaddr = "/ip6/::9/tcp/111".parse().unwrap();
+        // Litep2p1 is now reporting the new address.
+        assert!(litep2p1.public_addresses().add_address(multiaddr.clone()).unwrap());
+
+        // Dial `litep2p1`
+        litep2p2.dial_address(litep2p1_address.clone()).await.unwrap();
+
+        let expected_multiaddr = multiaddr.with(Protocol::P2p(peer1.into()));
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = litep2p1.next_event() => {}
+                    _event = event_stream1.next() => {}
+                }
+            }
+        });
+
+        loop {
+            tokio::select! {
+                _ = litep2p2.next_event() => {}
+                event = event_stream2.next() => match event {
+                    Some(IdentifyEvent::PeerIdentified {
+                        listen_addresses,
+                        ..
+                    }) => {
+                        assert!(listen_addresses.iter().any(|address| address == &expected_multiaddr));
+                        break;
+                    }
+                    _ => {}
                 }
             }
         }

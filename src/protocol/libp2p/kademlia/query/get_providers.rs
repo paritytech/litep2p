@@ -1,4 +1,4 @@
-// Copyright 2023 litep2p developers
+// Copyright 2024 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
 // copy of this software and associated documentation files (the "Software"),
@@ -24,34 +24,23 @@ use crate::{
     protocol::libp2p::kademlia::{
         message::KademliaMessage,
         query::{QueryAction, QueryId},
-        record::{Key as RecordKey, PeerRecord, Record},
+        record::{ContentProvider, Key as RecordKey},
         types::{Distance, KademliaPeer, Key},
-        Quorum,
     },
+    types::multiaddr::Multiaddr,
     PeerId,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_record";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_providers";
 
-/// The configuration needed to instantiate a new [`GetRecordContext`].
+/// The configuration needed to instantiate a new [`GetProvidersContext`].
 #[derive(Debug)]
-pub struct GetRecordConfig {
+pub struct GetProvidersConfig {
     /// Local peer ID.
     pub local_peer_id: PeerId,
-
-    /// How many records we already know about (ie extracted from storage).
-    ///
-    /// This can either be 0 or 1 when the record is extracted local storage.
-    pub known_records: usize,
-
-    /// Quorum for the query.
-    pub quorum: Quorum,
-
-    /// Replication factor.
-    pub replication_factor: usize,
 
     /// Parallelism factor.
     pub parallelism_factor: usize,
@@ -61,29 +50,15 @@ pub struct GetRecordConfig {
 
     /// Target key.
     pub target: Key<RecordKey>,
-}
 
-impl GetRecordConfig {
-    /// Checks if the found number of records meets the specified quorum.
-    ///
-    /// Used to determine if the query found enough records to stop.
-    fn sufficient_records(&self, records: usize) -> bool {
-        // The total number of known records is the sum of the records we knew about before starting
-        // the query and the records we found along the way.
-        let total_known = self.known_records + records;
-
-        match self.quorum {
-            Quorum::All => total_known >= self.replication_factor,
-            Quorum::One => total_known >= 1,
-            Quorum::N(needed_responses) => total_known >= needed_responses.get(),
-        }
-    }
+    /// Known providers from the local store.
+    pub known_providers: Vec<KademliaPeer>,
 }
 
 #[derive(Debug)]
-pub struct GetRecordContext {
+pub struct GetProvidersContext {
     /// Query immutable config.
-    pub config: GetRecordConfig,
+    pub config: GetProvidersConfig,
 
     /// Cached Kademlia message to send.
     kad_message: Bytes,
@@ -100,40 +75,66 @@ pub struct GetRecordContext {
     /// Candidates.
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
-    /// Found records.
-    pub found_records: Vec<PeerRecord>,
+    /// Found providers.
+    pub found_providers: Vec<KademliaPeer>,
 }
 
-impl GetRecordContext {
-    /// Create new [`GetRecordContext`].
-    pub fn new(
-        config: GetRecordConfig,
-        in_peers: VecDeque<KademliaPeer>,
-        found_records: Vec<PeerRecord>,
-    ) -> Self {
+impl GetProvidersContext {
+    /// Create new [`GetProvidersContext`].
+    pub fn new(config: GetProvidersConfig, candidate_peers: VecDeque<KademliaPeer>) -> Self {
         let mut candidates = BTreeMap::new();
 
-        for candidate in &in_peers {
-            let distance = config.target.distance(&candidate.key);
-            candidates.insert(distance, candidate.clone());
+        for peer in &candidate_peers {
+            let distance = config.target.distance(&peer.key);
+            candidates.insert(distance, peer.clone());
         }
 
-        let kad_message = KademliaMessage::get_record(config.target.clone().into_preimage());
+        let kad_message =
+            KademliaMessage::get_providers_request(config.target.clone().into_preimage());
 
         Self {
             config,
             kad_message,
-
             candidates,
             pending: HashMap::new(),
             queried: HashSet::new(),
-            found_records,
+            found_providers: Vec::new(),
         }
     }
 
-    /// Get the found records.
-    pub fn found_records(self) -> Vec<PeerRecord> {
-        self.found_records
+    /// Get the found providers.
+    pub fn found_providers(self) -> Vec<ContentProvider> {
+        Self::merge_and_sort_providers(
+            self.config.known_providers.into_iter().chain(self.found_providers),
+            self.config.target,
+        )
+    }
+
+    fn merge_and_sort_providers(
+        found_providers: impl IntoIterator<Item = KademliaPeer>,
+        target: Key<RecordKey>,
+    ) -> Vec<ContentProvider> {
+        // Merge addresses of different provider records of the same peer.
+        let mut providers = HashMap::<PeerId, HashSet<Multiaddr>>::new();
+        found_providers.into_iter().for_each(|provider| {
+            providers.entry(provider.peer).or_default().extend(provider.addresses)
+        });
+
+        // Convert into `Vec<KademliaPeer>`
+        let mut providers = providers
+            .into_iter()
+            .map(|(peer, addresses)| ContentProvider {
+                peer,
+                addresses: addresses.into_iter().collect(),
+            })
+            .collect::<Vec<_>>();
+
+        // Sort by the provider distance to the target key.
+        providers.sort_unstable_by(|p1, p2| {
+            Key::from(p1.peer).distance(&target).cmp(&Key::from(p2.peer).distance(&target))
+        });
+
+        providers
     }
 
     /// Register response failure for `peer`.
@@ -143,7 +144,7 @@ impl GetRecordContext {
                 target: LOG_TARGET,
                 query = ?self.config.query,
                 ?peer,
-                "`GetRecordContext`: pending peer doesn't exist",
+                "`GetProvidersContext`: pending peer doesn't exist",
             );
             return;
         };
@@ -151,18 +152,18 @@ impl GetRecordContext {
         self.queried.insert(peer.peer);
     }
 
-    /// Register `GET_VALUE` response from `peer`.
+    /// Register `GET_PROVIDERS` response from `peer`.
     pub fn register_response(
         &mut self,
         peer: PeerId,
-        record: Option<Record>,
-        peers: Vec<KademliaPeer>,
+        providers: impl IntoIterator<Item = KademliaPeer>,
+        closer_peers: impl IntoIterator<Item = KademliaPeer>,
     ) {
         tracing::trace!(
             target: LOG_TARGET,
             query = ?self.config.query,
             ?peer,
-            "`GetRecordContext`: received response from peer",
+            "`GetProvidersContext`: received response from peer",
         );
 
         let Some(peer) = self.pending.remove(&peer) else {
@@ -170,25 +171,18 @@ impl GetRecordContext {
                 target: LOG_TARGET,
                 query = ?self.config.query,
                 ?peer,
-                "`GetRecordContext`: received response from peer but didn't expect it",
+                "`GetProvidersContext`: received response from peer but didn't expect it",
             );
             return;
         };
 
-        if let Some(record) = record {
-            if !record.is_expired(std::time::Instant::now()) {
-                self.found_records.push(PeerRecord {
-                    peer: peer.peer,
-                    record,
-                });
-            }
-        }
+        self.found_providers.extend(providers);
 
         // Add the queried peer to `queried` and all new peers which haven't been
         // queried to `candidates`
         self.queried.insert(peer.peer);
 
-        let to_query_candidate = peers.into_iter().filter_map(|peer| {
+        let to_query_candidate = closer_peers.into_iter().filter_map(|peer| {
             // Peer already produced a response.
             if self.queried.contains(&peer.peer) {
                 return None;
@@ -228,7 +222,7 @@ impl GetRecordContext {
         tracing::trace!(
             target: LOG_TARGET,
             query = ?self.config.query,
-            "`GetRecordContext`: get next peer",
+            "`GetProvidersContext`: get next peer",
         );
 
         let (_, candidate) = self.candidates.pop_first()?;
@@ -238,7 +232,7 @@ impl GetRecordContext {
             target: LOG_TARGET,
             query = ?self.config.query,
             ?peer,
-            "`GetRecordContext`: current candidate",
+            "`GetProvidersContext`: current candidate",
         );
         self.pending.insert(candidate.peer, candidate);
 
@@ -256,16 +250,12 @@ impl GetRecordContext {
         self.pending.is_empty() && self.candidates.is_empty()
     }
 
-    /// Get next action for a `GET_VALUE` query.
+    /// Get next action for a `GET_PROVIDERS` query.
     pub fn next_action(&mut self) -> Option<QueryAction> {
-        // These are the records we knew about before starting the query and
-        // the records we found along the way.
-        let known_records = self.config.known_records + self.found_records.len();
-
-        // If we cannot make progress, return the final result.
-        // A query failed when we are not able to identify one single record.
         if self.is_done() {
-            return if known_records == 0 {
+            // If we cannot make progress, return the final result.
+            // A query failed when we are not able to find any providers.
+            if self.found_providers.is_empty() {
                 Some(QueryAction::QueryFailed {
                     query: self.config.query,
                 })
@@ -273,24 +263,14 @@ impl GetRecordContext {
                 Some(QueryAction::QuerySucceeded {
                     query: self.config.query,
                 })
-            };
+            }
+        } else if self.pending.len() == self.config.parallelism_factor {
+            // At this point, we either have pending responses or candidates to query; and we need
+            // more records. Ensure we do not exceed the parallelism factor.
+            None
+        } else {
+            self.schedule_next_peer()
         }
-
-        // Check if enough records have been found
-        let sufficient_records = self.config.sufficient_records(self.found_records.len());
-        if sufficient_records {
-            return Some(QueryAction::QuerySucceeded {
-                query: self.config.query,
-            });
-        }
-
-        // At this point, we either have pending responses or candidates to query; and we need more
-        // records. Ensure we do not exceed the parallelism factor.
-        if self.pending.len() == self.config.parallelism_factor {
-            return None;
-        }
-
-        self.schedule_next_peer()
     }
 }
 
@@ -298,16 +278,15 @@ impl GetRecordContext {
 mod tests {
     use super::*;
     use crate::protocol::libp2p::kademlia::types::ConnectionType;
+    use multiaddr::multiaddr;
 
-    fn default_config() -> GetRecordConfig {
-        GetRecordConfig {
+    fn default_config() -> GetProvidersConfig {
+        GetProvidersConfig {
             local_peer_id: PeerId::random(),
-            quorum: Quorum::All,
-            known_records: 0,
-            replication_factor: 20,
-            parallelism_factor: 10,
+            parallelism_factor: 3,
             query: QueryId(0),
             target: Key::new(vec![1, 2, 3].into()),
+            known_providers: vec![],
         }
     }
 
@@ -316,100 +295,43 @@ mod tests {
             peer,
             key: Key::from(peer),
             addresses: vec![],
-            connection: ConnectionType::Connected,
+            connection: ConnectionType::NotConnected,
         }
     }
 
-    #[test]
-    fn config_check() {
-        // Quorum::All with no known records.
-        let config = GetRecordConfig {
-            quorum: Quorum::All,
-            known_records: 0,
-            replication_factor: 20,
-            ..default_config()
-        };
-        assert!(config.sufficient_records(20));
-        assert!(!config.sufficient_records(19));
-
-        // Quorum::All with 1 known records.
-        let config = GetRecordConfig {
-            quorum: Quorum::All,
-            known_records: 1,
-            replication_factor: 20,
-            ..default_config()
-        };
-        assert!(config.sufficient_records(19));
-        assert!(!config.sufficient_records(18));
-
-        // Quorum::One with no known records.
-        let config = GetRecordConfig {
-            quorum: Quorum::One,
-            known_records: 0,
-            ..default_config()
-        };
-        assert!(config.sufficient_records(1));
-        assert!(!config.sufficient_records(0));
-
-        // Quorum::One with known records.
-        let config = GetRecordConfig {
-            quorum: Quorum::One,
-            known_records: 1,
-            ..default_config()
-        };
-        assert!(config.sufficient_records(1));
-        assert!(config.sufficient_records(0));
-
-        // Quorum::N with no known records.
-        let config = GetRecordConfig {
-            quorum: Quorum::N(std::num::NonZeroUsize::new(10).expect("valid; qed")),
-            known_records: 0,
-            ..default_config()
-        };
-        assert!(config.sufficient_records(10));
-        assert!(!config.sufficient_records(9));
-
-        // Quorum::N with known records.
-        let config = GetRecordConfig {
-            quorum: Quorum::N(std::num::NonZeroUsize::new(10).expect("valid; qed")),
-            known_records: 1,
-            ..default_config()
-        };
-        assert!(config.sufficient_records(9));
-        assert!(!config.sufficient_records(8));
+    fn peer_to_kad_with_addresses(peer: PeerId, addresses: Vec<Multiaddr>) -> KademliaPeer {
+        KademliaPeer {
+            peer,
+            key: Key::from(peer),
+            addresses,
+            connection: ConnectionType::NotConnected,
+        }
     }
 
     #[test]
     fn completes_when_no_candidates() {
         let config = default_config();
-        let mut context = GetRecordContext::new(config, VecDeque::new(), Vec::new());
+
+        let mut context = GetProvidersContext::new(config, VecDeque::new());
         assert!(context.is_done());
+
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
-
-        let config = GetRecordConfig {
-            known_records: 1,
-            ..default_config()
-        };
-        let mut context = GetRecordContext::new(config, VecDeque::new(), Vec::new());
-        assert!(context.is_done());
-        let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
     }
 
     #[test]
     fn fulfill_parallelism() {
-        let config = GetRecordConfig {
+        let config = GetProvidersConfig {
             parallelism_factor: 3,
             ..default_config()
         };
 
-        let in_peers_set: HashSet<_> =
+        let candidate_peer_set: HashSet<_> =
             [PeerId::random(), PeerId::random(), PeerId::random()].into_iter().collect();
-        assert_eq!(in_peers_set.len(), 3);
+        assert_eq!(candidate_peer_set.len(), 3);
 
-        let in_peers = in_peers_set.iter().map(|peer| peer_to_kad(*peer)).collect();
-        let mut context = GetRecordContext::new(config, in_peers, Vec::new());
+        let candidate_peers = candidate_peer_set.iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = GetProvidersContext::new(config, candidate_peers);
 
         for num in 0..3 {
             let event = context.next_action().unwrap();
@@ -421,7 +343,7 @@ mod tests {
                     assert!(context.pending.contains_key(&peer));
 
                     // Check the peer is the one provided.
-                    assert!(in_peers_set.contains(&peer));
+                    assert!(candidate_peer_set.contains(&peer));
                 }
                 _ => panic!("Unexpected event"),
             }
@@ -433,10 +355,8 @@ mod tests {
 
     #[test]
     fn completes_when_responses() {
-        let key = vec![1, 2, 3];
-        let config = GetRecordConfig {
+        let config = GetProvidersConfig {
             parallelism_factor: 3,
-            replication_factor: 3,
             ..default_config()
         };
 
@@ -444,11 +364,21 @@ mod tests {
         let peer_b = PeerId::random();
         let peer_c = PeerId::random();
 
-        let in_peers_set: HashSet<_> = [peer_a, peer_b, peer_c].into_iter().collect();
-        assert_eq!(in_peers_set.len(), 3);
+        let candidate_peer_set: HashSet<_> = [peer_a, peer_b, peer_c].into_iter().collect();
+        assert_eq!(candidate_peer_set.len(), 3);
 
-        let in_peers = [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
-        let mut context = GetRecordContext::new(config, in_peers, Vec::new());
+        let candidate_peers =
+            [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = GetProvidersContext::new(config, candidate_peers);
+
+        let [provider1, provider2, provider3, provider4] = (0..4)
+            .map(|_| ContentProvider {
+                peer: PeerId::random(),
+                addresses: vec![],
+            })
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
 
         // Schedule peer queries.
         for num in 0..3 {
@@ -461,7 +391,7 @@ mod tests {
                     assert!(context.pending.contains_key(&peer));
 
                     // Check the peer is the one provided.
-                    assert!(in_peers_set.contains(&peer));
+                    assert!(candidate_peer_set.contains(&peer));
                 }
                 _ => panic!("Unexpected event"),
             }
@@ -474,25 +404,26 @@ mod tests {
         assert!(context.queried.is_empty());
 
         // Provide responses back.
-        let record = Record::new(key.clone(), vec![1, 2, 3]);
-        context.register_response(peer_a, Some(record), vec![]);
+        let providers = vec![provider1.clone().into(), provider2.clone().into()];
+        context.register_response(peer_a, providers, vec![]);
         assert_eq!(context.pending.len(), 2);
         assert_eq!(context.queried.len(), 1);
-        assert_eq!(context.found_records.len(), 1);
+        assert_eq!(context.found_providers.len(), 2);
 
         // Provide different response from peer b with peer d as candidate.
-        let record = Record::new(key.clone(), vec![4, 5, 6]);
-        context.register_response(peer_b, Some(record), vec![peer_to_kad(peer_d.clone())]);
+        let providers = vec![provider2.clone().into(), provider3.clone().into()];
+        let candidates = vec![peer_to_kad(peer_d.clone())];
+        context.register_response(peer_b, providers, candidates);
         assert_eq!(context.pending.len(), 1);
         assert_eq!(context.queried.len(), 2);
-        assert_eq!(context.found_records.len(), 2);
+        assert_eq!(context.found_providers.len(), 4);
         assert_eq!(context.candidates.len(), 1);
 
         // Peer C fails.
         context.register_response_failure(peer_c);
         assert!(context.pending.is_empty());
         assert_eq!(context.queried.len(), 3);
-        assert_eq!(context.found_records.len(), 2);
+        assert_eq!(context.found_providers.len(), 4);
 
         // Drain the last candidate.
         let event = context.next_action().unwrap();
@@ -507,31 +438,75 @@ mod tests {
         }
 
         // Peer D responds.
-        let record = Record::new(key.clone(), vec![4, 5, 6]);
-        context.register_response(peer_d, Some(record), vec![]);
+        let providers = vec![provider4.clone().into()];
+        context.register_response(peer_d, providers, vec![]);
 
         // Produces the result.
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
 
         // Check results.
-        let found_records = context.found_records();
-        assert_eq!(
-            found_records,
-            vec![
-                PeerRecord {
-                    peer: peer_a,
-                    record: Record::new(key.clone(), vec![1, 2, 3]),
-                },
-                PeerRecord {
-                    peer: peer_b,
-                    record: Record::new(key.clone(), vec![4, 5, 6]),
-                },
-                PeerRecord {
-                    peer: peer_d,
-                    record: Record::new(key.clone(), vec![4, 5, 6]),
-                },
-            ]
+        let found_providers = context.found_providers();
+        assert_eq!(found_providers.len(), 4);
+        assert!(found_providers.contains(&provider1));
+        assert!(found_providers.contains(&provider2));
+        assert!(found_providers.contains(&provider3));
+        assert!(found_providers.contains(&provider4));
+    }
+
+    #[test]
+    fn providers_sorted_by_distance() {
+        let target = Key::new(vec![1, 2, 3].into());
+
+        let mut peers = (0..10).map(|_| PeerId::random()).collect::<Vec<_>>();
+        let providers = peers.iter().map(|peer| peer_to_kad(peer.clone())).collect::<Vec<_>>();
+
+        let found_providers =
+            GetProvidersContext::merge_and_sort_providers(providers, target.clone());
+
+        peers.sort_by(|p1, p2| {
+            Key::from(*p1).distance(&target).cmp(&Key::from(*p2).distance(&target))
+        });
+
+        assert!(
+            std::iter::zip(found_providers.into_iter(), peers.into_iter())
+                .all(|(provider, peer)| provider.peer == peer)
         );
+    }
+
+    #[test]
+    fn provider_addresses_merged() {
+        let peer = PeerId::random();
+
+        let address1 = multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16));
+        let address2 = multiaddr!(Ip4([192, 168, 0, 1]), Tcp(10000u16));
+        let address3 = multiaddr!(Ip4([10, 0, 0, 1]), Tcp(10000u16));
+        let address4 = multiaddr!(Ip4([1, 1, 1, 1]), Tcp(10000u16));
+        let address5 = multiaddr!(Ip4([8, 8, 8, 8]), Tcp(10000u16));
+
+        let provider1 = peer_to_kad_with_addresses(peer.clone(), vec![address1.clone()]);
+        let provider2 = peer_to_kad_with_addresses(
+            peer.clone(),
+            vec![address2.clone(), address3.clone(), address4.clone()],
+        );
+        let provider3 =
+            peer_to_kad_with_addresses(peer.clone(), vec![address4.clone(), address5.clone()]);
+
+        let providers = vec![provider1, provider2, provider3];
+
+        let found_providers = GetProvidersContext::merge_and_sort_providers(
+            providers,
+            Key::new(vec![1, 2, 3].into()),
+        );
+
+        assert_eq!(found_providers.len(), 1);
+
+        let addresses = &found_providers.get(0).unwrap().addresses;
+        assert_eq!(addresses.len(), 5);
+        assert!(addresses.contains(&address1));
+        assert!(addresses.contains(&address2));
+        assert!(addresses.contains(&address3));
+        assert!(addresses.contains(&address4));
+        assert!(addresses.contains(&address5));
     }
 }

@@ -53,7 +53,9 @@ use std::{
 };
 
 pub use config::{Config, ConfigBuilder};
-pub use handle::{DialOptions, RequestResponseError, RequestResponseEvent, RequestResponseHandle};
+pub use handle::{
+    DialOptions, RejectReason, RequestResponseError, RequestResponseEvent, RequestResponseHandle,
+};
 
 mod config;
 mod handle;
@@ -153,11 +155,11 @@ pub(crate) struct RequestResponseProtocol {
     /// notifies the future that the request should be rejected by closing the substream.
     pending_outbound_responses: FuturesUnordered<BoxFuture<'static, ()>>,
 
-    /// Pending inbound responses.
-    pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
-
     /// Pending outbound cancellation handles.
     pending_outbound_cancels: HashMap<RequestId, oneshot::Sender<()>>,
+
+    /// Pending inbound responses.
+    pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
 
     /// Pending inbound requests.
     pending_inbound_requests: SubstreamSet<(PeerId, RequestId), Substream>,
@@ -225,6 +227,12 @@ impl RequestResponseProtocol {
 
         match self.pending_dials.remove(&peer) {
             None => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    "peer connected without pending dial",
+                );
                 entry.insert(PeerContext::new());
             }
             Some(context) => match self.service.open_substream(peer) {
@@ -270,7 +278,7 @@ impl RequestResponseProtocol {
                         .report_request_failure(
                             peer,
                             context.request_id,
-                            RequestResponseError::Rejected,
+                            RequestResponseError::Rejected(error.into()),
                         )
                         .await;
                 }
@@ -301,7 +309,7 @@ impl RequestResponseProtocol {
                 .send(InnerRequestResponseEvent::RequestFailed {
                     peer,
                     request_id,
-                    error: RequestResponseError::Rejected,
+                    error: RequestResponseError::Rejected(RejectReason::ConnectionClosed),
                 })
                 .await;
         }
@@ -369,7 +377,7 @@ impl RequestResponseProtocol {
                     fallback_protocol,
                     Err(RequestResponseError::Timeout),
                 ),
-                Ok(Err(Error::IoError(ErrorKind::PermissionDenied))) => {
+                Ok(Err(SubstreamError::IoError(ErrorKind::PermissionDenied))) => {
                     tracing::warn!(
                         target: LOG_TARGET,
                         ?peer,
@@ -384,11 +392,11 @@ impl RequestResponseProtocol {
                         Err(RequestResponseError::TooLargePayload),
                     )
                 }
-                Ok(Err(_error)) => (
+                Ok(Err(error)) => (
                     peer,
                     request_id,
                     fallback_protocol,
-                    Err(RequestResponseError::NotConnected),
+                    Err(RequestResponseError::Rejected(error.into())),
                 ),
                 Ok(Ok(_)) => {
                     tokio::select! {
@@ -423,8 +431,20 @@ impl RequestResponseProtocol {
                         event = substream.next() => match event {
                             Some(Ok(response)) => {
                                 (peer, request_id, fallback_protocol, Ok(response.freeze().into()))
+                            },
+                            Some(Err(error)) => {
+                                (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(error.into())))
+                            },
+                            None => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    %protocol,
+                                    ?request_id,
+                                    "substream closed",
+                                );
+                                (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected(RejectReason::SubstreamClosed)))
                             }
-                            _ => (peer, request_id, fallback_protocol, Err(RequestResponseError::Rejected)),
                         }
                     }
                 }
@@ -439,7 +459,7 @@ impl RequestResponseProtocol {
         &mut self,
         peer: PeerId,
         request_id: RequestId,
-        request: crate::Result<BytesMut>,
+        request: Result<BytesMut, SubstreamError>,
     ) -> crate::Result<()> {
         let fallback = self
             .peers
@@ -614,7 +634,11 @@ impl RequestResponseProtocol {
                 .get_mut(&peer)
                 .map(|peer_context| peer_context.active.remove(&context.request_id));
             let _ = self
-                .report_request_failure(peer, context.request_id, RequestResponseError::Rejected)
+                .report_request_failure(
+                    peer,
+                    context.request_id,
+                    RequestResponseError::Rejected(RejectReason::DialFailed(None)),
+                )
                 .await;
         }
     }
@@ -663,7 +687,7 @@ impl RequestResponseProtocol {
                     SubstreamError::NegotiationError(NegotiationError::MultistreamSelectError(
                         MultistreamFailed,
                     )) => RequestResponseError::UnsupportedProtocol,
-                    _ => RequestResponseError::Rejected,
+                    _ => RequestResponseError::Rejected(error.into()),
                 },
             })
             .await
@@ -688,14 +712,14 @@ impl RequestResponseProtocol {
     }
 
     /// Send request to remote peer.
-    async fn on_send_request(
+    fn on_send_request(
         &mut self,
         peer: PeerId,
         request_id: RequestId,
         request: Vec<u8>,
         dial_options: DialOptions,
         fallback: Option<(ProtocolName, Vec<u8>)>,
-    ) -> crate::Result<()> {
+    ) -> Result<(), RequestResponseError> {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
@@ -717,13 +741,7 @@ impl RequestResponseProtocol {
                         "peer not connected and should not dial",
                     );
 
-                    return self
-                        .report_request_failure(
-                            peer,
-                            request_id,
-                            RequestResponseError::NotConnected,
-                        )
-                        .await;
+                    return Err(RequestResponseError::NotConnected);
                 }
                 DialOptions::Dial => match self.service.dial(&peer) {
                     Ok(_) => {
@@ -750,13 +768,9 @@ impl RequestResponseProtocol {
                             "failed to dial peer"
                         );
 
-                        return self
-                            .report_request_failure(
-                                peer,
-                                request_id,
-                                RequestResponseError::Rejected,
-                            )
-                            .await;
+                        return Err(RequestResponseError::Rejected(RejectReason::DialFailed(
+                            Some(error),
+                        )));
                     }
                 },
             }
@@ -786,8 +800,7 @@ impl RequestResponseProtocol {
                     "failed to open substream",
                 );
 
-                self.report_request_failure(peer, request_id, RequestResponseError::Rejected)
-                    .await
+                return Err(RequestResponseError::Rejected(error.into()));
             }
         }
     }
@@ -847,7 +860,7 @@ impl RequestResponseProtocol {
     }
 
     /// Cancel outbound request.
-    async fn on_cancel_request(&mut self, request_id: RequestId) -> crate::Result<()> {
+    fn on_cancel_request(&mut self, request_id: RequestId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, protocol = %self.protocol, ?request_id, "cancel outbound request");
 
         match self.pending_outbound_cancels.remove(&request_id) {
@@ -865,6 +878,142 @@ impl RequestResponseProtocol {
         }
     }
 
+    /// Handles the service event.
+    async fn handle_service_event(&mut self, event: TransportEvent) {
+        match event {
+            TransportEvent::ConnectionEstablished { peer, .. } => {
+                if let Err(error) = self.on_connection_established(peer).await {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        ?error,
+                        "failed to handle connection established",
+                    );
+                }
+            }
+
+            TransportEvent::ConnectionClosed { peer } => {
+                self.on_connection_closed(peer).await;
+            }
+
+            TransportEvent::SubstreamOpened {
+                peer,
+                substream,
+                direction,
+                fallback,
+                ..
+            } => match direction {
+                Direction::Inbound => {
+                    if let Err(error) = self.on_inbound_substream(peer, fallback, substream).await {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            ?error,
+                            "failed to handle inbound substream",
+                        );
+                    }
+                }
+                Direction::Outbound(substream_id) => {
+                    let _ =
+                        self.on_outbound_substream(peer, substream_id, substream, fallback).await;
+                }
+            },
+
+            TransportEvent::SubstreamOpenFailure { substream, error } => {
+                if let Err(error) = self.on_substream_open_failure(substream, error).await {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        protocol = %self.protocol,
+                        ?error,
+                        "failed to handle substream open failure",
+                    );
+                }
+            }
+
+            TransportEvent::DialFailure { peer, .. } => self.on_dial_failure(peer).await,
+        }
+    }
+
+    /// Handles the user command.
+    async fn handle_user_command(&mut self, command: RequestResponseCommand) {
+        match command {
+            RequestResponseCommand::SendRequest {
+                peer,
+                request_id,
+                request,
+                dial_options,
+            } => {
+                if let Err(error) =
+                    self.on_send_request(peer, request_id, request, dial_options, None)
+                {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        ?request_id,
+                        ?error,
+                        "failed to send request",
+                    );
+
+                    if let Err(error) = self.report_request_failure(peer, request_id, error).await {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            ?request_id,
+                            ?error,
+                            "failed to report request failure",
+                        );
+                    }
+                }
+            }
+            RequestResponseCommand::SendRequestWithFallback {
+                peer,
+                request_id,
+                request,
+                fallback,
+                dial_options,
+            } => {
+                if let Err(error) =
+                    self.on_send_request(peer, request_id, request, dial_options, Some(fallback))
+                {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        protocol = %self.protocol,
+                        ?request_id,
+                        ?error,
+                        "failed to send request",
+                    );
+
+                    if let Err(error) = self.report_request_failure(peer, request_id, error).await {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            ?request_id,
+                            ?error,
+                            "failed to report request failure",
+                        );
+                    }
+                }
+            }
+            RequestResponseCommand::CancelRequest { request_id } => {
+                if let Err(error) = self.on_cancel_request(request_id) {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        protocol = %self.protocol,
+                        ?request_id,
+                        ?error,
+                        "failed to cancel reqeuest",
+                    );
+                }
+            }
+        }
+    }
+
     /// Start [`RequestResponseProtocol`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting request-response event loop");
@@ -875,48 +1024,16 @@ impl RequestResponseProtocol {
                 // responses to network behaviour so ensure that the commands operate on the most up to date information.
                 biased;
 
+                // Connection and substream events from the transport service.
                 event = self.service.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        let _ = self.on_connection_established(peer).await;
+                    Some(event) => self.handle_service_event(event).await,
+                    None => {
+                        tracing::debug!(target: LOG_TARGET, protocol = %self.protocol, "service has exited, exiting");
+                        return
                     }
-                    Some(TransportEvent::ConnectionClosed { peer }) => {
-                        self.on_connection_closed(peer).await;
-                    }
-                    Some(TransportEvent::SubstreamOpened {
-                        peer,
-                        substream,
-                        direction,
-                        fallback,
-                        ..
-                    }) => match direction {
-                        Direction::Inbound => {
-                            if let Err(error) = self.on_inbound_substream(peer, fallback, substream).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    protocol = %self.protocol,
-                                    ?error,
-                                    "failed to handle inbound substream",
-                                );
-                            }
-                        }
-                        Direction::Outbound(substream_id) => {
-                            let _ = self.on_outbound_substream(peer, substream_id, substream, fallback).await;
-                        }
-                    },
-                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
-                        if let Err(error) = self.on_substream_open_failure(substream, error).await {
-                            tracing::warn!(
-                                target: LOG_TARGET,
-                                protocol = %self.protocol,
-                                ?error,
-                                "failed to handle substream open failure",
-                            );
-                        }
-                    }
-                    Some(TransportEvent::DialFailure { peer, .. }) => self.on_dial_failure(peer).await,
-                    None => return,
                 },
+
+                // These are outbound requests waiting for the substream to produce a response.
                 event = self.pending_inbound.select_next_some(), if !self.pending_inbound.is_empty() => {
                     let (peer, request_id, fallback, event) = event;
 
@@ -933,7 +1050,11 @@ impl RequestResponseProtocol {
 
                     self.pending_outbound_cancels.remove(&request_id);
                 }
+
+                // These are inbound requests waiting for the user to respond, then for the substream to send the response.
                 _ = self.pending_outbound_responses.next(), if !self.pending_outbound_responses.is_empty() => {}
+
+                // Inbound requests that are moved to `pending_outbound_responses`.
                 event = self.pending_inbound_requests.next() => match event {
                     Some(((peer, request_id), message)) => {
                         if let Err(error) = self.on_inbound_request(peer, request_id, message).await {
@@ -949,47 +1070,13 @@ impl RequestResponseProtocol {
                     }
                     None => return,
                 },
+
+                // User commands.
                 command = self.command_rx.recv() => match command {
+                    Some(command) => self.handle_user_command(command).await,
                     None => {
                         tracing::debug!(target: LOG_TARGET, protocol = %self.protocol, "user protocol has exited, exiting");
                         return
-                    }
-                    Some(command) => match command {
-                        RequestResponseCommand::SendRequest { peer, request_id, request, dial_options } => {
-                            if let Err(error) = self.on_send_request(peer, request_id, request, dial_options, None).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    protocol = %self.protocol,
-                                    ?request_id,
-                                    ?error,
-                                    "failed to send request",
-                                );
-                            }
-                        }
-                        RequestResponseCommand::CancelRequest { request_id } => {
-                            if let Err(error) = self.on_cancel_request(request_id).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    protocol = %self.protocol,
-                                    ?request_id,
-                                    ?error,
-                                    "failed to cancel reqeuest",
-                                );
-                            }
-                        }
-                        RequestResponseCommand::SendRequestWithFallback { peer, request_id, request, fallback, dial_options } => {
-                            if let Err(error) = self.on_send_request(peer, request_id, request, dial_options, Some(fallback)).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    protocol = %self.protocol,
-                                    ?request_id,
-                                    ?error,
-                                    "failed to send request",
-                                );
-                            }
-                        }
                     }
                 },
             }

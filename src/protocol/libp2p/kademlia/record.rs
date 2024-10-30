@@ -20,7 +20,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::types::{Distance, Key as KademliaKey},
+    protocol::libp2p::kademlia::types::{
+        ConnectionType, Distance, KademliaPeer, Key as KademliaKey,
+    },
     Multiaddr, PeerId,
 };
 
@@ -30,7 +32,6 @@ use multihash::Multihash;
 use std::{borrow::Borrow, time::Instant};
 
 /// The (opaque) key of a record.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Key(Bytes);
 
@@ -150,5 +151,26 @@ impl ProviderRecord {
     /// Checks whether the record is expired w.r.t. the given `Instant`.
     pub fn is_expired(&self, now: Instant) -> bool {
         now >= self.expires
+    }
+}
+
+/// A user-facing provider type.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ContentProvider {
+    // Peer ID of the provider.
+    pub peer: PeerId,
+
+    // Cached addresses of the provider.
+    pub addresses: Vec<Multiaddr>,
+}
+
+impl From<ContentProvider> for KademliaPeer {
+    fn from(provider: ContentProvider) -> Self {
+        Self {
+            key: KademliaKey::from(provider.peer),
+            peer: provider.peer,
+            addresses: provider.addresses,
+            connection: ConnectionType::NotConnected,
+        }
     }
 }

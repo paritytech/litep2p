@@ -18,10 +18,14 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{protocol::libp2p::kademlia::query::QueryId, substream::Substream, PeerId};
+use crate::{
+    protocol::libp2p::kademlia::{futures_stream::FuturesStream, query::QueryId},
+    substream::Substream,
+    PeerId,
+};
 
 use bytes::{Bytes, BytesMut};
-use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{future::BoxFuture, Stream, StreamExt};
 
 use std::{
     pin::Pin,
@@ -73,14 +77,14 @@ pub struct QueryContext {
 /// Query executor.
 pub struct QueryExecutor {
     /// Pending futures.
-    futures: FuturesUnordered<BoxFuture<'static, QueryContext>>,
+    futures: FuturesStream<BoxFuture<'static, QueryContext>>,
 }
 
 impl QueryExecutor {
     /// Create new [`QueryExecutor`]
     pub fn new() -> Self {
         Self {
-            futures: FuturesUnordered::new(),
+            futures: FuturesStream::new(),
         }
     }
 
@@ -173,10 +177,7 @@ impl Stream for QueryExecutor {
     type Item = QueryContext;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.futures.is_empty() {
-            true => Poll::Pending,
-            false => self.futures.poll_next_unpin(cx),
-        }
+        self.futures.poll_next_unpin(cx)
     }
 }
 
@@ -214,10 +215,9 @@ mod tests {
         let mut executor = QueryExecutor::new();
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
-        substream
-            .expect_poll_next()
-            .times(1)
-            .return_once(|_| Poll::Ready(Some(Err(crate::Error::Unknown))));
+        substream.expect_poll_next().times(1).return_once(|_| {
+            Poll::Ready(Some(Err(crate::error::SubstreamError::ConnectionClosed)))
+        });
 
         executor.read_message(
             peer,
@@ -249,10 +249,9 @@ mod tests {
         substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
         substream.expect_start_send().times(1).return_once(|_| Ok(()));
         substream.expect_poll_flush().times(1).return_once(|_| Poll::Ready(Ok(())));
-        substream
-            .expect_poll_next()
-            .times(1)
-            .return_once(|_| Poll::Ready(Some(Err(crate::Error::Unknown))));
+        substream.expect_poll_next().times(1).return_once(|_| {
+            Poll::Ready(Some(Err(crate::error::SubstreamError::ConnectionClosed)))
+        });
 
         executor.send_request_read_response(
             peer,
@@ -285,7 +284,7 @@ mod tests {
         substream
             .expect_poll_ready()
             .times(1)
-            .return_once(|_| Poll::Ready(Err(crate::Error::Unknown)));
+            .return_once(|_| Poll::Ready(Err(crate::error::SubstreamError::ConnectionClosed)));
         substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
 
         executor.send_request_read_response(
@@ -348,7 +347,7 @@ mod tests {
         substream
             .expect_poll_next()
             .times(1)
-            .return_once(|_| Poll::Ready(Some(Err(crate::Error::Unknown))));
+            .return_once(|_| Poll::Ready(Some(Err(crate::error::SubstreamError::ChannelClogged))));
 
         executor.read_message(
             peer,

@@ -21,7 +21,7 @@
 //! Connection-related helper code.
 
 use crate::{
-    error::Error,
+    error::{Error, SubstreamError},
     protocol::protocol_set::ProtocolCommand,
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
@@ -110,11 +110,11 @@ impl ConnectionHandle {
         fallback_names: Vec<ProtocolName>,
         substream_id: SubstreamId,
         permit: Permit,
-    ) -> crate::Result<()> {
+    ) -> Result<(), SubstreamError> {
         match &self.connection {
             ConnectionType::Active(active) => active.clone(),
             ConnectionType::Inactive(inactive) =>
-                inactive.upgrade().ok_or(Error::ConnectionClosed)?,
+                inactive.upgrade().ok_or(SubstreamError::ConnectionClosed)?,
         }
         .try_send(ProtocolCommand::OpenSubstream {
             protocol: protocol.clone(),
@@ -123,8 +123,8 @@ impl ConnectionHandle {
             permit,
         })
         .map_err(|error| match error {
-            TrySendError::Full(_) => Error::ChannelClogged,
-            TrySendError::Closed(_) => Error::ConnectionClosed,
+            TrySendError::Full(_) => SubstreamError::ChannelClogged,
+            TrySendError::Closed(_) => SubstreamError::ConnectionClosed,
         })
     }
 
@@ -236,7 +236,7 @@ mod tests {
             SubstreamId::new(),
             permit,
         ) {
-            Err(Error::ChannelClogged) => {}
+            Err(SubstreamError::ChannelClogged) => {}
             error => panic!("invalid error: {error:?}"),
         }
     }

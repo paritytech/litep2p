@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::error::Error;
+use crate::error::SubstreamError;
 
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, Stream};
@@ -31,15 +31,20 @@ use std::{
 
 /// Trait which describes the behavior of a mock substream.
 pub trait Substream:
-    Debug + Stream<Item = crate::Result<BytesMut>> + Sink<Bytes, Error = Error> + Send + Unpin + 'static
+    Debug
+    + Stream<Item = Result<BytesMut, SubstreamError>>
+    + Sink<Bytes, Error = SubstreamError>
+    + Send
+    + Unpin
+    + 'static
 {
 }
 
 /// Blanket implementation for [`Substream`].
 impl<
         T: Debug
-            + Stream<Item = crate::Result<BytesMut>>
-            + Sink<Bytes, Error = Error>
+            + Stream<Item = Result<BytesMut, SubstreamError>>
+            + Sink<Bytes, Error = SubstreamError>
             + Send
             + Unpin
             + 'static,
@@ -52,33 +57,33 @@ mockall::mock! {
     pub Substream {}
 
      impl Sink<bytes::Bytes> for Substream {
-        type Error = Error;
+        type Error = SubstreamError;
 
         fn poll_ready<'a>(
             self: Pin<&mut Self>,
             cx: &mut Context<'a>
-        ) -> Poll<Result<(), Error>>;
+        ) -> Poll<Result<(), SubstreamError>>;
 
-        fn start_send(self: Pin<&mut Self>, item: bytes::Bytes) -> Result<(), Error>;
+        fn start_send(self: Pin<&mut Self>, item: bytes::Bytes) -> Result<(), SubstreamError>;
 
         fn poll_flush<'a>(
             self: Pin<&mut Self>,
             cx: &mut Context<'a>
-        ) -> Poll<Result<(), Error>>;
+        ) -> Poll<Result<(), SubstreamError>>;
 
         fn poll_close<'a>(
             self: Pin<&mut Self>,
             cx: &mut Context<'a>
-        ) -> Poll<Result<(), Error>>;
+        ) -> Poll<Result<(), SubstreamError>>;
     }
 
     impl Stream for Substream {
-        type Item = crate::Result<BytesMut>;
+        type Item = Result<BytesMut, SubstreamError>;
 
         fn poll_next<'a>(
             self: Pin<&mut Self>,
             cx: &mut Context<'a>
-        ) -> Poll<Option<crate::Result<BytesMut>>>;
+        ) -> Poll<Option<Result<BytesMut, SubstreamError>>>;
     }
 }
 
@@ -95,32 +100,41 @@ impl DummySubstream {
 }
 
 impl Sink<bytes::Bytes> for DummySubstream {
-    type Error = Error;
+    type Error = SubstreamError;
 
-    fn poll_ready<'a>(self: Pin<&mut Self>, _cx: &mut Context<'a>) -> Poll<Result<(), Error>> {
+    fn poll_ready<'a>(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'a>,
+    ) -> Poll<Result<(), SubstreamError>> {
         Poll::Pending
     }
 
-    fn start_send(self: Pin<&mut Self>, _item: bytes::Bytes) -> Result<(), Error> {
+    fn start_send(self: Pin<&mut Self>, _item: bytes::Bytes) -> Result<(), SubstreamError> {
         Ok(())
     }
 
-    fn poll_flush<'a>(self: Pin<&mut Self>, _cx: &mut Context<'a>) -> Poll<Result<(), Error>> {
+    fn poll_flush<'a>(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'a>,
+    ) -> Poll<Result<(), SubstreamError>> {
         Poll::Pending
     }
 
-    fn poll_close<'a>(self: Pin<&mut Self>, _cx: &mut Context<'a>) -> Poll<Result<(), Error>> {
+    fn poll_close<'a>(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'a>,
+    ) -> Poll<Result<(), SubstreamError>> {
         Poll::Ready(Ok(()))
     }
 }
 
 impl Stream for DummySubstream {
-    type Item = crate::Result<BytesMut>;
+    type Item = Result<BytesMut, SubstreamError>;
 
     fn poll_next<'a>(
         self: Pin<&mut Self>,
         _cx: &mut Context<'a>,
-    ) -> Poll<Option<crate::Result<BytesMut>>> {
+    ) -> Poll<Option<Result<BytesMut, SubstreamError>>> {
         Poll::Pending
     }
 }
