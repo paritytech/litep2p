@@ -106,7 +106,11 @@ pub struct GetRecordContext {
 
 impl GetRecordContext {
     /// Create new [`GetRecordContext`].
-    pub fn new(config: GetRecordConfig, in_peers: VecDeque<KademliaPeer>) -> Self {
+    pub fn new(
+        config: GetRecordConfig,
+        in_peers: VecDeque<KademliaPeer>,
+        found_records: Vec<PeerRecord>,
+    ) -> Self {
         let mut candidates = BTreeMap::new();
 
         for candidate in &in_peers {
@@ -123,7 +127,7 @@ impl GetRecordContext {
             candidates,
             pending: HashMap::new(),
             queried: HashSet::new(),
-            found_records: Vec::new(),
+            found_records,
         }
     }
 
@@ -378,7 +382,7 @@ mod tests {
     #[test]
     fn completes_when_no_candidates() {
         let config = default_config();
-        let mut context = GetRecordContext::new(config, VecDeque::new());
+        let mut context = GetRecordContext::new(config, VecDeque::new(), Vec::new());
         assert!(context.is_done());
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
@@ -387,7 +391,7 @@ mod tests {
             known_records: 1,
             ..default_config()
         };
-        let mut context = GetRecordContext::new(config, VecDeque::new());
+        let mut context = GetRecordContext::new(config, VecDeque::new(), Vec::new());
         assert!(context.is_done());
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
@@ -405,7 +409,7 @@ mod tests {
         assert_eq!(in_peers_set.len(), 3);
 
         let in_peers = in_peers_set.iter().map(|peer| peer_to_kad(*peer)).collect();
-        let mut context = GetRecordContext::new(config, in_peers);
+        let mut context = GetRecordContext::new(config, in_peers, Vec::new());
 
         for num in 0..3 {
             let event = context.next_action().unwrap();
@@ -444,7 +448,7 @@ mod tests {
         assert_eq!(in_peers_set.len(), 3);
 
         let in_peers = [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
-        let mut context = GetRecordContext::new(config, in_peers);
+        let mut context = GetRecordContext::new(config, in_peers, Vec::new());
 
         // Schedule peer queries.
         for num in 0..3 {
