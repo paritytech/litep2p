@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn invalid_peer_id_schema() {
-        match parse_peer_id(&vec![1, 2, 3, 4]).unwrap_err() {
+        match parse_peer_id(&vec![1, 2, 3, 4], &[0]).unwrap_err() {
             NegotiationError::ParseError(_) => {}
             _ => panic!("invalid error"),
         }
