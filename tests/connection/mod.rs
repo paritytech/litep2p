@@ -762,7 +762,7 @@ async fn simultaneous_dial_ipv6_quic() {
     }
 }
 
-#[cfg(feature = "websocket")]
+#[cfg(feature = "webscocket")]
 #[tokio::test]
 async fn websocket_over_ipv6() {
     let _ = tracing_subscriber::fmt()

@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![cfg(feature = "custom_sc_network")]
+#![cfg(feature = "custom-sc-network")]
 
 #[cfg(test)]
 mod connection;
