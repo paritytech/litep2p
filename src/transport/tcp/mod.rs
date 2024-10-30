@@ -609,7 +609,7 @@ impl Stream for TcpTransport {
                         tracing::warn!(
                             target: LOG_TARGET,
                             ?connection_id,
-                            "raw cancelled connection without a handle",
+                            "raw cancelled connection without a cancel handle",
                         );
                     }
                 }
