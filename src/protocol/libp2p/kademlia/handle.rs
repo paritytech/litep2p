@@ -254,12 +254,12 @@ pub enum KademliaEvent {
 /// The type of the DHT records.
 #[derive(Debug, Clone)]
 pub enum RecordsType {
-    /// Record was found in the local store.
+    /// Record was found in the local store and [`Quorum::One`] was used.
     ///
     /// This contains only a single result.
     LocalStore(Record),
 
-    /// Records found in the network.
+    /// Records found in the network. This can include the locally found record.
     Network(Vec<PeerRecord>),
 }
 
