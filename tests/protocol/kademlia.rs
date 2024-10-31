@@ -465,6 +465,108 @@ async fn get_record_retrieves_remote_records() {
 }
 
 #[tokio::test]
+async fn get_record_retrieves_local_and_remote_records() {
+    let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
+    let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
+
+    let config1 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .build();
+
+    let config2 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    // Let peers jnow about each other
+    kad_handle1
+        .add_known_peer(
+            *litep2p2.local_peer_id(),
+            litep2p2.listen_addresses().cloned().collect(),
+        )
+        .await;
+    kad_handle2
+        .add_known_peer(
+            *litep2p1.local_peer_id(),
+            litep2p1.listen_addresses().cloned().collect(),
+        )
+        .await;
+
+    // Store the record on `litep2p1``.
+    let original_record = Record::new(vec![1, 2, 3], vec![0x01]);
+    let query1 = kad_handle1.put_record(original_record.clone()).await;
+
+    let (mut peer1_stored, mut peer2_stored) = (false, false);
+    let mut query3 = None;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("record was not retrieved in 10 secs")
+            }
+            event = litep2p1.next_event() => {}
+            event = litep2p2.next_event() => {}
+            event = kad_handle1.next() => {}
+            event = kad_handle2.next() => {
+                match event {
+                    Some(KademliaEvent::IncomingRecord { record: got_record }) => {
+                        assert_eq!(got_record.key, original_record.key);
+                        assert_eq!(got_record.value, original_record.value);
+                        assert_eq!(got_record.publisher.unwrap(), *litep2p1.local_peer_id());
+                        assert!(got_record.expires.is_some());
+
+                        // Get record.
+                        let query_id = kad_handle2
+                            .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::All).await;
+                        query3 = Some(query_id);
+                    }
+                    Some(KademliaEvent::GetRecordSuccess { query_id: _, records }) => {
+                        match records {
+                            RecordsType::LocalStore(_) => {
+                                panic!("the record was retrieved only from peer2")
+                            }
+                            RecordsType::Network(records) => {
+                                assert_eq!(records.len(), 2);
+
+                                // Locally retrieved record goes first.
+                                assert_eq!(records[0].peer, *litep2p2.local_peer_id());
+                                assert_eq!(records[0].record.key, original_record.key);
+                                assert_eq!(records[0].record.value, original_record.value);
+                                assert_eq!(records[0].record.publisher.unwrap(), *litep2p1.local_peer_id());
+                                assert!(records[0].record.expires.is_some());
+
+                                // Remote record from peer 1.
+                                assert_eq!(records[1].peer, *litep2p1.local_peer_id());
+                                assert_eq!(records[1].record.key, original_record.key);
+                                assert_eq!(records[1].record.value, original_record.value);
+                                assert_eq!(records[1].record.publisher.unwrap(), *litep2p1.local_peer_id());
+                                assert!(records[1].record.expires.is_some());
+
+                                break
+                            }
+                        }
+                    }
+                    Some(KademliaEvent::QueryFailed { query_id: _ }) => {
+                        panic!("peer2 query failed")
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn provider_retrieved_by_remote_node() {
     let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
     let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
