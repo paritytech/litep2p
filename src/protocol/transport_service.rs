@@ -222,7 +222,7 @@ impl Stream for KeepAliveTracker {
                 if when.elapsed() < self.keep_alive_timeout {
                     let timeout = self.keep_alive_timeout - when.elapsed();
 
-                    tracing::debug!(
+                    tracing::trace!(
                         target: LOG_TARGET,
                         peer = ?key.0,
                         connection_id = ?key.1,
