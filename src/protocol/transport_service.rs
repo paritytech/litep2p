@@ -203,7 +203,7 @@ impl Stream for KeepAliveTracker {
         match self.pending_keep_alive_timeouts.poll_next_unpin(cx) {
             Poll::Ready(Some(key)) => {
                 // Check last-activity time.
-                let Some(when) = self.last_activity.get(&key) else {
+                let Some(last_activity) = self.last_activity.get(&key) else {
                     tracing::debug!(
                         target: LOG_TARGET,
                         peer = ?key.0,
@@ -219,8 +219,9 @@ impl Stream for KeepAliveTracker {
                 };
 
                 // Keep-alive timeout not reached yet.
-                if when.elapsed() < self.keep_alive_timeout {
-                    let timeout = self.keep_alive_timeout - when.elapsed();
+                let inactive_for = last_activity.elapsed();
+                if inactive_for < self.keep_alive_timeout {
+                    let timeout = self.keep_alive_timeout.saturating_sub(inactive_for);
 
                     tracing::trace!(
                         target: LOG_TARGET,
@@ -243,7 +244,7 @@ impl Stream for KeepAliveTracker {
                 }
 
                 // Keep-alive timeout reached.
-                tracing::trace!(
+                tracing::debug!(
                     target: LOG_TARGET,
                     peer = ?key.0,
                     connection_id = ?key.1,
