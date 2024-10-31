@@ -94,6 +94,15 @@ impl ConnectionHandle {
         }
     }
 
+    /// Try to upgrade the connection to active state.
+    pub fn try_upgrade(&mut self) {
+        if let ConnectionType::Inactive(inactive) = &self.connection {
+            if let Some(active) = inactive.upgrade() {
+                self.connection = ConnectionType::Active(active);
+            }
+        }
+    }
+
     /// Attempt to acquire permit which will keep the connection open for indefinite time.
     pub fn try_get_permit(&self) -> Option<Permit> {
         match &self.connection {
@@ -120,6 +129,7 @@ impl ConnectionHandle {
             protocol: protocol.clone(),
             fallback_names,
             substream_id,
+            connection_id: self.connection_id.clone(),
             permit,
         })
         .map_err(|error| match error {
@@ -141,10 +151,15 @@ impl ConnectionHandle {
             TrySendError::Closed(_) => Error::ConnectionClosed,
         })
     }
+
+    /// Check if the connection is active.
+    pub fn is_active(&self) -> bool {
+        matches!(self.connection, ConnectionType::Active(_))
+    }
 }
 
 /// Type which allows the connection to be kept open.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Permit {
     /// Active connection.
     _connection: Sender<ProtocolCommand>,
