@@ -95,7 +95,7 @@ impl ConnectionHandle {
     }
 
     /// Try to upgrade the connection to active state.
-    pub fn try_open(&mut self) {
+    pub fn try_upgrade(&mut self) {
         if let ConnectionType::Inactive(inactive) = &self.connection {
             if let Some(active) = inactive.upgrade() {
                 self.connection = ConnectionType::Active(active);

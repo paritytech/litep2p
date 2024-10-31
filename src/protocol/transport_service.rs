@@ -100,13 +100,13 @@ impl ConnectionContext {
     /// Try to upgrade the connection to active state.
     fn try_upgrade(&mut self, connection_id: &ConnectionId) {
         if self.primary.connection_id() == connection_id {
-            self.primary.try_open();
+            self.primary.try_upgrade();
             return;
         }
 
         if let Some(handle) = &mut self.secondary {
             if handle.connection_id() == connection_id {
-                handle.try_open();
+                handle.try_upgrade();
                 return;
             }
         }
@@ -508,7 +508,7 @@ impl TransportService {
         );
 
         self.keep_alive_tracker.substream_activity(peer, connection_id);
-        connection.try_open();
+        connection.try_upgrade();
 
         connection
             .open_substream(
