@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2024-11-01
+
+This release adds several features for the Kademlia protocol, namely the ability to provide and retrieve records.
+Additionally, the release includes several improvements and memory leak fixes to enhance the stability and performance of the litep2p library.
+
+### Added
+
+- kad: Providers part 8: unit, e2e, and `libp2p` conformance tests  ([#258](https://github.com/paritytech/litep2p/pull/258))
+- kad: Providers part 7: better types and public API, public addresses & known providers  ([#246](https://github.com/paritytech/litep2p/pull/246))
+- kad: Providers part 6: stop providing  ([#245](https://github.com/paritytech/litep2p/pull/245))
+- kad: Providers part 5: `GET_PROVIDERS` query  ([#236](https://github.com/paritytech/litep2p/pull/236))
+- kad: Providers part 4: refresh local providers  ([#235](https://github.com/paritytech/litep2p/pull/235))
+- kad: Providers part 3: publish provider records (start providing)  ([#234](https://github.com/paritytech/litep2p/pull/234))
+
+### Changed
+
+- transport_service: Improve connection stability by downgrading connections on substream inactivity  ([#260](https://github.com/paritytech/litep2p/pull/260))
+- transport: Abort canceled dial attempts for TCP, WebSocket and Quic  ([#255](https://github.com/paritytech/litep2p/pull/255))
+- kad/executor: Add timeout for writting frames  ([#277](https://github.com/paritytech/litep2p/pull/277))
+- kad: Avoid cloning the `KademliaMessage` and use reference for `RoutingTable::closest`  ([#233](https://github.com/paritytech/litep2p/pull/233))
+- peer_state: Robust state machine transitions  ([#251](https://github.com/paritytech/litep2p/pull/251))
+- address_store: Improve address tracking and add eviction algorithm  ([#250](https://github.com/paritytech/litep2p/pull/250))
+- kad: Remove unused serde cfg  ([#262](https://github.com/paritytech/litep2p/pull/262))
+- req-resp: Refactor to move functionality to dedicated methods  ([#244](https://github.com/paritytech/litep2p/pull/244))
+- transport_service: Improve logs and move code from tokio::select macro  ([#254](https://github.com/paritytech/litep2p/pull/254))
+
+### Fixed
+
+- tcp/websocket/quic: Fix cancel memory leak  ([#272](https://github.com/paritytech/litep2p/pull/272))
+- transport: Fix pending dials memory leak  ([#271](https://github.com/paritytech/litep2p/pull/271))
+- ping: Fix memory leak of unremoved `pending_opens`  ([#274](https://github.com/paritytech/litep2p/pull/274))
+- identify: Fix memory leak of unused `pending_opens`  ([#273](https://github.com/paritytech/litep2p/pull/273))
+- kad: Fix not retrieving local records  ([#221](https://github.com/paritytech/litep2p/pull/221))
+
 ## [0.7.0] - 2024-09-05
 
 This release introduces several new features, improvements, and fixes to the litep2p library. Key updates include enhanced error handling, configurable connection limits, and a new API for managing public addresses.
