@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.0] - 2024-11-01
 
-This release adds several features for the Kademlia protocol, namely the ability to provide and retrieve records.
+This release adds support for content provider advertisement and discovery to Kademlia protocol implementation (see libp2p [spec](https://github.com/libp2p/specs/blob/master/kad-dht/README.md#content-provider-advertisement-and-discovery)).
 Additionally, the release includes several improvements and memory leak fixes to enhance the stability and performance of the litep2p library.
 
 ### Added
