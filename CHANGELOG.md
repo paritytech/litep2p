@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This release adds support for content provider advertisement and discovery to Kademlia protocol implementation (see libp2p [spec](https://github.com/libp2p/specs/blob/master/kad-dht/README.md#content-provider-advertisement-and-discovery)).
 Additionally, the release includes several improvements and memory leak fixes to enhance the stability and performance of the litep2p library.
 
+### [Content Provider Advertisement and Discovery](https://github.com/paritytech/litep2p/pull/234)
+
+Litep2p now supports content provider advertisement and discovery through the Kademlia protocol.
+Content providers can publish their records to the network, and other nodes can discover and retrieve these records using the `GET_PROVIDERS` query.
+
+```rust
+    // Start providing a record to the network.
+    // This stores the record in the local provider store and starts advertising it to the network.
+    kad_handle.start_providing(key.clone());
+
+    // Wait for some condition to stop providing...
+
+    // Stop providing a record to the network.
+    // The record is removed from the local provider store and stops advertising it to the network.
+    // Please note that the record will be removed from the network after the TTL expires.
+    kad_provider.stop_providing(key.clone());
+
+    // Retrieve providers for a record from the network.
+    // This returns a query ID that is later producing the result when polling the `Kademlia` instance.
+    let query_id = kad_provider.get_providers(key.clone());
+```
+
 ### Added
 
 - kad: Providers part 8: unit, e2e, and `libp2p` conformance tests  ([#258](https://github.com/paritytech/litep2p/pull/258))
