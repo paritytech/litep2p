@@ -170,27 +170,31 @@ impl Stream for TransportContext {
     type Item = (SupportedTransport, TransportEvent);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let len = match self.transports.len() {
-            0 => return Poll::Ready(None),
-            len => len,
-        };
-        let start_index = self.index;
+        if self.transports.is_empty() {
+            // Terminate if we don't have any transports installed.
+            return Poll::Ready(None);
+        }
 
-        loop {
-            let index = self.index % len;
-            self.index += 1;
-
-            let (key, stream) = self.transports.get_index_mut(index).expect("transport to exist");
+        let len = self.transports.len();
+        for index in 0..len {
+            let current = (self.index + index) % len;
+            let (key, stream) = self.transports.get_index_mut(current).expect("transport to exist");
             match stream.poll_next_unpin(cx) {
                 Poll::Pending => {}
-                Poll::Ready(None) => return Poll::Ready(None),
-                Poll::Ready(Some(event)) => return Poll::Ready(Some((*key, event))),
-            }
-
-            if self.index == start_index + len {
-                break Poll::Pending;
+                Poll::Ready(None) => {
+                    self.index = (self.index + 1) % len;
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(Some(event)) => {
+                    let event = Some((*key, event));
+                    self.index = (self.index + 1) % len;
+                    return Poll::Ready(event);
+                }
             }
         }
+
+        self.index = (self.index + 1) % len;
+        Poll::Pending
     }
 }
 
