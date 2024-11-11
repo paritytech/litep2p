@@ -573,11 +573,33 @@ impl Stream for WebSocketTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
-            return match connection {
-                Err(_) => Poll::Ready(None),
-                Ok((connection, address)) => {
+        if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
+            return match event {
+                None => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        "Websocket listener terminated, ignore if the node is stopping",
+                    );
+
+                    Poll::Ready(None)
+                }
+                Some(Err(error)) => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "Websocket listener terminated with error",
+                    );
+
+                    Poll::Ready(None)
+                }
+                Some(Ok((connection, address))) => {
                     let connection_id = self.context.next_connection_id();
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?address,
+                        "pending inbound Websocket connection",
+                    );
 
                     self.pending_inbound_connections.insert(
                         connection_id,
