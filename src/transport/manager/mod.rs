@@ -1322,6 +1322,152 @@ mod tests {
         (dial_address, connection_id)
     }
 
+    struct MockTransport {
+        rx: tokio::sync::mpsc::Receiver<TransportEvent>,
+    }
+
+    impl MockTransport {
+        fn new(rx: tokio::sync::mpsc::Receiver<TransportEvent>) -> Self {
+            Self { rx }
+        }
+    }
+
+    impl Transport for MockTransport {
+        fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn accept_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn reject_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn open(
+            &mut self,
+            _connection_id: ConnectionId,
+            _addresses: Vec<Multiaddr>,
+        ) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn negotiate(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+            Ok(())
+        }
+
+        fn cancel(&mut self, _connection_id: ConnectionId) {}
+    }
+    impl Stream for MockTransport {
+        type Item = TransportEvent;
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            self.rx.poll_recv(cx)
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "websocket")]
+    async fn transport_events() {
+        let mut transports = TransportContext::new();
+
+        let (tx_tcp, rx) = tokio::sync::mpsc::channel(8);
+        let transport = MockTransport::new(rx);
+        transports.register_transport(SupportedTransport::Tcp, Box::new(transport));
+
+        let (tx_ws, rx) = tokio::sync::mpsc::channel(8);
+        let transport = MockTransport::new(rx);
+        transports.register_transport(SupportedTransport::WebSocket, Box::new(transport));
+
+        assert_eq!(transports.index, 0);
+        assert_eq!(transports.transports.len(), 2);
+        // No items.
+        futures::future::poll_fn(|cx| match transports.poll_next_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+        assert_eq!(transports.index, 1);
+
+        // Websocket events.
+        tx_ws
+            .send(TransportEvent::PendingInboundConnection {
+                connection_id: ConnectionId::from(1),
+            })
+            .await
+            .expect("chanel to be open");
+
+        let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
+            .await
+            .expect("expected event");
+        assert_eq!(event.0, SupportedTransport::WebSocket);
+        assert!(std::matches!(
+            event.1,
+            TransportEvent::PendingInboundConnection { .. }
+        ));
+        assert_eq!(transports.index, 0);
+
+        // TCP events.
+        tx_tcp
+            .send(TransportEvent::PendingInboundConnection {
+                connection_id: ConnectionId::from(2),
+            })
+            .await
+            .expect("chanel to be open");
+
+        let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
+            .await
+            .expect("expected event");
+        assert_eq!(event.0, SupportedTransport::Tcp);
+        assert!(std::matches!(
+            event.1,
+            TransportEvent::PendingInboundConnection { .. }
+        ));
+        assert_eq!(transports.index, 1);
+
+        // Both transports produce events.
+        tx_ws
+            .send(TransportEvent::PendingInboundConnection {
+                connection_id: ConnectionId::from(3),
+            })
+            .await
+            .expect("chanel to be open");
+        tx_tcp
+            .send(TransportEvent::PendingInboundConnection {
+                connection_id: ConnectionId::from(4),
+            })
+            .await
+            .expect("chanel to be open");
+
+        let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
+            .await
+            .expect("expected event");
+        assert_eq!(event.0, SupportedTransport::WebSocket);
+        assert!(std::matches!(
+            event.1,
+            TransportEvent::PendingInboundConnection { .. }
+        ));
+        assert_eq!(transports.index, 0);
+
+        let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
+            .await
+            .expect("expected event");
+        assert_eq!(event.0, SupportedTransport::Tcp);
+        assert!(std::matches!(
+            event.1,
+            TransportEvent::PendingInboundConnection { .. }
+        ));
+        assert_eq!(transports.index, 1);
+    }
+
     #[test]
     #[should_panic]
     #[cfg(debug_assertions)]
