@@ -576,9 +576,9 @@ impl Stream for TcpTransport {
         let mut should_wake_up = false;
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
-            should_wake_up |= true;
-
             tracing::trace!(target: LOG_TARGET, ?result, "raw connection result");
+
+            should_wake_up |= true;
 
             match result {
                 RawConnectionResult::Connected {
