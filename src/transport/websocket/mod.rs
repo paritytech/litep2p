@@ -429,10 +429,15 @@ impl Transport for WebSocketTransport {
     }
 
     fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let pending = self
-            .pending_inbound_connections
-            .remove(&connection_id)
-            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+        let pending = self.pending_inbound_connections.remove(&connection_id).ok_or_else(|| {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "Cannot accept non existent pending connection",
+            );
+
+            Error::ConnectionDoesntExist(connection_id)
+        })?;
 
         self.on_inbound_connection(connection_id, pending.connection, pending.address);
 
@@ -440,9 +445,18 @@ impl Transport for WebSocketTransport {
     }
 
     fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        self.pending_open
-            .remove(&connection_id)
-            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
+        self.pending_inbound_connections.remove(&connection_id).map_or_else(
+            || {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?connection_id,
+                    "Cannot reject non existent pending connection",
+                );
+
+                Err(Error::ConnectionDoesntExist(connection_id))
+            },
+            |_| Ok(()),
+        )
     }
 
     fn open(
