@@ -570,7 +570,14 @@ impl Stream for TcpTransport {
             };
         }
 
+        // Whenever we are receiving events by `Poll::Ready` and we choose to not propagate
+        // them to the higher levels, we should wake up the context to poll us again.
+        // Otherwise, the scheduler will not know that we are ready to be polled again.
+        let mut should_wake_up = false;
+
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
+            should_wake_up |= true;
+
             tracing::trace!(target: LOG_TARGET, ?result, "raw connection result");
 
             match result {
@@ -633,6 +640,8 @@ impl Stream for TcpTransport {
         }
 
         while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
+            should_wake_up |= true;
+
             match connection {
                 Ok(connection) => {
                     let peer = connection.peer();
@@ -657,6 +666,11 @@ impl Stream for TcpTransport {
                     }
                 }
             }
+        }
+
+        // We have filtered out all `Poll::Ready` events.
+        if should_wake_up {
+            cx.waker().wake_by_ref();
         }
 
         Poll::Pending
