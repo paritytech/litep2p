@@ -772,10 +772,7 @@ impl TransportManager {
         };
 
         // Reject the connection if exceeded limits.
-        if let Err(error) = self
-            .connection_limits
-            .on_connection_established(endpoint.connection_id(), endpoint.is_listener())
-        {
+        if let Err(error) = self.connection_limits.can_accept_connection(endpoint.is_listener()) {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?peer,
@@ -804,6 +801,9 @@ impl TransportManager {
         );
 
         if connection_accepted {
+            self.connection_limits
+                .accept_established_connection(endpoint.connection_id(), endpoint.is_listener());
+
             // Cancel all pending dials if the connection was established.
             if let PeerState::Opening {
                 connection_id,
