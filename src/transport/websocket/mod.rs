@@ -33,6 +33,7 @@ use crate::{
         Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
+    utils::futures_stream::FuturesStream,
     DialError, PeerId,
 };
 
@@ -115,12 +116,11 @@ pub(crate) struct WebSocketTransport {
     pending_inbound_connections: HashMap<ConnectionId, PendingInboundConnection>,
 
     /// Pending connections.
-    pending_connections: FuturesUnordered<
-        BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, DialError)>>,
-    >,
+    pending_connections:
+        FuturesStream<BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, DialError)>>>,
 
     /// Pending raw, unnegotiated connections.
-    pending_raw_connections: FuturesUnordered<BoxFuture<'static, RawConnectionResult>>,
+    pending_raw_connections: FuturesStream<BoxFuture<'static, RawConnectionResult>>,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (WebSocketStream<MaybeTlsStream<TcpStream>>, Multiaddr)>,
@@ -325,8 +325,8 @@ impl TransportBuilder for WebSocketTransport {
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
                 pending_inbound_connections: HashMap::new(),
-                pending_connections: FuturesUnordered::new(),
-                pending_raw_connections: FuturesUnordered::new(),
+                pending_connections: FuturesStream::new(),
+                pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
             },
             listen_addresses,
@@ -630,13 +630,8 @@ impl Stream for WebSocketTransport {
             };
         }
 
-        // When we filter `Poll::Ready(event)` events are return `Poll::Pending`, we need to also
-        // wake the current context. Otherwise, the scheduler will not call again `poll_next`.
-        let mut should_wake_up = false;
-
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
             tracing::trace!(target: LOG_TARGET, ?result, "raw connection result");
-            should_wake_up |= true;
 
             match result {
                 RawConnectionResult::Connected {
@@ -698,8 +693,6 @@ impl Stream for WebSocketTransport {
         }
 
         while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
-            should_wake_up |= true;
-
             match connection {
                 Ok(connection) => {
                     let peer = connection.peer();
@@ -724,11 +717,6 @@ impl Stream for WebSocketTransport {
                     }
                 }
             }
-        }
-
-        // We have filtered out `Poll::Ready` events.
-        if should_wake_up {
-            cx.waker().wake_by_ref();
         }
 
         Poll::Pending
