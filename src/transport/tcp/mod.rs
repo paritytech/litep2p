@@ -378,10 +378,15 @@ impl Transport for TcpTransport {
     }
 
     fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let pending = self
-            .pending_inbound_connections
-            .remove(&connection_id)
-            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+        let pending = self.pending_inbound_connections.remove(&connection_id).ok_or_else(|| {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "Cannot accept non existent pending connection",
+            );
+
+            Error::ConnectionDoesntExist(connection_id)
+        })?;
 
         self.on_inbound_connection(connection_id, pending.connection, pending.address);
 
@@ -389,9 +394,18 @@ impl Transport for TcpTransport {
     }
 
     fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        self.pending_inbound_connections
-            .remove(&connection_id)
-            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
+        self.pending_inbound_connections.remove(&connection_id).map_or_else(
+            || {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?connection_id,
+                    "Cannot reject non existent pending connection",
+                );
+
+                Err(Error::ConnectionDoesntExist(connection_id))
+            },
+            |_| Ok(()),
+        )
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
@@ -529,7 +543,23 @@ impl Stream for TcpTransport {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
             return match event {
-                None | Some(Err(_)) => Poll::Ready(None),
+                None => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        "TCP listener terminated, ignore if the node is stopping",
+                    );
+
+                    Poll::Ready(None)
+                }
+                Some(Err(error)) => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "TCP listener terminated with error",
+                    );
+
+                    Poll::Ready(None)
+                }
                 Some(Ok((connection, address))) => {
                     let connection_id = self.context.next_connection_id();
                     tracing::trace!(
