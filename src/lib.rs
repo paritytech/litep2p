@@ -79,8 +79,8 @@ pub mod types;
 pub mod yamux;
 
 mod bandwidth;
-mod utils;
 mod multistream_select;
+mod utils;
 
 #[cfg(test)]
 mod mock;
