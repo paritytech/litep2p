@@ -44,7 +44,7 @@ impl<F> FuturesStream<F> {
         }
     }
 
-    /// Number of futeres in the stream.
+    /// Number of futures in the stream.
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.futures.len()

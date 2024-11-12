@@ -79,6 +79,7 @@ pub mod types;
 pub mod yamux;
 
 mod bandwidth;
+mod utils;
 mod multistream_select;
 
 #[cfg(test)]
