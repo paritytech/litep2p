@@ -1003,29 +1003,60 @@ impl TransportManager {
     pub async fn next(&mut self) -> Option<TransportEvent> {
         loop {
             tokio::select! {
-                event = self.event_rx.recv() => match event? {
-                    TransportManagerEvent::ConnectionClosed {
-                        peer,
-                        connection: connection_id,
-                    } => match self.on_connection_closed(peer, connection_id) {
-                        None => {}
-                        Some(event) => return Some(event),
-                    }
+                event = self.event_rx.recv() => {
+                    let Some(event) = event else {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            "Installed protocols terminated, ignore if the node is stopping"
+                        );
+
+                        return None;
+                    };
+
+                    match event {
+                        TransportManagerEvent::ConnectionClosed {
+                            peer,
+                            connection: connection_id,
+                        } => if let Some(event) = self.on_connection_closed(peer, connection_id) {
+                            return Some(event);
+                        }
+                    };
                 },
-                command = self.cmd_rx.recv() => match command? {
-                    InnerTransportManagerCommand::DialPeer { peer } => {
-                        if let Err(error) = self.dial(peer).await {
-                            tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer")
+
+                command = self.cmd_rx.recv() =>{
+                    let Some(command) = command else {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            "User command terminated, ignore if the node is stopping"
+                        );
+
+                        return None;
+                    };
+
+                    match command {
+                        InnerTransportManagerCommand::DialPeer { peer } => {
+                            if let Err(error) = self.dial(peer).await {
+                                tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer")
+                            }
+                        }
+                        InnerTransportManagerCommand::DialAddress { address } => {
+                            if let Err(error) = self.dial_address(address).await {
+                                tracing::debug!(target: LOG_TARGET, ?error, "failed to dial peer")
+                            }
                         }
                     }
-                    InnerTransportManagerCommand::DialAddress { address } => {
-                        if let Err(error) = self.dial_address(address).await {
-                            tracing::debug!(target: LOG_TARGET, ?error, "failed to dial peer")
-                        }
-                    }
                 },
+
                 event = self.transports.next() => {
-                    let (transport, event) = event?;
+                    let Some((transport, event)) = event else {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            "Installed transports terminated, ignore if the node is stopping"
+                        );
+
+                        return None;
+                    };
+
 
                     match event {
                         TransportEvent::DialFailure { connection_id, address, error } => {
