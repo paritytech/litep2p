@@ -176,24 +176,22 @@ impl Stream for TransportContext {
         }
 
         let len = self.transports.len();
+        self.index = (self.index + 1) % len;
         for index in 0..len {
             let current = (self.index + index) % len;
             let (key, stream) = self.transports.get_index_mut(current).expect("transport to exist");
             match stream.poll_next_unpin(cx) {
                 Poll::Pending => {}
                 Poll::Ready(None) => {
-                    self.index = (self.index + 1) % len;
                     return Poll::Ready(None);
                 }
                 Poll::Ready(Some(event)) => {
                     let event = Some((*key, event));
-                    self.index = (self.index + 1) % len;
                     return Poll::Ready(event);
                 }
             }
         }
 
-        self.index = (self.index + 1) % len;
         Poll::Pending
     }
 }
@@ -1450,7 +1448,7 @@ mod tests {
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
             .expect("expected event");
-        assert_eq!(event.0, SupportedTransport::WebSocket);
+        assert_eq!(event.0, SupportedTransport::Tcp);
         assert!(std::matches!(
             event.1,
             TransportEvent::PendingInboundConnection { .. }
@@ -1460,7 +1458,7 @@ mod tests {
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
             .expect("expected event");
-        assert_eq!(event.0, SupportedTransport::Tcp);
+        assert_eq!(event.0, SupportedTransport::WebSocket);
         assert!(std::matches!(
             event.1,
             TransportEvent::PendingInboundConnection { .. }
