@@ -33,6 +33,7 @@ use crate::{
         Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
+    utils::futures_stream::FuturesStream,
     DialError, PeerId,
 };
 
@@ -115,12 +116,11 @@ pub(crate) struct WebSocketTransport {
     pending_inbound_connections: HashMap<ConnectionId, PendingInboundConnection>,
 
     /// Pending connections.
-    pending_connections: FuturesUnordered<
-        BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, DialError)>>,
-    >,
+    pending_connections:
+        FuturesStream<BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, DialError)>>>,
 
     /// Pending raw, unnegotiated connections.
-    pending_raw_connections: FuturesUnordered<BoxFuture<'static, RawConnectionResult>>,
+    pending_raw_connections: FuturesStream<BoxFuture<'static, RawConnectionResult>>,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (WebSocketStream<MaybeTlsStream<TcpStream>>, Multiaddr)>,
@@ -325,8 +325,8 @@ impl TransportBuilder for WebSocketTransport {
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
                 pending_inbound_connections: HashMap::new(),
-                pending_connections: FuturesUnordered::new(),
-                pending_raw_connections: FuturesUnordered::new(),
+                pending_connections: FuturesStream::new(),
+                pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
             },
             listen_addresses,
@@ -429,10 +429,15 @@ impl Transport for WebSocketTransport {
     }
 
     fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let pending = self
-            .pending_inbound_connections
-            .remove(&connection_id)
-            .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+        let pending = self.pending_inbound_connections.remove(&connection_id).ok_or_else(|| {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "Cannot accept non existent pending connection",
+            );
+
+            Error::ConnectionDoesntExist(connection_id)
+        })?;
 
         self.on_inbound_connection(connection_id, pending.connection, pending.address);
 
@@ -440,9 +445,18 @@ impl Transport for WebSocketTransport {
     }
 
     fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        self.pending_open
-            .remove(&connection_id)
-            .map_or(Err(Error::ConnectionDoesntExist(connection_id)), |_| Ok(()))
+        self.pending_inbound_connections.remove(&connection_id).map_or_else(
+            || {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?connection_id,
+                    "Cannot reject non existent pending connection",
+                );
+
+                Err(Error::ConnectionDoesntExist(connection_id))
+            },
+            |_| Ok(()),
+        )
     }
 
     fn open(
@@ -573,11 +587,33 @@ impl Stream for WebSocketTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
-            return match connection {
-                Err(_) => Poll::Ready(None),
-                Ok((connection, address)) => {
+        if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
+            return match event {
+                None => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        "Websocket listener terminated, ignore if the node is stopping",
+                    );
+
+                    Poll::Ready(None)
+                }
+                Some(Err(error)) => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "Websocket listener terminated with error",
+                    );
+
+                    Poll::Ready(None)
+                }
+                Some(Ok((connection, address))) => {
                     let connection_id = self.context.next_connection_id();
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?address,
+                        "pending inbound Websocket connection",
+                    );
 
                     self.pending_inbound_connections.insert(
                         connection_id,
