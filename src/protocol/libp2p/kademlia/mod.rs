@@ -71,7 +71,6 @@ const PARALLELISM_FACTOR: usize = 3;
 mod bucket;
 mod config;
 mod executor;
-mod futures_stream;
 mod handle;
 mod message;
 mod query;

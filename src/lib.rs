@@ -80,6 +80,7 @@ pub mod yamux;
 
 mod bandwidth;
 mod multistream_select;
+mod utils;
 
 #[cfg(test)]
 mod mock;

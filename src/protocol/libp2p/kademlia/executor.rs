@@ -19,9 +19,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{futures_stream::FuturesStream, query::QueryId},
-    substream::Substream,
-    PeerId,
+    protocol::libp2p::kademlia::query::QueryId, substream::Substream,
+    utils::futures_stream::FuturesStream, PeerId,
 };
 
 use bytes::{Bytes, BytesMut};

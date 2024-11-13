@@ -33,6 +33,7 @@ use crate::{
         Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
+    utils::futures_stream::FuturesStream,
     DialError, PeerId,
 };
 
@@ -115,12 +116,11 @@ pub(crate) struct WebSocketTransport {
     pending_inbound_connections: HashMap<ConnectionId, PendingInboundConnection>,
 
     /// Pending connections.
-    pending_connections: FuturesUnordered<
-        BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, DialError)>>,
-    >,
+    pending_connections:
+        FuturesStream<BoxFuture<'static, Result<NegotiatedConnection, (ConnectionId, DialError)>>>,
 
     /// Pending raw, unnegotiated connections.
-    pending_raw_connections: FuturesUnordered<BoxFuture<'static, RawConnectionResult>>,
+    pending_raw_connections: FuturesStream<BoxFuture<'static, RawConnectionResult>>,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (WebSocketStream<MaybeTlsStream<TcpStream>>, Multiaddr)>,
@@ -325,8 +325,8 @@ impl TransportBuilder for WebSocketTransport {
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
                 pending_inbound_connections: HashMap::new(),
-                pending_connections: FuturesUnordered::new(),
-                pending_raw_connections: FuturesUnordered::new(),
+                pending_connections: FuturesStream::new(),
+                pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
             },
             listen_addresses,

@@ -23,10 +23,10 @@
 use crate::{
     protocol::libp2p::kademlia::{
         config::{DEFAULT_PROVIDER_REFRESH_INTERVAL, DEFAULT_PROVIDER_TTL},
-        futures_stream::FuturesStream,
         record::{ContentProvider, Key, ProviderRecord, Record},
         types::Key as KademliaKey,
     },
+    utils::futures_stream::FuturesStream,
     PeerId,
 };
 
