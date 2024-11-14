@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2024-11-14
+
+This release includes key fixes that enhance the stability and performance of the litep2p library, focusing on long-running stability and improvements to polling mechanisms.
+
+### Long Running Stability Improvements
+
+This issue caused long-running nodes to reject all incoming connections, impacting overall stability.
+
+Addressed a bug in the connection limits functionality that incorrectly tracked connections due for rejection.
+This issue caused an artificial increase in inbound peers, which were not being properly removed from the connection limit count.
+This fix ensures more accurate tracking and management of peer connections [#286](https://github.com/paritytech/litep2p/pull/286).
+
+### Polling implementation fixes
+
+This release provides multiple fixes to the polling mechanism, improving how connections and events are processed:
+
+- Resolved an overflow issue in TransportContext's polling index for streams, preventing potential crashes.
+- Fixed a delay in the manager's `poll_next` function that prevented immediate polling of newly added futures.
+- Corrected an issue where the listener did not return Poll::Ready(None) when it was closed, ensuring proper signal handling.
+
+### Fixed
+
+- manager: Fix connection limits tracking of rejected connections  ([#286](https://github.com/paritytech/litep2p/pull/286))
+- transport: Fix waking up on filtered events from `poll_next`  ([#287](https://github.com/paritytech/litep2p/pull/287))
+- transports: Fix missing Poll::Ready(None) event from listenener  ([#285](https://github.com/paritytech/litep2p/pull/285))
+- manager: Avoid overflow on stream implementation for `TransportContext`  ([#283](https://github.com/paritytech/litep2p/pull/283))
+- manager: Log when polling returns Ready(None)  ([#284](https://github.com/paritytech/litep2p/pull/284))
+
 ## [0.8.0] - 2024-11-04
 
 This release adds support for content provider advertisement and discovery to Kademlia protocol implementation (see libp2p [spec](https://github.com/libp2p/specs/blob/master/kad-dht/README.md#content-provider-advertisement-and-discovery)).
