@@ -673,7 +673,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
 /// Parse the `PeerId` from received `NoiseHandshakePayload` and verify the payload signature.
 fn parse_and_verify_peer_id(
     payload: handshake_schema::NoiseHandshakePayload,
-    keypair_public: &[u8],
+    dh_remote_pubkey: &[u8],
 ) -> Result<PeerId, NegotiationError> {
     let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
     let remote_public_key = PublicKey::from_protobuf_encoding(&identity)?;
@@ -686,7 +686,7 @@ fn parse_and_verify_peer_id(
     let peer_id = PeerId::from_public_key(&remote_public_key);
 
     if !remote_public_key.verify(
-        &[STATIC_KEY_DOMAIN.as_bytes(), keypair_public].concat(),
+        &[STATIC_KEY_DOMAIN.as_bytes(), dh_remote_pubkey].concat(),
         &remote_key_signature,
     ) {
         tracing::debug!(
