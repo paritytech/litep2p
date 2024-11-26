@@ -5,6 +5,90 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2024-11-14
+
+This release includes key fixes that enhance the stability and performance of the litep2p library, focusing on long-running stability and improvements to polling mechanisms.
+
+### Long Running Stability Improvements
+
+This issue caused long-running nodes to reject all incoming connections, impacting overall stability.
+
+Addressed a bug in the connection limits functionality that incorrectly tracked connections due for rejection.
+This issue caused an artificial increase in inbound peers, which were not being properly removed from the connection limit count.
+This fix ensures more accurate tracking and management of peer connections [#286](https://github.com/paritytech/litep2p/pull/286).
+
+### Polling implementation fixes
+
+This release provides multiple fixes to the polling mechanism, improving how connections and events are processed:
+
+- Resolved an overflow issue in TransportContext's polling index for streams, preventing potential crashes.
+- Fixed a delay in the manager's `poll_next` function that prevented immediate polling of newly added futures.
+- Corrected an issue where the listener did not return Poll::Ready(None) when it was closed, ensuring proper signal handling.
+
+### Fixed
+
+- manager: Fix connection limits tracking of rejected connections  ([#286](https://github.com/paritytech/litep2p/pull/286))
+- transport: Fix waking up on filtered events from `poll_next`  ([#287](https://github.com/paritytech/litep2p/pull/287))
+- transports: Fix missing Poll::Ready(None) event from listenener  ([#285](https://github.com/paritytech/litep2p/pull/285))
+- manager: Avoid overflow on stream implementation for `TransportContext`  ([#283](https://github.com/paritytech/litep2p/pull/283))
+- manager: Log when polling returns Ready(None)  ([#284](https://github.com/paritytech/litep2p/pull/284))
+
+## [0.8.0] - 2024-11-04
+
+This release adds support for content provider advertisement and discovery to Kademlia protocol implementation (see libp2p [spec](https://github.com/libp2p/specs/blob/master/kad-dht/README.md#content-provider-advertisement-and-discovery)).
+Additionally, the release includes several improvements and memory leak fixes to enhance the stability and performance of the litep2p library.
+
+### [Content Provider Advertisement and Discovery](https://github.com/paritytech/litep2p/pull/234)
+
+Litep2p now supports content provider advertisement and discovery through the Kademlia protocol.
+Content providers can publish their records to the network, and other nodes can discover and retrieve these records using the `GET_PROVIDERS` query.
+
+```rust
+    // Start providing a record to the network.
+    // This stores the record in the local provider store and starts advertising it to the network.
+    kad_handle.start_providing(key.clone());
+
+    // Wait for some condition to stop providing...
+
+    // Stop providing a record to the network.
+    // The record is removed from the local provider store and stops advertising it to the network.
+    // Please note that the record will be removed from the network after the TTL expires.
+    kad_provider.stop_providing(key.clone());
+
+    // Retrieve providers for a record from the network.
+    // This returns a query ID that is later producing the result when polling the `Kademlia` instance.
+    let query_id = kad_provider.get_providers(key.clone());
+```
+
+### Added
+
+- kad: Providers part 8: unit, e2e, and `libp2p` conformance tests  ([#258](https://github.com/paritytech/litep2p/pull/258))
+- kad: Providers part 7: better types and public API, public addresses & known providers  ([#246](https://github.com/paritytech/litep2p/pull/246))
+- kad: Providers part 6: stop providing  ([#245](https://github.com/paritytech/litep2p/pull/245))
+- kad: Providers part 5: `GET_PROVIDERS` query  ([#236](https://github.com/paritytech/litep2p/pull/236))
+- kad: Providers part 4: refresh local providers  ([#235](https://github.com/paritytech/litep2p/pull/235))
+- kad: Providers part 3: publish provider records (start providing)  ([#234](https://github.com/paritytech/litep2p/pull/234))
+
+### Changed
+
+- transport_service: Improve connection stability by downgrading connections on substream inactivity  ([#260](https://github.com/paritytech/litep2p/pull/260))
+- transport: Abort canceled dial attempts for TCP, WebSocket and Quic  ([#255](https://github.com/paritytech/litep2p/pull/255))
+- kad/executor: Add timeout for writting frames  ([#277](https://github.com/paritytech/litep2p/pull/277))
+- kad: Avoid cloning the `KademliaMessage` and use reference for `RoutingTable::closest`  ([#233](https://github.com/paritytech/litep2p/pull/233))
+- peer_state: Robust state machine transitions  ([#251](https://github.com/paritytech/litep2p/pull/251))
+- address_store: Improve address tracking and add eviction algorithm  ([#250](https://github.com/paritytech/litep2p/pull/250))
+- kad: Remove unused serde cfg  ([#262](https://github.com/paritytech/litep2p/pull/262))
+- req-resp: Refactor to move functionality to dedicated methods  ([#244](https://github.com/paritytech/litep2p/pull/244))
+- transport_service: Improve logs and move code from tokio::select macro  ([#254](https://github.com/paritytech/litep2p/pull/254))
+
+### Fixed
+
+- tcp/websocket/quic: Fix cancel memory leak  ([#272](https://github.com/paritytech/litep2p/pull/272))
+- transport: Fix pending dials memory leak  ([#271](https://github.com/paritytech/litep2p/pull/271))
+- ping: Fix memory leak of unremoved `pending_opens`  ([#274](https://github.com/paritytech/litep2p/pull/274))
+- identify: Fix memory leak of unused `pending_opens`  ([#273](https://github.com/paritytech/litep2p/pull/273))
+- kad: Fix not retrieving local records  ([#221](https://github.com/paritytech/litep2p/pull/221))
+
 ## [0.7.0] - 2024-09-05
 
 This release introduces several new features, improvements, and fixes to the litep2p library. Key updates include enhanced error handling, configurable connection limits, and a new API for managing public addresses.
