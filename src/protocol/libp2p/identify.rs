@@ -207,7 +207,11 @@ impl Identify {
     fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, ?endpoint, "connection established");
 
-        self.service.open_substream(peer)?;
+        self.service.open_substream(peer).map_err(|err| {
+            tracing::debug!(target: LOG_TARGET, ?peer, ?endpoint, ?err, "failed to open substream to remote peer");
+            err
+        })?;
+
         self.peers.insert(peer, endpoint);
 
         Ok(())
@@ -237,7 +241,7 @@ impl Identify {
         let observed_addr = match self.peers.get(&peer) {
             Some(endpoint) => Some(endpoint.address().to_vec()),
             None => {
-                tracing::warn!(
+                tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
                     %protocol,
