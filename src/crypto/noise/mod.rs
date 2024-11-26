@@ -281,6 +281,20 @@ impl NoiseContext {
         }
     }
 
+    fn get_handshake_dh_remote_pubkey(&self) -> Result<&[u8], NegotiationError> {
+        let NoiseState::Handshake(ref noise) = self.noise else {
+            tracing::error!(target: LOG_TARGET, "invalid state to get remote public key");
+            return Err(NegotiationError::StateMismatch);
+        };
+
+        let Some(dh_remote_pubkey) = noise.get_remote_static() else {
+            tracing::error!(target: LOG_TARGET, "expected remote public key at the end of XX session");
+            return Err(NegotiationError::IoError(std::io::ErrorKind::InvalidData));
+        };
+
+        Ok(dh_remote_pubkey)
+    }
+
     /// Convert Noise into transport mode.
     fn into_transport(self) -> Result<NoiseContext, NegotiationError> {
         let transport = match self.noise {
@@ -656,17 +670,35 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
     }
 }
 
-/// Try to parse `PeerId` from received `NoiseHandshakePayload`
-fn parse_peer_id(buf: &[u8]) -> Result<PeerId, NegotiationError> {
-    match handshake_schema::NoiseHandshakePayload::decode(buf) {
-        Ok(payload) => {
-            let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
+/// Parse the `PeerId` from received `NoiseHandshakePayload` and verify the payload signature.
+fn parse_and_verify_peer_id(
+    payload: handshake_schema::NoiseHandshakePayload,
+    dh_remote_pubkey: &[u8],
+) -> Result<PeerId, NegotiationError> {
+    let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
+    let remote_public_key = PublicKey::from_protobuf_encoding(&identity)?;
+    let remote_key_signature =
+        payload.identity_sig.ok_or(NegotiationError::BadSignature).map_err(|err| {
+            tracing::debug!(target: LOG_TARGET, "payload without signature");
+            err
+        })?;
 
-            let public_key = PublicKey::from_protobuf_encoding(&identity)?;
-            Ok(PeerId::from_public_key(&public_key))
-        }
-        Err(err) => Err(ParseError::from(err).into()),
+    let peer_id = PeerId::from_public_key(&remote_public_key);
+
+    if !remote_public_key.verify(
+        &[STATIC_KEY_DOMAIN.as_bytes(), dh_remote_pubkey].concat(),
+        &remote_key_signature,
+    ) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer_id,
+            "failed to verify remote public key signature"
+        );
+
+        return Err(NegotiationError::BadSignature);
     }
+
+    Ok(peer_id)
 }
 
 /// Perform Noise handshake.
@@ -680,7 +712,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     tracing::debug!(target: LOG_TARGET, ?role, "start noise handshake");
 
     let mut noise = NoiseContext::new(keypair, role)?;
-    let peer = match role {
+    let payload = match role {
         Role::Dialer => {
             // write initial message
             let first_message = noise.first_message(Role::Dialer)?;
@@ -689,13 +721,20 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
 
             // read back response which contains the remote peer id
             let message = noise.read_handshake_message(&mut io).await?;
+            // Decode the remote identity message.
+            let payload = handshake_schema::NoiseHandshakePayload::decode(message)
+                .map_err(ParseError::from)
+                .map_err(|err| {
+                    tracing::error!(target: LOG_TARGET, ?err, "failed to decode remote identity message");
+                    err
+                })?;
 
             // send the final message which contains local peer id
             let second_message = noise.second_message()?;
             let _ = io.write(&second_message).await?;
             io.flush().await?;
 
-            parse_peer_id(&message)?
+            payload
         }
         Role::Listener => {
             // read remote's first message
@@ -708,9 +747,13 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
 
             // read remote's second message which contains their peer id
             let message = noise.read_handshake_message(&mut io).await?;
-            parse_peer_id(&message)?
+            // Decode the remote identity message.
+            handshake_schema::NoiseHandshakePayload::decode(message).map_err(ParseError::from)?
         }
     };
+
+    let dh_remote_pubkey = noise.get_handshake_dh_remote_pubkey()?;
+    let peer = parse_and_verify_peer_id(payload, dh_remote_pubkey)?;
 
     Ok((
         NoiseSocket::new(
@@ -789,7 +832,12 @@ mod tests {
 
     #[test]
     fn invalid_peer_id_schema() {
-        match parse_peer_id(&vec![1, 2, 3, 4]).unwrap_err() {
+        let payload = handshake_schema::NoiseHandshakePayload {
+            identity_key: Some(vec![1, 2, 3, 4]),
+            identity_sig: None,
+            extensions: None,
+        };
+        match parse_and_verify_peer_id(payload, &[0]).unwrap_err() {
             NegotiationError::ParseError(_) => {}
             _ => panic!("invalid error"),
         }
