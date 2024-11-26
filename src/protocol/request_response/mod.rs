@@ -298,7 +298,6 @@ impl RequestResponseProtocol {
                 ?peer,
                 "state mismatch: peer doesn't exist",
             );
-            debug_assert!(false);
             return;
         };
 
