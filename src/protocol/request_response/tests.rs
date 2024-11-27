@@ -92,7 +92,6 @@ async fn connection_closed_twice() {
 
 #[tokio::test]
 #[cfg(debug_assertions)]
-#[should_panic]
 async fn connection_established_twice() {
     let (mut protocol, _handle, _manager, _tx) = protocol();
 
