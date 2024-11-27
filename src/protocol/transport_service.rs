@@ -180,7 +180,7 @@ impl KeepAliveTracker {
             ?peer,
             ?connection_id,
             ?self.keep_alive_timeout,
-            last_activity = ?self.last_activity,
+            last_activity = ?self.last_activity.len(),
             pending_keep_alive_timeouts = ?self.pending_keep_alive_timeouts.len(),
             "substream activity",
         );
