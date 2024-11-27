@@ -296,9 +296,8 @@ impl RequestResponseProtocol {
             tracing::error!(
                 target: LOG_TARGET,
                 ?peer,
-                "state mismatch: peer doesn't exist",
+                "Peer does not exist or substream open failed during connection establishment",
             );
-            debug_assert!(false);
             return;
         };
 
