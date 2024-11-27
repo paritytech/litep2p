@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2024-11-27
+
+This release ensures that the provided peer identity is verified at the crypto/noise protocol level, enhancing security and preventing potential misuses.
+The release also includes a fix that caused `TransportService` component to panic on debug builds.
+
+### Fixed
+
+- req-resp: Fix panic on connection closed for substream open failure  ([#291](https://github.com/paritytech/litep2p/pull/291))
+- crypto/noise: Verify crypto/noise signature payload  ([#278](https://github.com/paritytech/litep2p/pull/278))
+
+### Changed
+
+- transport_service/logs: Provide less details for trace logs  ([#292](https://github.com/paritytech/litep2p/pull/292))
+
 ## [0.8.1] - 2024-11-14
 
 This release includes key fixes that enhance the stability and performance of the litep2p library, focusing on long-running stability and improvements to polling mechanisms.
