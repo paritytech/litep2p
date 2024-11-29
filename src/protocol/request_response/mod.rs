@@ -208,7 +208,7 @@ impl RequestResponseProtocol {
         registry: Option<MetricsRegistry>,
     ) -> Result<Self, Error> {
         let metrics = if let Some(registry) = registry {
-            let protocol_name = config.protocol_name.to_string().replace("/", "_");
+            let protocol_name = config.protocol_name.to_metric_string();
 
             Some(Metrics {
                 connected_peers: registry.register_gauge(

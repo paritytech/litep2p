@@ -308,7 +308,7 @@ impl NotificationProtocol {
         let (shutdown_tx, shutdown_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
         let metrics = if let Some(registry) = registry {
-            let protocol_name = config.protocol_name.to_string().replace("/", "_");
+            let protocol_name = config.protocol_name.to_metric_string();
 
             Some(Metrics {
                 connected_peers: registry.register_gauge(
