@@ -53,14 +53,10 @@ pub trait MetricGaugeT: Send + Sync {
 /// A registry for metrics.
 pub trait MetricsRegistryT: Send + Sync {
     /// Register a new counter.
-    fn register_counter(
-        &self,
-        name: &'static str,
-        help: &'static str,
-    ) -> Result<MetricCounter, Error>;
+    fn register_counter(&self, name: String, help: String) -> Result<MetricCounter, Error>;
 
     /// Register a new gauge.
-    fn register_gauge(&self, name: &'static str, help: &'static str) -> Result<MetricGauge, Error>;
+    fn register_gauge(&self, name: String, help: String) -> Result<MetricGauge, Error>;
 }
 
 /// A scope for metrics that modifies a provided gauge in an RAII fashion.
