@@ -1200,7 +1200,7 @@ impl RequestResponseProtocol {
                 // Maybe metrics.
                 _ = self.metrics.next() => {
                     self.report_metrics();
-                }
+                },
             }
         }
     }

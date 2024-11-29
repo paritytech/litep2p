@@ -24,6 +24,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, DialError, Error},
     executor::Executor,
+    metrics::{MetricGauge, MetricsRegistry},
     protocol::{InnerTransportEvent, TransportService},
     transport::{
         manager::{
@@ -254,6 +255,17 @@ pub struct TransportManager {
 
     /// Opening connections errors.
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
+
+    /// Metrics.
+    metrics: Option<Metrics>,
+}
+
+struct Metrics {
+    peers: MetricGauge,
+    pending_connections: MetricGauge,
+    incoming_connections: MetricGauge,
+    outgoing_connections: MetricGauge,
+    opening_errors: MetricGauge,
 }
 
 impl TransportManager {
@@ -265,7 +277,8 @@ impl TransportManager {
         bandwidth_sink: BandwidthSink,
         max_parallel_dials: usize,
         connection_limits_config: limits::ConnectionLimitsConfig,
-    ) -> (Self, TransportManagerHandle) {
+        registry: Option<MetricsRegistry>,
+    ) -> Result<(Self, TransportManagerHandle), Error> {
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
@@ -281,7 +294,32 @@ impl TransportManager {
             public_addresses.clone(),
         );
 
-        (
+        let metrics = if let Some(registry) = registry {
+            Some(Metrics {
+                peers: registry
+                    .register_gauge("litep2p_manager_peers".into(), "Connected peers".into())?,
+                pending_connections: registry.register_gauge(
+                    "litep2p_manager_pending_connections".into(),
+                    "Pending connections".into(),
+                )?,
+                incoming_connections: registry.register_gauge(
+                    "litep2p_manager_incoming_connections".into(),
+                    "Incoming connections".into(),
+                )?,
+                outgoing_connections: registry.register_gauge(
+                    "litep2p_manager_outgoing_connections".into(),
+                    "Outgoing connections".into(),
+                )?,
+                opening_errors: registry.register_gauge(
+                    "litep2p_manager_opening_errors".into(),
+                    "Opening errors".into(),
+                )?,
+            })
+        } else {
+            None
+        };
+
+        Ok((
             Self {
                 peers,
                 cmd_rx,
@@ -302,9 +340,10 @@ impl TransportManager {
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
                 connection_limits: limits::ConnectionLimits::new(connection_limits_config),
                 opening_errors: HashMap::new(),
+                metrics,
             },
             handle,
-        )
+        ))
     }
 
     /// Get iterator to installed protocols.
@@ -999,9 +1038,28 @@ impl TransportManager {
         Ok(None)
     }
 
+    /// Report metrics.
+    fn report_metrics(&self) {
+        if let Some(metrics) = &self.metrics {
+            metrics.peers.set(self.peers.read().len() as u64);
+            metrics.pending_connections.set(self.pending_connections.len() as u64);
+
+            metrics
+                .incoming_connections
+                .set(self.connection_limits.num_incoming_connections() as u64);
+            metrics
+                .outgoing_connections
+                .set(self.connection_limits.num_outgoing_connections() as u64);
+
+            metrics.opening_errors.set(self.opening_errors.len() as u64);
+        }
+    }
+
     /// Poll next event from [`crate::transport::manager::TransportManager`].
     pub async fn next(&mut self) -> Option<TransportEvent> {
         loop {
+            self.report_metrics();
+
             tokio::select! {
                 event = self.event_rx.recv() => {
                     let Some(event) = event else {
