@@ -2889,6 +2889,7 @@ dependencies = [
  "nohash-hasher",
  "parking_lot 0.12.3",
  "pin-project",
+ "prometheus",
  "prost 0.12.6",
  "prost-build 0.13.1",
  "quickcheck",
