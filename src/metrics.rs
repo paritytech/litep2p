@@ -42,6 +42,12 @@ pub trait MetricCounterT: Send + Sync {
 pub trait MetricGaugeT: Send + Sync {
     /// Set the gauge to `value`.
     fn set(&self, value: u64);
+
+    /// Increment the gauge by `value`.
+    fn inc(&self, value: u64);
+
+    /// Decrement the gauge by `value`.
+    fn dec(&self, value: u64);
 }
 
 /// A registry for metrics.
