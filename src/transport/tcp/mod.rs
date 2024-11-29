@@ -24,7 +24,7 @@
 use crate::{
     config::Role,
     error::{DialError, Error},
-    metrics::{MetricGauge, MetricsRegistry},
+    metrics::{MetricGauge, MetricsRegistry, ScopeGaugeMetric},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
         manager::TransportHandle,
@@ -38,6 +38,7 @@ use crate::{
     utils::futures_stream::FuturesStream,
 };
 
+use connection::TcpConnectionMetrics;
 use futures::{
     future::BoxFuture,
     stream::{AbortHandle, FuturesUnordered, Stream, StreamExt},
@@ -144,6 +145,7 @@ struct TcpMetrics {
     /// easily mismatched, and it's hard to keep track of all the metrics.
     interval: tokio::time::Interval,
 
+    /// The following metrics are used for the transport itself.
     pending_dials_num: MetricGauge,
     pending_inbound_connections_num: MetricGauge,
     pending_connections_num: MetricGauge,
@@ -151,6 +153,19 @@ struct TcpMetrics {
     open_raw_connections_num: MetricGauge,
     cancel_futures_num: MetricGauge,
     pending_open_num: MetricGauge,
+
+    /// The following metrics are shared with all TCP connections.
+    active_connections_num: MetricGauge,
+    pending_substreams_num: MetricGauge,
+}
+
+impl TcpMetrics {
+    fn to_connection_metrics(&self) -> TcpConnectionMetrics {
+        TcpConnectionMetrics {
+            _active_connections_num: ScopeGaugeMetric::new(self.active_connections_num.clone()),
+            pending_substreams_num: self.pending_substreams_num.clone(),
+        }
+    }
 }
 
 impl TcpTransport {
@@ -313,32 +328,42 @@ impl TransportBuilder for TcpTransport {
                 interval: tokio::time::interval(Duration::from_secs(15)),
 
                 pending_dials_num: registry.register_gauge(
-                    "litep2p_tcp_pending_dials",
-                    "Litep2p number of pending dials",
+                    "litep2p_tcp_pending_dials".into(),
+                    "Litep2p number of pending dials".into(),
                 )?,
                 pending_inbound_connections_num: registry.register_gauge(
-                    "litep2p_tcp_pending_inbound_connections",
-                    "Litep2p number of pending inbound connections",
+                    "litep2p_tcp_pending_inbound_connections".into(),
+                    "Litep2p number of pending inbound connections".into(),
                 )?,
                 pending_connections_num: registry.register_gauge(
-                    "litep2p_tcp_pending_connections",
-                    "Litep2p number of pending connections",
+                    "litep2p_tcp_pending_connections".into(),
+                    "Litep2p number of pending connections".into(),
                 )?,
                 pending_raw_connections_num: registry.register_gauge(
-                    "litep2p_tcp_pending_raw_connections",
-                    "Litep2p number of pending raw connections",
+                    "litep2p_tcp_pending_raw_connections".into(),
+                    "Litep2p number of pending raw connections".into(),
                 )?,
                 open_raw_connections_num: registry.register_gauge(
-                    "litep2p_tcp_open_raw_connections",
-                    "Litep2p number of open raw connections",
+                    "litep2p_tcp_open_raw_connections".into(),
+                    "Litep2p number of open raw connections".into(),
                 )?,
                 cancel_futures_num: registry.register_gauge(
-                    "litep2p_tcp_cancel_futures",
-                    "Litep2p number of cancel futures",
+                    "litep2p_tcp_cancel_futures".into(),
+                    "Litep2p number of cancel futures".into(),
                 )?,
                 pending_open_num: registry.register_gauge(
-                    "litep2p_tcp_pending_open",
-                    "Litep2p number of pending open connections",
+                    "litep2p_tcp_pending_open".into(),
+                    "Litep2p number of pending open connections".into(),
+                )?,
+
+                active_connections_num: registry.register_gauge(
+                    "litep2p_tcp_active_connections".into(),
+                    "Litep2p number of active connections".into(),
+                )?,
+
+                pending_substreams_num: registry.register_gauge(
+                    "litep2p_tcp_pending_substreams".into(),
+                    "Litep2p number of pending substreams".into(),
                 )?,
             })
         } else {
@@ -421,11 +446,17 @@ impl Transport for TcpTransport {
             "start connection",
         );
 
+        let metrics = self.metrics.as_ref().map(|metrics| metrics.to_connection_metrics());
         self.context.executor.run(Box::pin(async move {
-            if let Err(error) =
-                TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
-                    .start()
-                    .await
+            if let Err(error) = TcpConnection::new(
+                context,
+                protocol_set,
+                bandwidth_sink,
+                next_substream_id,
+                metrics,
+            )
+            .start()
+            .await
             {
                 tracing::debug!(
                     target: LOG_TARGET,

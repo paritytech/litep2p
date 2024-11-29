@@ -25,6 +25,7 @@ use crate::{
         noise::{self, NoiseSocket},
     },
     error::{Error, NegotiationError, SubstreamError},
+    metrics::{MetricGauge, ScopeGaugeMetric},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
@@ -140,6 +141,15 @@ impl NegotiatedConnection {
     }
 }
 
+pub struct TcpConnectionMetrics {
+    /// Metric for the number of pending substreams that are negotiated.
+    pub pending_substreams_num: MetricGauge,
+
+    /// Metric incremented when the connection starts
+    /// and decremented when the connection closes.
+    pub _active_connections_num: ScopeGaugeMetric,
+}
+
 /// TCP connection.
 pub struct TcpConnection {
     /// Protocol context.
@@ -169,6 +179,9 @@ pub struct TcpConnection {
     /// Pending substreams.
     pending_substreams:
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
+
+    /// Metrics.
+    metrics: Option<TcpConnectionMetrics>,
 }
 
 impl fmt::Debug for TcpConnection {
@@ -187,6 +200,7 @@ impl TcpConnection {
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
         next_substream_id: Arc<AtomicUsize>,
+        metrics: Option<TcpConnectionMetrics>,
     ) -> Self {
         let NegotiatedConnection {
             connection,
@@ -206,6 +220,7 @@ impl TcpConnection {
             next_substream_id,
             pending_substreams: FuturesUnordered::new(),
             substream_open_timeout,
+            metrics,
         }
     }
 
@@ -535,6 +550,9 @@ impl TcpConnection {
                         }),
                     }
                 }));
+                if let Some(metrics) = &self.metrics {
+                    metrics.pending_substreams_num.inc();
+                }
 
                 Ok(false)
             }
@@ -694,6 +712,9 @@ impl TcpConnection {
                         }),
                     }
                 }));
+                if let Some(metrics) = &self.metrics {
+                    metrics.pending_substreams_num.inc();
+                }
 
                 Ok(false)
             }
@@ -734,7 +755,11 @@ impl TcpConnection {
                     }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
-                   self.handle_negotiated_substream(substream).await;
+                    if let Some(metrics) = &self.metrics {
+                        metrics.pending_substreams_num.set(self.pending_substreams.len() as u64);
+                    }
+
+                    self.handle_negotiated_substream(substream).await;
                 }
                 protocol = self.protocol_set.next() => {
                     if self.handle_protocol_command(protocol).await? {
