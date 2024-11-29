@@ -141,14 +141,6 @@ pub(crate) struct WebSocketTransport {
 
 /// Websocket specific metrics.
 struct WebSocketMetrics {
-    /// Interval for collecting metrics.
-    ///
-    /// This is a tradeoff we make in favor of simplicity and correctness.
-    /// An alternative to this would be to complicate the code by collecting
-    /// individual metrics in each method. This is error prone, as names are
-    /// easily mismatched, and it's hard to keep track of all the metrics.
-    interval: tokio::time::Interval,
-
     /// The following metrics are used for the transport itself.
     pending_dials_num: MetricGauge,
     pending_inbound_connections_num: MetricGauge,
@@ -356,8 +348,6 @@ impl TransportBuilder for WebSocketTransport {
 
         let metrics = if let Some(registry) = registry {
             Some(WebSocketMetrics {
-                interval: tokio::time::interval(Duration::from_secs(15)),
-
                 pending_dials_num: registry.register_gauge(
                     "litep2p_websocket_pending_dials".into(),
                     "Litep2p number of pending dials".into(),
@@ -676,21 +666,18 @@ impl Stream for WebSocketTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Take the metrics to only poll the tick in case they are enabled.
-        if let Some(mut metrics) = self.metrics.take() {
-            if let Poll::Ready(_) = metrics.interval.poll_tick(cx) {
-                metrics.pending_dials_num.set(self.pending_dials.len() as u64);
-                metrics
-                    .pending_inbound_connections_num
-                    .set(self.pending_inbound_connections.len() as u64);
-                metrics.pending_connections_num.set(self.pending_connections.len() as u64);
-                metrics
-                    .pending_raw_connections_num
-                    .set(self.pending_raw_connections.len() as u64);
-                metrics.open_raw_connections_num.set(self.opened_raw.len() as u64);
-                metrics.cancel_futures_num.set(self.cancel_futures.len() as u64);
-                metrics.pending_open_num.set(self.pending_open.len() as u64);
-            }
+        if let Some(metrics) = &self.metrics {
+            metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+            metrics
+                .pending_inbound_connections_num
+                .set(self.pending_inbound_connections.len() as u64);
+            metrics.pending_connections_num.set(self.pending_connections.len() as u64);
+            metrics
+                .pending_raw_connections_num
+                .set(self.pending_raw_connections.len() as u64);
+            metrics.open_raw_connections_num.set(self.opened_raw.len() as u64);
+            metrics.cancel_futures_num.set(self.cancel_futures.len() as u64);
+            metrics.pending_open_num.set(self.pending_open.len() as u64);
         }
 
         if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
