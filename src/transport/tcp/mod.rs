@@ -1102,7 +1102,9 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
-        );
+            None,
+        )
+        .unwrap();
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,

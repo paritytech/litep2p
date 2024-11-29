@@ -55,7 +55,9 @@ fn protocol() -> (
         BandwidthSink::new(),
         8usize,
         ConnectionLimitsConfig::default(),
-    );
+        None,
+    )
+    .unwrap();
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(
@@ -70,7 +72,7 @@ fn protocol() -> (
         ConfigBuilder::new(ProtocolName::from("/req/1")).with_max_size(1024).build();
 
     (
-        RequestResponseProtocol::new(transport_service, config),
+        RequestResponseProtocol::new(transport_service, config, None).unwrap(),
         handle,
         manager,
         tx,

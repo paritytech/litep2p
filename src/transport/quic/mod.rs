@@ -624,7 +624,7 @@ mod tests {
         };
 
         let (mut transport1, listen_addresses) =
-            QuicTransport::new(handle1, Default::default()).unwrap();
+            QuicTransport::new(handle1, Default::default(), None).unwrap();
         let listen_address = listen_addresses[0].clone();
 
         let keypair2 = Keypair::generate();
@@ -649,7 +649,7 @@ mod tests {
             )]),
         };
 
-        let (mut transport2, _) = QuicTransport::new(handle2, Default::default()).unwrap();
+        let (mut transport2, _) = QuicTransport::new(handle2, Default::default(), None).unwrap();
         let peer1: PeerId = PeerId::from_public_key(&keypair1.public().into());
         let _peer2: PeerId = PeerId::from_public_key(&keypair2.public().into());
         let listen_address = listen_address.with(Protocol::P2p(

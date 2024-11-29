@@ -1301,7 +1301,9 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
-        );
+            None,
+        )
+        .unwrap();
 
         let peer = PeerId::random();
         let (transport_service, _tx) = TransportService::new(
@@ -1332,7 +1334,7 @@ mod tests {
         };
 
         (
-            Kademlia::new(transport_service, config),
+            Kademlia::new(transport_service, config, None).unwrap(),
             Context { _cmd_tx, event_rx },
             manager,
         )
