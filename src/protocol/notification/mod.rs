@@ -40,20 +40,14 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     oneshot,
 };
 
-use std::{
-    collections::HashMap,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{NotificationHandle, NotificationSink};
@@ -291,49 +285,17 @@ pub(crate) struct NotificationProtocol {
     should_dial: bool,
 
     /// Metrics.
-    metrics: PollMetrics,
+    metrics: Option<Metrics>,
 }
 
 /// Request-response protocol metrics.
 struct Metrics {
-    /// Interval for collecting metrics.
-    ///
-    /// This is a tradeoff we make in favor of simplicity and correctness.
-    /// An alternative to this would be to complicate the code by collecting
-    /// individual metrics in each method. This is error prone, as names are
-    /// easily mismatched, and it's hard to keep track of all the metrics.
-    interval: tokio::time::Interval,
-
     connected_peers: MetricGauge,
     pending_outbound_num: MetricGauge,
     pending_outbound_handshake_num: MetricGauge,
     ready_substreams_handshake_num: MetricGauge,
     pending_validations_num: MetricGauge,
     timers_num: MetricGauge,
-}
-
-struct PollMetrics {
-    inner: Option<Metrics>,
-}
-
-impl Stream for PollMetrics {
-    type Item = tokio::time::Instant;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.inner.take() {
-            Some(mut metrics) => match metrics.interval.poll_tick(cx) {
-                Poll::Ready(_) => {
-                    self.inner = Some(metrics);
-                    return Poll::Ready(Some(tokio::time::Instant::now()));
-                }
-                Poll::Pending => {
-                    self.inner = Some(metrics);
-                    return Poll::Pending;
-                }
-            },
-            None => Poll::Pending,
-        }
-    }
 }
 
 impl NotificationProtocol {
@@ -348,9 +310,7 @@ impl NotificationProtocol {
         let metrics = if let Some(registry) = registry {
             let protocol_name = config.protocol_name.to_string().replace("/", "_");
 
-            let metrics = Metrics {
-                interval: tokio::time::interval(Duration::from_secs(15)),
-
+            Some(Metrics {
                 connected_peers: registry.register_gauge(
                     format!("litep2p_notif{}_connected_peers", protocol_name),
                     "Number of connected peers".to_string(),
@@ -381,13 +341,9 @@ impl NotificationProtocol {
                     format!("litep2p_notif{}_timers_num", protocol_name),
                     "Number of pending timers".to_string(),
                 )?,
-            };
-
-            PollMetrics {
-                inner: Some(metrics),
-            }
+            })
         } else {
-            PollMetrics { inner: None }
+            None
         };
 
         Ok(Self {
@@ -1704,7 +1660,7 @@ impl NotificationProtocol {
 
     /// Report metrics.
     fn report_metrics(&self) {
-        if let Some(metrics) = self.metrics.inner.as_ref() {
+        if let Some(metrics) = &self.metrics {
             metrics.connected_peers.set(self.peers.len() as u64);
             metrics.pending_outbound_num.set(self.pending_outbound.len() as u64);
             metrics
@@ -1718,6 +1674,8 @@ impl NotificationProtocol {
 
     /// Handle next notification event.
     async fn next_event(&mut self) {
+        self.report_metrics();
+
         // biased select is used because the substream events must be prioritized above other events
         // that is because a closed substream is detected by either `substreams` or `negotiation`
         // and if that event is not handled with priority but, e.g., inbound substream is
@@ -1921,11 +1879,6 @@ impl NotificationProtocol {
                     }
                 }
             },
-
-             // Maybe metrics.
-             _ = self.metrics.next() => {
-                self.report_metrics();
-            }
         }
     }
 

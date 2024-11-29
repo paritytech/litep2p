@@ -34,7 +34,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{channel, future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{channel, future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
@@ -46,12 +46,10 @@ use tokio::{
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     io::ErrorKind,
-    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    task::{Context, Poll},
     time::Duration,
 };
 
@@ -188,43 +186,11 @@ pub(crate) struct RequestResponseProtocol {
     max_concurrent_inbound_requests: Option<usize>,
 
     /// Metrics.
-    metrics: PollMetrics,
-}
-
-struct PollMetrics {
-    inner: Option<Metrics>,
-}
-
-impl Stream for PollMetrics {
-    type Item = tokio::time::Instant;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.inner.take() {
-            Some(mut metrics) => match metrics.interval.poll_tick(cx) {
-                Poll::Ready(_) => {
-                    self.inner = Some(metrics);
-                    return Poll::Ready(Some(tokio::time::Instant::now()));
-                }
-                Poll::Pending => {
-                    self.inner = Some(metrics);
-                    return Poll::Pending;
-                }
-            },
-            None => Poll::Pending,
-        }
-    }
+    metrics: Option<Metrics>,
 }
 
 /// Request-response protocol metrics.
 struct Metrics {
-    /// Interval for collecting metrics.
-    ///
-    /// This is a tradeoff we make in favor of simplicity and correctness.
-    /// An alternative to this would be to complicate the code by collecting
-    /// individual metrics in each method. This is error prone, as names are
-    /// easily mismatched, and it's hard to keep track of all the metrics.
-    interval: tokio::time::Interval,
-
     connected_peers: MetricGauge,
     pending_outbound_num: MetricGauge,
     pending_outbound_responses_num: MetricGauge,
@@ -244,9 +210,7 @@ impl RequestResponseProtocol {
         let metrics = if let Some(registry) = registry {
             let protocol_name = config.protocol_name.to_string().replace("/", "_");
 
-            let metrics = Metrics {
-                interval: tokio::time::interval(Duration::from_secs(15)),
-
+            Some(Metrics {
                 connected_peers: registry.register_gauge(
                     format!("litep2p_req_res{}_connected_peers", protocol_name),
                     "Litep2p number of connected peers".into(),
@@ -278,12 +242,9 @@ impl RequestResponseProtocol {
                     format!("litep2p_req_res{}_pending_dials", protocol_name),
                     "Litep2p number of pending dials".into(),
                 )?,
-            };
-            PollMetrics {
-                inner: Some(metrics),
-            }
+            })
         } else {
-            PollMetrics { inner: None }
+            None
         };
 
         Ok(Self {
@@ -1114,7 +1075,7 @@ impl RequestResponseProtocol {
 
     /// Report metrics.
     fn report_metrics(&self) {
-        if let Some(metrics) = self.metrics.inner.as_ref() {
+        if let Some(metrics) = &self.metrics {
             metrics.connected_peers.set(self.peers.len() as u64);
             metrics.pending_outbound_num.set(self.pending_outbound.len() as u64);
             metrics
@@ -1136,6 +1097,8 @@ impl RequestResponseProtocol {
         tracing::debug!(target: LOG_TARGET, "starting request-response event loop");
 
         loop {
+            self.report_metrics();
+
             tokio::select! {
                 // events coming from the network have higher priority than user commands as all user commands are
                 // responses to network behaviour so ensure that the commands operate on the most up to date information.
@@ -1195,11 +1158,6 @@ impl RequestResponseProtocol {
                         tracing::debug!(target: LOG_TARGET, protocol = %self.protocol, "user protocol has exited, exiting");
                         return
                     }
-                },
-
-                // Maybe metrics.
-                _ = self.metrics.next() => {
-                    self.report_metrics();
                 },
             }
         }
