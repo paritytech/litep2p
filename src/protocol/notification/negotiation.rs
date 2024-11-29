@@ -116,6 +116,16 @@ impl HandshakeService {
         }
     }
 
+    /// Number of substreams in the [`HandshakeService`].
+    pub fn substreams_len(&self) -> usize {
+        self.substreams.len()
+    }
+
+    /// Number of ready substreams in the [`HandshakeService`].
+    pub fn ready_len(&self) -> usize {
+        self.ready.len()
+    }
+
     /// Remove outbound substream from [`HandshakeService`].
     pub fn remove_outbound(&mut self, peer: &PeerId) -> Option<Substream> {
         self.substreams

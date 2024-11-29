@@ -23,6 +23,7 @@
 use crate::{
     error::{Error, SubstreamError},
     executor::Executor,
+    metrics::{MetricGauge, MetricsRegistry},
     protocol::{
         self,
         notification::{
@@ -39,14 +40,20 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     oneshot,
 };
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{NotificationHandle, NotificationSink};
@@ -282,6 +289,51 @@ pub(crate) struct NotificationProtocol {
 
     /// Should `NotificationProtocol` attempt to dial the peer.
     should_dial: bool,
+
+    /// Metrics.
+    metrics: PollMetrics,
+}
+
+/// Request-response protocol metrics.
+struct Metrics {
+    /// Interval for collecting metrics.
+    ///
+    /// This is a tradeoff we make in favor of simplicity and correctness.
+    /// An alternative to this would be to complicate the code by collecting
+    /// individual metrics in each method. This is error prone, as names are
+    /// easily mismatched, and it's hard to keep track of all the metrics.
+    interval: tokio::time::Interval,
+
+    connected_peers: MetricGauge,
+    pending_outbound_num: MetricGauge,
+    pending_outbound_handshake_num: MetricGauge,
+    ready_substreams_handshake_num: MetricGauge,
+    pending_validations_num: MetricGauge,
+    timers_num: MetricGauge,
+}
+
+struct PollMetrics {
+    inner: Option<Metrics>,
+}
+
+impl Stream for PollMetrics {
+    type Item = tokio::time::Instant;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.inner.take() {
+            Some(mut metrics) => match metrics.interval.poll_tick(cx) {
+                Poll::Ready(_) => {
+                    self.inner = Some(metrics);
+                    return Poll::Ready(Some(tokio::time::Instant::now()));
+                }
+                Poll::Pending => {
+                    self.inner = Some(metrics);
+                    return Poll::Pending;
+                }
+            },
+            None => Poll::Pending,
+        }
+    }
 }
 
 impl NotificationProtocol {
@@ -289,10 +341,56 @@ impl NotificationProtocol {
         service: TransportService,
         config: Config,
         executor: Arc<dyn Executor>,
-    ) -> Self {
+        registry: Option<MetricsRegistry>,
+    ) -> Result<Self, Error> {
         let (shutdown_tx, shutdown_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
-        Self {
+        let metrics = if let Some(registry) = registry {
+            let protocol_name = config.protocol_name.to_string().replace("/", "_");
+
+            let metrics = Metrics {
+                interval: tokio::time::interval(Duration::from_secs(15)),
+
+                connected_peers: registry.register_gauge(
+                    format!("litep2p_notif{}_connected_peers", protocol_name),
+                    "Number of connected peers".to_string(),
+                )?,
+                pending_outbound_num: registry.register_gauge(
+                    format!("litep2p_notif{}_pending_outbound_num", protocol_name),
+                    "Number of pending outbound substreams".to_string(),
+                )?,
+                pending_outbound_handshake_num: registry.register_gauge(
+                    format!(
+                        "litep2p_notif{}_pending_outbound_handshake_num",
+                        protocol_name
+                    ),
+                    "Number of pending outbound substreams with handshake".to_string(),
+                )?,
+                ready_substreams_handshake_num: registry.register_gauge(
+                    format!(
+                        "litep2p_notif{}_ready_substreams_handshake_num",
+                        protocol_name
+                    ),
+                    "Number of ready substreams with handshake".to_string(),
+                )?,
+                pending_validations_num: registry.register_gauge(
+                    format!("litep2p_notif{}_pending_validations_num", protocol_name),
+                    "Number of pending substream validations".to_string(),
+                )?,
+                timers_num: registry.register_gauge(
+                    format!("litep2p_notif{}_timers_num", protocol_name),
+                    "Number of pending timers".to_string(),
+                )?,
+            };
+
+            PollMetrics {
+                inner: Some(metrics),
+            }
+        } else {
+            PollMetrics { inner: None }
+        };
+
+        Ok(Self {
             service,
             shutdown_tx,
             shutdown_rx,
@@ -310,7 +408,8 @@ impl NotificationProtocol {
             sync_channel_size: config.sync_channel_size,
             async_channel_size: config.async_channel_size,
             should_dial: config.should_dial,
-        }
+            metrics,
+        })
     }
 
     /// Connection established to remote node.
@@ -1603,6 +1702,20 @@ impl NotificationProtocol {
         }
     }
 
+    /// Report metrics.
+    fn report_metrics(&self) {
+        if let Some(metrics) = self.metrics.inner.as_ref() {
+            metrics.connected_peers.set(self.peers.len() as u64);
+            metrics.pending_outbound_num.set(self.pending_outbound.len() as u64);
+            metrics
+                .pending_outbound_handshake_num
+                .set(self.negotiation.substreams_len() as u64);
+            metrics.ready_substreams_handshake_num.set(self.negotiation.ready_len() as u64);
+            metrics.pending_validations_num.set(self.pending_validations.len() as u64);
+            metrics.timers_num.set(self.timers.len() as u64);
+        }
+    }
+
     /// Handle next notification event.
     async fn next_event(&mut self) {
         // biased select is used because the substream events must be prioritized above other events
@@ -1808,6 +1921,11 @@ impl NotificationProtocol {
                     }
                 }
             },
+
+             // Maybe metrics.
+             _ = self.metrics.next() => {
+                self.report_metrics();
+            }
         }
     }
 

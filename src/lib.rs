@@ -189,9 +189,14 @@ impl Litep2p {
                 litep2p_config.keep_alive_timeout,
             );
             let executor = Arc::clone(&litep2p_config.executor);
-            litep2p_config.executor.run(Box::pin(async move {
-                NotificationProtocol::new(service, config, executor).run().await
-            }));
+            let notification = NotificationProtocol::new(
+                service,
+                config,
+                executor,
+                litep2p_config.metrics_registry.clone(),
+            )?;
+
+            litep2p_config.executor.run(Box::pin(async move { notification.run().await }));
         }
 
         // start request-response protocol event loops
