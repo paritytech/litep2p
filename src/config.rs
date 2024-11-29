@@ -83,6 +83,10 @@ pub struct ConfigBuilder {
     #[cfg(feature = "websocket")]
     websocket: Option<WebSocketConfig>,
 
+    /// Prometheus metrics registry.
+    #[cfg(feature = "metrics")]
+    metrics_registry: Option<prometheus::Registry>,
+
     /// Keypair.
     keypair: Option<Keypair>,
 
@@ -143,6 +147,8 @@ impl ConfigBuilder {
             webrtc: None,
             #[cfg(feature = "websocket")]
             websocket: None,
+            #[cfg(feature = "metrics")]
+            metrics_registry: None,
             keypair: None,
             ping: None,
             identify: None,
@@ -184,6 +190,13 @@ impl ConfigBuilder {
     #[cfg(feature = "websocket")]
     pub fn with_websocket(mut self, config: WebSocketConfig) -> Self {
         self.websocket = Some(config);
+        self
+    }
+
+    /// Add metrics registry.
+    #[cfg(feature = "metrics")]
+    pub fn with_metrics_registry(mut self, registry: prometheus::Registry) -> Self {
+        self.metrics_registry = Some(registry);
         self
     }
 
@@ -295,6 +308,8 @@ impl ConfigBuilder {
             webrtc: self.webrtc.take(),
             #[cfg(feature = "websocket")]
             websocket: self.websocket.take(),
+            #[cfg(feature = "metrics")]
+            metrics_registry: self.metrics_registry.take(),
             ping: self.ping.take(),
             identify: self.identify.take(),
             kademlia: self.kademlia.take(),
@@ -327,6 +342,10 @@ pub struct Litep2pConfig {
     /// WebSocket transport config.
     #[cfg(feature = "websocket")]
     pub(crate) websocket: Option<WebSocketConfig>,
+
+    /// Prometheus metrics registry.
+    #[cfg(feature = "metrics")]
+    pub(crate) metrics_registry: Option<prometheus::Registry>,
 
     /// Keypair.
     pub(crate) keypair: Keypair,
