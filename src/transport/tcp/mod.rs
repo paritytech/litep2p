@@ -133,12 +133,17 @@ pub(crate) struct TcpTransport {
 
     /// Tcp metrics.
     metrics: Option<TcpMetrics>,
-
-    /// Interval for collecting metrics.
-    interval: tokio::time::Interval,
 }
 
 struct TcpMetrics {
+    /// Interval for collecting metrics.
+    ///
+    /// This is a tradeoff we make in favor of simplicity and correctness.
+    /// An alternative to this would be to complicate the code by collecting
+    /// individual metrics in each method. This is error prone, as names are
+    /// easily mismatched, and it's hard to keep track of all the metrics.
+    interval: tokio::time::Interval,
+
     pending_dials_num: MetricGauge,
     pending_inbound_connections_num: MetricGauge,
     pending_connections_num: MetricGauge,
@@ -305,6 +310,8 @@ impl TransportBuilder for TcpTransport {
 
         let metrics = if let Some(registry) = registry {
             Some(TcpMetrics {
+                interval: tokio::time::interval(Duration::from_secs(15)),
+
                 pending_dials_num: registry.register_gauge(
                     "litep2p_tcp_pending_dials",
                     "Litep2p number of pending dials",
@@ -352,7 +359,6 @@ impl TransportBuilder for TcpTransport {
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
                 metrics,
-                interval: tokio::time::interval(Duration::from_secs(15)),
             },
             listen_addresses,
         ))
@@ -598,8 +604,9 @@ impl Stream for TcpTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Poll::Ready(_) = self.interval.poll_tick(cx) {
-            if let Some(metrics) = &self.metrics {
+        // Take the metrics to only poll the tick in case they are enabled.
+        if let Some(mut metrics) = self.metrics.take() {
+            if let Poll::Ready(_) = metrics.interval.poll_tick(cx) {
                 metrics.pending_dials_num.set(self.pending_dials.len() as u64);
                 metrics
                     .pending_inbound_connections_num
@@ -612,6 +619,8 @@ impl Stream for TcpTransport {
                 metrics.cancel_futures_num.set(self.cancel_futures.len() as u64);
                 metrics.pending_open_num.set(self.pending_open.len() as u64);
             }
+
+            self.metrics = Some(metrics);
         }
 
         if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
