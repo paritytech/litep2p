@@ -253,8 +253,14 @@ impl Litep2p {
                 ping_config.codec,
                 litep2p_config.keep_alive_timeout,
             );
+            let ping = Ping::new(
+                service,
+                ping_config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
+
             litep2p_config.executor.run(Box::pin(async move {
-                Ping::new(service, ping_config).run().await
+                ping.run().await
             }));
         }
 

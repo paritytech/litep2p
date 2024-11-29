@@ -22,6 +22,7 @@
 
 use crate::{
     error::{Error, SubstreamError},
+    metrics::{MetricGauge, MetricsRegistry},
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     types::SubstreamId,
@@ -77,19 +78,50 @@ pub(crate) struct Ping {
 
     /// Pending inbound substreams.
     pending_inbound: FuturesUnordered<BoxFuture<'static, crate::Result<()>>>,
+
+    /// Metrics.
+    metrics: Option<Metrics>,
+}
+
+struct Metrics {
+    peers: MetricGauge,
+    pending_outbound: MetricGauge,
+    pending_inbound: MetricGauge,
 }
 
 impl Ping {
     /// Create new [`Ping`] protocol.
-    pub fn new(service: TransportService, config: Config) -> Self {
-        Self {
+    pub fn new(
+        service: TransportService,
+        config: Config,
+        registry: Option<MetricsRegistry>,
+    ) -> Result<Self, Error> {
+        let metrics = if let Some(registry) = registry {
+            Some(Metrics {
+                peers: registry
+                    .register_gauge("litep2p_ping_peers".into(), "Connected peers".into())?,
+                pending_outbound: registry.register_gauge(
+                    "litep2p_ping_pending_outbound".into(),
+                    "Pending outbound substreams".into(),
+                )?,
+                pending_inbound: registry.register_gauge(
+                    "litep2p_ping_pending_inbound".into(),
+                    "Pending inbound substreams".into(),
+                )?,
+            })
+        } else {
+            None
+        };
+
+        Ok(Self {
             service,
             tx: config.tx_event,
             peers: HashSet::new(),
             pending_outbound: FuturesUnordered::new(),
             pending_inbound: FuturesUnordered::new(),
             _max_failures: config.max_failures,
-        }
+            metrics,
+        })
     }
 
     /// Connection established to remote peer.
@@ -98,6 +130,7 @@ impl Ping {
 
         self.service.open_substream(peer)?;
         self.peers.insert(peer);
+        self.metrics.as_ref().map(|metrics| metrics.peers.set(self.peers.len() as u64));
 
         Ok(())
     }
@@ -107,6 +140,7 @@ impl Ping {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
 
         self.peers.remove(&peer);
+        self.metrics.as_ref().map(|metrics| metrics.peers.set(self.peers.len() as u64));
     }
 
     /// Handle outbound substream.
@@ -137,6 +171,7 @@ impl Ping {
                 Ok(Ok(elapsed)) => Ok((peer, elapsed)),
             }
         }));
+        self.metrics.as_ref().map(|metrics| metrics.pending_outbound.inc());
     }
 
     /// Substream opened to remote peer.
@@ -161,6 +196,7 @@ impl Ping {
                 Ok(Ok(())) => Ok(()),
             }
         }));
+        self.metrics.as_ref().map(|metrics| metrics.pending_inbound.inc());
     }
 
     /// Start [`Ping`] event loop.
@@ -192,8 +228,12 @@ impl Ping {
                     Some(_) => {}
                     None => return,
                 },
-                _event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
+                _event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {
+                    self.metrics.as_ref().map(|metrics| metrics.pending_inbound.set(self.pending_inbound.len() as u64));
+                }
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => {
+                    self.metrics.as_ref().map(|metrics| metrics.pending_outbound.set(self.pending_outbound.len() as u64));
+
                     match event {
                         Some(Ok((peer, elapsed))) => {
                             let _ = self
