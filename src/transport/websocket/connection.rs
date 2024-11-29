@@ -25,6 +25,7 @@ use crate::{
         noise::{self, NoiseSocket},
     },
     error::{Error, NegotiationError, SubstreamError},
+    metrics::{MetricGauge, ScopeGaugeMetric},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
@@ -130,6 +131,16 @@ impl NegotiatedConnection {
     }
 }
 
+/// Connection specific metrics.
+pub struct WebSocketConnectionMetrics {
+    /// Metric for the number of pending substreams that are negotiated.
+    pub pending_substreams_num: MetricGauge,
+
+    /// Metric incremented when the connection starts
+    /// and decremented when the connection closes.
+    pub _active_connections_num: ScopeGaugeMetric,
+}
+
 /// WebSocket connection.
 pub(crate) struct WebSocketConnection {
     /// Protocol context.
@@ -160,6 +171,9 @@ pub(crate) struct WebSocketConnection {
     /// Pending substreams.
     pending_substreams:
         FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
+
+    /// Metrics.
+    metrics: Option<WebSocketConnectionMetrics>,
 }
 
 impl WebSocketConnection {
@@ -169,6 +183,7 @@ impl WebSocketConnection {
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
         substream_open_timeout: Duration,
+        metrics: Option<WebSocketConnectionMetrics>,
     ) -> Self {
         let NegotiatedConnection {
             peer,
@@ -187,6 +202,7 @@ impl WebSocketConnection {
             bandwidth_sink,
             substream_open_timeout,
             pending_substreams: FuturesUnordered::new(),
+            metrics,
         }
     }
 
@@ -454,6 +470,9 @@ impl WebSocketConnection {
                                 }),
                             }
                         }));
+                        if let Some(metrics) = &self.metrics {
+                            metrics.pending_substreams_num.inc();
+                        }
                     },
                     Some(Err(error)) => {
                         tracing::debug!(
@@ -475,6 +494,11 @@ impl WebSocketConnection {
                 },
                 // TODO: move this to a function
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
+                    if let Some(metrics) = &self.metrics {
+                        // This must be decremented and not set because the metric is shared across connections.
+                        metrics.pending_substreams_num.dec();
+                    }
+
                     match substream {
                         // TODO: return error to protocol
                         Err(error) => {
@@ -556,6 +580,9 @@ impl WebSocketConnection {
                                 }),
                             }
                         }));
+                        if let Some(metrics) = &self.metrics {
+                            metrics.pending_substreams_num.inc();
+                        }
                     }
                     Some(ProtocolCommand::ForceClose) => {
                         tracing::debug!(

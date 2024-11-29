@@ -136,6 +136,7 @@ pub(crate) struct TcpTransport {
     metrics: Option<TcpMetrics>,
 }
 
+/// TCP specific metrics.
 struct TcpMetrics {
     /// Interval for collecting metrics.
     ///

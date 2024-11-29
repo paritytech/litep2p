@@ -141,6 +141,7 @@ impl NegotiatedConnection {
     }
 }
 
+/// Connection specific metrics.
 pub struct TcpConnectionMetrics {
     /// Metric for the number of pending substreams that are negotiated.
     pub pending_substreams_num: MetricGauge,
@@ -756,7 +757,8 @@ impl TcpConnection {
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
                     if let Some(metrics) = &self.metrics {
-                        metrics.pending_substreams_num.set(self.pending_substreams.len() as u64);
+                        // This must be decremented and not set because the metric is shared across connections.
+                        metrics.pending_substreams_num.dec();
                     }
 
                     self.handle_negotiated_substream(substream).await;
