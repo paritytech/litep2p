@@ -208,9 +208,15 @@ impl Litep2p {
                 config.codec,
                 litep2p_config.keep_alive_timeout,
             );
-            litep2p_config.executor.run(Box::pin(async move {
-                RequestResponseProtocol::new(service, config).run().await
-            }));
+            let request_response = RequestResponseProtocol::new(
+                service,
+                config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
+
+            litep2p_config
+                .executor
+                .run(Box::pin(async move { request_response.run().await }));
         }
 
         // start user protocol event loops

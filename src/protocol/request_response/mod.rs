@@ -22,6 +22,7 @@
 
 use crate::{
     error::{Error, NegotiationError, SubstreamError},
+    metrics::{MetricGauge, MetricsRegistry},
     multistream_select::NegotiationError::Failed as MultistreamFailed,
     protocol::{
         request_response::handle::{InnerRequestResponseEvent, RequestResponseCommand},
@@ -33,7 +34,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{channel, future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{channel, future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
@@ -45,10 +46,12 @@ use tokio::{
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     io::ErrorKind,
+    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -183,12 +186,107 @@ pub(crate) struct RequestResponseProtocol {
 
     /// Maximum concurrent inbound requests, if specified.
     max_concurrent_inbound_requests: Option<usize>,
+
+    /// Metrics.
+    metrics: PollMetrics,
+}
+
+struct PollMetrics {
+    inner: Option<Metrics>,
+}
+
+impl Stream for PollMetrics {
+    type Item = tokio::time::Instant;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.inner.take() {
+            Some(mut metrics) => match metrics.interval.poll_tick(cx) {
+                Poll::Ready(_) => {
+                    self.inner = Some(metrics);
+                    return Poll::Ready(Some(tokio::time::Instant::now()));
+                }
+                Poll::Pending => {
+                    self.inner = Some(metrics);
+                    return Poll::Pending;
+                }
+            },
+            None => Poll::Pending,
+        }
+    }
+}
+
+/// Request-response protocol metrics.
+struct Metrics {
+    /// Interval for collecting metrics.
+    ///
+    /// This is a tradeoff we make in favor of simplicity and correctness.
+    /// An alternative to this would be to complicate the code by collecting
+    /// individual metrics in each method. This is error prone, as names are
+    /// easily mismatched, and it's hard to keep track of all the metrics.
+    interval: tokio::time::Interval,
+
+    connected_peers: MetricGauge,
+    pending_outbound_num: MetricGauge,
+    pending_outbound_responses_num: MetricGauge,
+    pending_outbound_cancels_num: MetricGauge,
+    pending_inbound_num: MetricGauge,
+    pending_inbound_requests_num: MetricGauge,
+    pending_dials_num: MetricGauge,
 }
 
 impl RequestResponseProtocol {
     /// Create new [`RequestResponseProtocol`].
-    pub(crate) fn new(service: TransportService, config: Config) -> Self {
-        Self {
+    pub(crate) fn new(
+        service: TransportService,
+        config: Config,
+        registry: Option<MetricsRegistry>,
+    ) -> Result<Self, Error> {
+        let metrics = if let Some(registry) = registry {
+            let protocol_name = config.protocol_name.to_string().replace("/", "_");
+
+            let metrics = Metrics {
+                interval: tokio::time::interval(Duration::from_secs(15)),
+
+                connected_peers: registry.register_gauge(
+                    format!("litep2p_req_res{}_connected_peers", protocol_name),
+                    "Litep2p number of connected peers".into(),
+                )?,
+                pending_outbound_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_outbound", protocol_name),
+                    "Litep2p number of pending outbound requests".into(),
+                )?,
+                pending_outbound_responses_num: registry.register_gauge(
+                    format!(
+                        "litep2p_req_res{}_pending_outbound_responses",
+                        protocol_name
+                    ),
+                    "Litep2p number of pending outbound responses".into(),
+                )?,
+                pending_outbound_cancels_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_outbound_cancels", protocol_name),
+                    "Litep2p number of pending outbound cancels".into(),
+                )?,
+                pending_inbound_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_inbound", protocol_name),
+                    "Litep2p number of pending inbound requests".into(),
+                )?,
+                pending_inbound_requests_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_inbound_requests", protocol_name),
+                    "Litep2p number of pending inbound requests".into(),
+                )?,
+                pending_dials_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_dials", protocol_name),
+                    "Litep2p number of pending dials".into(),
+                )?,
+            };
+            PollMetrics {
+                inner: Some(metrics),
+            }
+        } else {
+            PollMetrics { inner: None }
+        };
+
+        Ok(Self {
             service,
             peers: HashMap::new(),
             timeout: config.timeout,
@@ -203,7 +301,8 @@ impl RequestResponseProtocol {
             pending_inbound_requests: SubstreamSet::new(),
             pending_outbound_responses: FuturesUnordered::new(),
             max_concurrent_inbound_requests: config.max_concurrent_inbound_request,
-        }
+            metrics,
+        })
     }
 
     /// Get next ephemeral request ID.
@@ -1013,6 +1112,25 @@ impl RequestResponseProtocol {
         }
     }
 
+    /// Report metrics.
+    fn report_metrics(&self) {
+        if let Some(metrics) = self.metrics.inner.as_ref() {
+            metrics.connected_peers.set(self.peers.len() as u64);
+            metrics.pending_outbound_num.set(self.pending_outbound.len() as u64);
+            metrics
+                .pending_outbound_responses_num
+                .set(self.pending_outbound_responses.len() as u64);
+            metrics
+                .pending_outbound_cancels_num
+                .set(self.pending_outbound_cancels.len() as u64);
+            metrics.pending_inbound_num.set(self.pending_inbound.len() as u64);
+            metrics
+                .pending_inbound_requests_num
+                .set(self.pending_inbound_requests.len() as u64);
+            metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+        }
+    }
+
     /// Start [`RequestResponseProtocol`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting request-response event loop");
@@ -1078,6 +1196,11 @@ impl RequestResponseProtocol {
                         return
                     }
                 },
+
+                // Maybe metrics.
+                _ = self.metrics.next() => {
+                    self.report_metrics();
+                }
             }
         }
     }
