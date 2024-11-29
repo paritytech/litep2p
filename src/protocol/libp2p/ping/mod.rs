@@ -130,7 +130,6 @@ impl Ping {
 
         self.service.open_substream(peer)?;
         self.peers.insert(peer);
-        self.metrics.as_ref().map(|metrics| metrics.peers.set(self.peers.len() as u64));
 
         Ok(())
     }
@@ -140,7 +139,6 @@ impl Ping {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection closed");
 
         self.peers.remove(&peer);
-        self.metrics.as_ref().map(|metrics| metrics.peers.set(self.peers.len() as u64));
     }
 
     /// Handle outbound substream.
@@ -171,7 +169,6 @@ impl Ping {
                 Ok(Ok(elapsed)) => Ok((peer, elapsed)),
             }
         }));
-        self.metrics.as_ref().map(|metrics| metrics.pending_outbound.inc());
     }
 
     /// Substream opened to remote peer.
@@ -196,7 +193,6 @@ impl Ping {
                 Ok(Ok(())) => Ok(()),
             }
         }));
-        self.metrics.as_ref().map(|metrics| metrics.pending_inbound.inc());
     }
 
     /// Start [`Ping`] event loop.
@@ -204,6 +200,12 @@ impl Ping {
         tracing::debug!(target: LOG_TARGET, "starting ping event loop");
 
         loop {
+            if let Some(metrics) = &self.metrics {
+                metrics.peers.set(self.peers.len() as u64);
+                metrics.pending_inbound.set(self.pending_inbound.len() as u64);
+                metrics.pending_outbound.set(self.pending_outbound.len() as u64);
+            }
+
             tokio::select! {
                 event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
@@ -229,11 +231,8 @@ impl Ping {
                     None => return,
                 },
                 _event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {
-                    self.metrics.as_ref().map(|metrics| metrics.pending_inbound.set(self.pending_inbound.len() as u64));
                 }
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => {
-                    self.metrics.as_ref().map(|metrics| metrics.pending_outbound.set(self.pending_outbound.len() as u64));
-
                     match event {
                         Some(Ok((peer, elapsed))) => {
                             let _ = self

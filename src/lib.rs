@@ -259,9 +259,7 @@ impl Litep2p {
                 litep2p_config.metrics_registry.clone(),
             )?;
 
-            litep2p_config.executor.run(Box::pin(async move {
-                ping.run().await
-            }));
+            litep2p_config.executor.run(Box::pin(async move { ping.run().await }));
         }
 
         // start kademlia protocol event loop if enabled
@@ -422,7 +420,11 @@ impl Litep2p {
         // if identify was enabled, give it the enabled protocols and listen addresses and start it
         if let Some((service, mut identify_config)) = identify_info.take() {
             identify_config.protocols = transport_manager.protocols().cloned().collect();
-            let identify = Identify::new(service, identify_config);
+            let identify = Identify::new(
+                service,
+                identify_config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
 
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = identify.run().await;
