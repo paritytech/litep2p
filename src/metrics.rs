@@ -1,0 +1,124 @@
+// Copyright 2020 Parity Technologies (UK) Ltd.
+// Copyright 2024 litep2p developers
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the "Software"),
+// to deal in the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS IN THE SOFTWARE.
+
+//! A generic module for handling the metrics exposed by litep2p.
+//!
+//! Contains the traits and types that are used to define and interact with metrics.
+
+use crate::Error;
+use std::sync::Arc;
+
+pub type MetricCounter = Arc<dyn MetricCounterT>;
+
+pub type MetricGauge = Arc<dyn MetricGaugeT>;
+
+pub type MetricsRegistry = Arc<dyn MetricsRegistryT>;
+
+/// Represents a metric that can only go up.
+pub trait MetricCounterT: Send + Sync {
+    /// Increment the counter by `value`.
+    fn inc(&self, value: u64);
+}
+
+/// Represents a metric that can arbitrarily go up and down.
+pub trait MetricGaugeT: Send + Sync {
+    /// Set the gauge to `value`.
+    fn set(&self, value: u64);
+}
+
+/// A registry for metrics.
+pub trait MetricsRegistryT: Send + Sync {
+    /// Register a new counter.
+    fn register_counter(
+        &self,
+        name: &'static str,
+        help: &'static str,
+    ) -> Result<MetricCounter, Error>;
+
+    /// Register a new gauge.
+    fn register_gauge(&self, name: &'static str, help: &'static str) -> Result<MetricGauge, Error>;
+}
+
+#[cfg(feature = "metrics")]
+pub mod metrics {
+    use super::*;
+    use prometheus::{
+        core::{AtomicU64 as U64, GenericCounter, GenericGauge},
+        Registry,
+    };
+
+    impl From<prometheus::Error> for Error {
+        fn from(err: prometheus::Error) -> Self {
+            Error::MetricError(err.to_string())
+        }
+    }
+
+    /// A registry for metrics that uses the Prometheus metrics library.
+    pub struct PrometheusMetricsRegistry {
+        registry: Registry,
+    }
+
+    impl PrometheusMetricsRegistry {
+        /// Create a new [`PrometheusMetricsRegistry`].
+        pub fn from_registry(registry: Registry) -> Self {
+            Self { registry }
+        }
+
+        /// Get the Prometheus registry.
+        pub fn registry(&self) -> &Registry {
+            &self.registry
+        }
+    }
+
+    impl MetricsRegistryT for PrometheusMetricsRegistry {
+        fn register_counter(
+            &self,
+            name: &'static str,
+            help: &'static str,
+        ) -> Result<MetricCounter, Error> {
+            let counter = GenericCounter::<U64>::new(name, help)?;
+            self.registry.register(Box::new(counter.clone()))?;
+            Ok(Arc::new(counter))
+        }
+
+        fn register_gauge(
+            &self,
+            name: &'static str,
+            help: &'static str,
+        ) -> Result<MetricGauge, Error> {
+            let gauge = GenericGauge::<U64>::new(name, help)?;
+            self.registry.register(Box::new(gauge.clone()))?;
+            Ok(Arc::new(gauge))
+        }
+    }
+
+    impl MetricCounterT for GenericCounter<U64> {
+        fn inc(&self, value: u64) {
+            self.inc_by(value);
+        }
+    }
+
+    impl MetricGaugeT for GenericGauge<U64> {
+        fn set(&self, value: u64) {
+            self.set(value);
+        }
+    }
+}

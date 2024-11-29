@@ -54,7 +54,6 @@ yasna = "0.5.0"
 zeroize = "1.8.1"
 nohash-hasher = "0.2.0"
 static_assertions = "1.1.0"
-prometheus = { version = "0.13.0", default-features = false, optional = true }
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]
@@ -91,7 +90,6 @@ custom_sc_network = []
 quic = ["dep:webpki", "dep:quinn"]
 webrtc = ["dep:str0m"]
 websocket = ["dep:tokio-tungstenite"]
-metrics = ["dep:prometheus"]
 
 [profile.release]
 debug = true
