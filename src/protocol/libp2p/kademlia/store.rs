@@ -350,6 +350,26 @@ impl MemoryStore {
             }
         })
     }
+
+    /// Get the number of records in the store.
+    pub fn records_len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Get the number of provider keys in the store.
+    pub fn provider_keys_len(&self) -> usize {
+        self.provider_keys.len()
+    }
+
+    /// Get the number of local providers in the store.
+    pub fn local_providers_len(&self) -> usize {
+        self.local_providers.len()
+    }
+
+    /// Get the number of pending provider refreshes in the store.
+    pub fn pending_provider_refresh_len(&self) -> usize {
+        self.pending_provider_refresh.len()
+    }
 }
 
 pub struct MemoryStoreConfig {

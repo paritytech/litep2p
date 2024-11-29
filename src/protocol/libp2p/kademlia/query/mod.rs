@@ -216,6 +216,11 @@ impl QueryEngine {
         }
     }
 
+    /// Get number of active queries.
+    pub fn active_queries(&self) -> usize {
+        self.queries.len()
+    }
+
     /// Start `FIND_NODE` query.
     pub fn start_find_node(
         &mut self,

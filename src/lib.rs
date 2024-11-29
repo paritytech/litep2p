@@ -280,8 +280,14 @@ impl Litep2p {
                 kademlia_config.codec,
                 litep2p_config.keep_alive_timeout,
             );
+            let kad = Kademlia::new(
+                service,
+                kademlia_config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
+
             litep2p_config.executor.run(Box::pin(async move {
-                let _ = Kademlia::new(service, kademlia_config).run().await;
+                let _ = kad.run().await;
             }));
         }
 

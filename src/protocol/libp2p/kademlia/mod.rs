@@ -22,6 +22,7 @@
 
 use crate::{
     error::{Error, ImmediateDialError, SubstreamError},
+    metrics::{MetricGauge, MetricsRegistry},
     protocol::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
@@ -168,11 +169,30 @@ pub(crate) struct Kademlia {
 
     /// Query executor.
     executor: QueryExecutor,
+
+    /// Metrics.
+    metrics: Option<Metrics>,
+}
+
+struct Metrics {
+    peers: MetricGauge,
+
+    mem_store_records: MetricGauge,
+    mem_store_providers: MetricGauge,
+    mem_store_local_providers: MetricGauge,
+    mem_store_provider_refresh: MetricGauge,
+
+    engine_queries: MetricGauge,
+    executor_queries: MetricGauge,
 }
 
 impl Kademlia {
     /// Create new [`Kademlia`].
-    pub(crate) fn new(mut service: TransportService, config: Config) -> Self {
+    pub(crate) fn new(
+        mut service: TransportService,
+        config: Config,
+        registry: Option<MetricsRegistry>,
+    ) -> Result<Self, Error> {
         let local_peer_id = service.local_peer_id();
         let local_key = Key::from(service.local_peer_id());
         let mut routing_table = RoutingTable::new(local_key.clone());
@@ -193,7 +213,40 @@ impl Kademlia {
             },
         );
 
-        Self {
+        let metrics = if let Some(registry) = registry {
+            Some(Metrics {
+                peers: registry
+                    .register_gauge("litep2p_kad_peers".into(), "Connected peers".into())?,
+                mem_store_records: registry.register_gauge(
+                    "litep2p_kad_mem_store_records".into(),
+                    "Number of records in memory store".into(),
+                )?,
+                mem_store_providers: registry.register_gauge(
+                    "litep2p_kad_mem_store_providers".into(),
+                    "Number of providers in memory store".into(),
+                )?,
+                mem_store_local_providers: registry.register_gauge(
+                    "litep2p_kad_mem_store_local_providers".into(),
+                    "Number of local providers in memory store".into(),
+                )?,
+                mem_store_provider_refresh: registry.register_gauge(
+                    "litep2p_kad_mem_store_provider_refresh".into(),
+                    "Number of provider refresh futures".into(),
+                )?,
+                engine_queries: registry.register_gauge(
+                    "litep2p_kad_engine_queries".into(),
+                    "Number of queries in the query engine".into(),
+                )?,
+                executor_queries: registry.register_gauge(
+                    "litep2p_kad_executor_queries".into(),
+                    "Number of queries in the query executor".into(),
+                )?,
+            })
+        } else {
+            None
+        };
+
+        Ok(Self {
             service,
             routing_table,
             peers: HashMap::new(),
@@ -210,7 +263,8 @@ impl Kademlia {
             record_ttl: config.record_ttl,
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
-        }
+            metrics,
+        })
     }
 
     /// Allocate next query ID.
@@ -877,6 +931,20 @@ impl Kademlia {
         tracing::debug!(target: LOG_TARGET, "starting kademlia event loop");
 
         loop {
+            if let Some(metrics) = &self.metrics {
+                metrics.peers.set(self.peers.len() as u64);
+
+                metrics.mem_store_records.set(self.store.records_len() as u64);
+                metrics.mem_store_providers.set(self.store.provider_keys_len() as u64);
+                metrics.mem_store_local_providers.set(self.store.local_providers_len() as u64);
+                metrics
+                    .mem_store_provider_refresh
+                    .set(self.store.pending_provider_refresh_len() as u64);
+
+                metrics.engine_queries.set(self.engine.active_queries() as u64);
+                metrics.executor_queries.set(self.executor.futures_len() as u64);
+            }
+
             // poll `QueryEngine` for next actions.
             while let Some(action) = self.engine.next_action() {
                 if let Err((query, peer)) = self.on_query_action(action).await {
