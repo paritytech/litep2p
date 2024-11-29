@@ -215,6 +215,7 @@ impl TransportBuilder for QuicTransport {
     fn new(
         context: TransportHandle,
         mut config: Self::Config,
+        _registry: Option<crate::metrics::MetricsRegistry>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,

@@ -72,6 +72,7 @@ pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod executor;
+pub mod metrics;
 pub mod protocol;
 pub mod substream;
 pub mod transport;
@@ -313,8 +314,11 @@ impl Litep2p {
         // enable tcp transport if the config exists
         if let Some(config) = litep2p_config.tcp.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
-            let (transport, transport_listen_addresses) =
-                <TcpTransport as TransportBuilder>::new(handle, config)?;
+            let (transport, transport_listen_addresses) = <TcpTransport as TransportBuilder>::new(
+                handle,
+                config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -330,8 +334,11 @@ impl Litep2p {
         #[cfg(feature = "quic")]
         if let Some(config) = litep2p_config.quic.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
-            let (transport, transport_listen_addresses) =
-                <QuicTransport as TransportBuilder>::new(handle, config)?;
+            let (transport, transport_listen_addresses) = <QuicTransport as TransportBuilder>::new(
+                handle,
+                config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -348,7 +355,11 @@ impl Litep2p {
         if let Some(config) = litep2p_config.webrtc.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
-                <WebRtcTransport as TransportBuilder>::new(handle, config)?;
+                <WebRtcTransport as TransportBuilder>::new(
+                    handle,
+                    config,
+                    litep2p_config.metrics_registry.clone(),
+                )?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -365,7 +376,11 @@ impl Litep2p {
         if let Some(config) = litep2p_config.websocket.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
-                <WebSocketTransport as TransportBuilder>::new(handle, config)?;
+                <WebSocketTransport as TransportBuilder>::new(
+                    handle,
+                    config,
+                    litep2p_config.metrics_registry.clone(),
+                )?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());

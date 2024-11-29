@@ -24,6 +24,7 @@
 use crate::{
     config::Role,
     error::{DialError, Error},
+    metrics::{MetricGauge, MetricsRegistry},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
         manager::TransportHandle,
@@ -129,6 +130,13 @@ pub(crate) struct TcpTransport {
     /// Connections which have been opened and negotiated but are being validated by the
     /// `TransportManager`.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
+
+    /// Tcp metrics.
+    metrics: Option<TcpMetrics>,
+}
+
+struct TcpMetrics {
+    pending_dials_num: MetricGauge,
 }
 
 impl TcpTransport {
@@ -271,6 +279,7 @@ impl TransportBuilder for TcpTransport {
     fn new(
         context: TransportHandle,
         mut config: Self::Config,
+        registry: Option<MetricsRegistry>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -285,6 +294,17 @@ impl TransportBuilder for TcpTransport {
             config.nodelay,
         );
 
+        let metrics = if let Some(registry) = registry {
+            Some(TcpMetrics {
+                pending_dials_num: registry.register_gauge(
+                    "litep2p_tcp_pending_dials",
+                    "Litep2p number of pending dials",
+                )?,
+            })
+        } else {
+            None
+        };
+
         Ok((
             Self {
                 listener,
@@ -298,6 +318,7 @@ impl TransportBuilder for TcpTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
+                metrics,
             },
             listen_addresses,
         ))
@@ -319,6 +340,10 @@ impl Transport for TcpTransport {
         let nodelay = self.config.nodelay;
 
         self.pending_dials.insert(connection_id, address.clone());
+        if let Some(metrics) = &self.metrics {
+            metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+        }
+
         self.pending_connections.push(Box::pin(async move {
             let (_, stream) =
                 TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout, nodelay)
@@ -500,6 +525,10 @@ impl Transport for TcpTransport {
         );
 
         self.pending_dials.insert(connection_id, address);
+        if let Some(metrics) = &self.metrics {
+            metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+        }
+
         self.pending_connections.push(Box::pin(async move {
             match tokio::time::timeout(connection_open_timeout, async move {
                 TcpConnection::negotiate_connection(
@@ -652,6 +681,10 @@ impl Stream for TcpTransport {
                     let peer = connection.peer();
                     let endpoint = connection.endpoint();
                     self.pending_dials.remove(&connection.connection_id());
+                    if let Some(metrics) = &self.metrics {
+                        metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+                    }
+
                     self.pending_open.insert(connection.connection_id(), connection);
 
                     return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
@@ -661,6 +694,10 @@ impl Stream for TcpTransport {
                 }
                 Err((connection_id, error)) => {
                     if let Some(address) = self.pending_dials.remove(&connection_id) {
+                        if let Some(metrics) = &self.metrics {
+                            metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+                        }
+
                         return Poll::Ready(Some(TransportEvent::DialFailure {
                             connection_id,
                             address,

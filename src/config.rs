@@ -23,6 +23,7 @@
 use crate::{
     crypto::ed25519::Keypair,
     executor::{DefaultExecutor, Executor},
+    metrics::MetricsRegistry,
     protocol::{
         libp2p::{bitswap, identify, kademlia, ping},
         mdns::Config as MdnsConfig,
@@ -83,9 +84,8 @@ pub struct ConfigBuilder {
     #[cfg(feature = "websocket")]
     websocket: Option<WebSocketConfig>,
 
-    /// Prometheus metrics registry.
-    #[cfg(feature = "metrics")]
-    metrics_registry: Option<prometheus::Registry>,
+    /// Metrics registry
+    metrics_registry: Option<MetricsRegistry>,
 
     /// Keypair.
     keypair: Option<Keypair>,
@@ -147,7 +147,6 @@ impl ConfigBuilder {
             webrtc: None,
             #[cfg(feature = "websocket")]
             websocket: None,
-            #[cfg(feature = "metrics")]
             metrics_registry: None,
             keypair: None,
             ping: None,
@@ -194,8 +193,7 @@ impl ConfigBuilder {
     }
 
     /// Add metrics registry.
-    #[cfg(feature = "metrics")]
-    pub fn with_metrics_registry(mut self, registry: prometheus::Registry) -> Self {
+    pub fn with_metrics_registry(mut self, registry: MetricsRegistry) -> Self {
         self.metrics_registry = Some(registry);
         self
     }
@@ -308,7 +306,6 @@ impl ConfigBuilder {
             webrtc: self.webrtc.take(),
             #[cfg(feature = "websocket")]
             websocket: self.websocket.take(),
-            #[cfg(feature = "metrics")]
             metrics_registry: self.metrics_registry.take(),
             ping: self.ping.take(),
             identify: self.identify.take(),
@@ -344,8 +341,7 @@ pub struct Litep2pConfig {
     pub(crate) websocket: Option<WebSocketConfig>,
 
     /// Prometheus metrics registry.
-    #[cfg(feature = "metrics")]
-    pub(crate) metrics_registry: Option<prometheus::Registry>,
+    pub(crate) metrics_registry: Option<MetricsRegistry>,
 
     /// Keypair.
     pub(crate) keypair: Keypair,
