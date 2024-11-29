@@ -43,11 +43,11 @@ pub trait MetricGaugeT: Send + Sync {
     /// Set the gauge to `value`.
     fn set(&self, value: u64);
 
-    /// Increment the gauge by `value`.
-    fn inc(&self, value: u64);
+    /// Increment the gauge.
+    fn inc(&self);
 
-    /// Decrement the gauge by `value`.
-    fn dec(&self, value: u64);
+    /// Decrement the gauge.
+    fn dec(&self);
 }
 
 /// A registry for metrics.
@@ -61,4 +61,26 @@ pub trait MetricsRegistryT: Send + Sync {
 
     /// Register a new gauge.
     fn register_gauge(&self, name: &'static str, help: &'static str) -> Result<MetricGauge, Error>;
+}
+
+/// A scope for metrics that modifies a provided gauge in an RAII fashion.
+///
+/// The gauge is incremented when constructed and decremented when the object is dropped.
+#[derive(Clone)]
+pub struct ScopeGaugeMetric {
+    inner: MetricGauge,
+}
+
+impl ScopeGaugeMetric {
+    /// Create a new [`ScopeGaugeMetric`].
+    pub fn new(inner: MetricGauge) -> Self {
+        inner.inc();
+        ScopeGaugeMetric { inner }
+    }
+}
+
+impl Drop for ScopeGaugeMetric {
+    fn drop(&mut self) {
+        self.inner.dec();
+    }
 }
