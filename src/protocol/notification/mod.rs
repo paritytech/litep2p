@@ -435,18 +435,30 @@ impl NotificationProtocol {
                             },
                         );
                     }
+                    (OutboundState::OutboundInitiated { substream }, _) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            "connection closed outbound substream initiated ",
+                        );
+                        // We need to remove this state to avoid a memory leak.
+                        self.pending_outbound.remove(&substream);
+
+                        self.event_handle
+                            .report_notification_stream_open_failure(
+                                peer,
+                                NotificationError::Rejected,
+                            )
+                            .await;
+                    }
                     // user either initiated an outbound substream or an outbound substream was
                     // opened/being opened as a result of an accepted inbound substream but was not
                     // yet fully open
                     //
                     // to have consistent state tracking in the user protocol, substream rejection
                     // must be reported to the user
-                    (
-                        OutboundState::OutboundInitiated { .. }
-                        | OutboundState::Negotiating
-                        | OutboundState::Open { .. },
-                        _,
-                    ) => {
+                    (OutboundState::Negotiating | OutboundState::Open { .. }, _) => {
                         tracing::debug!(
                             target: LOG_TARGET,
                             ?peer,
