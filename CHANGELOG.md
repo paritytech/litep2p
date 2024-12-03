@@ -12,7 +12,7 @@ This release includes two fixes for small memory leaks happening on edge-cases i
 ### Fixed
 
 - req-resp: Fix memory leak of pending substreams  ([#297](https://github.com/paritytech/litep2p/pull/297))
--  notification: Fix memory leak of pending substreams ([#296](https://github.com/paritytech/litep2p/pull/296))
+- notification: Fix memory leak of pending substreams ([#296](https://github.com/paritytech/litep2p/pull/296))
 
 ## [0.8.2] - 2024-11-27
 
