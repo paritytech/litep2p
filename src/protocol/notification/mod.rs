@@ -259,7 +259,7 @@ pub(crate) struct NotificationProtocol {
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
 
-    /// Pending outboudn substreams.
+    /// Pending outbound substreams.
     pending_outbound: HashMap<SubstreamId, PeerId>,
 
     /// Handshaking service which reads and writes the handshakes to inbound
@@ -439,6 +439,8 @@ impl NotificationProtocol {
     async fn on_connection_closed(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "connection closed");
 
+        self.pending_outbound.retain(|_, p| p != &peer);
+
         let Some(context) = self.peers.remove(&peer) else {
             tracing::error!(
                 target: LOG_TARGET,
@@ -490,33 +492,18 @@ impl NotificationProtocol {
                             },
                         );
                     }
-                    // User initiated an outbound substream but the connection was closed before the
-                    // substream was fully open.
-                    // To have consistent state tracking in the user protocol, substream rejection
-                    // must be reported to the user.
-                    (OutboundState::OutboundInitiated { substream }, _) => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            protocol = %self.protocol,
-                            "connection closed outbound substream initiated ",
-                        );
-                        // We need to remove this state to avoid a memory leak.
-                        self.pending_outbound.remove(&substream);
-
-                        self.event_handle
-                            .report_notification_stream_open_failure(
-                                peer,
-                                NotificationError::Rejected,
-                            )
-                            .await;
-                    }
-                    // An outbound substream was opened/being opened as a result of an accepted
-                    // inbound substream but was not yet fully open.
+                    // user either initiated an outbound substream or an outbound substream was
+                    // opened/being opened as a result of an accepted inbound substream but was not
+                    // yet fully open
                     //
-                    // To have consistent state tracking in the user protocol, substream rejection
-                    // must be reported to the user.
-                    (OutboundState::Negotiating | OutboundState::Open { .. }, _) => {
+                    // to have consistent state tracking in the user protocol, substream rejection
+                    // must be reported to the user
+                    (
+                        OutboundState::OutboundInitiated { .. }
+                        | OutboundState::Negotiating
+                        | OutboundState::Open { .. },
+                        _,
+                    ) => {
                         tracing::debug!(
                             target: LOG_TARGET,
                             ?peer,
