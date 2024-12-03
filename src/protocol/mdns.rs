@@ -355,7 +355,9 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
-        );
+            None,
+        )
+        .unwrap();
 
         let mdns1 = Mdns::new(
             handle1,
@@ -378,7 +380,9 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
-        );
+            None,
+        )
+        .unwrap();
 
         let mdns2 = Mdns::new(
             handle2,
