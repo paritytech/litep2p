@@ -93,7 +93,7 @@ impl Drop for ScopeGaugeMetric {
     }
 }
 
-/// Wrapper around [`FuturesStream`] that provides information to the given metric.
+/// Wrapper around `FuturesStream` that provides information to the given metric.
 #[derive(Default)]
 pub struct MeteredFuturesStream<F> {
     stream: FuturesStream<F>,
