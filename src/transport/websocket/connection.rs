@@ -436,7 +436,7 @@ impl WebSocketConnection {
         })
     }
 
-    async fn start_inner(mut self) -> crate::Result<()> {
+    async fn start_inner(&mut self) -> crate::Result<()> {
         self.protocol_set
             .report_connection_established(self.peer, self.endpoint)
             .await?;
