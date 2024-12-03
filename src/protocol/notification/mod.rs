@@ -258,7 +258,7 @@ pub(crate) struct NotificationProtocol {
     /// Connected peers.
     peers: HashMap<PeerId, PeerContext>,
 
-    /// Pending outboudn substreams.
+    /// Pending outbound substreams.
     pending_outbound: HashMap<SubstreamId, PeerId>,
 
     /// Handshaking service which reads and writes the handshakes to inbound
@@ -383,6 +383,8 @@ impl NotificationProtocol {
     /// open, it had been initiated or the substream was under negotiation).
     async fn on_connection_closed(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "connection closed");
+
+        self.pending_outbound.retain(|_, p| p != &peer);
 
         let Some(context) = self.peers.remove(&peer) else {
             tracing::error!(
