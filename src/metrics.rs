@@ -23,8 +23,14 @@
 //!
 //! Contains the traits and types that are used to define and interact with metrics.
 
-use crate::Error;
-use std::sync::Arc;
+use crate::{utils::futures_stream::FuturesStream, Error};
+use futures::{Stream, StreamExt};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 pub type MetricCounter = Arc<dyn MetricCounterT>;
 
@@ -84,5 +90,53 @@ impl ScopeGaugeMetric {
 impl Drop for ScopeGaugeMetric {
     fn drop(&mut self) {
         self.inner.dec();
+    }
+}
+
+/// Wrapper around [`FuturesStream`] that provides information to the given metric.
+pub struct MeteredFuturesStream<F> {
+    stream: FuturesStream<F>,
+    metric: MetricGauge,
+}
+
+impl<F> MeteredFuturesStream<F> {
+    pub fn new(metric: MetricGauge) -> Self {
+        MeteredFuturesStream {
+            stream: FuturesStream::new(),
+            metric,
+        }
+    }
+
+    pub fn push(&mut self, future: F) {
+        self.metric.inc();
+        self.stream.push(future);
+    }
+
+    /// Number of futures in the stream.
+    pub fn len(&self) -> usize {
+        self.stream.len()
+    }
+
+    /// Returns `true` if the stream is empty.
+    pub fn is_empty(&self) -> bool {
+        self.stream.len() == 0
+    }
+}
+
+impl<F: Future> Stream for MeteredFuturesStream<F> {
+    type Item = <F as Future>::Output;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let result = self.stream.poll_next_unpin(cx);
+        if result.is_ready() {
+            self.metric.dec();
+        }
+        result
+    }
+}
+
+impl<F> Drop for MeteredFuturesStream<F> {
+    fn drop(&mut self) {
+        self.metric.sub(self.len() as u64);
     }
 }
