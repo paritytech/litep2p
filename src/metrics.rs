@@ -94,13 +94,14 @@ impl Drop for ScopeGaugeMetric {
 }
 
 /// Wrapper around [`FuturesStream`] that provides information to the given metric.
+#[derive(Default)]
 pub struct MeteredFuturesStream<F> {
     stream: FuturesStream<F>,
-    metric: MetricGauge,
+    metric: Option<MetricGauge>,
 }
 
 impl<F> MeteredFuturesStream<F> {
-    pub fn new(metric: MetricGauge) -> Self {
+    pub fn new(metric: Option<MetricGauge>) -> Self {
         MeteredFuturesStream {
             stream: FuturesStream::new(),
             metric,
@@ -108,7 +109,10 @@ impl<F> MeteredFuturesStream<F> {
     }
 
     pub fn push(&mut self, future: F) {
-        self.metric.inc();
+        if let Some(ref metric) = self.metric {
+            metric.inc();
+        }
+
         self.stream.push(future);
     }
 
@@ -129,7 +133,9 @@ impl<F: Future> Stream for MeteredFuturesStream<F> {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let result = self.stream.poll_next_unpin(cx);
         if result.is_ready() {
-            self.metric.dec();
+            if let Some(ref metric) = self.metric {
+                metric.dec();
+            }
         }
         result
     }
@@ -137,6 +143,8 @@ impl<F: Future> Stream for MeteredFuturesStream<F> {
 
 impl<F> Drop for MeteredFuturesStream<F> {
     fn drop(&mut self) {
-        self.metric.sub(self.len() as u64);
+        if let Some(ref metric) = self.metric {
+            metric.sub(self.len() as u64);
+        }
     }
 }
