@@ -48,6 +48,12 @@ pub trait MetricGaugeT: Send + Sync {
 
     /// Decrement the gauge.
     fn dec(&self);
+
+    /// Add `value` to the gauge.
+    fn add(&self, value: u64);
+
+    /// Subtract `value` from the gauge.
+    fn sub(&self, value: u64);
 }
 
 /// A registry for metrics.

@@ -742,8 +742,7 @@ impl TcpConnection {
         }
     }
 
-    /// Start connection event loop.
-    pub(crate) async fn start(mut self) -> crate::Result<()> {
+    async fn start_inner(&mut self) -> crate::Result<()> {
         self.protocol_set
             .report_connection_established(self.peer, self.endpoint.clone())
             .await?;
@@ -770,6 +769,16 @@ impl TcpConnection {
                 }
             }
         }
+    }
+
+    /// Start connection event loop.
+    pub(crate) async fn start(mut self) -> crate::Result<()> {
+        self.start_inner().await.inspect_err(|_| {
+            if let Some(metrics) = &self.metrics {
+                // All pending substreams must be decremented because the connection is closing.
+                metrics.pending_substreams_num.sub(self.pending_substreams.len() as u64);
+            }
+        })
     }
 }
 
