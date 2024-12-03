@@ -435,6 +435,10 @@ impl NotificationProtocol {
                             },
                         );
                     }
+                    // User initiated an outbound substream but the connection was closed before the
+                    // substream was fully open.
+                    // To have consistent state tracking in the user protocol, substream rejection
+                    // must be reported to the user.
                     (OutboundState::OutboundInitiated { substream }, _) => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -452,12 +456,11 @@ impl NotificationProtocol {
                             )
                             .await;
                     }
-                    // user either initiated an outbound substream or an outbound substream was
-                    // opened/being opened as a result of an accepted inbound substream but was not
-                    // yet fully open
+                    // An outbound substream was opened/being opened as a result of an accepted
+                    // inbound substream but was not yet fully open.
                     //
-                    // to have consistent state tracking in the user protocol, substream rejection
-                    // must be reported to the user
+                    // To have consistent state tracking in the user protocol, substream rejection
+                    // must be reported to the user.
                     (OutboundState::Negotiating | OutboundState::Open { .. }, _) => {
                         tracing::debug!(
                             target: LOG_TARGET,
