@@ -25,7 +25,7 @@ use crate::{
         noise::{self, NoiseSocket},
     },
     error::{Error, NegotiationError, SubstreamError},
-    metrics::{MetricGauge, ScopeGaugeMetric},
+    metrics::{MeteredFuturesStream, MetricGauge, ScopeGaugeMetric},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
@@ -38,11 +38,7 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
-use futures::{
-    future::BoxFuture,
-    stream::{FuturesUnordered, StreamExt},
-    AsyncRead, AsyncWrite,
-};
+use futures::{future::BoxFuture, stream::StreamExt, AsyncRead, AsyncWrite};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::net::TcpStream;
 use tokio_util::compat::{
@@ -179,10 +175,11 @@ pub struct TcpConnection {
 
     /// Pending substreams.
     pending_substreams:
-        FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
+        MeteredFuturesStream<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
 
-    /// Metrics.
-    metrics: Option<TcpConnectionMetrics>,
+    /// Metric incremented when the connection starts
+    /// and decremented when the connection closes.
+    _active_connections_num: Option<ScopeGaugeMetric>,
 }
 
 impl fmt::Debug for TcpConnection {
@@ -211,6 +208,15 @@ impl TcpConnection {
             substream_open_timeout,
         } = context;
 
+        let (pending_substreams_num, _active_connections_num) = if let Some(metrics) = metrics {
+            (
+                Some(metrics.pending_substreams_num),
+                Some(metrics._active_connections_num),
+            )
+        } else {
+            (None, None)
+        };
+
         Self {
             protocol_set,
             connection,
@@ -219,9 +225,9 @@ impl TcpConnection {
             endpoint,
             bandwidth_sink,
             next_substream_id,
-            pending_substreams: FuturesUnordered::new(),
             substream_open_timeout,
-            metrics,
+            pending_substreams: MeteredFuturesStream::new(pending_substreams_num),
+            _active_connections_num,
         }
     }
 
@@ -551,9 +557,6 @@ impl TcpConnection {
                         }),
                     }
                 }));
-                if let Some(metrics) = &self.metrics {
-                    metrics.pending_substreams_num.inc();
-                }
 
                 Ok(false)
             }
@@ -713,9 +716,6 @@ impl TcpConnection {
                         }),
                     }
                 }));
-                if let Some(metrics) = &self.metrics {
-                    metrics.pending_substreams_num.inc();
-                }
 
                 Ok(false)
             }
@@ -742,7 +742,8 @@ impl TcpConnection {
         }
     }
 
-    async fn start_inner(&mut self) -> crate::Result<()> {
+    /// Start connection event loop.
+    pub(crate) async fn start(mut self) -> crate::Result<()> {
         self.protocol_set
             .report_connection_established(self.peer, self.endpoint.clone())
             .await?;
@@ -754,11 +755,10 @@ impl TcpConnection {
                         return Ok(());
                     }
                 },
-                substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
-                    if let Some(metrics) = &self.metrics {
-                        // This must be decremented and not set because the metric is shared across connections.
-                        metrics.pending_substreams_num.dec();
-                    }
+                substream = self.pending_substreams.next(), if !self.pending_substreams.is_empty() => {
+                    let Some(substream) = substream else {
+                        continue;
+                    };
 
                     self.handle_negotiated_substream(substream).await;
                 }
@@ -769,16 +769,6 @@ impl TcpConnection {
                 }
             }
         }
-    }
-
-    /// Start connection event loop.
-    pub(crate) async fn start(mut self) -> crate::Result<()> {
-        self.start_inner().await.inspect_err(|_| {
-            if let Some(metrics) = &self.metrics {
-                // All pending substreams must be decremented because the connection is closing.
-                metrics.pending_substreams_num.sub(self.pending_substreams.len() as u64);
-            }
-        })
     }
 }
 
