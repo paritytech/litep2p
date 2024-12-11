@@ -138,12 +138,15 @@ impl Mdns {
         socket.join_multicast_v4(&IPV4_MULTICAST_ADDRESS, &Ipv4Addr::UNSPECIFIED)?;
         socket.set_nonblocking(true)?;
 
+        let mut query_interval = tokio::time::interval(config.query_interval);
+        query_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
         Ok(Self {
             _transport_handle,
             event_tx: config.tx,
             next_query_id: 1337u16,
             discovered: HashSet::new(),
-            query_interval: tokio::time::interval(config.query_interval),
+            query_interval,
             receive_buffer: vec![0u8; 4096],
             username: rand::thread_rng()
                 .sample_iter(&Alphanumeric)
