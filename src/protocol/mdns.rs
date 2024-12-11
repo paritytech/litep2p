@@ -95,7 +95,7 @@ pub(crate) struct Mdns {
     socket: UdpSocket,
 
     /// Query interval.
-    query_interval: Duration,
+    query_interval: tokio::time::Interval,
 
     /// TX channel for sending events to user.
     event_tx: Sender<MdnsEvent>,
@@ -143,7 +143,7 @@ impl Mdns {
             event_tx: config.tx,
             next_query_id: 1337u16,
             discovered: HashSet::new(),
-            query_interval: config.query_interval,
+            query_interval: tokio::time::interval(config.query_interval),
             receive_buffer: vec![0u8; 4096],
             username: rand::thread_rng()
                 .sample_iter(&Alphanumeric)
@@ -279,21 +279,16 @@ impl Mdns {
     pub(crate) async fn start(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting mdns event loop");
 
-        // Before starting the loop, make an initial query to the network
-        if let Err(error) = self.on_outbound_request().await {
-            tracing::error!(target: LOG_TARGET, ?error, "Failed to send initial mdns query. MDNS entering failure mode");
-            futures::future::pending::<()>().await;
-        }
-
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(self.query_interval) => {
-                    tracing::trace!(target: LOG_TARGET, "timeout expired");
+                _ = self.query_interval.tick() => {
+                    tracing::trace!(target: LOG_TARGET, "query interval ticked");
 
                     if let Err(error) = self.on_outbound_request().await {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
                     }
-                }
+                },
+
                 result = self.socket.recv_from(&mut self.receive_buffer) => match result {
                     Ok((nread, address)) => match Packet::parse(&self.receive_buffer[..nread]) {
                         Ok(packet) => match packet.has_flags(PacketFlag::RESPONSE) {
