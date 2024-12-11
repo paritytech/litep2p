@@ -68,7 +68,7 @@ jobs:
           cache-all-crates: true
 
       - name: Install cargo-machete
-        run: cargo install cargo-machete
+        run: cargo install cargo-machete@0.6.0
 
       - name: Check unused dependencies
         run: cargo machete
