@@ -49,6 +49,11 @@ impl<F> FuturesStream<F> {
         self.futures.len()
     }
 
+    /// Check if the stream is empty.
+    pub fn is_empty(&self) -> bool {
+        self.futures.is_empty()
+    }
+
     /// Push a future for processing.
     pub fn push(&mut self, future: F) {
         self.futures.push(future);

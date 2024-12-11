@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2024-12-03
+
+This release includes two fixes for small memory leaks happening on edge-cases in the notification and request-response protocols.
+
+### Fixed
+
+- req-resp: Fix memory leak of pending substreams  ([#297](https://github.com/paritytech/litep2p/pull/297))
+- notification: Fix memory leak of pending substreams ([#296](https://github.com/paritytech/litep2p/pull/296))
+
 ## [0.8.2] - 2024-11-27
 
 This release ensures that the provided peer identity is verified at the crypto/noise protocol level, enhancing security and preventing potential misuses.
