@@ -291,7 +291,6 @@ impl Mdns {
 
                     if let Err(error) = self.on_outbound_request().await {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
-                        return Err(error);
                     }
                 }
                 result = self.socket.recv_from(&mut self.receive_buffer) => match result {
@@ -308,9 +307,11 @@ impl Mdns {
                                 }
                             }
                             false => if let Some(response) = self.on_inbound_request(packet) {
-                                self.socket
+                                if let Err(error) = self.socket
                                     .send_to(&response, (IPV4_MULTICAST_ADDRESS, IPV4_MULTICAST_PORT))
-                                    .await?;
+                                    .await {
+                                    tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns response");
+                                }
                             }
                         }
                         Err(error) => tracing::debug!(
@@ -323,7 +324,6 @@ impl Mdns {
                     }
                     Err(error) => {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to read from socket");
-                        return Err(Error::from(error));
                     }
                 },
             }
