@@ -28,10 +28,11 @@ use crate::{
     substream::Substream,
     transport::Endpoint,
     types::{protocol::ProtocolName, SubstreamId},
+    utils::futures_stream::FuturesStream,
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{future::BoxFuture, Stream, StreamExt};
 use multiaddr::Multiaddr;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
@@ -181,10 +182,10 @@ pub(crate) struct Identify {
     protocols: Vec<String>,
 
     /// Pending outbound substreams.
-    pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
+    pending_outbound: FuturesStream<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
 
     /// Pending inbound substreams.
-    pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
+    pending_inbound: FuturesStream<BoxFuture<'static, ()>>,
 }
 
 impl Identify {
@@ -197,8 +198,8 @@ impl Identify {
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
-            pending_inbound: FuturesUnordered::new(),
-            pending_outbound: FuturesUnordered::new(),
+            pending_inbound: FuturesStream::new(),
+            pending_outbound: FuturesStream::new(),
             protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
         }
     }
@@ -356,7 +357,10 @@ impl Identify {
         loop {
             tokio::select! {
                 event = self.service.next() => match event {
-                    None => return,
+                    None => {
+                        tracing::warn!(target: LOG_TARGET, "transport service stream ended, terminating identify event loop");
+                        return
+                    },
                     Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
                         let _ = self.on_connection_established(peer, endpoint);
                     }
@@ -390,7 +394,7 @@ impl Identify {
                             .await;
                     }
                     Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
-                    None => return,
+                    None => {}
                 }
             }
         }
