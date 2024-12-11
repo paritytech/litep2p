@@ -21,7 +21,7 @@
 
 //! [Multicast DNS](https://en.wikipedia.org/wiki/Multicast_DNS) implementation.
 
-use crate::{error::Error, transport::manager::TransportManagerHandle, DEFAULT_CHANNEL_SIZE};
+use crate::{transport::manager::TransportManagerHandle, DEFAULT_CHANNEL_SIZE};
 
 use futures::Stream;
 use multiaddr::Multiaddr;
@@ -95,7 +95,7 @@ pub(crate) struct Mdns {
     socket: UdpSocket,
 
     /// Query interval.
-    query_interval: Duration,
+    query_interval: tokio::time::Interval,
 
     /// TX channel for sending events to user.
     event_tx: Sender<MdnsEvent>,
@@ -138,12 +138,15 @@ impl Mdns {
         socket.join_multicast_v4(&IPV4_MULTICAST_ADDRESS, &Ipv4Addr::UNSPECIFIED)?;
         socket.set_nonblocking(true)?;
 
+        let mut query_interval = tokio::time::interval(config.query_interval);
+        query_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
         Ok(Self {
             _transport_handle,
             event_tx: config.tx,
             next_query_id: 1337u16,
             discovered: HashSet::new(),
-            query_interval: config.query_interval,
+            query_interval,
             receive_buffer: vec![0u8; 4096],
             username: rand::thread_rng()
                 .sample_iter(&Alphanumeric)
@@ -276,24 +279,19 @@ impl Mdns {
     }
 
     /// Event loop for [`Mdns`].
-    pub(crate) async fn start(mut self) -> crate::Result<()> {
+    pub(crate) async fn start(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting mdns event loop");
-
-        // before starting the loop, make an initial query to the network
-        //
-        // bail early if the socket is not working
-        self.on_outbound_request().await?;
 
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(self.query_interval) => {
-                    tracing::trace!(target: LOG_TARGET, "timeout expired");
+                _ = self.query_interval.tick() => {
+                    tracing::trace!(target: LOG_TARGET, "query interval ticked");
 
                     if let Err(error) = self.on_outbound_request().await {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
-                        return Err(error);
                     }
-                }
+                },
+
                 result = self.socket.recv_from(&mut self.receive_buffer) => match result {
                     Ok((nread, address)) => match Packet::parse(&self.receive_buffer[..nread]) {
                         Ok(packet) => match packet.has_flags(PacketFlag::RESPONSE) {
@@ -308,9 +306,11 @@ impl Mdns {
                                 }
                             }
                             false => if let Some(response) = self.on_inbound_request(packet) {
-                                self.socket
+                                if let Err(error) = self.socket
                                     .send_to(&response, (IPV4_MULTICAST_ADDRESS, IPV4_MULTICAST_PORT))
-                                    .await?;
+                                    .await {
+                                    tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns response");
+                                }
                             }
                         }
                         Err(error) => tracing::debug!(
@@ -323,7 +323,6 @@ impl Mdns {
                     }
                     Err(error) => {
                         tracing::error!(target: LOG_TARGET, ?error, "failed to read from socket");
-                        return Err(Error::from(error));
                     }
                 },
             }
