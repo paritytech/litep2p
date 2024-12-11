@@ -394,7 +394,7 @@ impl Identify {
                             .await;
                     }
                     Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
-                    None => return,
+                    _ => {}
                 }
             }
         }
