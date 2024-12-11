@@ -21,7 +21,7 @@
 
 //! [Multicast DNS](https://en.wikipedia.org/wiki/Multicast_DNS) implementation.
 
-use crate::{error::Error, transport::manager::TransportManagerHandle, DEFAULT_CHANNEL_SIZE};
+use crate::{transport::manager::TransportManagerHandle, DEFAULT_CHANNEL_SIZE};
 
 use futures::Stream;
 use multiaddr::Multiaddr;
@@ -276,13 +276,14 @@ impl Mdns {
     }
 
     /// Event loop for [`Mdns`].
-    pub(crate) async fn start(mut self) -> crate::Result<()> {
+    pub(crate) async fn start(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting mdns event loop");
 
-        // before starting the loop, make an initial query to the network
-        //
-        // bail early if the socket is not working
-        self.on_outbound_request().await?;
+        // Before starting the loop, make an initial query to the network
+        if let Err(error) = self.on_outbound_request().await {
+            tracing::error!(target: LOG_TARGET, ?error, "Failed to send initial mdns query. MDNS entering failure mode");
+            futures::future::pending::<()>().await;
+        }
 
         loop {
             tokio::select! {
