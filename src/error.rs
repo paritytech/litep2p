@@ -127,6 +127,8 @@ pub enum Error {
     ConnectionLimit(ConnectionLimitsError),
     #[error("Failed to dial peer immediately")]
     ImmediateDialError(#[from] ImmediateDialError),
+    #[error("Invalid metric: `{0}`")]
+    MetricError(String),
 }
 
 /// Error type for address parsing.

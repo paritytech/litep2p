@@ -85,6 +85,13 @@ impl PartialEq for ProtocolName {
 
 impl Eq for ProtocolName {}
 
+impl ProtocolName {
+    /// Get the protocol name as a metrics valid string.
+    pub fn to_metric_string(&self) -> String {
+        self.to_string().replace("/", "_").replace("-", "_")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

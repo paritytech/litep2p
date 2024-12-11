@@ -81,6 +81,16 @@ impl ConnectionLimits {
         }
     }
 
+    /// Returns the number of established incoming connections.
+    pub fn num_incoming_connections(&self) -> usize {
+        self.incoming_connections.len()
+    }
+
+    /// Returns the number of established outgoing connections.
+    pub fn num_outgoing_connections(&self) -> usize {
+        self.outgoing_connections.len()
+    }
+
     /// Called when dialing an address.
     ///
     /// Returns the number of outgoing connections permitted to be established.
