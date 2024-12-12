@@ -423,7 +423,11 @@ impl TransportBuilder for WebRtcTransport {
     type Transport = WebRtcTransport;
 
     /// Create new [`Transport`] object.
-    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<(Self, Vec<Multiaddr>)>
+    fn new(
+        context: TransportHandle,
+        config: Self::Config,
+        _registry: Option<crate::metrics::MetricsRegistry>,
+    ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
     {
