@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2024-12-12
+
+This release aims to make the MDNS component more robust by fixing a bug that caused the MDNS service to fail to register opened substreams. Additionally, the release includes several improvements to the `identify` protocol, replacing `FuturesUnordered` with `FuturesStream` for better performance.
+
+### Fixed
+
+- mdns/fix: Failed to register opened substream  ([#301](https://github.com/paritytech/litep2p/pull/301))
+
+### Changed
+
+- identify: Replace FuturesUnordered with FuturesStream  ([#302](https://github.com/paritytech/litep2p/pull/302))
+- chore: Update hickory-resolver to version 0.24.2  ([#304](https://github.com/paritytech/litep2p/pull/304))
+- ci: Ensure cargo-machete is working with rust version from CI  ([#303](https://github.com/paritytech/litep2p/pull/303))
+
 ## [0.8.3] - 2024-12-03
 
 This release includes two fixes for small memory leaks happening on edge-cases in the notification and request-response protocols.
