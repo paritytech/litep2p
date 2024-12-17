@@ -151,6 +151,9 @@ pub(crate) struct Kademlia {
     /// Pending outbound substreams.
     pending_substreams: HashMap<SubstreamId, PeerId>,
 
+    /// Established substreams of connected peers.
+    established_substreams: HashMap<PeerId, Substream>,
+
     /// Pending dials.
     pending_dials: HashMap<PeerId, Vec<PeerAction>>,
 
@@ -205,6 +208,8 @@ impl Kademlia {
             pending_dials: HashMap::new(),
             executor: QueryExecutor::new(),
             pending_substreams: HashMap::new(),
+            established_substreams: HashMap::new(),
+
             update_mode: config.update_mode,
             validation_mode: config.validation_mode,
             record_ttl: config.record_ttl,
@@ -245,7 +250,7 @@ impl Kademlia {
                             context.add_pending_action(substream_id, action);
                         }
                         Err(error) => {
-                            tracing::debug!(
+                            tracing::warn!(
                                 target: LOG_TARGET,
                                 ?peer,
                                 ?action,
@@ -326,7 +331,7 @@ impl Kademlia {
                     "pending action doesn't exist for peer, closing substream",
                 );
 
-                let _ = substream.close().await;
+                self.established_substreams.insert(peer, substream);
                 return Ok(());
             }
             Some(PeerAction::SendFindNode(query)) => {
@@ -347,11 +352,11 @@ impl Kademlia {
                     }
                     // query finished while the substream was being opened
                     None => {
-                        let _ = substream.close().await;
+                        self.established_substreams.insert(peer, substream);
                     }
                     action => {
                         tracing::warn!(target: LOG_TARGET, ?query, ?peer, ?action, "unexpected action for `FIND_NODE`");
-                        let _ = substream.close().await;
+                        self.established_substreams.insert(peer, substream);
                         debug_assert!(false);
                     }
                 }
@@ -744,15 +749,32 @@ impl Kademlia {
     /// Handle next query action.
     async fn on_query_action(&mut self, action: QueryAction) -> Result<(), (QueryId, PeerId)> {
         match action {
-            QueryAction::SendMessage { query, peer, .. } => {
-                if self
-                    .open_substream_or_dial(peer, PeerAction::SendFindNode(query), Some(query))
-                    .is_err()
-                {
-                    // Announce the error to the query engine.
-                    self.engine.register_response_failure(query, peer);
+            QueryAction::SendMessage {
+                query,
+                peer,
+                message,
+            } => {
+                if let Some(substream) = self.established_substreams.remove(&peer) {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        query = ?query,
+                        "start sending message to peer",
+                    );
+
+                    self.executor.send_request_read_response(peer, Some(query), message, substream);
+
+                    Ok(())
+                } else {
+                    if self
+                        .open_substream_or_dial(peer, PeerAction::SendFindNode(query), Some(query))
+                        .is_err()
+                    {
+                        // Announce the error to the query engine.
+                        self.engine.register_response_failure(query, peer);
+                    }
+                    Ok(())
                 }
-                Ok(())
             }
             QueryAction::FindNodeQuerySucceeded {
                 target,
@@ -943,7 +965,7 @@ impl Kademlia {
                                 query = ?query_id,
                                 "message sent to peer",
                             );
-                            let _ = substream.close().await;
+                            self.established_substreams.insert(peer, substream);
                         }
                         QueryResult::ReadSuccess { substream, message } => {
                             tracing::trace!(target: LOG_TARGET,
