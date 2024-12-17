@@ -480,6 +480,14 @@ impl TransportService {
         self.transport_handle.add_known_address(peer, addresses.into_iter());
     }
 
+    // Get peer addresses from the manager.
+    pub fn peer_addresses(
+        &self,
+        wanted_peers: impl IntoIterator<Item = PeerId>,
+    ) -> HashMap<PeerId, Vec<Multiaddr>> {
+        self.transport_handle.peer_addresses(wanted_peers)
+    }
+
     /// Open substream to `peer`.
     ///
     /// Call fails if there is no connection open to `peer` or the channel towards

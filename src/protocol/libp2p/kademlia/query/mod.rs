@@ -34,8 +34,13 @@ use crate::{
 };
 
 use bytes::Bytes;
+use futures::{Stream, StreamExt};
 
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use self::find_many_nodes::FindManyNodesContext;
 
@@ -596,6 +601,33 @@ impl QueryEngine {
         }
 
         None
+    }
+}
+
+impl Stream for QueryEngine {
+    type Item = QueryAction;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        for (_, state) in self.queries.iter_mut() {
+            let result = match state {
+                QueryType::FindNode { context } => context.poll_next_unpin(cx),
+                _ => continue,
+            };
+
+            match result {
+                Poll::Ready(Some(QueryAction::QuerySucceeded { query })) => {
+                    return Poll::Ready(Some(self.on_query_succeeded(query)));
+                }
+                Poll::Ready(Some(QueryAction::QueryFailed { query })) => {
+                    return Poll::Ready(Some(self.on_query_failed(query)));
+                }
+                Poll::Ready(Some(action)) => return Poll::Ready(Some(action)),
+                Poll::Ready(None) => panic!("Should never happen, we handle the result"),
+                Poll::Pending => {}
+            }
+        }
+
+        Poll::Pending
     }
 }
 

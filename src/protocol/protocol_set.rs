@@ -90,6 +90,9 @@ pub enum InnerTransportEvent {
 
         /// Dialed address.
         address: Multiaddr,
+
+        /// Reason for the failure.
+        reason: String,
     },
 
     /// Substream opened for `peer`.
@@ -144,8 +147,15 @@ pub enum InnerTransportEvent {
 impl From<InnerTransportEvent> for TransportEvent {
     fn from(event: InnerTransportEvent) -> Self {
         match event {
-            InnerTransportEvent::DialFailure { peer, address } =>
-                TransportEvent::DialFailure { peer, address },
+            InnerTransportEvent::DialFailure {
+                peer,
+                address,
+                reason,
+            } => TransportEvent::DialFailure {
+                peer,
+                address,
+                reason,
+            },
             InnerTransportEvent::SubstreamOpened {
                 peer,
                 protocol,

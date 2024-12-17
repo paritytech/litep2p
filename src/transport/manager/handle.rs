@@ -171,6 +171,22 @@ impl TransportManagerHandle {
         self.listen_addresses.read().contains(&address)
     }
 
+    // Get peer addresses from the manager.
+    pub fn peer_addresses(
+        &self,
+        wanted_peers: impl IntoIterator<Item = PeerId>,
+    ) -> HashMap<PeerId, Vec<Multiaddr>> {
+        let peers = self.peers.read();
+        wanted_peers
+            .into_iter()
+            .filter_map(|peer| {
+                peers
+                    .get(&peer)
+                    .map(|PeerContext { addresses, .. }| (peer, addresses.addresses(16)))
+            })
+            .collect()
+    }
+
     /// Add one or more known addresses for peer.
     ///
     /// If peer doesn't exist, it will be added to known peers.

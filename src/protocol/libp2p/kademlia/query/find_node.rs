@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use bytes::Bytes;
+use futures::Stream;
 
 use crate::{
     protocol::libp2p::kademlia::{
@@ -29,7 +30,11 @@ use crate::{
     PeerId,
 };
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_node";
@@ -91,6 +96,11 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     /// These represent the number of peers added to the `Self::pending` minus the number of peers
     /// that have failed to respond within the `Self::peer_timeout`
     pending_responses: usize,
+
+    start_time: std::time::Instant,
+
+    is_done: bool,
+    waker: Option<std::task::Waker>,
 }
 
 impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
@@ -116,11 +126,18 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
             peer_timeout: DEFAULT_PEER_TIMEOUT,
             pending_responses: 0,
+
+            is_done: false,
+            waker: None,
+
+            start_time: std::time::Instant::now(),
         }
     }
 
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
+        tracing::warn!(target: LOG_TARGET, query = ?self.config.query, ?peer, "peer failed to respond");
+
         let Some((peer, instant)) = self.pending.remove(&peer) else {
             tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist during response failure");
             return;
@@ -129,7 +146,8 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "peer failed to respond");
 
-        self.queried.insert(peer.peer);
+        // Add a retry mechanism for failure responses.
+        // self.queried.insert(peer.peer);
     }
 
     /// Register `FIND_NODE` response from `peer`.
@@ -149,25 +167,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
         // always mark the peer as queried to prevent it getting queried again
         self.queried.insert(peer.peer);
-
-        if self.responses.len() < self.config.replication_factor {
-            self.responses.insert(distance, peer);
-        } else {
-            // Update the furthest peer if this response is closer.
-            // Find the furthest distance.
-            let furthest_distance =
-                self.responses.last_entry().map(|entry| *entry.key()).unwrap_or(distance);
-
-            // The response received from the peer is closer than the furthest response.
-            if distance < furthest_distance {
-                self.responses.insert(distance, peer);
-
-                // Remove the furthest entry.
-                if self.responses.len() > self.config.replication_factor {
-                    self.responses.pop_last();
-                }
-            }
-        }
+        self.responses.insert(distance, peer);
 
         let to_query_candidate = peers.into_iter().filter_map(|peer| {
             // Peer already produced a response.
@@ -230,6 +230,18 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
     /// Get next action for a `FIND_NODE` query.
     pub fn next_action(&mut self) -> Option<QueryAction> {
+        // if self.start_time.elapsed() > std::time::Duration::from_secs(10) {
+        //     return if self.responses.is_empty() {
+        //         Some(QueryAction::QueryFailed {
+        //             query: self.config.query,
+        //         })
+        //     } else {
+        //         Some(QueryAction::QuerySucceeded {
+        //             query: self.config.query,
+        //         })
+        //     };
+        // }
+
         // If we cannot make progress, return the final result.
         // A query failed when we are not able to identify one single peer.
         if self.is_done() {
@@ -295,6 +307,30 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         Some(QueryAction::QuerySucceeded {
             query: self.config.query,
         })
+    }
+}
+
+impl<T: Clone + Into<Vec<u8>> + Unpin> Stream for FindNodeContext<T> {
+    type Item = QueryAction;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.is_done {
+            return Poll::Ready(None);
+        }
+
+        let action = self.next_action();
+        match action {
+            Some(QueryAction::QueryFailed { .. }) | Some(QueryAction::QuerySucceeded { .. }) => {
+                self.is_done = true;
+            }
+            None => {
+                self.waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
+            _ => (),
+        };
+
+        Poll::Ready(action)
     }
 }
 
@@ -460,7 +496,8 @@ mod tests {
         let in_peers_set: HashSet<_> = [peer_a, peer_b, peer_c].into_iter().collect();
         assert_eq!(in_peers_set.len(), 3);
 
-        let in_peers = [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
+        let in_peers: VecDeque<KademliaPeer> =
+            [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
         let mut context = FindNodeContext::new(config, in_peers);
 
         // Schedule peer queries.
