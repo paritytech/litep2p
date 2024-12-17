@@ -319,7 +319,7 @@ impl Kademlia {
 
         match pending_action.take() {
             None => {
-                tracing::trace!(
+                tracing::warn!(
                     target: LOG_TARGET,
                     ?peer,
                     ?substream_id,
@@ -877,14 +877,22 @@ impl Kademlia {
         tracing::debug!(target: LOG_TARGET, "starting kademlia event loop");
 
         loop {
-            // poll `QueryEngine` for next actions.
-            while let Some(action) = self.engine.next_action() {
-                if let Err((query, peer)) = self.on_query_action(action).await {
-                    self.disconnect_peer(peer, Some(query)).await;
-                }
-            }
+            // // poll `QueryEngine` for next actions.
+            // while let Some(action) = self.engine.next_action() {
+            //     if let Err((query, peer)) = self.on_query_action(action).await {
+            //         self.disconnect_peer(peer, Some(query)).await;
+            //     }
+            // }
 
             tokio::select! {
+                action = self.engine.next() => {
+                    if let Some(action) = action {
+                        if let Err((query, peer)) = self.on_query_action(action).await {
+                            self.disconnect_peer(peer, Some(query)).await;
+                        }
+                    }
+                },
+
                 event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
                         if let Err(error) = self.on_connection_established(peer) {
@@ -966,7 +974,7 @@ impl Kademlia {
                                 "failed to read message from substream",
                             );
 
-                            self.disconnect_peer(peer, query_id).await;
+                            // self.disconnect_peer(peer, query_id).await;
                         }
                     }
                 },

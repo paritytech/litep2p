@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use bytes::Bytes;
+use futures::Stream;
 
 use crate::{
     protocol::libp2p::kademlia::{
@@ -29,7 +30,11 @@ use crate::{
     PeerId,
 };
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::find_node";
@@ -91,6 +96,9 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     /// These represent the number of peers added to the `Self::pending` minus the number of peers
     /// that have failed to respond within the `Self::peer_timeout`
     pending_responses: usize,
+
+    is_done: bool,
+    waker: Option<std::task::Waker>,
 }
 
 impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
@@ -116,6 +124,9 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
             peer_timeout: DEFAULT_PEER_TIMEOUT,
             pending_responses: 0,
+
+            is_done: false,
+            waker: None,
         }
     }
 
@@ -295,6 +306,30 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         Some(QueryAction::QuerySucceeded {
             query: self.config.query,
         })
+    }
+}
+
+impl<T: Clone + Into<Vec<u8>> + Unpin> Stream for FindNodeContext<T> {
+    type Item = QueryAction;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.is_done {
+            return Poll::Ready(None);
+        }
+
+        let action = self.next_action();
+        match action {
+            Some(QueryAction::QueryFailed { .. }) | Some(QueryAction::QuerySucceeded { .. }) => {
+                self.is_done = true;
+            }
+            None => {
+                self.waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
+            _ => (),
+        };
+
+        Poll::Ready(action)
     }
 }
 
