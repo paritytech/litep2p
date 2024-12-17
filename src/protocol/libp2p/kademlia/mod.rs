@@ -21,6 +21,7 @@
 //! [`/ipfs/kad/1.0.0`](https://github.com/libp2p/specs/blob/master/kad-dht/README.md) implementation.
 
 use crate::{
+    addresses,
     error::{Error, ImmediateDialError, SubstreamError},
     protocol::{
         libp2p::kademlia::{
@@ -41,8 +42,9 @@ use crate::{
 };
 
 use bytes::{Bytes, BytesMut};
-use futures::StreamExt;
+use futures::{sink::Close, StreamExt};
 use multiaddr::Multiaddr;
+use rustls::client;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
@@ -245,7 +247,7 @@ impl Kademlia {
                             context.add_pending_action(substream_id, action);
                         }
                         Err(error) => {
-                            tracing::debug!(
+                            tracing::error!(
                                 target: LOG_TARGET,
                                 ?peer,
                                 ?action,
@@ -410,6 +412,25 @@ impl Kademlia {
         }
     }
 
+    fn closest_peers<K: Clone>(&mut self, target: &Key<K>) -> Vec<KademliaPeer> {
+        // Find closest peers from kademlia.
+        let mut closest_peers = self.routing_table.closest(target, self.replication_factor);
+
+        // Get the true addresses of the peers.
+        let mut peer_to_addresses =
+            self.service.peer_addresses(closest_peers.iter().map(|p| p.peer));
+
+        // Update the addresses of the peers.
+        for closest in closest_peers.iter_mut() {
+            if let Some(addresses) = peer_to_addresses.remove(&closest.peer) {
+                closest.addresses = addresses;
+            } else {
+                closest.addresses = Vec::new();
+            }
+        }
+        closest_peers
+    }
+
     /// Handle received message.
     async fn on_message_received(
         &mut self,
@@ -448,11 +469,8 @@ impl Kademlia {
                             "handle `FIND_NODE` request",
                         );
 
-                        let message = KademliaMessage::find_node_response(
-                            &target,
-                            self.routing_table
-                                .closest(&Key::new(target.as_ref()), self.replication_factor),
-                        );
+                        let peers = self.closest_peers(&Key::new(target.as_ref()));
+                        let message = KademliaMessage::find_node_response(&target, peers);
                         self.executor.send_message(peer, message.into(), substream);
                     }
                 }
@@ -500,9 +518,7 @@ impl Kademlia {
                         );
 
                         let value = self.store.get(&key).cloned();
-                        let closest_peers = self
-                            .routing_table
-                            .closest(&Key::new(key.as_ref()), self.replication_factor);
+                        let closest_peers = self.closest_peers(&Key::new(key.as_ref()));
 
                         let message =
                             KademliaMessage::get_value_response(key, closest_peers, value);
@@ -612,9 +628,7 @@ impl Kademlia {
                             p.addresses = self.service.public_addresses().get_addresses();
                         });
 
-                        let closer_peers = self
-                            .routing_table
-                            .closest(&Key::new(key.as_ref()), self.replication_factor);
+                        let closer_peers = self.closest_peers(&Key::new(key.as_ref()));
 
                         let message =
                             KademliaMessage::get_providers_response(providers, &closer_peers);
@@ -667,7 +681,7 @@ impl Kademlia {
     }
 
     /// Handle dial failure.
-    fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
+    fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr, reason: String) {
         tracing::trace!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
 
         let Some(actions) = self.pending_dials.remove(&peer) else {
@@ -681,6 +695,7 @@ impl Kademlia {
                     ?peer,
                     query = ?query_id,
                     ?address,
+                    ?reason,
                     "report failure for pending query",
                 );
 
@@ -928,8 +943,8 @@ impl Kademlia {
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error).await;
                     }
-                    Some(TransportEvent::DialFailure { peer, address, .. }) =>
-                        self.on_dial_failure(peer, address),
+                    Some(TransportEvent::DialFailure { peer, address, reason }) =>
+                        self.on_dial_failure(peer, address, reason),
                     None => return Err(Error::EssentialTaskClosed),
                 },
                 context = self.executor.next() => {
@@ -988,12 +1003,11 @@ impl Kademlia {
                                 "starting `FIND_NODE` query",
                             );
 
+                            let closest = self.closest_peers(&Key::from(peer));
                             self.engine.start_find_node(
                                 query_id,
                                 peer,
-                                self.routing_table
-                                    .closest(&Key::from(peer), self.replication_factor)
-                                    .into()
+                                closest.into(),
                             );
                         }
                         Some(KademliaCommand::PutRecord { mut record, query_id }) => {
@@ -1017,10 +1031,11 @@ impl Kademlia {
 
                             self.store.put(record.clone());
 
+                            let closest = self.closest_peers(&key);
                             self.engine.start_put_record(
                                 query_id,
                                 record,
-                                self.routing_table.closest(&key, self.replication_factor).into(),
+                                closest.into(),
                             );
                         }
                         Some(KademliaCommand::PutRecordToPeers {
@@ -1083,14 +1098,14 @@ impl Kademlia {
                             };
 
                             self.store.put_provider(key.clone(), provider.clone());
+                            let key_saved = key.clone();
+                            let closest = self.closest_peers(&Key::new(key));
 
                             self.engine.start_add_provider(
                                 query_id,
-                                key.clone(),
+                                key_saved,
                                 provider,
-                                self.routing_table
-                                    .closest(&Key::new(key), self.replication_factor)
-                                    .into(),
+                                closest.into(),
                             );
                         }
                         Some(KademliaCommand::StopProviding {

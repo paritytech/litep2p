@@ -203,6 +203,9 @@ impl AddressStore {
     pub fn insert(&mut self, record: AddressRecord) {
         if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
             occupied.get_mut().update_score(record.score);
+            // if occupied.get().score < 0 {
+            //     occupied.remove();
+            // }
             return;
         }
 
@@ -213,20 +216,20 @@ impl AddressStore {
         //  - if the store is at capacity, the worst address will be evicted.
         //  - an address that is not dialed yet (with score zero) will be preferred over an address
         //  that already failed (with negative score).
-        if self.addresses.len() >= self.max_capacity {
-            let min_record = self
-                .addresses
-                .values()
-                .min()
-                .cloned()
-                .expect("There is at least one element checked above; qed");
+        // if self.addresses.len() >= self.max_capacity {
+        //     let min_record = self
+        //         .addresses
+        //         .values()
+        //         .min()
+        //         .cloned()
+        //         .expect("There is at least one element checked above; qed");
 
-            // The lowest score is better than the new record.
-            if record.score < min_record.score {
-                return;
-            }
-            self.addresses.remove(min_record.address());
-        }
+        //     // The lowest score is better than the new record.
+        //     if record.score < min_record.score {
+        //         return;
+        //     }
+        //     self.addresses.remove(min_record.address());
+        // }
 
         // Insert the record.
         self.addresses.insert(record.address.clone(), record);
@@ -236,7 +239,17 @@ impl AddressStore {
     pub fn addresses(&self, limit: usize) -> Vec<Multiaddr> {
         let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
         records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
-        records.into_iter().take(limit).map(|record| record.address).collect()
+        records
+            .into_iter()
+            .filter_map(|record| {
+                if record.score >= 0 {
+                    Some(record.address)
+                } else {
+                    None
+                }
+            })
+            .take(limit)
+            .collect()
     }
 }
 
