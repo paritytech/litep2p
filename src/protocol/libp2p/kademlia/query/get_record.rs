@@ -102,6 +102,9 @@ pub struct GetRecordContext {
 
     /// Number of found records.
     pub found_records: usize,
+
+    /// Records to propagate as next query action.
+    pub records: VecDeque<PeerRecord>,
 }
 
 impl GetRecordContext {
@@ -128,6 +131,7 @@ impl GetRecordContext {
             pending: HashMap::new(),
             queried: HashSet::new(),
             found_records: if local_record { 1 } else { 0 },
+            records: VecDeque::new(),
         }
     }
 
@@ -154,7 +158,7 @@ impl GetRecordContext {
         peer: PeerId,
         record: Option<Record>,
         peers: Vec<KademliaPeer>,
-    ) -> Option<PeerRecord> {
+    ) {
         tracing::trace!(
             target: LOG_TARGET,
             query = ?self.config.query,
@@ -169,13 +173,12 @@ impl GetRecordContext {
                 ?peer,
                 "`GetRecordContext`: received response from peer but didn't expect it",
             );
-            return None;
+            return;
         };
 
-        let mut maybe_result = None;
         if let Some(record) = record {
             if !record.is_expired(std::time::Instant::now()) {
-                maybe_result = Some(PeerRecord {
+                self.records.push_back(PeerRecord {
                     peer: peer.peer,
                     record,
                 });
@@ -211,8 +214,6 @@ impl GetRecordContext {
             let distance = self.config.target.distance(&candidate.key);
             self.candidates.insert(distance, candidate);
         }
-
-        maybe_result
     }
 
     /// Get next action for `peer`.
@@ -260,6 +261,14 @@ impl GetRecordContext {
 
     /// Get next action for a `GET_VALUE` query.
     pub fn next_action(&mut self) -> Option<QueryAction> {
+        // Drain the records first.
+        if let Some(record) = self.records.pop_front() {
+            return Some(QueryAction::GetRecordPartialResult {
+                query_id: self.config.query,
+                record,
+            });
+        }
+
         // These are the records we knew about before starting the query and
         // the records we found along the way.
         let known_records = self.config.known_records + self.found_records;

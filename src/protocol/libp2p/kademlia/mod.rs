@@ -871,8 +871,14 @@ impl Kademlia {
                 let _ = self.event_tx.send(KademliaEvent::QueryFailed { query_id: query }).await;
                 Ok(())
             }
-            QueryAction::QuerySucceeded { .. } | QueryAction::GetRecordPartialResult { .. } =>
-                Ok(()),
+            QueryAction::GetRecordPartialResult { query_id, record } => {
+                let _ = self
+                    .event_tx
+                    .send(KademliaEvent::GetRecordPartialResult { query_id, record })
+                    .await;
+                Ok(())
+            }
+            QueryAction::QuerySucceeded { .. } => Ok(()),
         }
     }
 

@@ -489,14 +489,8 @@ impl QueryEngine {
                 _ => unreachable!(),
             },
             Some(QueryType::GetRecord { context }) => match message {
-                KademliaMessage::GetRecord { record, peers, .. } => {
-                    if let Some(record) = context.register_response(peer, record, peers) {
-                        return Some(QueryAction::GetRecordPartialResult {
-                            query_id: query,
-                            record,
-                        });
-                    }
-                }
+                KademliaMessage::GetRecord { record, peers, .. } =>
+                    context.register_response(peer, record, peers),
                 _ => unreachable!(),
             },
             Some(QueryType::AddProvider { context, .. }) => match message {
