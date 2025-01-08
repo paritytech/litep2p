@@ -1107,9 +1107,16 @@ impl Kademlia {
                                 (Some(record), Quorum::One) => {
                                     let _ = self
                                         .event_tx
+                                        .send(KademliaEvent::GetRecordPartialResult { query_id, record: PeerRecord {
+                                            peer: self.service.local_peer_id(),
+                                            record: record.clone(),
+                                        } })
+                                        .await;
+
+                                    let _ = self
+                                        .event_tx
                                         .send(KademliaEvent::GetRecordSuccess {
                                             query_id,
-                                            records: RecordsType::LocalStore(record.clone()),
                                         })
                                         .await;
                                 }
