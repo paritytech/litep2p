@@ -152,12 +152,14 @@ impl GetRecordContext {
     }
 
     /// Register `GET_VALUE` response from `peer`.
+    ///
+    /// Returns some if the response should be propagated to the user.
     pub fn register_response(
         &mut self,
         peer: PeerId,
         record: Option<Record>,
         peers: Vec<KademliaPeer>,
-    ) {
+    ) -> Option<PeerRecord> {
         tracing::trace!(
             target: LOG_TARGET,
             query = ?self.config.query,
@@ -172,11 +174,18 @@ impl GetRecordContext {
                 ?peer,
                 "`GetRecordContext`: received response from peer but didn't expect it",
             );
-            return;
+            return None;
         };
+
+        let mut maybe_result = None;
 
         if let Some(record) = record {
             if !record.is_expired(std::time::Instant::now()) {
+                maybe_result = Some(PeerRecord {
+                    peer: peer.peer,
+                    record: record.clone(),
+                });
+
                 self.found_records.push(PeerRecord {
                     peer: peer.peer,
                     record,
@@ -211,6 +220,8 @@ impl GetRecordContext {
             let distance = self.config.target.distance(&candidate.key);
             self.candidates.insert(distance, candidate);
         }
+
+        maybe_result
     }
 
     /// Get next action for `peer`.
