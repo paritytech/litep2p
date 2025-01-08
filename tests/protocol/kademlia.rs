@@ -26,7 +26,7 @@ use litep2p::{
     crypto::ed25519::Keypair,
     protocol::libp2p::kademlia::{
         ConfigBuilder as KademliaConfigBuilder, ContentProvider, IncomingRecordValidationMode,
-        KademliaEvent, PeerRecord, Quorum, Record, RecordKey, RecordsType,
+        KademliaEvent, PeerRecord, Quorum, Record, RecordKey,
     },
     transport::tcp::config::Config as TcpConfig,
     types::multiaddr::{Multiaddr, Protocol},

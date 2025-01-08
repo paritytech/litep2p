@@ -54,7 +54,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use self::handle::RecordsType;
 pub use config::{Config, ConfigBuilder};
 pub use handle::{
     IncomingRecordValidationMode, KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode,
