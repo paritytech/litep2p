@@ -326,7 +326,7 @@ impl QueryEngine {
         target: RecordKey,
         candidates: VecDeque<KademliaPeer>,
         quorum: Quorum,
-        local_record: Option<Record>,
+        local_record: bool,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -339,7 +339,7 @@ impl QueryEngine {
         let target = Key::new(target);
         let config = GetRecordConfig {
             local_peer_id: self.local_peer_id,
-            known_records: if local_record.is_some() { 1 } else { 0 },
+            known_records: if local_record { 1 } else { 0 },
             quorum,
             replication_factor: self.replication_factor,
             parallelism_factor: self.parallelism_factor,
@@ -347,18 +347,10 @@ impl QueryEngine {
             target,
         };
 
-        let found_records = local_record
-            .into_iter()
-            .map(|record| PeerRecord {
-                peer: self.local_peer_id,
-                record,
-            })
-            .collect();
-
         self.queries.insert(
             query_id,
             QueryType::GetRecord {
-                context: GetRecordContext::new(config, candidates, found_records),
+                context: GetRecordContext::new(config, candidates, local_record),
             },
         );
 
@@ -565,7 +557,6 @@ impl QueryEngine {
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.config.query,
-                records: context.found_records(),
             },
             QueryType::AddProvider {
                 provided_key,

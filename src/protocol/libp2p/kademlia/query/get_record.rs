@@ -100,8 +100,8 @@ pub struct GetRecordContext {
     /// Candidates.
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
-    /// Found records.
-    pub found_records: Vec<PeerRecord>,
+    /// Number of found records.
+    pub found_records: usize,
 }
 
 impl GetRecordContext {
@@ -109,7 +109,7 @@ impl GetRecordContext {
     pub fn new(
         config: GetRecordConfig,
         in_peers: VecDeque<KademliaPeer>,
-        found_records: Vec<PeerRecord>,
+        local_record: bool,
     ) -> Self {
         let mut candidates = BTreeMap::new();
 
@@ -127,13 +127,8 @@ impl GetRecordContext {
             candidates,
             pending: HashMap::new(),
             queried: HashSet::new(),
-            found_records,
+            found_records: if local_record { 1 } else { 0 },
         }
-    }
-
-    /// Get the found records.
-    pub fn found_records(self) -> Vec<PeerRecord> {
-        self.found_records
     }
 
     /// Register response failure for `peer`.
@@ -178,18 +173,14 @@ impl GetRecordContext {
         };
 
         let mut maybe_result = None;
-
         if let Some(record) = record {
             if !record.is_expired(std::time::Instant::now()) {
                 maybe_result = Some(PeerRecord {
                     peer: peer.peer,
-                    record: record.clone(),
-                });
-
-                self.found_records.push(PeerRecord {
-                    peer: peer.peer,
                     record,
                 });
+
+                self.found_records += 1;
             }
         }
 
@@ -271,7 +262,7 @@ impl GetRecordContext {
     pub fn next_action(&mut self) -> Option<QueryAction> {
         // These are the records we knew about before starting the query and
         // the records we found along the way.
-        let known_records = self.config.known_records + self.found_records.len();
+        let known_records = self.config.known_records + self.found_records;
 
         // If we cannot make progress, return the final result.
         // A query failed when we are not able to identify one single record.
@@ -288,7 +279,7 @@ impl GetRecordContext {
         }
 
         // Check if enough records have been found
-        let sufficient_records = self.config.sufficient_records(self.found_records.len());
+        let sufficient_records = self.config.sufficient_records(self.found_records);
         if sufficient_records {
             return Some(QueryAction::QuerySucceeded {
                 query: self.config.query,

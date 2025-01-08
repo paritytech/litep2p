@@ -1121,6 +1121,17 @@ impl Kademlia {
                                         .await;
                                 }
                                 (record, _) => {
+                                    let local_record = record.is_some();
+                                    if let Some(record) = record {
+                                        let _ = self
+                                            .event_tx
+                                            .send(KademliaEvent::GetRecordPartialResult { query_id, record: PeerRecord {
+                                                peer: self.service.local_peer_id(),
+                                                record: record.clone(),
+                                            } })
+                                            .await;
+                                    }
+
                                     self.engine.start_get_record(
                                         query_id,
                                         key.clone(),
@@ -1128,7 +1139,7 @@ impl Kademlia {
                                             .closest(&Key::new(key), self.replication_factor)
                                             .into(),
                                         quorum,
-                                        record.cloned(),
+                                        local_record,
                                     );
                                 }
                             }
