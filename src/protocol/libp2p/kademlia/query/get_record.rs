@@ -487,8 +487,19 @@ mod tests {
         let mut found_records = Vec::new();
         // Provide responses back.
         let record = Record::new(key.clone(), vec![1, 2, 3]);
-        let record = context.register_response(peer_a, Some(record), vec![]).unwrap();
-        found_records.push(record);
+        context.register_response(peer_a, Some(record), vec![]);
+        // Check propagated action.
+        let record = context.next_action().unwrap();
+        match record {
+            QueryAction::GetRecordPartialResult { query_id, record } => {
+                assert_eq!(query_id, QueryId(0));
+                assert_eq!(record.peer, peer_a);
+                assert_eq!(record.record, Record::new(key.clone(), vec![1, 2, 3]));
+
+                found_records.push(record);
+            }
+            _ => panic!("Unexpected event"),
+        }
 
         assert_eq!(context.pending.len(), 2);
         assert_eq!(context.queried.len(), 1);
@@ -496,10 +507,19 @@ mod tests {
 
         // Provide different response from peer b with peer d as candidate.
         let record = Record::new(key.clone(), vec![4, 5, 6]);
-        let record = context
-            .register_response(peer_b, Some(record), vec![peer_to_kad(peer_d.clone())])
-            .unwrap();
-        found_records.push(record);
+        context.register_response(peer_b, Some(record), vec![peer_to_kad(peer_d.clone())]);
+        // Check propagated action.
+        let record = context.next_action().unwrap();
+        match record {
+            QueryAction::GetRecordPartialResult { query_id, record } => {
+                assert_eq!(query_id, QueryId(0));
+                assert_eq!(record.peer, peer_b);
+                assert_eq!(record.record, Record::new(key.clone(), vec![4, 5, 6]));
+
+                found_records.push(record);
+            }
+            _ => panic!("Unexpected event"),
+        }
 
         assert_eq!(context.pending.len(), 1);
         assert_eq!(context.queried.len(), 2);
@@ -526,8 +546,19 @@ mod tests {
 
         // Peer D responds.
         let record = Record::new(key.clone(), vec![4, 5, 6]);
-        let record = context.register_response(peer_d, Some(record), vec![]).unwrap();
-        found_records.push(record);
+        context.register_response(peer_d, Some(record), vec![]);
+        // Check propagated action.
+        let record = context.next_action().unwrap();
+        match record {
+            QueryAction::GetRecordPartialResult { query_id, record } => {
+                assert_eq!(query_id, QueryId(0));
+                assert_eq!(record.peer, peer_d);
+                assert_eq!(record.record, Record::new(key.clone(), vec![4, 5, 6]));
+
+                found_records.push(record);
+            }
+            _ => panic!("Unexpected event"),
+        }
 
         // Produces the result.
         let event = context.next_action().unwrap();
