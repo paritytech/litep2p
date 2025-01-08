@@ -899,9 +899,11 @@ mod tests {
             false,
         );
 
+        let mut records = Vec::new();
         for _ in 0..4 {
             match engine.next_action() {
                 Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    assert_eq!(query, QueryId(1341));
                     engine.register_response(
                         query,
                         peer,
@@ -912,18 +914,23 @@ mod tests {
                         },
                     );
                 }
-                _ => panic!("invalid event received"),
+                event => panic!("invalid event received {:?}", event),
+            }
+
+            // GetRecordPartialResult is emitted after the `register_response` if the record is
+            // valid.
+            match engine.next_action() {
+                Some(QueryAction::GetRecordPartialResult { query_id, record }) => {
+                    println!("Partial result {:?}", record);
+                    assert_eq!(query_id, QueryId(1341));
+                    records.push(record);
+                }
+                event => panic!("invalid event received {:?}", event),
             }
         }
 
         let peers: std::collections::HashSet<_> = peers.into_iter().map(|p| p.peer).collect();
-        let mut records = Vec::new();
         match engine.next_action() {
-            Some(QueryAction::GetRecordPartialResult { query_id, record }) => {
-                println!("Partial result {:?}", record);
-                assert_eq!(query_id, QueryId(1341));
-                records.push(record);
-            }
             Some(QueryAction::GetRecordQueryDone { .. }) => {
                 println!("Records {:?}", records);
                 let query_peers = records
@@ -941,7 +948,7 @@ mod tests {
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);
             }
-            _ => panic!("invalid event received"),
+            event => panic!("invalid event received {:?}", event),
         }
     }
 }
