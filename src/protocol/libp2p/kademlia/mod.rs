@@ -1315,7 +1315,7 @@ mod tests {
         ];
 
         let query_id = QueryId(1);
-        let action = QueryAction::GetRecordQueryDone { query_id, records };
+        let action = QueryAction::GetRecordQueryDone { query_id };
         assert!(kademlia.on_query_action(action).await.is_ok());
 
         // Check the local storage should not get updated.
@@ -1325,6 +1325,8 @@ mod tests {
     #[tokio::test]
     async fn check_get_records_update_with_expired_records() {
         let (mut kademlia, _context, _manager) = make_kademlia();
+
+        // TODO: Move records on query actions.
 
         let key = RecordKey::from(vec![1, 2, 3]);
         let expired = std::time::Instant::now() - std::time::Duration::from_secs(10);
@@ -1355,7 +1357,7 @@ mod tests {
         ];
 
         let query_id = QueryId(1);
-        let action = QueryAction::GetRecordQueryDone { query_id, records };
+        let action = QueryAction::GetRecordQueryDone { query_id };
         assert!(kademlia.on_query_action(action).await.is_ok());
 
         // Check the local storage should not get updated.

@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn completes_when_no_candidates() {
         let config = default_config();
-        let mut context = GetRecordContext::new(config, VecDeque::new(), Vec::new());
+        let mut context = GetRecordContext::new(config, VecDeque::new(), false);
         assert!(context.is_done());
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
@@ -393,7 +393,7 @@ mod tests {
             known_records: 1,
             ..default_config()
         };
-        let mut context = GetRecordContext::new(config, VecDeque::new(), Vec::new());
+        let mut context = GetRecordContext::new(config, VecDeque::new(), false);
         assert!(context.is_done());
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(in_peers_set.len(), 3);
 
         let in_peers = in_peers_set.iter().map(|peer| peer_to_kad(*peer)).collect();
-        let mut context = GetRecordContext::new(config, in_peers, Vec::new());
+        let mut context = GetRecordContext::new(config, in_peers, false);
 
         for num in 0..3 {
             let event = context.next_action().unwrap();
@@ -450,7 +450,7 @@ mod tests {
         assert_eq!(in_peers_set.len(), 3);
 
         let in_peers = [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
-        let mut context = GetRecordContext::new(config, in_peers, Vec::new());
+        let mut context = GetRecordContext::new(config, in_peers, false);
 
         // Schedule peer queries.
         for num in 0..3 {
@@ -475,26 +475,33 @@ mod tests {
         assert_eq!(context.pending.len(), 3);
         assert!(context.queried.is_empty());
 
+        let mut found_records = Vec::new();
         // Provide responses back.
         let record = Record::new(key.clone(), vec![1, 2, 3]);
-        context.register_response(peer_a, Some(record), vec![]);
+        let record = context.register_response(peer_a, Some(record), vec![]).unwrap();
+        found_records.push(record);
+
         assert_eq!(context.pending.len(), 2);
         assert_eq!(context.queried.len(), 1);
-        assert_eq!(context.found_records.len(), 1);
+        assert_eq!(context.found_records, 1);
 
         // Provide different response from peer b with peer d as candidate.
         let record = Record::new(key.clone(), vec![4, 5, 6]);
-        context.register_response(peer_b, Some(record), vec![peer_to_kad(peer_d.clone())]);
+        let record = context
+            .register_response(peer_b, Some(record), vec![peer_to_kad(peer_d.clone())])
+            .unwrap();
+        found_records.push(record);
+
         assert_eq!(context.pending.len(), 1);
         assert_eq!(context.queried.len(), 2);
-        assert_eq!(context.found_records.len(), 2);
+        assert_eq!(context.found_records, 2);
         assert_eq!(context.candidates.len(), 1);
 
         // Peer C fails.
         context.register_response_failure(peer_c);
         assert!(context.pending.is_empty());
         assert_eq!(context.queried.len(), 3);
-        assert_eq!(context.found_records.len(), 2);
+        assert_eq!(context.found_records, 2);
 
         // Drain the last candidate.
         let event = context.next_action().unwrap();
@@ -510,14 +517,14 @@ mod tests {
 
         // Peer D responds.
         let record = Record::new(key.clone(), vec![4, 5, 6]);
-        context.register_response(peer_d, Some(record), vec![]);
+        let record = context.register_response(peer_d, Some(record), vec![]).unwrap();
+        found_records.push(record);
 
         // Produces the result.
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
 
         // Check results.
-        let found_records = context.found_records();
         assert_eq!(
             found_records,
             vec![

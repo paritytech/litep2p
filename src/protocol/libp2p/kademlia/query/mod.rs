@@ -902,7 +902,7 @@ mod tests {
             ]
             .into(),
             Quorum::All,
-            None,
+            false,
         );
 
         for _ in 0..4 {
@@ -923,8 +923,15 @@ mod tests {
         }
 
         let peers: std::collections::HashSet<_> = peers.into_iter().map(|p| p.peer).collect();
+        let mut records = Vec::new();
         match engine.next_action() {
-            Some(QueryAction::GetRecordQueryDone { records, .. }) => {
+            Some(QueryAction::GetRecordPartialResult { query_id, record }) => {
+                println!("Partial result {:?}", record);
+                assert_eq!(query_id, QueryId(1341));
+                records.push(record);
+            }
+            Some(QueryAction::GetRecordQueryDone { .. }) => {
+                println!("Records {:?}", records);
                 let query_peers = records
                     .iter()
                     .map(|peer_record| peer_record.peer)
