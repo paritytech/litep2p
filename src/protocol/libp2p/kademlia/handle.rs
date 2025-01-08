@@ -197,9 +197,17 @@ pub enum KademliaEvent {
     GetRecordSuccess {
         /// Query ID.
         query_id: QueryId,
+    },
 
-        /// Found records.
-        records: RecordsType,
+    /// `GET_VALUE` inflight query produced a result.
+    ///
+    /// This event is emitted when a peer responds to the query with a record.
+    GetRecordPartialResult {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Found record.
+        record: PeerRecord,
     },
 
     /// `GET_PROVIDERS` query succeeded.

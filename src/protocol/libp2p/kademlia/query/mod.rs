@@ -156,9 +156,17 @@ pub enum QueryAction {
     GetRecordQueryDone {
         /// Query ID.
         query_id: QueryId,
+    },
 
-        /// Found records.
-        records: Vec<PeerRecord>,
+    /// `GET_VALUE` inflight query produced a result.
+    ///
+    /// This event is emitted when a peer responds to the query with a record.
+    GetRecordPartialResult {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Found record.
+        record: PeerRecord,
     },
 
     /// `GET_PROVIDERS` query succeeded.
@@ -458,7 +466,12 @@ impl QueryEngine {
     }
 
     /// Register that `response` received from `peer`.
-    pub fn register_response(&mut self, query: QueryId, peer: PeerId, message: KademliaMessage) {
+    pub fn register_response(
+        &mut self,
+        query: QueryId,
+        peer: PeerId,
+        message: KademliaMessage,
+    ) -> Option<QueryAction> {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response");
 
         match self.queries.get_mut(&query) {
@@ -485,7 +498,12 @@ impl QueryEngine {
             },
             Some(QueryType::GetRecord { context }) => match message {
                 KademliaMessage::GetRecord { record, peers, .. } => {
-                    context.register_response(peer, record, peers);
+                    if let Some(record) = context.register_response(peer, record, peers) {
+                        return Some(QueryAction::GetRecordPartialResult {
+                            query_id: query,
+                            record,
+                        });
+                    }
                 }
                 _ => unreachable!(),
             },
@@ -506,6 +524,8 @@ impl QueryEngine {
                 _ => unreachable!(),
             },
         }
+
+        None
     }
 
     /// Get next action for `peer` from the [`QueryEngine`].
