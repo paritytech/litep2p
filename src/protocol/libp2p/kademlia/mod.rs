@@ -485,11 +485,20 @@ impl Kademlia {
 
                         // update routing table and inform user about the update
                         self.update_routing_table(&peers).await;
-                        self.engine.register_response(
-                            query_id,
-                            peer,
-                            KademliaMessage::GetRecord { key, record, peers },
-                        );
+
+                        // Send partial response to the user.
+                        if let Some(QueryAction::GetRecordPartialResult { query_id, record }) =
+                            self.engine.register_response(
+                                query_id,
+                                peer,
+                                KademliaMessage::GetRecord { key, record, peers },
+                            )
+                        {
+                            let _ = self
+                                .event_tx
+                                .send(KademliaEvent::GetRecordPartialResult { query_id, record })
+                                .await;
+                        }
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -837,14 +846,8 @@ impl Kademlia {
 
                 Ok(())
             }
-            QueryAction::GetRecordQueryDone { query_id, records } => {
-                let _ = self
-                    .event_tx
-                    .send(KademliaEvent::GetRecordSuccess {
-                        query_id,
-                        records: RecordsType::Network(records),
-                    })
-                    .await;
+            QueryAction::GetRecordQueryDone { query_id } => {
+                let _ = self.event_tx.send(KademliaEvent::GetRecordSuccess { query_id }).await;
                 Ok(())
             }
             QueryAction::GetProvidersQueryDone {
@@ -868,7 +871,8 @@ impl Kademlia {
                 let _ = self.event_tx.send(KademliaEvent::QueryFailed { query_id: query }).await;
                 Ok(())
             }
-            QueryAction::QuerySucceeded { .. } => unreachable!(),
+            QueryAction::QuerySucceeded { .. } | QueryAction::GetRecordPartialResult { .. } =>
+                Ok(()),
         }
     }
 
