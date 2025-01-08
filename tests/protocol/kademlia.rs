@@ -130,6 +130,10 @@ async fn put_value() {
 
 #[tokio::test]
 async fn records_are_stored_automatically() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
     let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
     let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
 
@@ -190,7 +194,8 @@ async fn records_are_stored_automatically() {
                     Some(KademliaEvent::GetRecordSuccess { query_id: _ }) => {
                         assert_eq!(records.len(), 1);
                         let got_record = records.first().unwrap();
-                        assert_eq!(got_record.peer, *litep2p1.local_peer_id());
+                        // Record retrieved from local storage.
+                        assert_eq!(got_record.peer, *litep2p2.local_peer_id());
                         assert_eq!(got_record.record.key, record.key);
                         assert_eq!(got_record.record.value, record.value);
                         assert_eq!(got_record.record.publisher.unwrap(), *litep2p1.local_peer_id());
@@ -272,7 +277,8 @@ async fn records_are_stored_manually() {
                     Some(KademliaEvent::GetRecordSuccess { query_id: _ }) => {
                         assert_eq!(records.len(), 1);
                         let got_record = records.first().unwrap();
-                        assert_eq!(got_record.peer, *litep2p1.local_peer_id());
+                        // Record retrieved from local storage.
+                        assert_eq!(got_record.peer, *litep2p2.local_peer_id());
                         assert_eq!(got_record.record.key, record.key);
                         assert_eq!(got_record.record.value, record.value);
                         assert_eq!(got_record.record.publisher.unwrap(), *litep2p1.local_peer_id());
