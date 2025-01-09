@@ -485,19 +485,11 @@ impl Kademlia {
                         // update routing table and inform user about the update
                         self.update_routing_table(&peers).await;
 
-                        // Send partial response to the user.
-                        if let Some(QueryAction::GetRecordPartialResult { query_id, record }) =
-                            self.engine.register_response(
-                                query_id,
-                                peer,
-                                KademliaMessage::GetRecord { key, record, peers },
-                            )
-                        {
-                            let _ = self
-                                .event_tx
-                                .send(KademliaEvent::GetRecordPartialResult { query_id, record })
-                                .await;
-                        }
+                        self.engine.register_response(
+                            query_id,
+                            peer,
+                            KademliaMessage::GetRecord { key, record, peers },
+                        );
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
