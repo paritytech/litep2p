@@ -102,7 +102,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
                 tracing::info!("peer2 observed: {observed_address:?}");
 
                 assert_eq!(protocol_version, Some("/proto/2".to_string()));
-                assert_eq!(user_agent, Some("agent v2".to_string()));
+                assert_eq!(user_agent, Some("agent v2 (litep2p)".to_string()));
 
                 litep2p1_done = true;
 
@@ -115,7 +115,7 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
                 tracing::info!("peer1 observed: {observed_address:?}");
 
                 assert_eq!(protocol_version, Some("/proto/1".to_string()));
-                assert_eq!(user_agent, Some("agent v1".to_string()));
+                assert_eq!(user_agent, Some("agent v1 (litep2p)".to_string()));
 
                 litep2p2_done = true;
 
