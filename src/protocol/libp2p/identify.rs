@@ -55,6 +55,9 @@ const _PUSH_PROTOCOL_NAME: &str = "/ipfs/id/push/1.0.0";
 /// Default agent version.
 const DEFAULT_AGENT: &str = "litep2p/1.0.0";
 
+/// Sufix name added to the user agent.
+const AGENT_SUFIX: &str = "(litep2p)";
+
 /// Size for `/ipfs/ping/1.0.0` payloads.
 // TODO: what is the max size?
 const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
@@ -197,7 +200,10 @@ impl Identify {
             peers: HashMap::new(),
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
-            user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
+            user_agent: config
+                .user_agent
+                .map(|agent| format!("{} {}", agent, AGENT_SUFIX))
+                .unwrap_or(DEFAULT_AGENT.to_string()),
             pending_inbound: FuturesStream::new(),
             pending_outbound: FuturesStream::new(),
             protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
