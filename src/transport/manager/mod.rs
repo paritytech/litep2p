@@ -1098,9 +1098,10 @@ impl TransportManager {
                                                 match context.tx.try_send(InnerTransportEvent::DialFailure {
                                                     peer,
                                                     address: address.clone(),
+                                                    reason: error.to_string(),
                                                 }) {
                                                     Ok(()) => {}
-                                                    Err(_) => {
+                                                    Err(err) => {
                                                         tracing::trace!(
                                                             target: LOG_TARGET,
                                                             ?connection_id,
@@ -1114,6 +1115,7 @@ impl TransportManager {
                                                             .send(InnerTransportEvent::DialFailure {
                                                                 peer,
                                                                 address: address.clone(),
+                                                                reason: format!("channel clogged err ({:?}) original error: {:?}", err, error.to_string()),
                                                             })
                                                             .await;
                                                     }
@@ -1219,8 +1221,10 @@ impl TransportManager {
                             }
                         }
                         TransportEvent::OpenFailure { connection_id, errors } => {
+                            let mut report_error = "".to_string();
                             for (address, error) in &errors {
                                 self.update_address_on_dial_failure(address.clone(), error);
+                                report_error.push_str(&format!("({}: {}), ", address, error));
                             }
 
                             match self.on_open_failure(transport, connection_id) {
@@ -1245,9 +1249,10 @@ impl TransportManager {
                                             .try_send(InnerTransportEvent::DialFailure {
                                                 peer,
                                                 address: Multiaddr::empty(),
+                                                reason: report_error.to_string(),
                                             }) {
                                             Ok(_) => Ok(()),
-                                            Err(_) => {
+                                            Err(err) => {
                                                 tracing::trace!(
                                                     target: LOG_TARGET,
                                                     ?peer,
@@ -1261,6 +1266,7 @@ impl TransportManager {
                                                     .send(InnerTransportEvent::DialFailure {
                                                         peer,
                                                         address: Multiaddr::empty(),
+                                                        reason: format!("channel clogged open-err ({:?}) original error: {:?}", err, report_error),
                                                     })
                                                     .await
                                             }

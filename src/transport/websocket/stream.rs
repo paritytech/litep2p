@@ -113,7 +113,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                     }
                 }
                 State::ReadyPending { to_write } => {
-                    match self.stream.start_send_unpin(Message::Binary(to_write.clone())) {
+                    // TODO: Optimize this code!
+                    match self.stream.start_send_unpin(Message::binary(to_write.clone())) {
                         Ok(_) => {
                             self.state = State::FlushPending;
                             continue;
@@ -156,7 +157,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncRead for BufferedStream<S>
             if self.read_buffer.is_none() {
                 match self.stream.poll_next_unpin(cx) {
                     Poll::Ready(Some(Ok(chunk))) => match chunk {
-                        Message::Binary(chunk) => self.read_buffer.replace(chunk.into()),
+                        Message::Binary(chunk) => {
+                            let buffer= match chunk {
+                                tokio_tungstenite::tungstenite::protocol::frame::Payload::Owned(bytes_mut) => bytes_mut.freeze(),
+                                tokio_tungstenite::tungstenite::protocol::frame::Payload::Shared(bytes) => bytes,
+                                tokio_tungstenite::tungstenite::protocol::frame::Payload::Vec(vec) => vec.into(),
+                            };
+                            self.read_buffer = Some(buffer);
+                        }
                         _event => return Poll::Ready(Err(std::io::ErrorKind::Unsupported.into())),
                     },
                     Poll::Ready(Some(Err(_error))) =>
