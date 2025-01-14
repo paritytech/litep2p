@@ -156,9 +156,17 @@ pub enum QueryAction {
     GetRecordQueryDone {
         /// Query ID.
         query_id: QueryId,
+    },
 
-        /// Found records.
-        records: Vec<PeerRecord>,
+    /// `GET_VALUE` inflight query produced a result.
+    ///
+    /// This event is emitted when a peer responds to the query with a record.
+    GetRecordPartialResult {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Found record.
+        record: PeerRecord,
     },
 
     /// `GET_PROVIDERS` query succeeded.
@@ -318,7 +326,7 @@ impl QueryEngine {
         target: RecordKey,
         candidates: VecDeque<KademliaPeer>,
         quorum: Quorum,
-        local_record: Option<Record>,
+        local_record: bool,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -331,7 +339,7 @@ impl QueryEngine {
         let target = Key::new(target);
         let config = GetRecordConfig {
             local_peer_id: self.local_peer_id,
-            known_records: if local_record.is_some() { 1 } else { 0 },
+            known_records: if local_record { 1 } else { 0 },
             quorum,
             replication_factor: self.replication_factor,
             parallelism_factor: self.parallelism_factor,
@@ -339,18 +347,10 @@ impl QueryEngine {
             target,
         };
 
-        let found_records = local_record
-            .into_iter()
-            .map(|record| PeerRecord {
-                peer: self.local_peer_id,
-                record,
-            })
-            .collect();
-
         self.queries.insert(
             query_id,
             QueryType::GetRecord {
-                context: GetRecordContext::new(config, candidates, found_records),
+                context: GetRecordContext::new(config, candidates, local_record),
             },
         );
 
@@ -458,7 +458,12 @@ impl QueryEngine {
     }
 
     /// Register that `response` received from `peer`.
-    pub fn register_response(&mut self, query: QueryId, peer: PeerId, message: KademliaMessage) {
+    pub fn register_response(
+        &mut self,
+        query: QueryId,
+        peer: PeerId,
+        message: KademliaMessage,
+    ) -> Option<QueryAction> {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response");
 
         match self.queries.get_mut(&query) {
@@ -484,9 +489,8 @@ impl QueryEngine {
                 _ => unreachable!(),
             },
             Some(QueryType::GetRecord { context }) => match message {
-                KademliaMessage::GetRecord { record, peers, .. } => {
-                    context.register_response(peer, record, peers);
-                }
+                KademliaMessage::GetRecord { record, peers, .. } =>
+                    context.register_response(peer, record, peers),
                 _ => unreachable!(),
             },
             Some(QueryType::AddProvider { context, .. }) => match message {
@@ -506,6 +510,8 @@ impl QueryEngine {
                 _ => unreachable!(),
             },
         }
+
+        None
     }
 
     /// Get next action for `peer` from the [`QueryEngine`].
@@ -545,7 +551,6 @@ impl QueryEngine {
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.config.query,
-                records: context.found_records(),
             },
             QueryType::AddProvider {
                 provided_key,
@@ -891,12 +896,14 @@ mod tests {
             ]
             .into(),
             Quorum::All,
-            None,
+            false,
         );
 
+        let mut records = Vec::new();
         for _ in 0..4 {
             match engine.next_action() {
                 Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    assert_eq!(query, QueryId(1341));
                     engine.register_response(
                         query,
                         peer,
@@ -907,13 +914,25 @@ mod tests {
                         },
                     );
                 }
-                _ => panic!("invalid event received"),
+                event => panic!("invalid event received {:?}", event),
+            }
+
+            // GetRecordPartialResult is emitted after the `register_response` if the record is
+            // valid.
+            match engine.next_action() {
+                Some(QueryAction::GetRecordPartialResult { query_id, record }) => {
+                    println!("Partial result {:?}", record);
+                    assert_eq!(query_id, QueryId(1341));
+                    records.push(record);
+                }
+                event => panic!("invalid event received {:?}", event),
             }
         }
 
         let peers: std::collections::HashSet<_> = peers.into_iter().map(|p| p.peer).collect();
         match engine.next_action() {
-            Some(QueryAction::GetRecordQueryDone { records, .. }) => {
+            Some(QueryAction::GetRecordQueryDone { .. }) => {
+                println!("Records {:?}", records);
                 let query_peers = records
                     .iter()
                     .map(|peer_record| peer_record.peer)
@@ -929,7 +948,7 @@ mod tests {
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);
             }
-            _ => panic!("invalid event received"),
+            event => panic!("invalid event received {:?}", event),
         }
     }
 }

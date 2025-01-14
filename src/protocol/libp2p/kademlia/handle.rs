@@ -197,9 +197,17 @@ pub enum KademliaEvent {
     GetRecordSuccess {
         /// Query ID.
         query_id: QueryId,
+    },
 
-        /// Found records.
-        records: RecordsType,
+    /// `GET_VALUE` inflight query produced a result.
+    ///
+    /// This event is emitted when a peer responds to the query with a record.
+    GetRecordPartialResult {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Found record.
+        record: PeerRecord,
     },
 
     /// `GET_PROVIDERS` query succeeded.
@@ -249,18 +257,6 @@ pub enum KademliaEvent {
         /// Provider.
         provider: ContentProvider,
     },
-}
-
-/// The type of the DHT records.
-#[derive(Debug, Clone)]
-pub enum RecordsType {
-    /// Record was found in the local store and [`Quorum::One`] was used.
-    ///
-    /// This contains only a single result.
-    LocalStore(Record),
-
-    /// Records found in the network. This can include the locally found record.
-    Network(Vec<PeerRecord>),
 }
 
 /// Handle for communicating with the Kademlia protocol.

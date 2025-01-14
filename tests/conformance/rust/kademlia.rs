@@ -405,9 +405,14 @@ async fn get_record() {
 
     loop {
         match kad_handle.next().await.unwrap() {
+            KademliaEvent::GetRecordPartialResult { record, .. } => {
+                assert_eq!(record.record.key.as_ref(), vec![1, 2, 3, 4]);
+                assert_eq!(record.record.value, vec![13, 37, 13, 38]);
+                break;
+            }
             KademliaEvent::GetRecordSuccess { .. } => break,
             KademliaEvent::RoutingTableUpdate { .. } => {}
-            _ => panic!("invalid event received"),
+            event => panic!("invalid event received {event:?}"),
         }
     }
 }

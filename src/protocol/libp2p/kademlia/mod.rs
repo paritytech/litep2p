@@ -54,7 +54,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use self::handle::RecordsType;
 pub use config::{Config, ConfigBuilder};
 pub use handle::{
     IncomingRecordValidationMode, KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode,
@@ -485,6 +484,7 @@ impl Kademlia {
 
                         // update routing table and inform user about the update
                         self.update_routing_table(&peers).await;
+
                         self.engine.register_response(
                             query_id,
                             peer,
@@ -837,14 +837,8 @@ impl Kademlia {
 
                 Ok(())
             }
-            QueryAction::GetRecordQueryDone { query_id, records } => {
-                let _ = self
-                    .event_tx
-                    .send(KademliaEvent::GetRecordSuccess {
-                        query_id,
-                        records: RecordsType::Network(records),
-                    })
-                    .await;
+            QueryAction::GetRecordQueryDone { query_id } => {
+                let _ = self.event_tx.send(KademliaEvent::GetRecordSuccess { query_id }).await;
                 Ok(())
             }
             QueryAction::GetProvidersQueryDone {
@@ -868,7 +862,14 @@ impl Kademlia {
                 let _ = self.event_tx.send(KademliaEvent::QueryFailed { query_id: query }).await;
                 Ok(())
             }
-            QueryAction::QuerySucceeded { .. } => unreachable!(),
+            QueryAction::GetRecordPartialResult { query_id, record } => {
+                let _ = self
+                    .event_tx
+                    .send(KademliaEvent::GetRecordPartialResult { query_id, record })
+                    .await;
+                Ok(())
+            }
+            QueryAction::QuerySucceeded { .. } => Ok(()),
         }
     }
 
@@ -1103,13 +1104,31 @@ impl Kademlia {
                                 (Some(record), Quorum::One) => {
                                     let _ = self
                                         .event_tx
+                                        .send(KademliaEvent::GetRecordPartialResult { query_id, record: PeerRecord {
+                                            peer: self.service.local_peer_id(),
+                                            record: record.clone(),
+                                        } })
+                                        .await;
+
+                                    let _ = self
+                                        .event_tx
                                         .send(KademliaEvent::GetRecordSuccess {
                                             query_id,
-                                            records: RecordsType::LocalStore(record.clone()),
                                         })
                                         .await;
                                 }
                                 (record, _) => {
+                                    let local_record = record.is_some();
+                                    if let Some(record) = record {
+                                        let _ = self
+                                            .event_tx
+                                            .send(KademliaEvent::GetRecordPartialResult { query_id, record: PeerRecord {
+                                                peer: self.service.local_peer_id(),
+                                                record: record.clone(),
+                                            } })
+                                            .await;
+                                    }
+
                                     self.engine.start_get_record(
                                         query_id,
                                         key.clone(),
@@ -1117,7 +1136,7 @@ impl Kademlia {
                                             .closest(&Key::new(key), self.replication_factor)
                                             .into(),
                                         quorum,
-                                        record.cloned(),
+                                        local_record,
                                     );
                                 }
                             }
@@ -1292,8 +1311,16 @@ mod tests {
             },
         ];
 
+        for record in records {
+            let action = QueryAction::GetRecordPartialResult {
+                query_id: QueryId(1),
+                record,
+            };
+            assert!(kademlia.on_query_action(action).await.is_ok());
+        }
+
         let query_id = QueryId(1);
-        let action = QueryAction::GetRecordQueryDone { query_id, records };
+        let action = QueryAction::GetRecordQueryDone { query_id };
         assert!(kademlia.on_query_action(action).await.is_ok());
 
         // Check the local storage should not get updated.
@@ -1332,9 +1359,20 @@ mod tests {
             },
         ];
 
-        let query_id = QueryId(1);
-        let action = QueryAction::GetRecordQueryDone { query_id, records };
-        assert!(kademlia.on_query_action(action).await.is_ok());
+        for record in records {
+            let action = QueryAction::GetRecordPartialResult {
+                query_id: QueryId(1),
+                record,
+            };
+            assert!(kademlia.on_query_action(action).await.is_ok());
+        }
+
+        kademlia
+            .on_query_action(QueryAction::GetRecordQueryDone {
+                query_id: QueryId(1),
+            })
+            .await
+            .unwrap();
 
         // Check the local storage should not get updated.
         assert!(kademlia.store.get(&key).is_none());
