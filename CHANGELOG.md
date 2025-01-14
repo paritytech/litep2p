@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2025-01-14
+
+This release provides partial results to speed up `GetRecord` queries in the Kademlia protocol.
+
+### Changed
+
+- kad: Provide partial results to speedup `GetRecord` queries  ([#315](https://github.com/paritytech/litep2p/pull/315))
+
 ## [0.8.4] - 2024-12-12
 
 This release aims to make the MDNS component more robust by fixing a bug that caused the MDNS service to fail to register opened substreams. Additionally, the release includes several improvements to the `identify` protocol, replacing `FuturesUnordered` with `FuturesStream` for better performance.
