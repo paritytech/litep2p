@@ -292,13 +292,15 @@ impl RequestResponseProtocol {
     async fn on_connection_closed(&mut self, peer: PeerId) {
         tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "connection closed");
 
+        // Remove any pending outbound substreams for this peer.
+        self.pending_outbound.retain(|_, context| context.peer != peer);
+
         let Some(context) = self.peers.remove(&peer) else {
             tracing::error!(
                 target: LOG_TARGET,
                 ?peer,
-                "state mismatch: peer doesn't exist",
+                "Peer does not exist or substream open failed during connection establishment",
             );
-            debug_assert!(false);
             return;
         };
 

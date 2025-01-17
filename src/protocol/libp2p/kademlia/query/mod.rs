@@ -23,9 +23,10 @@ use crate::{
         message::KademliaMessage,
         query::{
             find_node::{FindNodeConfig, FindNodeContext},
+            get_providers::{GetProvidersConfig, GetProvidersContext},
             get_record::{GetRecordConfig, GetRecordContext},
         },
-        record::{Key as RecordKey, Record},
+        record::{ContentProvider, Key as RecordKey, Record},
         types::{KademliaPeer, Key},
         PeerRecord, Quorum,
     },
@@ -40,12 +41,11 @@ use self::find_many_nodes::FindManyNodesContext;
 
 mod find_many_nodes;
 mod find_node;
+mod get_providers;
 mod get_record;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
-
-// TODO: store record key instead of the actual record
 
 /// Type representing a query ID.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -56,7 +56,7 @@ pub struct QueryId(pub usize);
 enum QueryType {
     /// `FIND_NODE` query.
     FindNode {
-        /// Context for the `FIND_NODE` query
+        /// Context for the `FIND_NODE` query.
         context: FindNodeContext<PeerId>,
     },
 
@@ -65,7 +65,7 @@ enum QueryType {
         /// Record that needs to be stored.
         record: Record,
 
-        /// Context for the `FIND_NODE` query
+        /// Context for the `FIND_NODE` query.
         context: FindNodeContext<RecordKey>,
     },
 
@@ -82,6 +82,24 @@ enum QueryType {
     GetRecord {
         /// Context for the `GET_VALUE` query.
         context: GetRecordContext,
+    },
+
+    /// `ADD_PROVIDER` query.
+    AddProvider {
+        /// Provided key.
+        provided_key: RecordKey,
+
+        /// Provider record that need to be stored.
+        provider: ContentProvider,
+
+        /// Context for the `FIND_NODE` query.
+        context: FindNodeContext<RecordKey>,
+    },
+
+    /// `GET_PROVIDERS` query.
+    GetProviders {
+        /// Context for the `GET_PROVIDERS` query.
+        context: GetProvidersContext,
     },
 }
 
@@ -122,16 +140,47 @@ pub enum QueryAction {
         peers: Vec<KademliaPeer>,
     },
 
+    /// Add the provider record to nodes closest to the target key.
+    AddProviderToFoundNodes {
+        /// Provided key.
+        provided_key: RecordKey,
+
+        /// Provider record.
+        provider: ContentProvider,
+
+        /// Peers for whom the `ADD_PROVIDER` must be sent to.
+        peers: Vec<KademliaPeer>,
+    },
+
     /// `GET_VALUE` query succeeded.
     GetRecordQueryDone {
         /// Query ID.
         query_id: QueryId,
-
-        /// Found records.
-        records: Vec<PeerRecord>,
     },
 
-    // TODO: remove
+    /// `GET_VALUE` inflight query produced a result.
+    ///
+    /// This event is emitted when a peer responds to the query with a record.
+    GetRecordPartialResult {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Found record.
+        record: PeerRecord,
+    },
+
+    /// `GET_PROVIDERS` query succeeded.
+    GetProvidersQueryDone {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Provided key.
+        provided_key: RecordKey,
+
+        /// Found providers.
+        providers: Vec<ContentProvider>,
+    },
+
     /// Query succeeded.
     QuerySucceeded {
         /// ID of the query that succeeded.
@@ -277,7 +326,7 @@ impl QueryEngine {
         target: RecordKey,
         candidates: VecDeque<KademliaPeer>,
         quorum: Quorum,
-        count: usize,
+        local_record: bool,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -290,7 +339,7 @@ impl QueryEngine {
         let target = Key::new(target);
         let config = GetRecordConfig {
             local_peer_id: self.local_peer_id,
-            known_records: count,
+            known_records: if local_record { 1 } else { 0 },
             quorum,
             replication_factor: self.replication_factor,
             parallelism_factor: self.parallelism_factor,
@@ -301,7 +350,78 @@ impl QueryEngine {
         self.queries.insert(
             query_id,
             QueryType::GetRecord {
-                context: GetRecordContext::new(config, candidates),
+                context: GetRecordContext::new(config, candidates, local_record),
+            },
+        );
+
+        query_id
+    }
+
+    /// Start `ADD_PROVIDER` query.
+    pub fn start_add_provider(
+        &mut self,
+        query_id: QueryId,
+        provided_key: RecordKey,
+        provider: ContentProvider,
+        candidates: VecDeque<KademliaPeer>,
+    ) -> QueryId {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            ?provider,
+            num_peers = ?candidates.len(),
+            "start `ADD_PROVIDER` query",
+        );
+
+        let config = FindNodeConfig {
+            local_peer_id: self.local_peer_id,
+            replication_factor: self.replication_factor,
+            parallelism_factor: self.parallelism_factor,
+            query: query_id,
+            target: Key::new(provided_key.clone()),
+        };
+
+        self.queries.insert(
+            query_id,
+            QueryType::AddProvider {
+                provided_key,
+                provider,
+                context: FindNodeContext::new(config, candidates),
+            },
+        );
+
+        query_id
+    }
+
+    /// Start `GET_PROVIDERS` query.
+    pub fn start_get_providers(
+        &mut self,
+        query_id: QueryId,
+        key: RecordKey,
+        candidates: VecDeque<KademliaPeer>,
+        known_providers: Vec<ContentProvider>,
+    ) -> QueryId {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            ?key,
+            num_peers = ?candidates.len(),
+            "start `GET_PROVIDERS` query",
+        );
+
+        let target = Key::new(key);
+        let config = GetProvidersConfig {
+            local_peer_id: self.local_peer_id,
+            parallelism_factor: self.parallelism_factor,
+            query: query_id,
+            target,
+            known_providers: known_providers.into_iter().map(Into::into).collect(),
+        };
+
+        self.queries.insert(
+            query_id,
+            QueryType::GetProviders {
+                context: GetProvidersContext::new(config, candidates),
             },
         );
 
@@ -328,11 +448,22 @@ impl QueryEngine {
             Some(QueryType::GetRecord { context }) => {
                 context.register_response_failure(peer);
             }
+            Some(QueryType::AddProvider { context, .. }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::GetProviders { context }) => {
+                context.register_response_failure(peer);
+            }
         }
     }
 
     /// Register that `response` received from `peer`.
-    pub fn register_response(&mut self, query: QueryId, peer: PeerId, message: KademliaMessage) {
+    pub fn register_response(
+        &mut self,
+        query: QueryId,
+        peer: PeerId,
+        message: KademliaMessage,
+    ) -> Option<QueryAction> {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response");
 
         match self.queries.get_mut(&query) {
@@ -358,12 +489,29 @@ impl QueryEngine {
                 _ => unreachable!(),
             },
             Some(QueryType::GetRecord { context }) => match message {
-                KademliaMessage::GetRecord { record, peers, .. } => {
-                    context.register_response(peer, record, peers);
+                KademliaMessage::GetRecord { record, peers, .. } =>
+                    context.register_response(peer, record, peers),
+                _ => unreachable!(),
+            },
+            Some(QueryType::AddProvider { context, .. }) => match message {
+                KademliaMessage::FindNode { peers, .. } => {
+                    context.register_response(peer, peers);
+                }
+                _ => unreachable!(),
+            },
+            Some(QueryType::GetProviders { context }) => match message {
+                KademliaMessage::GetProviders {
+                    key: _,
+                    providers,
+                    peers,
+                } => {
+                    context.register_response(peer, providers, peers);
                 }
                 _ => unreachable!(),
             },
         }
+
+        None
     }
 
     /// Get next action for `peer` from the [`QueryEngine`].
@@ -379,6 +527,8 @@ impl QueryEngine {
             Some(QueryType::PutRecord { context, .. }) => context.next_peer_action(peer),
             Some(QueryType::PutRecordToPeers { context, .. }) => context.next_peer_action(peer),
             Some(QueryType::GetRecord { context }) => context.next_peer_action(peer),
+            Some(QueryType::AddProvider { context, .. }) => context.next_peer_action(peer),
+            Some(QueryType::GetProviders { context }) => context.next_peer_action(peer),
         }
     }
 
@@ -401,7 +551,20 @@ impl QueryEngine {
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.config.query,
-                records: context.found_records(),
+            },
+            QueryType::AddProvider {
+                provided_key,
+                provider,
+                context,
+            } => QueryAction::AddProviderToFoundNodes {
+                provided_key,
+                provider,
+                peers: context.responses.into_values().collect::<Vec<_>>(),
+            },
+            QueryType::GetProviders { context } => QueryAction::GetProvidersQueryDone {
+                query_id: context.config.query,
+                provided_key: context.config.target.clone().into_preimage(),
+                providers: context.found_providers(),
             },
         }
     }
@@ -422,6 +585,8 @@ impl QueryEngine {
                 QueryType::PutRecord { context, .. } => context.next_action(),
                 QueryType::PutRecordToPeers { context, .. } => context.next_action(),
                 QueryType::GetRecord { context } => context.next_action(),
+                QueryType::AddProvider { context, .. } => context.next_action(),
+                QueryType::GetProviders { context } => context.next_action(),
             };
 
             match action {
@@ -731,12 +896,14 @@ mod tests {
             ]
             .into(),
             Quorum::All,
-            3,
+            false,
         );
 
+        let mut records = Vec::new();
         for _ in 0..4 {
             match engine.next_action() {
                 Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    assert_eq!(query, QueryId(1341));
                     engine.register_response(
                         query,
                         peer,
@@ -747,13 +914,25 @@ mod tests {
                         },
                     );
                 }
-                _ => panic!("invalid event received"),
+                event => panic!("invalid event received {:?}", event),
+            }
+
+            // GetRecordPartialResult is emitted after the `register_response` if the record is
+            // valid.
+            match engine.next_action() {
+                Some(QueryAction::GetRecordPartialResult { query_id, record }) => {
+                    println!("Partial result {:?}", record);
+                    assert_eq!(query_id, QueryId(1341));
+                    records.push(record);
+                }
+                event => panic!("invalid event received {:?}", event),
             }
         }
 
         let peers: std::collections::HashSet<_> = peers.into_iter().map(|p| p.peer).collect();
         match engine.next_action() {
-            Some(QueryAction::GetRecordQueryDone { records, .. }) => {
+            Some(QueryAction::GetRecordQueryDone { .. }) => {
+                println!("Records {:?}", records);
                 let query_peers = records
                     .iter()
                     .map(|peer_record| peer_record.peer)
@@ -769,7 +948,7 @@ mod tests {
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);
             }
-            _ => panic!("invalid event received"),
+            event => panic!("invalid event received {:?}", event),
         }
     }
 }

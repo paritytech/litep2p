@@ -2,7 +2,7 @@
 name = "litep2p"
 description = "Peer-to-peer networking library"
 license = "MIT"
-version = "0.7.0"
+version = "0.9.0"
 edition = "2021"
 
 [build-dependencies]
@@ -43,7 +43,7 @@ tokio-tungstenite = { version = "0.20.0", features = ["rustls-tls-native-roots"]
 tokio-util = { version = "0.7.11", features = ["compat", "io", "codec"] }
 tokio = { version = "1.26.0", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
 tracing = { version = "0.1.40", features = ["log"] }
-hickory-resolver = "0.24.1"
+hickory-resolver = "0.24.2"
 uint = "0.9.5"
 unsigned-varint = { version = "0.8.0", features = ["codec"] }
 url = "2.4.0"

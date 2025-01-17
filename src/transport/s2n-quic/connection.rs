@@ -325,7 +325,7 @@ impl QuicConnection {
                     }
                 }
                 protocol = self.protocol_set.next_event() => match protocol {
-                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit }) => {
+                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit, .. }) => {
                         let handle = self.connection.handle();
 
                         tracing::trace!(

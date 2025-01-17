@@ -100,13 +100,20 @@ pub struct GetRecordContext {
     /// Candidates.
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
-    /// Found records.
-    pub found_records: Vec<PeerRecord>,
+    /// Number of found records.
+    pub found_records: usize,
+
+    /// Records to propagate as next query action.
+    pub records: VecDeque<PeerRecord>,
 }
 
 impl GetRecordContext {
     /// Create new [`GetRecordContext`].
-    pub fn new(config: GetRecordConfig, in_peers: VecDeque<KademliaPeer>) -> Self {
+    pub fn new(
+        config: GetRecordConfig,
+        in_peers: VecDeque<KademliaPeer>,
+        local_record: bool,
+    ) -> Self {
         let mut candidates = BTreeMap::new();
 
         for candidate in &in_peers {
@@ -123,19 +130,20 @@ impl GetRecordContext {
             candidates,
             pending: HashMap::new(),
             queried: HashSet::new(),
-            found_records: Vec::new(),
+            found_records: if local_record { 1 } else { 0 },
+            records: VecDeque::new(),
         }
-    }
-
-    /// Get the found records.
-    pub fn found_records(self) -> Vec<PeerRecord> {
-        self.found_records
     }
 
     /// Register response failure for `peer`.
     pub fn register_response_failure(&mut self, peer: PeerId) {
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist");
+            tracing::debug!(
+                target: LOG_TARGET,
+                query = ?self.config.query,
+                ?peer,
+                "`GetRecordContext`: pending peer doesn't exist",
+            );
             return;
         };
 
@@ -143,25 +151,39 @@ impl GetRecordContext {
     }
 
     /// Register `GET_VALUE` response from `peer`.
+    ///
+    /// Returns some if the response should be propagated to the user.
     pub fn register_response(
         &mut self,
         peer: PeerId,
         record: Option<Record>,
         peers: Vec<KademliaPeer>,
     ) {
-        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer");
+        tracing::trace!(
+            target: LOG_TARGET,
+            query = ?self.config.query,
+            ?peer,
+            "`GetRecordContext`: received response from peer",
+        );
 
         let Some(peer) = self.pending.remove(&peer) else {
-            tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer but didn't expect it");
+            tracing::debug!(
+                target: LOG_TARGET,
+                query = ?self.config.query,
+                ?peer,
+                "`GetRecordContext`: received response from peer but didn't expect it",
+            );
             return;
         };
 
         if let Some(record) = record {
             if !record.is_expired(std::time::Instant::now()) {
-                self.found_records.push(PeerRecord {
+                self.records.push_back(PeerRecord {
                     peer: peer.peer,
                     record,
                 });
+
+                self.found_records += 1;
             }
         }
 
@@ -206,12 +228,21 @@ impl GetRecordContext {
 
     /// Schedule next peer for outbound `GET_VALUE` query.
     fn schedule_next_peer(&mut self) -> Option<QueryAction> {
-        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, "get next peer");
+        tracing::trace!(
+            target: LOG_TARGET,
+            query = ?self.config.query,
+            "`GetRecordContext`: get next peer",
+        );
 
         let (_, candidate) = self.candidates.pop_first()?;
         let peer = candidate.peer;
 
-        tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, "current candidate");
+        tracing::trace!(
+            target: LOG_TARGET,
+            query = ?self.config.query,
+            ?peer,
+            "`GetRecordContext`: current candidate",
+        );
         self.pending.insert(candidate.peer, candidate);
 
         Some(QueryAction::SendMessage {
@@ -230,9 +261,17 @@ impl GetRecordContext {
 
     /// Get next action for a `GET_VALUE` query.
     pub fn next_action(&mut self) -> Option<QueryAction> {
+        // Drain the records first.
+        if let Some(record) = self.records.pop_front() {
+            return Some(QueryAction::GetRecordPartialResult {
+                query_id: self.config.query,
+                record,
+            });
+        }
+
         // These are the records we knew about before starting the query and
         // the records we found along the way.
-        let known_records = self.config.known_records + self.found_records.len();
+        let known_records = self.config.known_records + self.found_records;
 
         // If we cannot make progress, return the final result.
         // A query failed when we are not able to identify one single record.
@@ -249,7 +288,7 @@ impl GetRecordContext {
         }
 
         // Check if enough records have been found
-        let sufficient_records = self.config.sufficient_records(self.found_records.len());
+        let sufficient_records = self.config.sufficient_records(self.found_records);
         if sufficient_records {
             return Some(QueryAction::QuerySucceeded {
                 query: self.config.query,
@@ -354,7 +393,7 @@ mod tests {
     #[test]
     fn completes_when_no_candidates() {
         let config = default_config();
-        let mut context = GetRecordContext::new(config, VecDeque::new());
+        let mut context = GetRecordContext::new(config, VecDeque::new(), false);
         assert!(context.is_done());
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
@@ -363,7 +402,7 @@ mod tests {
             known_records: 1,
             ..default_config()
         };
-        let mut context = GetRecordContext::new(config, VecDeque::new());
+        let mut context = GetRecordContext::new(config, VecDeque::new(), false);
         assert!(context.is_done());
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
@@ -381,7 +420,7 @@ mod tests {
         assert_eq!(in_peers_set.len(), 3);
 
         let in_peers = in_peers_set.iter().map(|peer| peer_to_kad(*peer)).collect();
-        let mut context = GetRecordContext::new(config, in_peers);
+        let mut context = GetRecordContext::new(config, in_peers, false);
 
         for num in 0..3 {
             let event = context.next_action().unwrap();
@@ -420,7 +459,7 @@ mod tests {
         assert_eq!(in_peers_set.len(), 3);
 
         let in_peers = [peer_a, peer_b, peer_c].iter().map(|peer| peer_to_kad(*peer)).collect();
-        let mut context = GetRecordContext::new(config, in_peers);
+        let mut context = GetRecordContext::new(config, in_peers, false);
 
         // Schedule peer queries.
         for num in 0..3 {
@@ -445,26 +484,53 @@ mod tests {
         assert_eq!(context.pending.len(), 3);
         assert!(context.queried.is_empty());
 
+        let mut found_records = Vec::new();
         // Provide responses back.
         let record = Record::new(key.clone(), vec![1, 2, 3]);
         context.register_response(peer_a, Some(record), vec![]);
+        // Check propagated action.
+        let record = context.next_action().unwrap();
+        match record {
+            QueryAction::GetRecordPartialResult { query_id, record } => {
+                assert_eq!(query_id, QueryId(0));
+                assert_eq!(record.peer, peer_a);
+                assert_eq!(record.record, Record::new(key.clone(), vec![1, 2, 3]));
+
+                found_records.push(record);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
         assert_eq!(context.pending.len(), 2);
         assert_eq!(context.queried.len(), 1);
-        assert_eq!(context.found_records.len(), 1);
+        assert_eq!(context.found_records, 1);
 
         // Provide different response from peer b with peer d as candidate.
         let record = Record::new(key.clone(), vec![4, 5, 6]);
         context.register_response(peer_b, Some(record), vec![peer_to_kad(peer_d.clone())]);
+        // Check propagated action.
+        let record = context.next_action().unwrap();
+        match record {
+            QueryAction::GetRecordPartialResult { query_id, record } => {
+                assert_eq!(query_id, QueryId(0));
+                assert_eq!(record.peer, peer_b);
+                assert_eq!(record.record, Record::new(key.clone(), vec![4, 5, 6]));
+
+                found_records.push(record);
+            }
+            _ => panic!("Unexpected event"),
+        }
+
         assert_eq!(context.pending.len(), 1);
         assert_eq!(context.queried.len(), 2);
-        assert_eq!(context.found_records.len(), 2);
+        assert_eq!(context.found_records, 2);
         assert_eq!(context.candidates.len(), 1);
 
         // Peer C fails.
         context.register_response_failure(peer_c);
         assert!(context.pending.is_empty());
         assert_eq!(context.queried.len(), 3);
-        assert_eq!(context.found_records.len(), 2);
+        assert_eq!(context.found_records, 2);
 
         // Drain the last candidate.
         let event = context.next_action().unwrap();
@@ -481,13 +547,24 @@ mod tests {
         // Peer D responds.
         let record = Record::new(key.clone(), vec![4, 5, 6]);
         context.register_response(peer_d, Some(record), vec![]);
+        // Check propagated action.
+        let record = context.next_action().unwrap();
+        match record {
+            QueryAction::GetRecordPartialResult { query_id, record } => {
+                assert_eq!(query_id, QueryId(0));
+                assert_eq!(record.peer, peer_d);
+                assert_eq!(record.record, Record::new(key.clone(), vec![4, 5, 6]));
+
+                found_records.push(record);
+            }
+            _ => panic!("Unexpected event"),
+        }
 
         // Produces the result.
         let event = context.next_action().unwrap();
         assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
 
         // Check results.
-        let found_records = context.found_records();
         assert_eq!(
             found_records,
             vec![

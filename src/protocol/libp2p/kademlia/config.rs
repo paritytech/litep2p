@@ -31,13 +31,20 @@ use crate::{
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicUsize, Arc},
+    time::Duration,
+};
 
 /// Default TTL for the records.
 const DEFAULT_TTL: Duration = Duration::from_secs(36 * 60 * 60);
 
 /// Default provider record TTL.
-const DEFAULT_PROVIDER_TTL: Duration = Duration::from_secs(48 * 60 * 60);
+pub(super) const DEFAULT_PROVIDER_TTL: Duration = Duration::from_secs(48 * 60 * 60);
+
+/// Default provider republish interval.
+pub(super) const DEFAULT_PROVIDER_REFRESH_INTERVAL: Duration = Duration::from_secs(22 * 60 * 60);
 
 /// Protocol name.
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
@@ -74,11 +81,17 @@ pub struct Config {
     /// Provider record TTL.
     pub(super) provider_ttl: Duration,
 
+    /// Provider republish interval.
+    pub(super) provider_refresh_interval: Duration,
+
     /// TX channel for sending events to `KademliaHandle`.
     pub(super) event_tx: Sender<KademliaEvent>,
 
     /// RX channel for receiving commands from `KademliaHandle`.
     pub(super) cmd_rx: Receiver<KademliaCommand>,
+
+    /// Next query ID counter shared with the handle.
+    pub(super) next_query_id: Arc<AtomicUsize>,
 }
 
 impl Config {
@@ -90,9 +103,11 @@ impl Config {
         validation_mode: IncomingRecordValidationMode,
         record_ttl: Duration,
         provider_ttl: Duration,
+        provider_refresh_interval: Duration,
     ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let next_query_id = Arc::new(AtomicUsize::new(0usize));
 
         // if no protocol names were provided, use the default protocol
         if protocol_names.is_empty() {
@@ -106,13 +121,15 @@ impl Config {
                 validation_mode,
                 record_ttl,
                 provider_ttl,
+                provider_refresh_interval,
                 codec: ProtocolCodec::UnsignedVarint(None),
                 replication_factor,
                 known_peers,
                 cmd_rx,
                 event_tx,
+                next_query_id: next_query_id.clone(),
             },
-            KademliaHandle::new(cmd_tx, event_rx),
+            KademliaHandle::new(cmd_tx, event_rx, next_query_id),
         )
     }
 
@@ -126,6 +143,7 @@ impl Config {
             IncomingRecordValidationMode::Automatic,
             DEFAULT_TTL,
             DEFAULT_PROVIDER_TTL,
+            DEFAULT_PROVIDER_REFRESH_INTERVAL,
         )
     }
 }
@@ -151,8 +169,11 @@ pub struct ConfigBuilder {
     /// Default TTL for the records.
     pub(super) record_ttl: Duration,
 
-    /// Default TTL for the provider records.
+    /// TTL for the provider records.
     pub(super) provider_ttl: Duration,
+
+    /// Republish interval for the provider records.
+    pub(super) provider_refresh_interval: Duration,
 }
 
 impl Default for ConfigBuilder {
@@ -172,6 +193,7 @@ impl ConfigBuilder {
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: DEFAULT_TTL,
             provider_ttl: DEFAULT_PROVIDER_TTL,
+            provider_refresh_interval: DEFAULT_PROVIDER_REFRESH_INTERVAL,
         }
     }
 
@@ -224,11 +246,19 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set default TTL for the provider records. Recommended value is 2 * (refresh interval) + 20%.
+    /// Set TTL for the provider records. Recommended value is 2 * (refresh interval) + 10%.
     ///
     /// If unspecified, the default TTL is 48 hours.
     pub fn with_provider_record_ttl(mut self, provider_record_ttl: Duration) -> Self {
         self.provider_ttl = provider_record_ttl;
+        self
+    }
+
+    /// Set the refresh (republish) interval for provider records.
+    ///
+    /// If unspecified, the default interval is 22 hours.
+    pub fn with_provider_refresh_interval(mut self, provider_refresh_interval: Duration) -> Self {
+        self.provider_refresh_interval = provider_refresh_interval;
         self
     }
 
@@ -242,6 +272,7 @@ impl ConfigBuilder {
             self.validation_mode,
             self.record_ttl,
             self.provider_ttl,
+            self.provider_refresh_interval,
         )
     }
 }

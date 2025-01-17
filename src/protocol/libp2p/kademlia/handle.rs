@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::libp2p::kademlia::{PeerRecord, QueryId, Record, RecordKey},
+    protocol::libp2p::kademlia::{ContentProvider, PeerRecord, QueryId, Record, RecordKey},
     PeerId,
 };
 
@@ -30,6 +30,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use std::{
     num::NonZeroUsize,
     pin::Pin,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
 };
 
@@ -130,6 +134,30 @@ pub(crate) enum KademliaCommand {
         query_id: QueryId,
     },
 
+    /// Get providers from DHT.
+    GetProviders {
+        /// Provided key.
+        key: RecordKey,
+
+        /// Query ID for the query.
+        query_id: QueryId,
+    },
+
+    /// Register as a content provider for `key`.
+    StartProviding {
+        /// Provided key.
+        key: RecordKey,
+
+        /// Query ID for the query.
+        query_id: QueryId,
+    },
+
+    /// Stop providing the key locally and refreshing the provider.
+    StopProviding {
+        /// Provided key.
+        key: RecordKey,
+    },
+
     /// Store record locally.
     StoreRecord {
         // Record.
@@ -169,13 +197,35 @@ pub enum KademliaEvent {
     GetRecordSuccess {
         /// Query ID.
         query_id: QueryId,
+    },
 
-        /// Found records.
-        records: RecordsType,
+    /// `GET_VALUE` inflight query produced a result.
+    ///
+    /// This event is emitted when a peer responds to the query with a record.
+    GetRecordPartialResult {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Found record.
+        record: PeerRecord,
+    },
+
+    /// `GET_PROVIDERS` query succeeded.
+    GetProvidersSuccess {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Provided key.
+        provided_key: RecordKey,
+
+        /// Found providers with cached addresses. Returned providers are sorted by distane to the
+        /// provided key.
+        providers: Vec<ContentProvider>,
     },
 
     /// `PUT_VALUE` query succeeded.
-    PutRecordSucess {
+    // TODO: this is never emitted. Implement + add `AddProviderSuccess`.
+    PutRecordSuccess {
         /// Query ID.
         query_id: QueryId,
 
@@ -198,18 +248,15 @@ pub enum KademliaEvent {
         /// Record.
         record: Record,
     },
-}
 
-/// The type of the DHT records.
-#[derive(Debug, Clone)]
-pub enum RecordsType {
-    /// Record was found in the local store.
-    ///
-    /// This contains only a single result.
-    LocalStore(Record),
+    /// Incoming `ADD_PROVIDER` request received.
+    IncomingProvider {
+        /// Provided key.
+        provided_key: RecordKey,
 
-    /// Records found in the network.
-    Network(Vec<PeerRecord>),
+        /// Provider.
+        provider: ContentProvider,
+    },
 }
 
 /// Handle for communicating with the Kademlia protocol.
@@ -221,23 +268,26 @@ pub struct KademliaHandle {
     event_rx: Receiver<KademliaEvent>,
 
     /// Next query ID.
-    next_query_id: usize,
+    next_query_id: Arc<AtomicUsize>,
 }
 
 impl KademliaHandle {
     /// Create new [`KademliaHandle`].
-    pub(super) fn new(cmd_tx: Sender<KademliaCommand>, event_rx: Receiver<KademliaEvent>) -> Self {
+    pub(super) fn new(
+        cmd_tx: Sender<KademliaCommand>,
+        event_rx: Receiver<KademliaEvent>,
+        next_query_id: Arc<AtomicUsize>,
+    ) -> Self {
         Self {
             cmd_tx,
             event_rx,
-            next_query_id: 0usize,
+            next_query_id,
         }
     }
 
     /// Allocate next query ID.
     fn next_query_id(&mut self) -> QueryId {
-        let query_id = self.next_query_id;
-        self.next_query_id += 1;
+        let query_id = self.next_query_id.fetch_add(1, Ordering::Relaxed);
 
         QueryId(query_id)
     }
@@ -264,6 +314,8 @@ impl KademliaHandle {
     }
 
     /// Store record to DHT to the given peers.
+    ///
+    /// Returns [`Err`] only if `Kademlia` is terminating.
     pub async fn put_record_to_peers(
         &mut self,
         record: Record,
@@ -285,6 +337,8 @@ impl KademliaHandle {
     }
 
     /// Get record from DHT.
+    ///
+    /// Returns [`Err`] only if `Kademlia` is terminating.
     pub async fn get_record(&mut self, key: RecordKey, quorum: Quorum) -> QueryId {
         let query_id = self.next_query_id();
         let _ = self
@@ -295,6 +349,36 @@ impl KademliaHandle {
                 query_id,
             })
             .await;
+
+        query_id
+    }
+
+    /// Register as a content provider on the DHT.
+    ///
+    /// Register the local peer ID & its `public_addresses` as a provider for a given `key`.
+    /// Returns [`Err`] only if `Kademlia` is terminating.
+    pub async fn start_providing(&mut self, key: RecordKey) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::StartProviding { key, query_id }).await;
+
+        query_id
+    }
+
+    /// Stop providing the key on the DHT.
+    ///
+    /// This will stop republishing the provider, but won't
+    /// remove it instantly from the nodes. It will be removed from them after the provider TTL
+    /// expires, set by default to 48 hours.
+    pub async fn stop_providing(&mut self, key: RecordKey) {
+        let _ = self.cmd_tx.send(KademliaCommand::StopProviding { key }).await;
+    }
+
+    /// Get providers from DHT.
+    ///
+    /// Returns [`Err`] only if `Kademlia` is terminating.
+    pub async fn get_providers(&mut self, key: RecordKey) -> QueryId {
+        let query_id = self.next_query_id();
+        let _ = self.cmd_tx.send(KademliaCommand::GetProviders { key, query_id }).await;
 
         query_id
     }

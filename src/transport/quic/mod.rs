@@ -34,12 +34,16 @@ use crate::{
     PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{
+    future::BoxFuture,
+    stream::{AbortHandle, FuturesUnordered},
+    Stream, StreamExt, TryFutureExt,
+};
 use multiaddr::{Multiaddr, Protocol};
 use quinn::{ClientConfig, Connecting, Connection, Endpoint, IdleTimeout};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -64,6 +68,25 @@ struct NegotiatedConnection {
 
     /// QUIC connection.
     connection: Connection,
+}
+
+#[derive(Debug)]
+enum RawConnectionResult {
+    /// The first successful connection.
+    Connected {
+        connection_id: ConnectionId,
+        address: Multiaddr,
+        stream: NegotiatedConnection,
+    },
+
+    /// All connection attempts failed.
+    Failed {
+        connection_id: ConnectionId,
+        errors: Vec<(Multiaddr, DialError)>,
+    },
+
+    /// Future was canceled.
+    Canceled { connection_id: ConnectionId },
 }
 
 /// QUIC transport object.
@@ -92,21 +115,15 @@ pub(crate) struct QuicTransport {
     pending_open: HashMap<ConnectionId, (NegotiatedConnection, Litep2pEndpoint)>,
 
     /// Pending raw, unnegotiated connections.
-    pending_raw_connections: FuturesUnordered<
-        BoxFuture<
-            'static,
-            Result<
-                (ConnectionId, Multiaddr, NegotiatedConnection),
-                (ConnectionId, Vec<(Multiaddr, DialError)>),
-            >,
-        >,
-    >,
+    pending_raw_connections: FuturesUnordered<BoxFuture<'static, RawConnectionResult>>,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
     opened_raw: HashMap<ConnectionId, (NegotiatedConnection, Multiaddr)>,
 
-    /// Canceled raw connections.
-    canceled: HashSet<ConnectionId>,
+    /// Cancel raw connections futures.
+    ///
+    /// This is cancelling `Self::pending_raw_connections`.
+    cancel_futures: HashMap<ConnectionId, AbortHandle>,
 }
 
 impl QuicTransport {
@@ -218,13 +235,13 @@ impl TransportBuilder for QuicTransport {
                 context,
                 config,
                 listener,
-                canceled: HashSet::new(),
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
                 pending_inbound_connections: HashMap::new(),
                 pending_raw_connections: FuturesUnordered::new(),
                 pending_connections: FuturesUnordered::new(),
+                cancel_futures: HashMap::new(),
             },
             listen_addresses,
         ))
@@ -407,12 +424,18 @@ impl Transport for QuicTransport {
             })
             .collect();
 
-        self.pending_raw_connections.push(Box::pin(async move {
+        // Future that will resolve to the first successful connection.
+        let future = async move {
             let mut errors = Vec::with_capacity(num_addresses);
 
             while let Some(result) = futures.next().await {
                 match result {
-                    Ok((address, connection)) => return Ok((connection_id, address, connection)),
+                    Ok((address, stream)) =>
+                        return RawConnectionResult::Connected {
+                            connection_id,
+                            address,
+                            stream,
+                        },
                     Err(error) => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -425,8 +448,16 @@ impl Transport for QuicTransport {
                 }
             }
 
-            Err((connection_id, errors))
-        }));
+            RawConnectionResult::Failed {
+                connection_id,
+                errors,
+            }
+        };
+
+        let (fut, handle) = futures::future::abortable(future);
+        let fut = fut.unwrap_or_else(move |_| RawConnectionResult::Canceled { connection_id });
+        self.pending_raw_connections.push(Box::pin(fut));
+        self.cancel_futures.insert(connection_id, handle);
 
         Ok(())
     }
@@ -445,7 +476,11 @@ impl Transport for QuicTransport {
 
     /// Cancel opening connections.
     fn cancel(&mut self, connection_id: ConnectionId) {
-        self.canceled.insert(connection_id);
+        // Cancel the future if it exists.
+        // State clean-up happens inside the `poll_next`.
+        if let Some(handle) = self.cancel_futures.get(&connection_id) {
+            handle.abort();
+        }
     }
 }
 
@@ -470,17 +505,25 @@ impl Stream for QuicTransport {
         }
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
-            match result {
-                Ok((connection_id, address, stream)) => {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?address,
-                        canceled = self.canceled.contains(&connection_id),
-                        "connection opened",
-                    );
+            tracing::trace!(target: LOG_TARGET, ?result, "raw connection result");
 
-                    if !self.canceled.remove(&connection_id) {
+            match result {
+                RawConnectionResult::Connected {
+                    connection_id,
+                    address,
+                    stream,
+                } => {
+                    let Some(handle) = self.cancel_futures.remove(&connection_id) else {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?address,
+                            "raw connection without a cancel handle",
+                        );
+                        continue;
+                    };
+
+                    if !handle.is_aborted() {
                         self.opened_raw.insert(connection_id, (stream, address.clone()));
 
                         return Poll::Ready(Some(TransportEvent::ConnectionOpened {
@@ -489,13 +532,38 @@ impl Stream for QuicTransport {
                         }));
                     }
                 }
-                Err((connection_id, errors)) =>
-                    if !self.canceled.remove(&connection_id) {
+
+                RawConnectionResult::Failed {
+                    connection_id,
+                    errors,
+                } => {
+                    let Some(handle) = self.cancel_futures.remove(&connection_id) else {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            ?errors,
+                            "raw connection without a cancel handle",
+                        );
+                        continue;
+                    };
+
+                    if !handle.is_aborted() {
                         return Poll::Ready(Some(TransportEvent::OpenFailure {
                             connection_id,
                             errors,
                         }));
-                    },
+                    }
+                }
+
+                RawConnectionResult::Canceled { connection_id } => {
+                    if self.cancel_futures.remove(&connection_id).is_none() {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?connection_id,
+                            "raw cancelled connection without a cancel handle",
+                        );
+                    }
+                }
             }
         }
 

@@ -28,10 +28,11 @@ use crate::{
     substream::Substream,
     transport::Endpoint,
     types::{protocol::ProtocolName, SubstreamId},
+    utils::futures_stream::FuturesStream,
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{future::BoxFuture, Stream, StreamExt};
 use multiaddr::Multiaddr;
 use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
@@ -181,13 +182,10 @@ pub(crate) struct Identify {
     protocols: Vec<String>,
 
     /// Pending outbound substreams.
-    pending_opens: HashMap<SubstreamId, PeerId>,
-
-    /// Pending outbound substreams.
-    pending_outbound: FuturesUnordered<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
+    pending_outbound: FuturesStream<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
 
     /// Pending inbound substreams.
-    pending_inbound: FuturesUnordered<BoxFuture<'static, ()>>,
+    pending_inbound: FuturesStream<BoxFuture<'static, ()>>,
 }
 
 impl Identify {
@@ -200,9 +198,8 @@ impl Identify {
             public: config.public.expect("public key to be supplied"),
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
-            pending_opens: HashMap::new(),
-            pending_inbound: FuturesUnordered::new(),
-            pending_outbound: FuturesUnordered::new(),
+            pending_inbound: FuturesStream::new(),
+            pending_outbound: FuturesStream::new(),
             protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
         }
     }
@@ -211,8 +208,7 @@ impl Identify {
     fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, ?endpoint, "connection established");
 
-        let substream_id = self.service.open_substream(peer)?;
-        self.pending_opens.insert(substream_id, peer);
+        self.service.open_substream(peer)?;
         self.peers.insert(peer, endpoint);
 
         Ok(())
@@ -361,7 +357,10 @@ impl Identify {
         loop {
             tokio::select! {
                 event = self.service.next() => match event {
-                    None => return,
+                    None => {
+                        tracing::warn!(target: LOG_TARGET, "transport service stream ended, terminating identify event loop");
+                        return
+                    },
                     Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
                         let _ = self.on_connection_established(peer, endpoint);
                     }
@@ -395,7 +394,7 @@ impl Identify {
                             .await;
                     }
                     Some(Err(error)) => tracing::debug!(target: LOG_TARGET, ?error, "failed to read ipfs identify response"),
-                    None => return,
+                    None => {}
                 }
             }
         }
