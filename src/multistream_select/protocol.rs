@@ -487,4 +487,14 @@ mod tests {
         let bytes = Bytes::from_static(MSG_LS);
         assert_eq!(Message::decode(bytes).unwrap(), Message::ListProtocols);
     }
+
+    #[test]
+    fn test_decode_empty_message() {
+        // Empty message should decode to an IoError, not Header::Protocols.
+        let bytes = Bytes::from_static(b"");
+        match Message::decode(bytes).unwrap_err() {
+            ProtocolError::IoError(io) => assert_eq!(io.kind(), io::ErrorKind::InvalidData),
+            err => panic!("Unexpected error: {:?}", err),
+        };
+    }
 }
