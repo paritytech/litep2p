@@ -467,3 +467,24 @@ impl From<uvi::decode::Error> for ProtocolError {
         Self::from(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_main_messages() {
+        // Decode main messages.
+        let bytes = Bytes::from_static(MSG_MULTISTREAM_1_0);
+        assert_eq!(
+            Message::decode(bytes).unwrap(),
+            Message::Header(HeaderLine::V1)
+        );
+
+        let bytes = Bytes::from_static(MSG_PROTOCOL_NA);
+        assert_eq!(Message::decode(bytes).unwrap(), Message::NotAvailable);
+
+        let bytes = Bytes::from_static(MSG_LS);
+        assert_eq!(Message::decode(bytes).unwrap(), Message::ListProtocols);
+    }
+}
