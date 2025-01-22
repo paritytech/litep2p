@@ -249,6 +249,9 @@ pub fn webrtc_encode_multistream_message(
         header.append(&mut proto_bytes);
     }
 
+    // For the `Message::Protocols` to be interpreted correctly, it must be followed by a newline.
+    header.push(b'\n');
+
     Ok(BytesMut::from(&header[..]))
 }
 
