@@ -497,4 +497,41 @@ mod tests {
             err => panic!("Unexpected error: {:?}", err),
         };
     }
+
+    #[test]
+    fn test_decode_protocols() {
+        // Single protocol.
+        let bytes = Bytes::from_static(b"/protocol-v1\n");
+        assert_eq!(
+            Message::decode(bytes).unwrap(),
+            Message::Protocol(Protocol::try_from(Bytes::from_static(b"/protocol-v1")).unwrap())
+        );
+
+        // Multiple protocols.
+        let expected = Message::Protocols(vec![
+            Protocol::try_from(Bytes::from_static(b"/protocol-v1")).unwrap(),
+            Protocol::try_from(Bytes::from_static(b"/protocol-v2")).unwrap(),
+        ]);
+        let mut encoded = BytesMut::new();
+        expected.encode(&mut encoded).unwrap();
+
+        // `\r` is the length of the protocol names.
+        let bytes = Bytes::from_static(b"\r/protocol-v1\n\r/protocol-v2\n\n");
+        assert_eq!(encoded, bytes);
+
+        assert_eq!(
+            Message::decode(bytes).unwrap(),
+            Message::Protocols(vec![
+                Protocol::try_from(Bytes::from_static(b"/protocol-v1")).unwrap(),
+                Protocol::try_from(Bytes::from_static(b"/protocol-v2")).unwrap(),
+            ])
+        );
+
+        // Check invalid length.
+        let bytes = Bytes::from_static(b"\r/v1\n\n");
+        assert_eq!(
+            Message::decode(bytes).unwrap_err(),
+            ProtocolError::InvalidMessage
+        );
+    }
 }
