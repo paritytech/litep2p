@@ -26,7 +26,8 @@ use crate::{
     error::{self, Error},
     multistream_select::{
         protocol::{
-            encode_multistream_message, HeaderLine, Message, MessageIO, Protocol, ProtocolError,
+            webrtc_encode_multistream_message, HeaderLine, Message, MessageIO, Protocol,
+            ProtocolError,
         },
         Negotiated, NegotiationError,
     },
@@ -324,7 +325,7 @@ where
     }
 }
 
-/// Result of [`listener_negotiate()`].
+/// Result of [`webrtc_listener_negotiate()`].
 #[derive(Debug)]
 pub enum ListenerSelectResult {
     /// Requested protocol is available and substream can be accepted.
@@ -348,7 +349,7 @@ pub enum ListenerSelectResult {
 /// Parse protocols offered by the remote peer and check if any of the offered protocols match
 /// locally available protocols. If a match is found, return an encoded multistream-select
 /// response and the negotiated protocol. If parsing fails or no match is found, return an error.
-pub fn listener_negotiate<'a>(
+pub fn webrtc_listener_negotiate<'a>(
     supported_protocols: &'a mut impl Iterator<Item = &'a ProtocolName>,
     payload: Bytes,
 ) -> crate::Result<ListenerSelectResult> {
@@ -382,9 +383,9 @@ pub fn listener_negotiate<'a>(
             if protocol.as_ref() == supported.as_bytes() {
                 return Ok(ListenerSelectResult::Accepted {
                     protocol: supported.clone(),
-                    message: encode_multistream_message(std::iter::once(Message::Protocol(
-                        protocol,
-                    )))?,
+                    message: webrtc_encode_multistream_message(std::iter::once(
+                        Message::Protocol(protocol),
+                    ))?,
                 });
             }
         }
@@ -396,7 +397,7 @@ pub fn listener_negotiate<'a>(
     );
 
     Ok(ListenerSelectResult::Rejected {
-        message: encode_multistream_message(std::iter::once(Message::NotAvailable))?,
+        message: webrtc_encode_multistream_message(std::iter::once(Message::NotAvailable))?,
     })
 }
 
@@ -405,7 +406,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn listener_negotiate_works() {
+    fn webrtc_listener_negotiate_works() {
         let mut local_protocols = vec![
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
@@ -413,7 +414,7 @@ mod tests {
             ProtocolName::from("/13371338/proto/3"),
             ProtocolName::from("/13371338/proto/4"),
         ];
-        let message = encode_multistream_message(
+        let message = webrtc_encode_multistream_message(
             vec![
                 Message::Protocol(Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap()),
                 Message::Protocol(Protocol::try_from(&b"/sup/proto/1"[..]).unwrap()),
@@ -423,7 +424,7 @@ mod tests {
         .unwrap()
         .freeze();
 
-        match listener_negotiate(&mut local_protocols.iter(), message) {
+        match webrtc_listener_negotiate(&mut local_protocols.iter(), message) {
             Err(error) => panic!("error received: {error:?}"),
             Ok(ListenerSelectResult::Rejected { .. }) => panic!("message rejected"),
             Ok(ListenerSelectResult::Accepted { protocol, message }) => {
@@ -441,14 +442,14 @@ mod tests {
             ProtocolName::from("/13371338/proto/3"),
             ProtocolName::from("/13371338/proto/4"),
         ];
-        let message = encode_multistream_message(std::iter::once(Message::Protocols(vec![
+        let message = webrtc_encode_multistream_message(std::iter::once(Message::Protocols(vec![
             Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
             Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
         ])))
         .unwrap()
         .freeze();
 
-        match listener_negotiate(&mut local_protocols.iter(), message) {
+        match webrtc_listener_negotiate(&mut local_protocols.iter(), message) {
             Err(error) => assert!(std::matches!(error, Error::InvalidData)),
             _ => panic!("invalid event"),
         }
@@ -469,7 +470,7 @@ mod tests {
         let message = Message::Header(HeaderLine::V1);
         let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
-        match listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
+        match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
             Err(error) => assert!(std::matches!(
                 error,
                 Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
@@ -498,7 +499,7 @@ mod tests {
         ]);
         let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
-        match listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
+        match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
             Err(error) => assert!(std::matches!(
                 error,
                 Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
@@ -518,7 +519,7 @@ mod tests {
             ProtocolName::from("/13371338/proto/3"),
             ProtocolName::from("/13371338/proto/4"),
         ];
-        let message = encode_multistream_message(
+        let message = webrtc_encode_multistream_message(
             vec![Message::Protocol(
                 Protocol::try_from(&b"/13371339/proto/1"[..]).unwrap(),
             )]
@@ -527,12 +528,13 @@ mod tests {
         .unwrap()
         .freeze();
 
-        match listener_negotiate(&mut local_protocols.iter(), message) {
+        match webrtc_listener_negotiate(&mut local_protocols.iter(), message) {
             Err(error) => panic!("error received: {error:?}"),
             Ok(ListenerSelectResult::Rejected { message }) => {
                 assert_eq!(
                     message,
-                    encode_multistream_message(std::iter::once(Message::NotAvailable)).unwrap()
+                    webrtc_encode_multistream_message(std::iter::once(Message::NotAvailable))
+                        .unwrap()
                 );
             }
             Ok(ListenerSelectResult::Accepted { protocol, message }) => panic!("message accepted"),

@@ -76,9 +76,10 @@ mod negotiated;
 mod protocol;
 
 pub use crate::multistream_select::{
-    dialer_select::{dialer_select_proto, DialerSelectFuture, DialerState, HandshakeResult},
+    dialer_select::{dialer_select_proto, DialerSelectFuture, HandshakeResult, WebRtcDialerState},
     listener_select::{
-        listener_negotiate, listener_select_proto, ListenerSelectFuture, ListenerSelectResult,
+        listener_select_proto, webrtc_listener_negotiate, ListenerSelectFuture,
+        ListenerSelectResult,
     },
     negotiated::{Negotiated, NegotiatedComplete, NegotiationError},
     protocol::{HeaderLine, Message, Protocol, ProtocolError},

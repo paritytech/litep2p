@@ -227,7 +227,12 @@ impl Message {
 }
 
 /// Create `multistream-select` message from an iterator of `Message`s.
-pub fn encode_multistream_message(
+///
+/// # Note
+///
+/// This is implementation is not compliant with the multistream-select protocol spec.
+/// The only purpose of this was to get the `multistream-select` protocol working with smoldot.
+pub fn webrtc_encode_multistream_message(
     messages: impl IntoIterator<Item = Message>,
 ) -> crate::Result<BytesMut> {
     // encode `/multistream-select/1.0.0` header

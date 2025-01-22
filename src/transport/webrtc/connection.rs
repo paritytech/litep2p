@@ -20,7 +20,9 @@
 
 use crate::{
     error::{Error, ParseError, SubstreamError},
-    multistream_select::{listener_negotiate, DialerState, HandshakeResult, ListenerSelectResult},
+    multistream_select::{
+        webrtc_listener_negotiate, HandshakeResult, ListenerSelectResult, WebRtcDialerState,
+    },
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream,
     transport::{
@@ -147,7 +149,7 @@ enum ChannelState {
         context: ChannelContext,
 
         /// `multistream-select` dialer state.
-        dialer_state: DialerState,
+        dialer_state: WebRtcDialerState,
     },
 
     /// Channel is open.
@@ -260,7 +262,7 @@ impl WebRtcConnection {
 
         let fallback_names = std::mem::take(&mut context.fallback_names);
         let (dialer_state, message) =
-            DialerState::propose(context.protocol.clone(), fallback_names)?;
+            WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
         let message = WebRtcMessage::encode(message);
 
         self.rtc
@@ -317,11 +319,13 @@ impl WebRtcConnection {
         );
 
         let payload = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
-        let (response, negotiated) =
-            match listener_negotiate(&mut self.protocol_set.protocols().iter(), payload.into())? {
-                ListenerSelectResult::Accepted { protocol, message } => (message, Some(protocol)),
-                ListenerSelectResult::Rejected { message } => (message, None),
-            };
+        let (response, negotiated) = match webrtc_listener_negotiate(
+            &mut self.protocol_set.protocols().iter(),
+            payload.into(),
+        )? {
+            ListenerSelectResult::Accepted { protocol, message } => (message, Some(protocol)),
+            ListenerSelectResult::Rejected { message } => (message, None),
+        };
 
         self.rtc
             .channel(channel_id)
@@ -371,7 +375,7 @@ impl WebRtcConnection {
         &mut self,
         channel_id: ChannelId,
         data: Vec<u8>,
-        mut dialer_state: DialerState,
+        mut dialer_state: WebRtcDialerState,
         context: ChannelContext,
     ) -> Result<Option<(SubstreamId, SubstreamHandle, Permit)>, SubstreamError> {
         tracing::trace!(
