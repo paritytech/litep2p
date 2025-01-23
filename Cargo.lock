@@ -2765,7 +2765,7 @@ dependencies = [
  "libp2p-core",
  "log",
  "thiserror",
- "yamux",
+ "yamux 0.10.2",
 ]
 
 [[package]]
@@ -2922,6 +2922,7 @@ dependencies = [
  "webpki",
  "x25519-dalek 2.0.1",
  "x509-parser 0.16.0",
+ "yamux 0.13.4",
  "yasna",
  "zeroize",
 ]
@@ -6928,6 +6929,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "webpki"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7350,6 +7361,22 @@ dependencies = [
  "parking_lot 0.12.3",
  "rand 0.8.5",
  "static_assertions",
+]
+
+[[package]]
+name = "yamux"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17610762a1207ee816c6fadc29220904753648aba0a9ed61c7b8336e80a559c4"
+dependencies = [
+ "futures",
+ "log",
+ "nohash-hasher",
+ "parking_lot 0.12.3",
+ "pin-project",
+ "rand 0.8.5",
+ "static_assertions",
+ "web-time",
 ]
 
 [[package]]
