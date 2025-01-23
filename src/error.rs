@@ -182,7 +182,7 @@ pub enum ParseError {
     InvalidData,
 }
 
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error)]
 pub enum SubstreamError {
     #[error("Connection closed")]
     ConnectionClosed,
@@ -200,6 +200,76 @@ pub enum SubstreamError {
     WriteFailure(Option<SubstreamId>),
     #[error("Negotiation error: `{0:?}`")]
     NegotiationError(#[from] NegotiationError),
+}
+
+// Libp2p yamux does not implement PartialEq for ConnectionError.
+impl PartialEq for SubstreamError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::ConnectionClosed, Self::ConnectionClosed) => true,
+            (Self::ChannelClogged, Self::ChannelClogged) => true,
+            (Self::PeerDoesNotExist(lhs), Self::PeerDoesNotExist(rhs)) => lhs == rhs,
+            (Self::IoError(lhs), Self::IoError(rhs)) => lhs == rhs,
+            (Self::YamuxError(lhs, lhs_1), Self::YamuxError(rhs, rhs_1)) => {
+                if lhs_1 != rhs_1 {
+                    return false;
+                }
+
+                match (lhs, rhs) {
+                    (
+                        crate::yamux::ConnectionError::Io(lhs),
+                        crate::yamux::ConnectionError::Io(rhs),
+                    ) => lhs.kind() == rhs.kind(),
+                    (
+                        crate::yamux::ConnectionError::Decode(lhs),
+                        crate::yamux::ConnectionError::Decode(rhs),
+                    ) => match (lhs, rhs) {
+                        (
+                            crate::yamux::FrameDecodeError::Io(lhs),
+                            crate::yamux::FrameDecodeError::Io(rhs),
+                        ) => lhs.kind() == rhs.kind(),
+                        (
+                            crate::yamux::FrameDecodeError::FrameTooLarge(lhs),
+                            crate::yamux::FrameDecodeError::FrameTooLarge(rhs),
+                        ) => lhs == rhs,
+                        (
+                            crate::yamux::FrameDecodeError::Header(lhs),
+                            crate::yamux::FrameDecodeError::Header(rhs),
+                        ) => match (lhs, rhs) {
+                            (
+                                crate::yamux::HeaderDecodeError::Version(lhs),
+                                crate::yamux::HeaderDecodeError::Version(rhs),
+                            ) => lhs == rhs,
+                            (
+                                crate::yamux::HeaderDecodeError::Type(lhs),
+                                crate::yamux::HeaderDecodeError::Type(rhs),
+                            ) => lhs == rhs,
+                            _ => false,
+                        },
+                        _ => false,
+                    },
+                    (
+                        crate::yamux::ConnectionError::NoMoreStreamIds,
+                        crate::yamux::ConnectionError::NoMoreStreamIds,
+                    ) => true,
+                    (
+                        crate::yamux::ConnectionError::Closed,
+                        crate::yamux::ConnectionError::Closed,
+                    ) => true,
+                    (
+                        crate::yamux::ConnectionError::TooManyStreams,
+                        crate::yamux::ConnectionError::TooManyStreams,
+                    ) => true,
+                    _ => false,
+                }
+            }
+
+            (Self::ReadFailure(lhs), Self::ReadFailure(rhs)) => lhs == rhs,
+            (Self::WriteFailure(lhs), Self::WriteFailure(rhs)) => lhs == rhs,
+            (Self::NegotiationError(lhs), Self::NegotiationError(rhs)) => lhs == rhs,
+            _ => false,
+        }
+    }
 }
 
 /// Error during the negotiation phase.
