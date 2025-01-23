@@ -54,6 +54,7 @@ yasna = "0.5.0"
 zeroize = "1.8.1"
 nohash-hasher = "0.2.0"
 static_assertions = "1.1.0"
+libp2p-yamux = { version = "0.13.4", package = "yamux" }
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]
