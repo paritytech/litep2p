@@ -8,7 +8,8 @@
 // at https://www.apache.org/licenses/LICENSE-2.0 and a copy of the MIT license
 // at https://opensource.org/licenses/MIT.
 
-use crate::yamux::{error::ConnectionError, Connection, Result, Stream, MAX_ACK_BACKLOG};
+use crate::yamux::{Connection, ConnectionError, Result, Stream, MAX_ACK_BACKLOG};
+
 use futures::{
     channel::{mpsc, oneshot},
     prelude::*,
