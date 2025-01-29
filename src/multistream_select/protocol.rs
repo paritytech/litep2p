@@ -201,8 +201,7 @@ impl Message {
         let mut remaining: &[u8] = &msg;
         loop {
             // A well-formed message must be terminated with a newline.
-            // TODO: don't do this
-            if remaining == [b'\n'] || remaining.is_empty() {
+            if remaining == [b'\n'] {
                 break;
             } else if protocols.len() == MAX_PROTOCOLS {
                 return Err(ProtocolError::TooManyProtocols);
@@ -228,7 +227,12 @@ impl Message {
 }
 
 /// Create `multistream-select` message from an iterator of `Message`s.
-pub fn encode_multistream_message(
+///
+/// # Note
+///
+/// This is implementation is not compliant with the multistream-select protocol spec.
+/// The only purpose of this was to get the `multistream-select` protocol working with smoldot.
+pub fn webrtc_encode_multistream_message(
     messages: impl IntoIterator<Item = Message>,
 ) -> crate::Result<BytesMut> {
     // encode `/multistream-select/1.0.0` header
@@ -244,6 +248,9 @@ pub fn encode_multistream_message(
         let mut proto_bytes = UnsignedVarint::encode(proto_bytes)?;
         header.append(&mut proto_bytes);
     }
+
+    // For the `Message::Protocols` to be interpreted correctly, it must be followed by a newline.
+    header.push(b'\n');
 
     Ok(BytesMut::from(&header[..]))
 }
@@ -466,5 +473,73 @@ impl From<ProtocolError> for io::Error {
 impl From<uvi::decode::Error> for ProtocolError {
     fn from(err: uvi::decode::Error) -> ProtocolError {
         Self::from(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_main_messages() {
+        // Decode main messages.
+        let bytes = Bytes::from_static(MSG_MULTISTREAM_1_0);
+        assert_eq!(
+            Message::decode(bytes).unwrap(),
+            Message::Header(HeaderLine::V1)
+        );
+
+        let bytes = Bytes::from_static(MSG_PROTOCOL_NA);
+        assert_eq!(Message::decode(bytes).unwrap(), Message::NotAvailable);
+
+        let bytes = Bytes::from_static(MSG_LS);
+        assert_eq!(Message::decode(bytes).unwrap(), Message::ListProtocols);
+    }
+
+    #[test]
+    fn test_decode_empty_message() {
+        // Empty message should decode to an IoError, not Header::Protocols.
+        let bytes = Bytes::from_static(b"");
+        match Message::decode(bytes).unwrap_err() {
+            ProtocolError::IoError(io) => assert_eq!(io.kind(), io::ErrorKind::InvalidData),
+            err => panic!("Unexpected error: {:?}", err),
+        };
+    }
+
+    #[test]
+    fn test_decode_protocols() {
+        // Single protocol.
+        let bytes = Bytes::from_static(b"/protocol-v1\n");
+        assert_eq!(
+            Message::decode(bytes).unwrap(),
+            Message::Protocol(Protocol::try_from(Bytes::from_static(b"/protocol-v1")).unwrap())
+        );
+
+        // Multiple protocols.
+        let expected = Message::Protocols(vec![
+            Protocol::try_from(Bytes::from_static(b"/protocol-v1")).unwrap(),
+            Protocol::try_from(Bytes::from_static(b"/protocol-v2")).unwrap(),
+        ]);
+        let mut encoded = BytesMut::new();
+        expected.encode(&mut encoded).unwrap();
+
+        // `\r` is the length of the protocol names.
+        let bytes = Bytes::from_static(b"\r/protocol-v1\n\r/protocol-v2\n\n");
+        assert_eq!(encoded, bytes);
+
+        assert_eq!(
+            Message::decode(bytes).unwrap(),
+            Message::Protocols(vec![
+                Protocol::try_from(Bytes::from_static(b"/protocol-v1")).unwrap(),
+                Protocol::try_from(Bytes::from_static(b"/protocol-v2")).unwrap(),
+            ])
+        );
+
+        // Check invalid length.
+        let bytes = Bytes::from_static(b"\r/v1\n\n");
+        assert_eq!(
+            Message::decode(bytes).unwrap_err(),
+            ProtocolError::InvalidMessage
+        );
     }
 }

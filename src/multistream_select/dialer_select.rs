@@ -25,7 +25,8 @@ use crate::{
     error::{self, Error, ParseError},
     multistream_select::{
         protocol::{
-            encode_multistream_message, HeaderLine, Message, MessageIO, Protocol, ProtocolError,
+            webrtc_encode_multistream_message, HeaderLine, Message, MessageIO, Protocol,
+            ProtocolError,
         },
         Negotiated, NegotiationError, Version,
     },
@@ -305,7 +306,7 @@ pub enum HandshakeResult {
 /// Handshake state.
 #[derive(Debug)]
 enum HandshakeState {
-    /// Wainting to receive any response from remote peer.
+    /// Waiting to receive any response from remote peer.
     WaitingResponse,
 
     /// Waiting to receive the actual application protocol from remote peer.
@@ -314,7 +315,7 @@ enum HandshakeState {
 
 /// `multistream-select` dialer handshake state.
 #[derive(Debug)]
-pub struct DialerState {
+pub struct WebRtcDialerState {
     /// Proposed main protocol.
     protocol: ProtocolName,
 
@@ -325,16 +326,16 @@ pub struct DialerState {
     state: HandshakeState,
 }
 
-impl DialerState {
+impl WebRtcDialerState {
     /// Propose protocol to remote peer.
     ///
-    /// Return [`DialerState`] which is used to drive forward the negotiation and an encoded
+    /// Return [`WebRtcDialerState`] which is used to drive forward the negotiation and an encoded
     /// `multistream-select` message that contains the protocol proposal for the substream.
     pub fn propose(
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<(Self, Vec<u8>)> {
-        let message = encode_multistream_message(
+        let message = webrtc_encode_multistream_message(
             std::iter::once(protocol.clone())
                 .chain(fallback_names.clone())
                 .filter_map(|protocol| Protocol::try_from(protocol.as_ref()).ok())
@@ -353,7 +354,7 @@ impl DialerState {
         ))
     }
 
-    /// Register response to [`DialerState`].
+    /// Register response to [`WebRtcDialerState`].
     pub fn register_response(
         &mut self,
         payload: Vec<u8>,
@@ -755,7 +756,7 @@ mod tests {
     #[test]
     fn propose() {
         let (mut dialer_state, message) =
-            DialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
+            WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
         let message = bytes::BytesMut::from(&message[..]).freeze();
 
         let Message::Protocols(protocols) = Message::decode(message).unwrap() else {
@@ -777,7 +778,7 @@ mod tests {
 
     #[test]
     fn propose_with_fallback() {
-        let (mut dialer_state, message) = DialerState::propose(
+        let (mut dialer_state, message) = WebRtcDialerState::propose(
             ProtocolName::from("/13371338/proto/1"),
             vec![ProtocolName::from("/sup/proto/1")],
         )
@@ -813,7 +814,7 @@ mod tests {
         let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         let (mut dialer_state, _message) =
-            DialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
+            WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
 
         match dialer_state.register_response(bytes.freeze().to_vec()) {
             Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
@@ -832,7 +833,7 @@ mod tests {
         let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         let (mut dialer_state, _message) =
-            DialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
+            WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
 
         match dialer_state.register_response(bytes.freeze().to_vec()) {
             Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
@@ -842,7 +843,7 @@ mod tests {
 
     #[test]
     fn negotiate_main_protocol() {
-        let message = encode_multistream_message(
+        let message = webrtc_encode_multistream_message(
             vec![Message::Protocol(
                 Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
             )]
@@ -851,7 +852,7 @@ mod tests {
         .unwrap()
         .freeze();
 
-        let (mut dialer_state, _message) = DialerState::propose(
+        let (mut dialer_state, _message) = WebRtcDialerState::propose(
             ProtocolName::from("/13371338/proto/1"),
             vec![ProtocolName::from("/sup/proto/1")],
         )
@@ -860,13 +861,13 @@ mod tests {
         match dialer_state.register_response(message.to_vec()) {
             Ok(HandshakeResult::Succeeded(negotiated)) =>
                 assert_eq!(negotiated, ProtocolName::from("/13371338/proto/1")),
-            _ => panic!("invalid event"),
+            event => panic!("invalid event {event:?}"),
         }
     }
 
     #[test]
     fn negotiate_fallback_protocol() {
-        let message = encode_multistream_message(
+        let message = webrtc_encode_multistream_message(
             vec![Message::Protocol(
                 Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
             )]
@@ -875,7 +876,7 @@ mod tests {
         .unwrap()
         .freeze();
 
-        let (mut dialer_state, _message) = DialerState::propose(
+        let (mut dialer_state, _message) = WebRtcDialerState::propose(
             ProtocolName::from("/13371338/proto/1"),
             vec![ProtocolName::from("/sup/proto/1")],
         )
