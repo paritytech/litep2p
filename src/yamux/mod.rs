@@ -25,7 +25,7 @@
 
 mod control;
 
-pub use libp2p_yamux::{
+pub use yamux::{
     Config, Connection, ConnectionError, FrameDecodeError, HeaderDecodeError, Mode, Packet, Result,
     Stream, StreamId,
 };
