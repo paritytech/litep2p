@@ -42,13 +42,13 @@ pub(crate) mod manager;
 pub use manager::limits::{ConnectionLimitsConfig, ConnectionLimitsError};
 
 /// Timeout for opening a connection.
-pub(crate) const CONNECTION_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const CONNECTION_OPEN_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Timeout for opening a substream.
-pub(crate) const SUBSTREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const SUBSTREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Timeout for connection waiting new substreams.
-pub(crate) const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Maximum number of parallel dial attempts.
 pub(crate) const MAX_PARALLEL_DIALS: usize = 8;

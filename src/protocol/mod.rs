@@ -84,6 +84,9 @@ pub enum TransportEvent {
 
         /// Dialed address.
         address: Multiaddr,
+
+        /// Reason for the dial failure.
+        reason: String,
     },
 
     /// Substream opened for `peer`.
