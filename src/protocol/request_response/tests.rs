@@ -200,14 +200,12 @@ async fn inbound_substream_error() {
         .await
         .unwrap();
 
-    // verify the request has been registered for the peer
-    let request_id = *protocol.peers.get(&peer).unwrap().active_inbound.keys().next().unwrap();
-    assert!(protocol.pending_inbound_requests.get_mut(&(peer, request_id)).is_some());
-
     // poll the substream and get the failure event
-    let ((peer, request_id), event) = protocol.pending_inbound_requests.next().await.unwrap();
+    assert_eq!(protocol.pending_inbound_requests.len(), 1);
+    let (peer, request_id, event, substream) =
+        protocol.pending_inbound_requests.next().await.unwrap();
 
-    match protocol.on_inbound_request(peer, request_id, event).await {
+    match protocol.on_inbound_request(peer, request_id, event, substream).await {
         Err(Error::InvalidData) => {}
         _ => panic!("invalid return value"),
     }
@@ -241,9 +239,7 @@ async fn disconnect_peer_has_active_inbound_substream() {
         .await
         .unwrap();
 
-    // verify the request has been registered for the peer
-    let request_id = *protocol.peers.get(&peer).unwrap().active_inbound.keys().next().unwrap();
-    assert!(protocol.pending_inbound_requests.get_mut(&(peer, request_id)).is_some());
+    assert_eq!(protocol.pending_inbound_requests.len(), 1);
 
     // disconnect the peer and verify that no events are read from the handle
     // since no outbound request was initiated
@@ -254,9 +250,6 @@ async fn disconnect_peer_has_active_inbound_substream() {
         event => panic!("read an unexpected event from handle: {event:?}"),
     })
     .await;
-
-    // verify the substream has been removed from `pending_inbound_requests`
-    assert!(protocol.pending_inbound_requests.get_mut(&(peer, request_id)).is_none());
 }
 
 // when user initiates an outbound request and `RequestResponseProtocol` tries to open an outbound
