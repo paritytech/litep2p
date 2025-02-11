@@ -56,7 +56,7 @@ yamux = "0.13.4"
 
 # Exposed dependencies. Breaking changes to these are breaking changes to us.
 [dependencies.rustls]
-version = "0.20.7"
+version = "0.21.12"
 default-features = false
 features = ["dangerous_configuration"] # Must enable this to allow for custom verification code.
 
