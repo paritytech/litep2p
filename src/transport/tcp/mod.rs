@@ -24,6 +24,7 @@
 use crate::{
     config::Role,
     error::{DialError, Error},
+    metrics::{MetricGauge, MetricsRegistry, ScopeGaugeMetric},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
         manager::TransportHandle,
@@ -37,6 +38,7 @@ use crate::{
     utils::futures_stream::FuturesStream,
 };
 
+use connection::TcpConnectionMetrics;
 use futures::{
     future::BoxFuture,
     stream::{AbortHandle, FuturesUnordered, Stream, StreamExt},
@@ -129,6 +131,34 @@ pub(crate) struct TcpTransport {
     /// Connections which have been opened and negotiated but are being validated by the
     /// `TransportManager`.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
+
+    /// Tcp metrics.
+    metrics: Option<TcpMetrics>,
+}
+
+/// TCP specific metrics.
+struct TcpMetrics {
+    /// The following metrics are used for the transport itself.
+    pending_dials_num: MetricGauge,
+    pending_inbound_connections_num: MetricGauge,
+    pending_connections_num: MetricGauge,
+    pending_raw_connections_num: MetricGauge,
+    open_raw_connections_num: MetricGauge,
+    cancel_futures_num: MetricGauge,
+    pending_open_num: MetricGauge,
+
+    /// The following metrics are shared with all TCP connections.
+    active_connections_num: MetricGauge,
+    pending_substreams_num: MetricGauge,
+}
+
+impl TcpMetrics {
+    fn to_connection_metrics(&self) -> TcpConnectionMetrics {
+        TcpConnectionMetrics {
+            _active_connections_num: ScopeGaugeMetric::new(self.active_connections_num.clone()),
+            pending_substreams_num: self.pending_substreams_num.clone(),
+        }
+    }
 }
 
 impl TcpTransport {
@@ -271,6 +301,7 @@ impl TransportBuilder for TcpTransport {
     fn new(
         context: TransportHandle,
         mut config: Self::Config,
+        registry: Option<MetricsRegistry>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -285,6 +316,51 @@ impl TransportBuilder for TcpTransport {
             config.nodelay,
         );
 
+        let metrics = if let Some(registry) = registry {
+            Some(TcpMetrics {
+                pending_dials_num: registry.register_gauge(
+                    "litep2p_tcp_pending_dials".into(),
+                    "Litep2p number of pending dials".into(),
+                )?,
+                pending_inbound_connections_num: registry.register_gauge(
+                    "litep2p_tcp_pending_inbound_connections".into(),
+                    "Litep2p number of pending inbound connections".into(),
+                )?,
+                pending_connections_num: registry.register_gauge(
+                    "litep2p_tcp_pending_connections".into(),
+                    "Litep2p number of pending connections".into(),
+                )?,
+                pending_raw_connections_num: registry.register_gauge(
+                    "litep2p_tcp_pending_raw_connections".into(),
+                    "Litep2p number of pending raw connections".into(),
+                )?,
+                open_raw_connections_num: registry.register_gauge(
+                    "litep2p_tcp_open_raw_connections".into(),
+                    "Litep2p number of open raw connections".into(),
+                )?,
+                cancel_futures_num: registry.register_gauge(
+                    "litep2p_tcp_cancel_futures".into(),
+                    "Litep2p number of cancel futures".into(),
+                )?,
+                pending_open_num: registry.register_gauge(
+                    "litep2p_tcp_pending_open".into(),
+                    "Litep2p number of pending open connections".into(),
+                )?,
+
+                active_connections_num: registry.register_gauge(
+                    "litep2p_tcp_active_connections".into(),
+                    "Litep2p number of active connections".into(),
+                )?,
+
+                pending_substreams_num: registry.register_gauge(
+                    "litep2p_tcp_pending_substreams".into(),
+                    "Litep2p number of pending substreams".into(),
+                )?,
+            })
+        } else {
+            None
+        };
+
         Ok((
             Self {
                 listener,
@@ -298,6 +374,7 @@ impl TransportBuilder for TcpTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
+                metrics,
             },
             listen_addresses,
         ))
@@ -319,6 +396,7 @@ impl Transport for TcpTransport {
         let nodelay = self.config.nodelay;
 
         self.pending_dials.insert(connection_id, address.clone());
+
         self.pending_connections.push(Box::pin(async move {
             let (_, stream) =
                 TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout, nodelay)
@@ -359,11 +437,17 @@ impl Transport for TcpTransport {
             "start connection",
         );
 
+        let metrics = self.metrics.as_ref().map(|metrics| metrics.to_connection_metrics());
         self.context.executor.run(Box::pin(async move {
-            if let Err(error) =
-                TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
-                    .start()
-                    .await
+            if let Err(error) = TcpConnection::new(
+                context,
+                protocol_set,
+                bandwidth_sink,
+                next_substream_id,
+                metrics,
+            )
+            .start()
+            .await
             {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -500,6 +584,7 @@ impl Transport for TcpTransport {
         );
 
         self.pending_dials.insert(connection_id, address);
+
         self.pending_connections.push(Box::pin(async move {
             match tokio::time::timeout(connection_open_timeout, async move {
                 TcpConnection::negotiate_connection(
@@ -541,6 +626,20 @@ impl Stream for TcpTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(metrics) = &self.metrics {
+            metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+            metrics
+                .pending_inbound_connections_num
+                .set(self.pending_inbound_connections.len() as u64);
+            metrics.pending_connections_num.set(self.pending_connections.len() as u64);
+            metrics
+                .pending_raw_connections_num
+                .set(self.pending_raw_connections.len() as u64);
+            metrics.open_raw_connections_num.set(self.opened_raw.len() as u64);
+            metrics.cancel_futures_num.set(self.cancel_futures.len() as u64);
+            metrics.pending_open_num.set(self.pending_open.len() as u64);
+        }
+
         if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
             return match event {
                 None => {
@@ -652,6 +751,10 @@ impl Stream for TcpTransport {
                     let peer = connection.peer();
                     let endpoint = connection.endpoint();
                     self.pending_dials.remove(&connection.connection_id());
+                    if let Some(metrics) = &self.metrics {
+                        metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+                    }
+
                     self.pending_open.insert(connection.connection_id(), connection);
 
                     return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
@@ -661,6 +764,10 @@ impl Stream for TcpTransport {
                 }
                 Err((connection_id, error)) => {
                     if let Some(address) = self.pending_dials.remove(&connection_id) {
+                        if let Some(metrics) = &self.metrics {
+                            metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+                        }
+
                         return Poll::Ready(Some(TransportEvent::DialFailure {
                             connection_id,
                             address,
@@ -729,7 +836,7 @@ mod tests {
         };
 
         let (mut transport1, listen_addresses) =
-            TcpTransport::new(handle1, transport_config1).unwrap();
+            TcpTransport::new(handle1, transport_config1, None).unwrap();
         let listen_address = listen_addresses[0].clone();
 
         let keypair2 = Keypair::generate();
@@ -758,7 +865,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2).unwrap();
+        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2, None).unwrap();
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
         let (tx, mut from_transport2) = channel(64);
@@ -822,7 +929,7 @@ mod tests {
         };
 
         let (mut transport1, listen_addresses) =
-            TcpTransport::new(handle1, transport_config1).unwrap();
+            TcpTransport::new(handle1, transport_config1, None).unwrap();
         let listen_address = listen_addresses[0].clone();
 
         let keypair2 = Keypair::generate();
@@ -851,7 +958,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2).unwrap();
+        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2, None).unwrap();
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
         let (tx, mut from_transport2) = channel(64);
@@ -904,7 +1011,7 @@ mod tests {
                 },
             )]),
         };
-        let (mut transport1, _) = TcpTransport::new(handle1, Default::default()).unwrap();
+        let (mut transport1, _) = TcpTransport::new(handle1, Default::default(), None).unwrap();
 
         tokio::spawn(async move {
             while let Some(event) = transport1.next().await {
@@ -941,7 +1048,7 @@ mod tests {
             )]),
         };
 
-        let (mut transport2, _) = TcpTransport::new(handle2, Default::default()).unwrap();
+        let (mut transport2, _) = TcpTransport::new(handle2, Default::default(), None).unwrap();
 
         let peer1: PeerId = PeerId::from_public_key(&keypair1.public().into());
         let peer2: PeerId = PeerId::from_public_key(&keypair2.public().into());
@@ -980,7 +1087,9 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
-        );
+            None,
+        )
+        .unwrap();
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(
             SupportedTransport::Tcp,
@@ -992,6 +1101,7 @@ mod tests {
                 listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
                 ..Default::default()
             },
+            None,
         )
         .unwrap();
 
