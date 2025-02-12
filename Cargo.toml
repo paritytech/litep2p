@@ -19,7 +19,7 @@ futures-timer = "3.0.3"
 hex-literal = "0.4.1"
 indexmap = { version = "2.7.1", features = ["std"] }
 libc = "0.2.158"
-mockall = "0.13.0"
+mockall = "0.13.1"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
 network-interface = "1.1.1"
