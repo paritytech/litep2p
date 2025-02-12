@@ -2719,7 +2719,7 @@ dependencies = [
  "sha2 0.10.8",
  "smallvec",
  "thiserror 1.0.69",
- "uint",
+ "uint 0.9.5",
  "unsigned-varint 0.7.2",
  "void",
 ]
@@ -3106,7 +3106,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
- "uint",
+ "uint 0.10.0",
  "unsigned-varint 0.8.0",
  "url",
  "webpki",
@@ -4047,7 +4047,7 @@ dependencies = [
  "impl-codec",
  "impl-serde",
  "scale-info",
- "uint",
+ "uint 0.9.5",
 ]
 
 [[package]]
@@ -6686,6 +6686,18 @@ name = "uint"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76f64bba2c53b04fcab63c01a7d7427eadc821e3bc48c34dc9ba29c501164b52"
+dependencies = [
+ "byteorder",
+ "crunchy",
+ "hex",
+ "static_assertions",
+]
+
+[[package]]
+name = "uint"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "909988d098b2f738727b161a106cfc7cab00c539c2687a8836f8e565976fb53e"
 dependencies = [
  "byteorder",
  "crunchy",
