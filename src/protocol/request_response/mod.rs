@@ -470,23 +470,19 @@ impl RequestResponseProtocol {
         request: Result<BytesMut, SubstreamError>,
         mut substream: Substream,
     ) -> crate::Result<()> {
-        let fallback = self
-            .peers
-            .get_mut(&peer)
-            .ok_or(Error::PeerDoesntExist(peer))?
-            .active_inbound
-            .remove(&request_id)
-            .ok_or_else(|| {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    protocol = %self.protocol,
-                    ?request_id,
-                    "no active inbound request",
-                );
+        // The peer will no longer exist if the connection was closed before processing the request.
+        let peer_context = self.peers.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?;
+        let fallback = peer_context.active_inbound.remove(&request_id).ok_or_else(|| {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                protocol = %self.protocol,
+                ?request_id,
+                "no active inbound request",
+            );
 
-                Error::InvalidState
-            })?;
+            Error::InvalidState
+        })?;
 
         let protocol = self.protocol.clone();
 
