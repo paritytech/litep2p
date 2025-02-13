@@ -27,8 +27,9 @@ use crate::{
         request_response::handle::{InnerRequestResponseEvent, RequestResponseCommand},
         Direction, TransportEvent, TransportService,
     },
-    substream::{Substream, SubstreamSet},
+    substream::Substream,
     types::{protocol::ProtocolName, RequestId, SubstreamId},
+    utils::futures_stream::FuturesStream,
     PeerId,
 };
 
@@ -162,7 +163,17 @@ pub(crate) struct RequestResponseProtocol {
     pending_inbound: FuturesUnordered<BoxFuture<'static, PendingRequest>>,
 
     /// Pending inbound requests.
-    pending_inbound_requests: SubstreamSet<(PeerId, RequestId), Substream>,
+    pending_inbound_requests: FuturesStream<
+        BoxFuture<
+            'static,
+            (
+                PeerId,
+                RequestId,
+                Result<BytesMut, SubstreamError>,
+                Substream,
+            ),
+        >,
+    >,
 
     /// Pending dials for outbound requests.
     pending_dials: HashMap<PeerId, RequestContext>,
@@ -200,7 +211,7 @@ impl RequestResponseProtocol {
             pending_outbound: HashMap::new(),
             pending_inbound: FuturesUnordered::new(),
             pending_outbound_cancels: HashMap::new(),
-            pending_inbound_requests: SubstreamSet::new(),
+            pending_inbound_requests: FuturesStream::new(),
             pending_outbound_responses: FuturesUnordered::new(),
             max_concurrent_inbound_requests: config.max_concurrent_inbound_request,
         }
@@ -314,11 +325,6 @@ impl RequestResponseProtocol {
                     error: RequestResponseError::Rejected(RejectReason::ConnectionClosed),
                 })
                 .await;
-        }
-
-        // remove all pending inbound requests
-        for (request_id, _) in context.active_inbound {
-            self.pending_inbound_requests.remove(&(peer, request_id));
         }
     }
 
@@ -462,36 +468,22 @@ impl RequestResponseProtocol {
         peer: PeerId,
         request_id: RequestId,
         request: Result<BytesMut, SubstreamError>,
+        mut substream: Substream,
     ) -> crate::Result<()> {
-        let fallback = self
-            .peers
-            .get_mut(&peer)
-            .ok_or(Error::PeerDoesntExist(peer))?
-            .active_inbound
-            .remove(&request_id)
-            .ok_or_else(|| {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    protocol = %self.protocol,
-                    ?request_id,
-                    "no active inbound request",
-                );
+        // The peer will no longer exist if the connection was closed before processing the request.
+        let peer_context = self.peers.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?;
+        let fallback = peer_context.active_inbound.remove(&request_id).ok_or_else(|| {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                protocol = %self.protocol,
+                ?request_id,
+                "no active inbound request",
+            );
 
-                Error::InvalidState
-            })?;
-        let mut substream =
-            self.pending_inbound_requests.remove(&(peer, request_id)).ok_or_else(|| {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    protocol = %self.protocol,
-                    ?request_id,
-                    "request doesn't exist in pending requests",
-                );
+            Error::InvalidState
+        })?;
 
-                Error::InvalidState
-            })?;
         let protocol = self.protocol.clone();
 
         tracing::trace!(
@@ -589,7 +581,7 @@ impl RequestResponseProtocol {
         &mut self,
         peer: PeerId,
         fallback: Option<ProtocolName>,
-        substream: Substream,
+        mut substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "handle inbound substream");
 
@@ -622,7 +614,16 @@ impl RequestResponseProtocol {
             .ok_or(Error::PeerDoesntExist(peer))?
             .active_inbound
             .insert(request_id, fallback);
-        self.pending_inbound_requests.insert((peer, request_id), substream);
+
+        self.pending_inbound_requests.push(Box::pin(async move {
+            let request = match substream.next().await {
+                Some(Ok(request)) => Ok(request),
+                Some(Err(error)) => Err(error),
+                None => Err(SubstreamError::ConnectionClosed),
+            };
+
+            (peer, request_id, request, substream)
+        }));
 
         Ok(())
     }
@@ -1057,9 +1058,9 @@ impl RequestResponseProtocol {
                 _ = self.pending_outbound_responses.next(), if !self.pending_outbound_responses.is_empty() => {}
 
                 // Inbound requests that are moved to `pending_outbound_responses`.
-                event = self.pending_inbound_requests.next() => match event {
-                    Some(((peer, request_id), message)) => {
-                        if let Err(error) = self.on_inbound_request(peer, request_id, message).await {
+                event = self.pending_inbound_requests.next(), if !self.pending_inbound_requests.is_empty() => match event {
+                    Some((peer, request_id, request, substream)) => {
+                        if let Err(error) = self.on_inbound_request(peer, request_id, request, substream).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
