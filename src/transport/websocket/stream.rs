@@ -127,7 +127,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                         // TODO: optimize
                         self.state = State::ReadyToSend;
                         self.write_ptr = 0;
-                        self.write_buffer = Vec::with_capacity(2000);
+                        self.write_buffer.clear();
                         return Poll::Ready(Ok(()));
                     }
                     Err(_) => return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
