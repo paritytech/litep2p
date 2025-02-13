@@ -17,9 +17,9 @@ ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.27"
 futures-timer = "3.0.3"
 hex-literal = "0.4.1"
-indexmap = { version = "2.0.0", features = ["std"] }
+indexmap = { version = "2.7.1", features = ["std"] }
 libc = "0.2.158"
-mockall = "0.13.0"
+mockall = "0.13.1"
 multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
 network-interface = "1.1.1"
@@ -32,24 +32,24 @@ rcgen = "0.10.0"
 ring = "0.16.20"
 serde = "1.0.158"
 sha2 = "0.10.8"
-simple-dns = "0.7.0"
+simple-dns = "0.9.3"
 smallvec = "1.13.2"
 snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
-socket2 = { version = "0.5.7", features = ["all"] }
+socket2 = { version = "0.5.8", features = ["all"] }
 str0m = { version = "0.6.2", optional = true }
-thiserror = "1.0.61"
+thiserror = "2.0.11"
 tokio-stream = "0.1.12"
 tokio-tungstenite = { version = "0.20.0", features = ["rustls-tls-native-roots"], optional = true }
 tokio-util = { version = "0.7.11", features = ["compat", "io", "codec"] }
 tokio = { version = "1.26.0", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
 tracing = { version = "0.1.40", features = ["log"] }
 hickory-resolver = "0.24.2"
-uint = "0.9.5"
+uint = "0.10.0"
 unsigned-varint = { version = "0.8.0", features = ["codec"] }
 url = "2.4.0"
 webpki = { version = "0.22.4", optional = true }
-x25519-dalek = "2.0.0"
-x509-parser = "0.16.0"
+x25519-dalek = "2.0.1"
+x509-parser = "0.17.0"
 yasna = "0.5.0"
 zeroize = "1.8.1"
 yamux = "0.13.4"
@@ -78,7 +78,7 @@ libp2p = { version = "0.51.4", features = [
 ]}
 quickcheck = "1.0.3"
 rand_xorshift = "0.3.0"
-sc-network = "0.31.0"
+sc-network = "0.48.1"
 sc-utils = "17.0.0"
 serde_json = "1.0.122"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
