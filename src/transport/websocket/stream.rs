@@ -113,7 +113,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                     }
                 }
                 State::ReadyPending { to_write } => {
-                    match self.stream.start_send_unpin(Message::Binary(to_write.clone())) {
+                    match self.stream.start_send_unpin(Message::Binary(to_write.clone().into())) {
                         Ok(_) => {
                             self.state = State::FlushPending;
                             continue;
