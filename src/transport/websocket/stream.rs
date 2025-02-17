@@ -129,6 +129,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                         self.state = State::ReadyToSend;
                         self.write_ptr = 0;
                         self.write_buffer.clear();
+                        // In the unlikely event that the buffer is too large, we need to bound the
+                        // capacity to avoid unbounded memory usage.
+                        self.write_buffer.shrink_to(DEFAULT_BUF_SIZE);
                         return Poll::Ready(Ok(()));
                     }
                     Err(_) => return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
