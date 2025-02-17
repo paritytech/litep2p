@@ -106,8 +106,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                         Poll::Pending => return Poll::Pending,
                     }
 
-                    let message = self.write_buffer[..self.write_ptr].to_vec();
-                    match self.stream.start_send_unpin(Message::Binary(message.into())) {
+                    let message = std::mem::take(&mut self.write_buffer);
+                    match self.stream.start_send_unpin(Message::Binary(message.freeze())) {
                         Ok(()) => {}
                         Err(_error) =>
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
