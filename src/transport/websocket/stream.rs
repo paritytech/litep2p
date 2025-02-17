@@ -21,7 +21,7 @@
 //! Stream implementation for `tokio_tungstenite::WebSocketStream` that implements
 //! `AsyncRead + AsyncWrite`
 
-use bytes::{Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
@@ -48,7 +48,7 @@ enum State {
 /// Buffered stream which implements `AsyncRead + AsyncWrite`
 pub(super) struct BufferedStream<S: AsyncRead + AsyncWrite + Unpin> {
     /// Write buffer.
-    write_buffer: Vec<u8>,
+    write_buffer: BytesMut,
 
     /// Write pointer.
     write_ptr: usize,
@@ -67,7 +67,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> BufferedStream<S> {
     /// Create new [`BufferedStream`].
     pub(super) fn new(stream: WebSocketStream<S>) -> Self {
         Self {
-            write_buffer: Vec::with_capacity(2000),
+            write_buffer: BytesMut::with_capacity(2000),
             read_buffer: None,
             write_ptr: 0usize,
             stream,
@@ -128,7 +128,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
 
                     self.state = State::ReadyToSend;
                     self.write_ptr = 0;
-                    self.write_buffer = Vec::with_capacity(2000);
+                    self.write_buffer = BytesMut::with_capacity(2000);
                     return Poll::Ready(Ok(()));
                 }
                 State::Poisoned =>
