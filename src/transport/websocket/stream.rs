@@ -50,9 +50,6 @@ pub(super) struct BufferedStream<S: AsyncRead + AsyncWrite + Unpin> {
     /// Write buffer.
     write_buffer: BytesMut,
 
-    /// Write pointer.
-    write_ptr: usize,
-
     // Read buffer.
     read_buffer: Option<Bytes>,
 
@@ -69,7 +66,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> BufferedStream<S> {
         Self {
             write_buffer: BytesMut::with_capacity(2000),
             read_buffer: None,
-            write_ptr: 0usize,
             stream,
             state: State::ReadyToSend,
         }
@@ -83,7 +79,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         self.write_buffer.extend_from_slice(buf);
-        self.write_ptr += buf.len();
 
         Poll::Ready(Ok(buf.len()))
     }
@@ -127,7 +122,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                     }
 
                     self.state = State::ReadyToSend;
-                    self.write_ptr = 0;
                     self.write_buffer = BytesMut::with_capacity(2000);
                     return Poll::Ready(Ok(()));
                 }
