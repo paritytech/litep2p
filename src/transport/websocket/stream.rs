@@ -108,25 +108,29 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
 
                     let message = self.write_buffer[..self.write_ptr].to_vec();
                     match self.stream.start_send_unpin(Message::Binary(message.into())) {
-                        Ok(_) => {
-                            self.state = State::FlushPending;
-                            continue;
-                        }
+                        Ok(()) => {}
                         Err(_error) =>
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
                     }
+
+                    // Transition to flush pending state.
+                    self.state = State::FlushPending;
+                    continue;
                 }
 
-                State::FlushPending => match futures::ready!(self.stream.poll_flush_unpin(cx)) {
-                    Ok(_res) => {
-                        // TODO: optimize
-                        self.state = State::ReadyToSend;
-                        self.write_ptr = 0;
-                        self.write_buffer = Vec::with_capacity(2000);
-                        return Poll::Ready(Ok(()));
+                State::FlushPending => {
+                    match self.stream.poll_flush_unpin(cx) {
+                        Poll::Ready(Ok(())) => {}
+                        Poll::Ready(Err(_error)) =>
+                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
+                        Poll::Pending => return Poll::Pending,
                     }
-                    Err(_) => return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
-                },
+
+                    self.state = State::ReadyToSend;
+                    self.write_ptr = 0;
+                    self.write_buffer = Vec::with_capacity(2000);
+                    return Poll::Ready(Ok(()));
+                }
                 State::Poisoned =>
                     return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
             }
