@@ -41,9 +41,6 @@ enum State {
     /// Sink is accepting input.
     ReadyToSend,
 
-    /// Sink is ready to send.
-    ReadyPending { to_write: Vec<u8> },
-
     /// Flush is pending for the sink.
     FlushPending,
 }
@@ -102,18 +99,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
         loop {
             match std::mem::replace(&mut self.state, State::Poisoned) {
                 State::ReadyToSend => {
-                    match futures::ready!(self.stream.poll_ready_unpin(cx)) {
-                        Ok(()) => {}
-                        Err(_error) => {
-                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()));
-                        }
-                    };
+                    match self.stream.poll_ready_unpin(cx) {
+                        Poll::Ready(Ok(())) => {}
+                        Poll::Ready(Err(_error)) =>
+                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
+                        Poll::Pending => return Poll::Pending,
+                    }
 
                     let message = self.write_buffer[..self.write_ptr].to_vec();
-                    self.state = State::ReadyPending { to_write: message };
-                }
-                State::ReadyPending { to_write } => {
-                    match self.stream.start_send_unpin(Message::Binary(to_write.clone().into())) {
+                    match self.stream.start_send_unpin(Message::Binary(message.into())) {
                         Ok(_) => {
                             self.state = State::FlushPending;
                             continue;
@@ -122,6 +116,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
                     }
                 }
+
                 State::FlushPending => match futures::ready!(self.stream.poll_flush_unpin(cx)) {
                     Ok(_res) => {
                         // TODO: optimize
