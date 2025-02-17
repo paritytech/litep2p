@@ -102,15 +102,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
         loop {
             match std::mem::replace(&mut self.state, State::Poisoned) {
                 State::ReadyToSend => {
-                    let message = self.write_buffer[..self.write_ptr].to_vec();
-                    self.state = State::ReadyPending { to_write: message };
-
                     match futures::ready!(self.stream.poll_ready_unpin(cx)) {
-                        Ok(()) => continue,
+                        Ok(()) => {}
                         Err(_error) => {
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()));
                         }
-                    }
+                    };
+
+                    let message = self.write_buffer[..self.write_ptr].to_vec();
+                    self.state = State::ReadyPending { to_write: message };
                 }
                 State::ReadyPending { to_write } => {
                     match self.stream.start_send_unpin(Message::Binary(to_write.clone().into())) {
