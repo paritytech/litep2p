@@ -108,7 +108,7 @@ enum ConnectionError {
 /// Connection context for an opened connection that hasn't yet started its event loop.
 pub struct NegotiatedConnection {
     /// Yamux connection.
-    connection: crate::yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
+    connection: crate::yamux::ControlledConnection<Negotiated<Compat<TcpStream>>>,
 
     /// Yamux control.
     control: crate::yamux::Control,
@@ -146,7 +146,7 @@ pub struct TcpConnection {
     protocol_set: ProtocolSet,
 
     /// Yamux connection.
-    connection: crate::yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
+    connection: crate::yamux::ControlledConnection<Negotiated<Compat<TcpStream>>>,
 
     /// Yamux control.
     control: crate::yamux::Control,
@@ -425,30 +425,30 @@ impl TcpConnection {
         let (stream, _) =
             Self::negotiate_protocol(stream, &role, vec!["/noise"], substream_open_timeout).await?;
 
-        tracing::trace!(
-            target: LOG_TARGET,
-            "`multistream-select` and `noise` negotiated",
-        );
+        // tracing::trace!(
+        //     target: LOG_TARGET,
+        //     "`multistream-select` and `noise` negotiated",
+        // );
 
-        // perform noise handshake
-        let (stream, peer) = noise::handshake(
-            stream.inner(),
-            &keypair,
-            role,
-            max_read_ahead_factor,
-            max_write_buffer_size,
-        )
-        .await?;
+        // // perform noise handshake
+        // let (stream, peer) = noise::handshake(
+        //     stream.inner(),
+        //     &keypair,
+        //     role,
+        //     max_read_ahead_factor,
+        //     max_write_buffer_size,
+        // )
+        // .await?;
 
-        if let Some(dialed_peer) = dialed_peer {
-            if dialed_peer != peer {
-                tracing::debug!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer id mismatch");
-                return Err(NegotiationError::PeerIdMismatch(dialed_peer, peer));
-            }
-        }
+        // if let Some(dialed_peer) = dialed_peer {
+        //     if dialed_peer != peer {
+        //         tracing::debug!(target: LOG_TARGET, ?dialed_peer, ?peer, "peer id mismatch");
+        //         return Err(NegotiationError::PeerIdMismatch(dialed_peer, peer));
+        //     }
+        // }
 
-        tracing::trace!(target: LOG_TARGET, "noise handshake done");
-        let stream: NoiseSocket<Compat<TcpStream>> = stream;
+        // tracing::trace!(target: LOG_TARGET, "noise handshake done");
+        // let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
         // negotiate `yamux`
         let (stream, _) =
@@ -485,7 +485,7 @@ impl TcpConnection {
         };
 
         Ok(NegotiatedConnection {
-            peer,
+            peer: dialed_peer.unwrap(),
             control,
             connection,
             endpoint,
