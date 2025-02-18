@@ -33,6 +33,8 @@ use std::{
 
 // TODO: add tests
 
+const DEFAULT_BUF_SIZE: usize = 8 * 1024;
+
 /// Send state.
 enum State {
     /// State is poisoned.
@@ -66,7 +68,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> BufferedStream<S> {
     /// Create new [`BufferedStream`].
     pub(super) fn new(stream: WebSocketStream<S>) -> Self {
         Self {
-            write_buffer: BytesMut::with_capacity(2000),
+            write_buffer: BytesMut::with_capacity(DEFAULT_BUF_SIZE),
             read_buffer: Bytes::new(),
             stream,
             state: State::ReadyToSend,
@@ -130,7 +132,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                     }
 
                     self.state = State::ReadyToSend;
-                    self.write_buffer = BytesMut::with_capacity(2000);
+                    self.write_buffer = BytesMut::with_capacity(DEFAULT_BUF_SIZE);
                     return Poll::Ready(Ok(()));
                 }
                 State::Poisoned =>
