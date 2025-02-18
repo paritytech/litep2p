@@ -100,7 +100,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                         Poll::Ready(Ok(())) => {}
                         Poll::Ready(Err(_error)) =>
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
-                        Poll::Pending => return Poll::Pending,
+                        Poll::Pending => {
+                            self.state = State::ReadyToSend;
+                            return Poll::Pending;
+                        }
                     }
 
                     let message = std::mem::take(&mut self.write_buffer);
@@ -120,7 +123,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                         Poll::Ready(Ok(())) => {}
                         Poll::Ready(Err(_error)) =>
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
-                        Poll::Pending => return Poll::Pending,
+                        Poll::Pending => {
+                            self.state = State::ReadyToSend;
+                            return Poll::Pending;
+                        }
                     }
 
                     self.state = State::ReadyToSend;
