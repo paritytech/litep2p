@@ -92,7 +92,7 @@ impl BucketIndex {
         let lower = usize::pow(2, rem);
         let upper = usize::pow(2, rem + 1);
         bytes[31 - quot] = rng.gen_range(lower..upper) as u8;
-        Distance(U256::from(bytes))
+        Distance(U256::from_big_endian(&bytes))
     }
 }
 
