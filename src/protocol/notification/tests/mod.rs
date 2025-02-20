@@ -57,7 +57,9 @@ fn make_notification_protocol() -> (
         BandwidthSink::new(),
         8usize,
         ConnectionLimitsConfig::default(),
-    );
+        None,
+    )
+    .unwrap();
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(
@@ -84,7 +86,9 @@ fn make_notification_protocol() -> (
             transport_service,
             config,
             std::sync::Arc::new(DefaultExecutor {}),
-        ),
+            None,
+        )
+        .unwrap(),
         handle,
         manager,
         tx,

@@ -22,6 +22,7 @@
 
 use crate::{
     error::{Error, NegotiationError, SubstreamError},
+    metrics::{MetricGauge, MetricsRegistry},
     multistream_select::NegotiationError::Failed as MultistreamFailed,
     protocol::{
         request_response::handle::{InnerRequestResponseEvent, RequestResponseCommand},
@@ -194,12 +195,70 @@ pub(crate) struct RequestResponseProtocol {
 
     /// Maximum concurrent inbound requests, if specified.
     max_concurrent_inbound_requests: Option<usize>,
+
+    /// Metrics.
+    metrics: Option<Metrics>,
+}
+
+/// Request-response protocol metrics.
+struct Metrics {
+    connected_peers: MetricGauge,
+    pending_outbound_num: MetricGauge,
+    pending_outbound_responses_num: MetricGauge,
+    pending_outbound_cancels_num: MetricGauge,
+    pending_inbound_num: MetricGauge,
+    pending_inbound_requests_num: MetricGauge,
+    pending_dials_num: MetricGauge,
 }
 
 impl RequestResponseProtocol {
     /// Create new [`RequestResponseProtocol`].
-    pub(crate) fn new(service: TransportService, config: Config) -> Self {
-        Self {
+    pub(crate) fn new(
+        service: TransportService,
+        config: Config,
+        registry: Option<MetricsRegistry>,
+    ) -> Result<Self, Error> {
+        let metrics = if let Some(registry) = registry {
+            let protocol_name = config.protocol_name.to_metric_string();
+
+            Some(Metrics {
+                connected_peers: registry.register_gauge(
+                    format!("litep2p_req_res{}_connected_peers", protocol_name),
+                    "Litep2p number of connected peers".into(),
+                )?,
+                pending_outbound_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_outbound", protocol_name),
+                    "Litep2p number of pending outbound requests".into(),
+                )?,
+                pending_outbound_responses_num: registry.register_gauge(
+                    format!(
+                        "litep2p_req_res{}_pending_outbound_responses",
+                        protocol_name
+                    ),
+                    "Litep2p number of pending outbound responses".into(),
+                )?,
+                pending_outbound_cancels_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_outbound_cancels", protocol_name),
+                    "Litep2p number of pending outbound cancels".into(),
+                )?,
+                pending_inbound_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_inbound", protocol_name),
+                    "Litep2p number of pending inbound requests".into(),
+                )?,
+                pending_inbound_requests_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_inbound_requests", protocol_name),
+                    "Litep2p number of pending inbound requests".into(),
+                )?,
+                pending_dials_num: registry.register_gauge(
+                    format!("litep2p_req_res{}_pending_dials", protocol_name),
+                    "Litep2p number of pending dials".into(),
+                )?,
+            })
+        } else {
+            None
+        };
+
+        Ok(Self {
             service,
             peers: HashMap::new(),
             timeout: config.timeout,
@@ -214,7 +273,8 @@ impl RequestResponseProtocol {
             pending_inbound_requests: FuturesStream::new(),
             pending_outbound_responses: FuturesUnordered::new(),
             max_concurrent_inbound_requests: config.max_concurrent_inbound_request,
-        }
+            metrics,
+        })
     }
 
     /// Get next ephemeral request ID.
@@ -1017,11 +1077,32 @@ impl RequestResponseProtocol {
         }
     }
 
+    /// Report metrics.
+    fn report_metrics(&self) {
+        if let Some(metrics) = &self.metrics {
+            metrics.connected_peers.set(self.peers.len() as u64);
+            metrics.pending_outbound_num.set(self.pending_outbound.len() as u64);
+            metrics
+                .pending_outbound_responses_num
+                .set(self.pending_outbound_responses.len() as u64);
+            metrics
+                .pending_outbound_cancels_num
+                .set(self.pending_outbound_cancels.len() as u64);
+            metrics.pending_inbound_num.set(self.pending_inbound.len() as u64);
+            metrics
+                .pending_inbound_requests_num
+                .set(self.pending_inbound_requests.len() as u64);
+            metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+        }
+    }
+
     /// Start [`RequestResponseProtocol`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting request-response event loop");
 
         loop {
+            self.report_metrics();
+
             tokio::select! {
                 // events coming from the network have higher priority than user commands as all user commands are
                 // responses to network behaviour so ensure that the commands operate on the most up to date information.
