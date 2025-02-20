@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.1] - 2025-01-19
 
-This release enhances compatibility between litep2p and libp2p by backporting the latest Yamux updates. Additionally, it includes various improvements and fixes to boost the stability and performance of the WebSocket stream and the multistream-select protocol.
+This release enhances compatibility between litep2p and libp2p by using the latest Yamux upstream version. Additionally, it includes various improvements and fixes to boost the stability and performance of the WebSocket stream and the multistream-select protocol.
 
 ### Changed
 
