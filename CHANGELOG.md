@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2025-01-19
+
+This release enhances compatibility between litep2p and libp2p by using the latest Yamux upstream version. Additionally, it includes various improvements and fixes to boost the stability and performance of the WebSocket stream and the multistream-select protocol.
+
+### Changed
+
+- yamux: Switch to upstream implementation while keeping the controller API  ([#320](https://github.com/paritytech/litep2p/pull/320))
+- req-resp: Replace SubstreamSet with FuturesStream  ([#321](https://github.com/paritytech/litep2p/pull/321))
+- cargo: Bring up to date multiple dependencies  ([#324](https://github.com/paritytech/litep2p/pull/324))
+- build(deps): bump hickory-proto from 0.24.1 to 0.24.3  ([#323](https://github.com/paritytech/litep2p/pull/323))
+- build(deps): bump openssl from 0.10.66 to 0.10.70  ([#322](https://github.com/paritytech/litep2p/pull/322))
+
+### Fixed
+
+- websocket/stream: Fix unexpected EOF on `Poll::Pending` state poisoning  ([#327](https://github.com/paritytech/litep2p/pull/327))
+- websocket/stream: Avoid memory allocations on flushing  ([#325](https://github.com/paritytech/litep2p/pull/325))
+- multistream-select: Enforce `io::error` instead of empty protocols  ([#318](https://github.com/paritytech/litep2p/pull/318))
+- multistream: Do not wait for negotiation in poll_close  ([#319](https://github.com/paritytech/litep2p/pull/319))
+
+
 ## [0.9.0] - 2025-01-14
 
 This release provides partial results to speed up `GetRecord` queries in the Kademlia protocol.
