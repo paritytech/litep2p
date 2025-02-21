@@ -96,7 +96,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
         loop {
             match std::mem::replace(&mut self.state, State::Poisoned) {
                 State::ReadyToSend => {
-                    println!("poll ready unpin ");
                     match self.stream.poll_ready_unpin(cx) {
                         Poll::Ready(Ok(())) => {}
                         Poll::Ready(Err(_error)) =>
@@ -106,8 +105,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                             return Poll::Pending;
                         }
                     }
-
-                    println!("start send unpin");
 
                     let message = std::mem::take(&mut self.write_buffer);
                     match self.stream.start_send_unpin(Message::Binary(message.freeze())) {
@@ -122,8 +119,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                 }
 
                 State::FlushPending => {
-                    println!("poll flush");
-
                     match self.stream.poll_flush_unpin(cx) {
                         Poll::Ready(Ok(())) => {}
                         Poll::Ready(Err(_error)) =>
