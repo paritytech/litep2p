@@ -96,6 +96,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
         loop {
             match std::mem::replace(&mut self.state, State::Poisoned) {
                 State::ReadyToSend => {
+                    println!("poll ready unpin ");
                     match self.stream.poll_ready_unpin(cx) {
                         Poll::Ready(Ok(())) => {}
                         Poll::Ready(Err(_error)) =>
@@ -105,6 +106,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                             return Poll::Pending;
                         }
                     }
+
+                    println!("start send unpin");
 
                     let message = std::mem::take(&mut self.write_buffer);
                     match self.stream.start_send_unpin(Message::Binary(message.freeze())) {
@@ -119,6 +122,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                 }
 
                 State::FlushPending => {
+                    println!("poll flush");
+
                     match self.stream.poll_flush_unpin(cx) {
                         Poll::Ready(Ok(())) => {}
                         Poll::Ready(Err(_error)) =>
@@ -246,7 +251,7 @@ mod tests {
 
         assert!(server.write(b"world").await.is_ok());
         match server.flush().await {
-            (Err(error)) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
+            Err(error) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
             state => panic!("Unexpected state {state:?}"),
         };
     }
@@ -261,7 +266,7 @@ mod tests {
         let mut buffer = [0u8; 10];
         let result = stream.read(&mut buffer).await;
         match result {
-            (Err(error)) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
+            Err(error) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
             state => panic!("Unexpected state {state:?}"),
         };
 
