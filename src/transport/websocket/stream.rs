@@ -220,4 +220,10 @@ mod tests {
         stream.write_all(data).await.unwrap();
         assert!(stream.flush().await.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_close_stream() {
+        let (mut stream, mut _server) = create_test_stream().await;
+        assert!(stream.close().await.is_ok());
+    }
 }
