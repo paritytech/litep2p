@@ -31,8 +31,6 @@ use std::{
     task::{Context, Poll},
 };
 
-// TODO: add tests
-
 const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
 /// Send state.
@@ -291,5 +289,18 @@ mod tests {
             pin_stream.poll_read(&mut cx, &mut buffer),
             Poll::Pending
         ));
+    }
+
+    #[tokio::test]
+    async fn test_read_from_internal_buffers() {
+        let (mut stream, server) = create_test_stream().await;
+        drop(server);
+
+        stream.read_buffer = Bytes::from_static(b"hello world");
+
+        let mut buffer = [0u8; 32];
+        let bytes_read = stream.read(&mut buffer).await.unwrap();
+        assert_eq!(bytes_read, 11);
+        assert_eq!(&buffer[..bytes_read], b"hello world");
     }
 }
