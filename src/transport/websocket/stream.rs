@@ -205,4 +205,10 @@ mod tests {
         assert_eq!(bytes_written, data.len());
         assert_eq!(&stream.write_buffer[..], data);
     }
+
+    #[tokio::test]
+    async fn test_flush_empty_buffer() {
+        let (mut stream, mut _server) = create_test_stream().await;
+        assert!(stream.flush().await.is_ok());
+    }
 }
