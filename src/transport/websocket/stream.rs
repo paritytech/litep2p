@@ -179,3 +179,30 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncRead for BufferedStream<S>
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+    use tokio::io::DuplexStream;
+    use tokio_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
+
+    async fn create_test_stream() -> (BufferedStream<DuplexStream>, BufferedStream<DuplexStream>) {
+        let (client, server) = tokio::io::duplex(1024);
+
+        (
+            BufferedStream::new(WebSocketStream::from_raw_socket(client, Role::Client, None).await),
+            BufferedStream::new(WebSocketStream::from_raw_socket(server, Role::Server, None).await),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_write_to_buffer() {
+        let (mut stream, mut _server) = create_test_stream().await;
+        let data = b"hello";
+
+        let bytes_written = stream.write(data).await.unwrap();
+        assert_eq!(bytes_written, data.len());
+        assert_eq!(&stream.write_buffer[..], data);
+    }
+}
