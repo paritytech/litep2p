@@ -211,4 +211,13 @@ mod tests {
         let (mut stream, mut _server) = create_test_stream().await;
         assert!(stream.flush().await.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_write_and_flush() {
+        let (mut stream, mut _server) = create_test_stream().await;
+        let data = b"hello world";
+
+        stream.write_all(data).await.unwrap();
+        assert!(stream.flush().await.is_ok());
+    }
 }
