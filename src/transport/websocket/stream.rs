@@ -278,4 +278,18 @@ mod tests {
             state => panic!("Expected state {state:?}"),
         }
     }
+
+    #[tokio::test]
+    async fn test_read_poll_pending() {
+        let (mut stream, mut _server) = create_test_stream().await;
+
+        let mut buffer = [0u8; 10];
+        let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
+        let pin_stream = Pin::new(&mut stream);
+
+        assert!(matches!(
+            pin_stream.poll_read(&mut cx, &mut buffer),
+            Poll::Pending
+        ));
+    }
 }
