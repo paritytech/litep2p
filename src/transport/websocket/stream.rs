@@ -226,4 +226,27 @@ mod tests {
         let (mut stream, mut _server) = create_test_stream().await;
         assert!(stream.close().await.is_ok());
     }
+
+    #[tokio::test]
+    async fn test_ping_pong_stream() {
+        let (mut stream, mut server) = create_test_stream().await;
+        stream.write(b"hello").await.unwrap();
+        assert!(stream.flush().await.is_ok());
+
+        let mut message = [0u8; 5];
+        server.read(&mut message).await.unwrap();
+        assert_eq!(&message, b"hello");
+
+        server.write(b"world").await.unwrap();
+        assert!(server.flush().await.is_ok());
+
+        stream.read(&mut message).await.unwrap();
+        assert_eq!(&message, b"world");
+
+        assert!(stream.close().await.is_ok());
+        drop(stream);
+
+        assert!(server.write(b"world").await.is_ok());
+        assert!(server.flush().await.is_err());
+    }
 }
