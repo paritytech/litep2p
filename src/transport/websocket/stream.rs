@@ -245,7 +245,10 @@ mod tests {
         drop(stream);
 
         assert!(server.write(b"world").await.is_ok());
-        assert!(server.flush().await.is_err());
+        match server.flush().await {
+            (Err(error)) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
+            state => panic!("Unexpected state {state:?}"),
+        };
     }
 
     #[tokio::test]
@@ -257,7 +260,10 @@ mod tests {
 
         let mut buffer = [0u8; 10];
         let result = stream.read(&mut buffer).await;
-        assert!(result.is_err());
+        match result {
+            (Err(error)) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
+            state => panic!("Unexpected state {state:?}"),
+        };
 
         let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
         let mut pin_stream = Pin::new(&mut stream);
@@ -265,7 +271,7 @@ mod tests {
         // Messages are buffered internally, the socket is not touched.
         match pin_stream.as_mut().poll_write(&mut cx, &mut buffer) {
             Poll::Ready(Ok(10)) => {}
-            state => panic!("Expected state {state:?}"),
+            state => panic!("Unexpected state {state:?}"),
         }
         // Socket is poisoned, the flush will fail.
         match pin_stream.poll_flush(&mut cx) {
@@ -273,7 +279,7 @@ mod tests {
                 if error.kind() == std::io::ErrorKind::UnexpectedEof {
                     return;
                 },
-            state => panic!("Expected state {state:?}"),
+            state => panic!("Unexpected state {state:?}"),
         }
     }
 
