@@ -63,9 +63,9 @@ mod handle;
 #[cfg(test)]
 mod tests;
 
-// TODO: add ability to specify limit for inbound requests?
-// TODO: convert inbound/outbound substreams to use `oneshot:Sender<()>` for sending/rejecting
-// responses.       this way, the code dealing with rejecting/responding doesn't have to block.
+// TODO: https://github.com/paritytech/litep2p/issues/339 Convert inbound/outbound
+// substreams to use `oneshot:Sender<()>` for sending/rejecting responses.
+// This way, the code dealing with rejecting/responding doesn't have to block.
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::request-response::protocol";
