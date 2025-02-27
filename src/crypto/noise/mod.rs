@@ -252,8 +252,9 @@ impl NoiseContext {
         let mut message = BytesMut::zeroed(size as usize);
         io.read_exact(&mut message).await?;
 
+        // TODO: https://github.com/paritytech/litep2p/issues/332 use correct overhead.
         let mut out = BytesMut::new();
-        out.resize(message.len() + 200, 0u8); // TODO: correct overhead
+        out.resize(message.len() + 200, 0u8);
 
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             tracing::error!(target: LOG_TARGET, "invalid state to read handshake message");
