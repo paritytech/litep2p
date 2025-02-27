@@ -73,7 +73,7 @@ impl WebRtcMessage {
 
     /// Decode payload into [`WebRtcMessage`].
     pub fn decode(payload: &[u8]) -> Result<Self, ParseError> {
-        // TODO: set correct size
+        // TODO: https://github.com/paritytech/litep2p/issues/352 set correct size
         let mut codec = UnsignedVarint::new(None);
         let mut data = bytes::BytesMut::from(payload);
         let result = codec
