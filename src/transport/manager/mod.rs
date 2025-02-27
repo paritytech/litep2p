@@ -67,7 +67,6 @@ mod types;
 
 pub(crate) mod handle;
 
-// TODO: store `Multiaddr` in `Arc`
 // TODO: limit number of peers and addresses
 // TODO: rename constants
 // TODO: add lots of documentation

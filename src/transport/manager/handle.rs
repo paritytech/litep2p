@@ -289,7 +289,6 @@ impl TransportManagerHandle {
     }
 }
 
-// TODO: add getters for these
 pub struct TransportHandle {
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,
