@@ -67,9 +67,8 @@ mod types;
 
 pub(crate) mod handle;
 
-// TODO: limit number of peers and addresses
-// TODO: rename constants
-// TODO: add lots of documentation
+// TODO: https://github.com/paritytech/litep2p/issues/268 Periodically clean up idle peers.
+// TODO: https://github.com/paritytech/litep2p/issues/344 add lots of documentation
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::transport-manager";
@@ -257,7 +256,7 @@ pub struct TransportManager {
 
 impl TransportManager {
     /// Create new [`crate::transport::manager::TransportManager`].
-    // TODO: don't return handle here
+    // TODO: https://github.com/paritytech/litep2p/issues/343 don't return handle here
     pub fn new(
         keypair: Keypair,
         supported_transports: HashSet<SupportedTransport>,
