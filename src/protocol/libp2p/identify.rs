@@ -56,7 +56,7 @@ const _PUSH_PROTOCOL_NAME: &str = "/ipfs/id/push/1.0.0";
 const DEFAULT_AGENT: &str = "litep2p/1.0.0";
 
 /// Size for `/ipfs/ping/1.0.0` payloads.
-// TODO: what is the max size?
+// TODO: https://github.com/paritytech/litep2p/issues/334 what is the max size?
 const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
 
 mod identify_schema {

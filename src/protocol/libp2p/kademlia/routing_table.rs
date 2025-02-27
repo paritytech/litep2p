@@ -142,7 +142,7 @@ impl RoutingTable {
             "add known peer"
         );
 
-        // TODO: this has to be moved elsewhere at some point
+        // TODO: https://github.com/paritytech/litep2p/issues/337 this has to be moved elsewhere at some point
         let addresses: Vec<Multiaddr> = addresses
             .into_iter()
             .filter_map(|address| {

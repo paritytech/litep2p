@@ -208,7 +208,7 @@ impl GetProvidersContext {
     }
 
     /// Get next action for `peer`.
-    // TODO: remove this and store the next action to `PeerAction`
+    // TODO: https://github.com/paritytech/litep2p/issues/40 remove this and store the next action to `PeerAction`
     pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
         self.pending.contains_key(peer).then_some(QueryAction::SendMessage {
             query: self.config.query,

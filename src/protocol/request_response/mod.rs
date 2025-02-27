@@ -185,8 +185,6 @@ pub(crate) struct RequestResponseProtocol {
     command_rx: Receiver<RequestResponseCommand>,
 
     /// Next request ID.
-    ///
-    /// Inbound requests are assigned an ephemeral ID TODO: finish
     next_request_id: Arc<AtomicUsize>,
 
     /// Timeout for outbound requests.

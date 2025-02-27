@@ -1637,7 +1637,7 @@ impl NotificationProtocol {
                     }
                 }
             },
-            // TODO: this could be combined with `Negotiation`
+            // TODO: https://github.com/paritytech/litep2p/issues/338 this could be combined with `Negotiation`
             peer = self.timers.next(), if !self.timers.is_empty() => match peer {
                 Some(peer) => {
                     match self.peers.get_mut(&peer) {
