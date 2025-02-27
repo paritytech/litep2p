@@ -21,7 +21,7 @@
 //! Stream implementation for `tokio_tungstenite::WebSocketStream` that implements
 //! `AsyncRead + AsyncWrite`
 
-use bytes::{Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
@@ -33,6 +33,8 @@ use std::{
 
 // TODO: add tests
 
+const DEFAULT_BUF_SIZE: usize = 8 * 1024;
+
 /// Send state.
 enum State {
     /// State is poisoned.
@@ -41,9 +43,6 @@ enum State {
     /// Sink is accepting input.
     ReadyToSend,
 
-    /// Sink is ready to send.
-    ReadyPending { to_write: Vec<u8> },
-
     /// Flush is pending for the sink.
     FlushPending,
 }
@@ -51,13 +50,12 @@ enum State {
 /// Buffered stream which implements `AsyncRead + AsyncWrite`
 pub(super) struct BufferedStream<S: AsyncRead + AsyncWrite + Unpin> {
     /// Write buffer.
-    write_buffer: Vec<u8>,
+    write_buffer: BytesMut,
 
-    /// Write pointer.
-    write_ptr: usize,
-
-    // Read buffer.
-    read_buffer: Option<Bytes>,
+    /// Read buffer.
+    ///
+    /// The buffer is taken directly from the WebSocket stream.
+    read_buffer: Bytes,
 
     /// Underlying WebSocket stream.
     stream: WebSocketStream<S>,
@@ -70,9 +68,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> BufferedStream<S> {
     /// Create new [`BufferedStream`].
     pub(super) fn new(stream: WebSocketStream<S>) -> Self {
         Self {
-            write_buffer: Vec::with_capacity(2000),
-            read_buffer: None,
-            write_ptr: 0usize,
+            write_buffer: BytesMut::with_capacity(DEFAULT_BUF_SIZE),
+            read_buffer: Bytes::new(),
             stream,
             state: State::ReadyToSend,
         }
@@ -86,7 +83,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         self.write_buffer.extend_from_slice(buf);
-        self.write_ptr += buf.len();
 
         Poll::Ready(Ok(buf.len()))
     }
@@ -102,36 +98,43 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
         loop {
             match std::mem::replace(&mut self.state, State::Poisoned) {
                 State::ReadyToSend => {
-                    let message = self.write_buffer[..self.write_ptr].to_vec();
-                    self.state = State::ReadyPending { to_write: message };
-
-                    match futures::ready!(self.stream.poll_ready_unpin(cx)) {
-                        Ok(()) => continue,
-                        Err(_error) => {
-                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()));
+                    match self.stream.poll_ready_unpin(cx) {
+                        Poll::Ready(Ok(())) => {}
+                        Poll::Ready(Err(_error)) =>
+                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
+                        Poll::Pending => {
+                            self.state = State::ReadyToSend;
+                            return Poll::Pending;
                         }
                     }
-                }
-                State::ReadyPending { to_write } => {
-                    match self.stream.start_send_unpin(Message::Binary(to_write.clone())) {
-                        Ok(_) => {
-                            self.state = State::FlushPending;
-                            continue;
-                        }
+
+                    let message = std::mem::take(&mut self.write_buffer);
+                    match self.stream.start_send_unpin(Message::Binary(message.freeze())) {
+                        Ok(()) => {}
                         Err(_error) =>
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
                     }
+
+                    // Transition to flush pending state.
+                    self.state = State::FlushPending;
+                    continue;
                 }
-                State::FlushPending => match futures::ready!(self.stream.poll_flush_unpin(cx)) {
-                    Ok(_res) => {
-                        // TODO: optimize
-                        self.state = State::ReadyToSend;
-                        self.write_ptr = 0;
-                        self.write_buffer = Vec::with_capacity(2000);
-                        return Poll::Ready(Ok(()));
+
+                State::FlushPending => {
+                    match self.stream.poll_flush_unpin(cx) {
+                        Poll::Ready(Ok(())) => {}
+                        Poll::Ready(Err(_error)) =>
+                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
+                        Poll::Pending => {
+                            self.state = State::ReadyToSend;
+                            return Poll::Pending;
+                        }
                     }
-                    Err(_) => return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
-                },
+
+                    self.state = State::ReadyToSend;
+                    self.write_buffer = BytesMut::with_capacity(DEFAULT_BUF_SIZE);
+                    return Poll::Ready(Ok(()));
+                }
                 State::Poisoned =>
                     return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
             }
@@ -153,10 +156,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncRead for BufferedStream<S>
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
         loop {
-            if self.read_buffer.is_none() {
-                match self.stream.poll_next_unpin(cx) {
+            if self.read_buffer.is_empty() {
+                let next_chunk = match self.stream.poll_next_unpin(cx) {
                     Poll::Ready(Some(Ok(chunk))) => match chunk {
-                        Message::Binary(chunk) => self.read_buffer.replace(chunk.into()),
+                        Message::Binary(chunk) => chunk,
                         _event => return Poll::Ready(Err(std::io::ErrorKind::Unsupported.into())),
                     },
                     Poll::Ready(Some(Err(_error))) =>
@@ -164,21 +167,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncRead for BufferedStream<S>
                     Poll::Ready(None) => return Poll::Ready(Ok(0)),
                     Poll::Pending => return Poll::Pending,
                 };
+
+                self.read_buffer = next_chunk;
+                continue;
             }
 
-            let buffer = self.read_buffer.as_mut().expect("buffer to exist");
-            let bytes_read = buf.len().min(buffer.len());
-            let _orig_size = buffer.len();
-            buf[..bytes_read].copy_from_slice(&buffer[..bytes_read]);
-
-            buffer.advance(bytes_read);
-
-            // TODO: this can't be correct
-            if !buffer.is_empty() || bytes_read != 0 {
-                return Poll::Ready(Ok(bytes_read));
-            } else {
-                self.read_buffer.take();
-            }
+            let len = std::cmp::min(self.read_buffer.len(), buf.len());
+            buf[..len].copy_from_slice(&self.read_buffer[..len]);
+            self.read_buffer.advance(len);
+            return Poll::Ready(Ok(len));
         }
     }
 }

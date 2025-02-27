@@ -841,6 +841,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-foundation"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b55271e5c8c478ad3f38ad24ef34923091e0548492a266d19b3c0b4d82574c63"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2512,7 +2522,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdf9d64cfcf380606e64f9a0bcf493616b65331199f984151a6fa11a7b3cde38"
 dependencies = [
  "async-io",
- "core-foundation",
+ "core-foundation 0.9.4",
  "fnv",
  "futures",
  "if-addrs",
@@ -3497,7 +3507,7 @@ dependencies = [
  "rcgen",
  "ring 0.16.20",
  "rustls 0.21.12",
- "rustls-webpki",
+ "rustls-webpki 0.101.7",
  "thiserror 1.0.69",
  "x509-parser 0.15.1",
  "yasna",
@@ -3690,6 +3700,58 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 [[package]]
 name = "litep2p"
 version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ca6ee50a125dc4fc4e9a3ae3640010796d1d07bc517a0ac715fdf0b24a0b6ac"
+dependencies = [
+ "async-trait",
+ "bs58 0.5.1",
+ "bytes",
+ "cid 0.10.1",
+ "ed25519-dalek",
+ "futures",
+ "futures-timer",
+ "hex-literal",
+ "hickory-resolver",
+ "indexmap 2.7.1",
+ "libc",
+ "mockall 0.13.1",
+ "multiaddr 0.17.1",
+ "multihash 0.17.0",
+ "network-interface",
+ "nohash-hasher",
+ "parking_lot 0.12.3",
+ "pin-project",
+ "prost 0.12.6",
+ "prost-build",
+ "rand",
+ "rcgen",
+ "ring 0.16.20",
+ "rustls 0.20.9",
+ "serde",
+ "sha2 0.10.8",
+ "simple-dns 0.7.1",
+ "smallvec",
+ "snow",
+ "socket2 0.5.8",
+ "static_assertions",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.20.1",
+ "tokio-util",
+ "tracing",
+ "uint 0.9.5",
+ "unsigned-varint 0.8.0",
+ "url",
+ "x25519-dalek 2.0.1",
+ "x509-parser 0.16.0",
+ "yasna",
+ "zeroize",
+]
+
+[[package]]
+name = "litep2p"
+version = "0.9.1"
 dependencies = [
  "async-trait",
  "asynchronous-codec 0.7.0",
@@ -3733,7 +3795,7 @@ dependencies = [
  "thiserror 2.0.11",
  "tokio",
  "tokio-stream",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.26.1",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
@@ -3744,58 +3806,6 @@ dependencies = [
  "x25519-dalek 2.0.1",
  "x509-parser 0.17.0",
  "yamux 0.13.4",
- "yasna",
- "zeroize",
-]
-
-[[package]]
-name = "litep2p"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ca6ee50a125dc4fc4e9a3ae3640010796d1d07bc517a0ac715fdf0b24a0b6ac"
-dependencies = [
- "async-trait",
- "bs58 0.5.1",
- "bytes",
- "cid 0.10.1",
- "ed25519-dalek",
- "futures",
- "futures-timer",
- "hex-literal",
- "hickory-resolver",
- "indexmap 2.7.1",
- "libc",
- "mockall 0.13.1",
- "multiaddr 0.17.1",
- "multihash 0.17.0",
- "network-interface",
- "nohash-hasher",
- "parking_lot 0.12.3",
- "pin-project",
- "prost 0.12.6",
- "prost-build",
- "rand",
- "rcgen",
- "ring 0.16.20",
- "rustls 0.20.9",
- "serde",
- "sha2 0.10.8",
- "simple-dns 0.7.1",
- "smallvec",
- "snow",
- "socket2 0.5.8",
- "static_assertions",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite",
- "tokio-util",
- "tracing",
- "uint 0.9.5",
- "unsigned-varint 0.8.0",
- "url",
- "x25519-dalek 2.0.1",
- "x509-parser 0.16.0",
  "yasna",
  "zeroize",
 ]
@@ -5557,8 +5567,21 @@ checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
 dependencies = [
  "log",
  "ring 0.17.8",
- "rustls-webpki",
+ "rustls-webpki 0.101.7",
  "sct",
+]
+
+[[package]]
+name = "rustls"
+version = "0.23.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47796c98c480fce5406ef69d1c76378375492c3b0a0de587be0c1d9feb12f395"
+dependencies = [
+ "once_cell",
+ "rustls-pki-types",
+ "rustls-webpki 0.102.8",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -5570,7 +5593,19 @@ dependencies = [
  "openssl-probe",
  "rustls-pemfile",
  "schannel",
- "security-framework",
+ "security-framework 2.11.1",
+]
+
+[[package]]
+name = "rustls-native-certs"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fcff2dd52b58a8d98a70243663a0d234c4e2b79235637849d15913394a247d3"
+dependencies = [
+ "openssl-probe",
+ "rustls-pki-types",
+ "schannel",
+ "security-framework 3.2.0",
 ]
 
 [[package]]
@@ -5583,12 +5618,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-pki-types"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "917ce264624a4b4db1c364dcc35bfca9ded014d0a958cd47ad3e960e988ea51c"
+
+[[package]]
 name = "rustls-webpki"
 version = "0.101.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
  "ring 0.17.8",
+ "untrusted 0.9.0",
+]
+
+[[package]]
+name = "rustls-webpki"
+version = "0.102.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
+dependencies = [
+ "ring 0.17.8",
+ "rustls-pki-types",
  "untrusted 0.9.0",
 ]
 
@@ -5788,7 +5840,7 @@ dependencies = [
  "ip_network",
  "libp2p 0.52.4",
  "linked_hash_set",
- "litep2p 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "litep2p 0.9.0",
  "log",
  "mockall 0.11.4",
  "once_cell",
@@ -5849,7 +5901,7 @@ dependencies = [
  "bs58 0.5.1",
  "ed25519-dalek",
  "libp2p-identity 0.2.10",
- "litep2p 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "litep2p 0.9.0",
  "log",
  "multiaddr 0.18.2",
  "multihash 0.19.3",
@@ -6051,7 +6103,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "897b2245f0b511c87893af39b033e5ca9cce68824c4d7e7630b5a1d339658d02"
 dependencies = [
  "bitflags 2.8.0",
- "core-foundation",
+ "core-foundation 0.9.4",
+ "core-foundation-sys",
+ "libc",
+ "security-framework-sys",
+]
+
+[[package]]
+name = "security-framework"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "271720403f46ca04f7ba6f55d438f8bd878d6b8ca0a1046e8228c4145bcbb316"
+dependencies = [
+ "bitflags 2.8.0",
+ "core-foundation 0.10.0",
  "core-foundation-sys",
  "libc",
  "security-framework-sys",
@@ -6971,9 +7036,9 @@ dependencies = [
 
 [[package]]
 name = "subtle"
-version = "2.4.1"
+version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
+checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
@@ -7027,7 +7092,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c879d448e9d986b661742763247d3693ed13609438cf3d006f51f5368a5ba6b"
 dependencies = [
  "bitflags 2.8.0",
- "core-foundation",
+ "core-foundation 0.9.4",
  "system-configuration-sys",
 ]
 
@@ -7227,6 +7292,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-rustls"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f6d0975eaace0cf0fcadee4e4aaa5da15b5c079146f2cffb67c113be122bf37"
+dependencies = [
+ "rustls 0.23.23",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-stream"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7246,10 +7321,26 @@ dependencies = [
  "futures-util",
  "log",
  "rustls 0.21.12",
- "rustls-native-certs",
+ "rustls-native-certs 0.6.3",
  "tokio",
- "tokio-rustls",
- "tungstenite",
+ "tokio-rustls 0.24.1",
+ "tungstenite 0.20.1",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be4bf6fecd69fcdede0ec680aaf474cdab988f9de6bc73d3758f0160e3b7025a"
+dependencies = [
+ "futures-util",
+ "log",
+ "rustls 0.23.23",
+ "rustls-native-certs 0.8.1",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls 0.26.1",
+ "tungstenite 0.26.1",
 ]
 
 [[package]]
@@ -7513,6 +7604,27 @@ dependencies = [
  "rustls 0.21.12",
  "sha1",
  "thiserror 1.0.69",
+ "url",
+ "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "413083a99c579593656008130e29255e54dcaae495be556cc26888f211648c24"
+dependencies = [
+ "byteorder",
+ "bytes",
+ "data-encoding",
+ "http 1.2.0",
+ "httparse",
+ "log",
+ "rand",
+ "rustls 0.23.23",
+ "rustls-pki-types",
+ "sha1",
+ "thiserror 2.0.11",
  "url",
  "utf-8",
 ]
