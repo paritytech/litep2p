@@ -19,7 +19,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    codec::{generic::Unspecified, identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec},
+    codec::{
+        generic::Unspecified, identity::Identity, unsigned_varint::UnsignedVarint, ProtocolCodec,
+    },
     config::Role,
     error::Error,
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
@@ -166,8 +168,8 @@ impl QuicConnection {
             }
         };
 
-        // TODO: protocols don't change after they've been initialized so this should be done only
-        // once
+        // TODO: https://github.com/paritytech/litep2p/issues/346 protocols don't change after
+        // they've been initialized so this should be done only once.
         let protocols = std::iter::once(&*protocol)
             .chain(fallback_names.iter().map(|protocol| &**protocol))
             .collect();
@@ -228,7 +230,7 @@ impl QuicConnection {
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                std::time::Duration::from_secs(5), // TODO: https://github.com/paritytech/litep2p/issues/348 make this configurable
                                 Self::accept_substream(stream, permit, substream, protocols),
                             )
                             .await
@@ -338,7 +340,7 @@ impl QuicConnection {
 
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
-                                std::time::Duration::from_secs(5), // TODO: make this configurable
+                                std::time::Duration::from_secs(5), // TODO: https://github.com/paritytech/litep2p/issues/348 make this configurable
                                 Self::open_substream(
                                     handle,
                                     permit,

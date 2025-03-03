@@ -23,9 +23,6 @@
 
 //! [`Litep2p`](`crate::Litep2p`) error types.
 
-// TODO: clean up all these errors into something coherent
-// TODO: move `NegotiationError` under `SubstreamError`
-
 use crate::{
     protocol::Direction,
     transport::manager::limits::ConnectionLimitsError,
@@ -38,6 +35,8 @@ use multihash::{Multihash, MultihashGeneric};
 
 use std::io::{self, ErrorKind};
 
+// TODO: https://github.com/paritytech/litep2p/issues/204 clean up the overarching error.
+// Please note that this error is not propagated directly to the user.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

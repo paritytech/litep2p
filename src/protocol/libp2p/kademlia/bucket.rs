@@ -56,7 +56,8 @@ impl<'a> KBucketEntry<'a> {
 
 /// Kademlia k-bucket.
 pub struct KBucket {
-    // TODO: store peers in a btreemap with increasing distance from local key?
+    // TODO: https://github.com/paritytech/litep2p/issues/335
+    // store peers in a btreemap with increasing distance from local key?
     nodes: Vec<KademliaPeer>,
 }
 
@@ -69,7 +70,7 @@ impl KBucket {
     }
 
     /// Get entry into the bucket.
-    // TODO: this is horrible code
+    // TODO: https://github.com/paritytech/litep2p/pull/184 should optimize this
     pub fn entry<K: Clone>(&mut self, key: Key<K>) -> KBucketEntry<'_> {
         for i in 0..self.nodes.len() {
             if self.nodes[i].key == key {

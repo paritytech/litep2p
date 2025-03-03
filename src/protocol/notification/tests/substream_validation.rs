@@ -329,7 +329,7 @@ async fn accept_fails_due_to_closed_substream() {
     }
     notif.on_handshake_event(peer, event).await;
 
-    // TODO: check state
+    // TODO: https://github.com/paritytech/litep2p/issues/340 check state
 }
 
 #[tokio::test]

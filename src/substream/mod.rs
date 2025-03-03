@@ -661,7 +661,7 @@ impl Stream for Substream {
     }
 }
 
-// TODO: this code can definitely be optimized
+// TODO: https://github.com/paritytech/litep2p/issues/341 this code can definitely be optimized
 impl Sink<Bytes> for Substream {
     type Error = SubstreamError;
 
@@ -759,6 +759,7 @@ pub trait SubstreamSetKey: Hash + Unpin + fmt::Debug + PartialEq + Eq + Copy {}
 impl<K: Hash + Unpin + fmt::Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
 
 /// Substream set.
+// TODO: https://github.com/paritytech/litep2p/issues/342 remove this.
 #[derive(Debug, Default)]
 pub struct SubstreamSet<K, S>
 where
@@ -825,7 +826,6 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inner = Pin::into_inner(self);
 
-        // TODO: poll the streams more randomly
         for (key, mut substream) in inner.substreams.iter_mut() {
             match Pin::new(&mut substream).poll_next(cx) {
                 Poll::Pending => continue,

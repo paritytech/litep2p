@@ -199,14 +199,10 @@ pub(crate) trait Transport: Stream + Unpin + Send {
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
 
     /// Attempt to open connection to remote peer over one or more addresses.
-    ///
-    /// TODO: documentation
     fn open(&mut self, connection_id: ConnectionId, addresses: Vec<Multiaddr>)
         -> crate::Result<()>;
 
     /// Negotiate opened connection.
-    ///
-    /// TODO: documentation
     fn negotiate(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
 
     /// Cancel opening connections.

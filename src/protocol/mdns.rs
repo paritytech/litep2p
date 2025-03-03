@@ -263,7 +263,8 @@ impl Mdns {
                     return vec![];
                 }
 
-                // TODO: `filter_map` is not necessary as there's at most one entry
+                // TODO: https://github.com/paritytech/litep2p/issues/333
+                // `filter_map` is not necessary as there's at most one entry
                 match &record.rdata {
                     RData::TXT(text) => text
                         .attributes()

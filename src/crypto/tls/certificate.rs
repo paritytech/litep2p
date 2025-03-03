@@ -216,7 +216,6 @@ fn make_libp2p_extension(
     //    signature OCTET STRING
     // }
     let extension_content = {
-        // TODO: this is ridiculous
         let serialized_pubkey =
             crate::crypto::PublicKey::Ed25519(identity_keypair.public()).to_protobuf_encoding();
         yasna::encode_der(&(serialized_pubkey, signature))

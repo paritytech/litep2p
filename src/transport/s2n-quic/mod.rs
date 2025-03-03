@@ -164,7 +164,7 @@ impl QuicTransport {
 
         tracing::info!(target: LOG_TARGET, ?address, ?peer, "accepted connection from remote peer");
 
-        // TODO: verify that the peer can actually be accepted
+        // TODO: https://github.com/paritytech/litep2p/issues/349 verify that the peer can actually be accepted
         let mut protocol_set = self.context.protocol_set();
         protocol_set.report_connection_established(connection_id, peer, address).await?;
 

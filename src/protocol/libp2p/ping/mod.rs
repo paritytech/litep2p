@@ -40,7 +40,7 @@ pub use config::{Config, ConfigBuilder};
 
 mod config;
 
-// TODO: handle max failures
+// TODO: https://github.com/paritytech/litep2p/issues/132 let the user handle max failures
 
 /// Log target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::ping";
@@ -120,7 +120,7 @@ impl Ping {
 
         self.pending_outbound.push(Box::pin(async move {
             let future = async move {
-                // TODO: generate random payload and verify it
+                // TODO: https://github.com/paritytech/litep2p/issues/134 generate random payload and verify it
                 substream.send_framed(vec![0u8; 32].into()).await?;
                 let now = Instant::now();
                 let _ = substream.next().await.ok_or(Error::SubstreamError(

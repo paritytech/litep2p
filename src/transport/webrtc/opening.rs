@@ -410,7 +410,7 @@ impl OpeningWebRtcConnection {
                             continue;
                         }
 
-                        // TODO: no expect
+                        // TODO: https://github.com/paritytech/litep2p/issues/350 no expect
                         self.on_noise_channel_open().expect("to succeed");
                     }
                     Event::ChannelData(data) => {
@@ -429,7 +429,7 @@ impl OpeningWebRtcConnection {
                             continue;
                         }
 
-                        // TODO: no expect
+                        // TODO: https://github.com/paritytech/litep2p/issues/350 no expect
                         return self.on_noise_channel_data(data.data).expect("to succeed");
                     }
                     Event::ChannelClose(channel_id) => {

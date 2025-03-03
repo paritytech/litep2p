@@ -224,7 +224,8 @@ pub enum KademliaEvent {
     },
 
     /// `PUT_VALUE` query succeeded.
-    // TODO: this is never emitted. Implement + add `AddProviderSuccess`.
+    // TODO: https://github.com/paritytech/litep2p/issues/336
+    // this is never emitted. Implement + add `AddProviderSuccess`.
     PutRecordSuccess {
         /// Query ID.
         query_id: QueryId,
