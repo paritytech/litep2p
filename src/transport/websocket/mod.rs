@@ -23,6 +23,7 @@
 use crate::{
     config::Role,
     error::{AddressError, Error, NegotiationError},
+    metrics::{MetricGauge, ScopeGaugeMetric},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, WebSocketAddress},
         manager::TransportHandle,
@@ -37,6 +38,7 @@ use crate::{
     DialError, PeerId,
 };
 
+use connection::WebSocketConnectionMetrics;
 use futures::{
     future::BoxFuture,
     stream::{AbortHandle, FuturesUnordered},
@@ -132,6 +134,34 @@ pub(crate) struct WebSocketTransport {
 
     /// Negotiated connections waiting validation.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
+
+    /// Websocket metrics.
+    metrics: Option<WebSocketMetrics>,
+}
+
+/// Websocket specific metrics.
+struct WebSocketMetrics {
+    /// The following metrics are used for the transport itself.
+    pending_dials_num: MetricGauge,
+    pending_inbound_connections_num: MetricGauge,
+    pending_connections_num: MetricGauge,
+    pending_raw_connections_num: MetricGauge,
+    open_raw_connections_num: MetricGauge,
+    cancel_futures_num: MetricGauge,
+    pending_open_num: MetricGauge,
+
+    /// The following metrics are shared with all TCP connections.
+    active_connections_num: MetricGauge,
+    pending_substreams_num: MetricGauge,
+}
+
+impl WebSocketMetrics {
+    fn to_connection_metrics(&self) -> WebSocketConnectionMetrics {
+        WebSocketConnectionMetrics {
+            _active_connections_num: ScopeGaugeMetric::new(self.active_connections_num.clone()),
+            pending_substreams_num: self.pending_substreams_num.clone(),
+        }
+    }
 }
 
 impl WebSocketTransport {
@@ -300,6 +330,7 @@ impl TransportBuilder for WebSocketTransport {
     fn new(
         context: TransportHandle,
         mut config: Self::Config,
+        registry: Option<crate::metrics::MetricsRegistry>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
@@ -315,6 +346,51 @@ impl TransportBuilder for WebSocketTransport {
             config.nodelay,
         );
 
+        let metrics = if let Some(registry) = registry {
+            Some(WebSocketMetrics {
+                pending_dials_num: registry.register_gauge(
+                    "litep2p_websocket_pending_dials".into(),
+                    "Litep2p number of pending dials".into(),
+                )?,
+                pending_inbound_connections_num: registry.register_gauge(
+                    "litep2p_websocket_pending_inbound_connections".into(),
+                    "Litep2p number of pending inbound connections".into(),
+                )?,
+                pending_connections_num: registry.register_gauge(
+                    "litep2p_websocket_pending_connections".into(),
+                    "Litep2p number of pending connections".into(),
+                )?,
+                pending_raw_connections_num: registry.register_gauge(
+                    "litep2p_websocket_pending_raw_connections".into(),
+                    "Litep2p number of pending raw connections".into(),
+                )?,
+                open_raw_connections_num: registry.register_gauge(
+                    "litep2p_websocket_open_raw_connections".into(),
+                    "Litep2p number of open raw connections".into(),
+                )?,
+                cancel_futures_num: registry.register_gauge(
+                    "litep2p_websocket_cancel_futures".into(),
+                    "Litep2p number of cancel futures".into(),
+                )?,
+                pending_open_num: registry.register_gauge(
+                    "litep2p_websocket_pending_open".into(),
+                    "Litep2p number of pending open connections".into(),
+                )?,
+
+                active_connections_num: registry.register_gauge(
+                    "litep2p_websocket_active_connections".into(),
+                    "Litep2p number of active connections".into(),
+                )?,
+
+                pending_substreams_num: registry.register_gauge(
+                    "litep2p_websocket_pending_substreams".into(),
+                    "Litep2p number of pending substreams".into(),
+                )?,
+            })
+        } else {
+            None
+        };
+
         Ok((
             Self {
                 listener,
@@ -328,6 +404,7 @@ impl TransportBuilder for WebSocketTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
+                metrics,
             },
             listen_addresses,
         ))
@@ -400,12 +477,14 @@ impl Transport for WebSocketTransport {
             "start connection",
         );
 
+        let metrics = self.metrics.as_ref().map(|metrics| metrics.to_connection_metrics());
         self.context.executor.run(Box::pin(async move {
             if let Err(error) = WebSocketConnection::new(
                 context,
                 protocol_set,
                 bandwidth_sink,
                 substream_open_timeout,
+                metrics,
             )
             .start()
             .await
@@ -587,6 +666,20 @@ impl Stream for WebSocketTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(metrics) = &self.metrics {
+            metrics.pending_dials_num.set(self.pending_dials.len() as u64);
+            metrics
+                .pending_inbound_connections_num
+                .set(self.pending_inbound_connections.len() as u64);
+            metrics.pending_connections_num.set(self.pending_connections.len() as u64);
+            metrics
+                .pending_raw_connections_num
+                .set(self.pending_raw_connections.len() as u64);
+            metrics.open_raw_connections_num.set(self.opened_raw.len() as u64);
+            metrics.cancel_futures_num.set(self.cancel_futures.len() as u64);
+            metrics.pending_open_num.set(self.pending_open.len() as u64);
+        }
+
         if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
             return match event {
                 None => {

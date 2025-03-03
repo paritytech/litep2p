@@ -72,6 +72,7 @@ pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod executor;
+pub mod metrics;
 pub mod protocol;
 pub mod substream;
 pub mod transport;
@@ -164,7 +165,8 @@ impl Litep2p {
             bandwidth_sink.clone(),
             litep2p_config.max_parallel_dials,
             litep2p_config.connection_limits,
-        );
+            litep2p_config.metrics_registry.clone(),
+        )?;
 
         // add known addresses to `TransportManager`, if any exist
         if !litep2p_config.known_addresses.is_empty() {
@@ -188,9 +190,14 @@ impl Litep2p {
                 litep2p_config.keep_alive_timeout,
             );
             let executor = Arc::clone(&litep2p_config.executor);
-            litep2p_config.executor.run(Box::pin(async move {
-                NotificationProtocol::new(service, config, executor).run().await
-            }));
+            let notification = NotificationProtocol::new(
+                service,
+                config,
+                executor,
+                litep2p_config.metrics_registry.clone(),
+            )?;
+
+            litep2p_config.executor.run(Box::pin(async move { notification.run().await }));
         }
 
         // start request-response protocol event loops
@@ -207,9 +214,15 @@ impl Litep2p {
                 config.codec,
                 litep2p_config.keep_alive_timeout,
             );
-            litep2p_config.executor.run(Box::pin(async move {
-                RequestResponseProtocol::new(service, config).run().await
-            }));
+            let request_response = RequestResponseProtocol::new(
+                service,
+                config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
+
+            litep2p_config
+                .executor
+                .run(Box::pin(async move { request_response.run().await }));
         }
 
         // start user protocol event loops
@@ -241,9 +254,13 @@ impl Litep2p {
                 ping_config.codec,
                 litep2p_config.keep_alive_timeout,
             );
-            litep2p_config.executor.run(Box::pin(async move {
-                Ping::new(service, ping_config).run().await
-            }));
+            let ping = Ping::new(
+                service,
+                ping_config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
+
+            litep2p_config.executor.run(Box::pin(async move { ping.run().await }));
         }
 
         // start kademlia protocol event loop if enabled
@@ -264,8 +281,14 @@ impl Litep2p {
                 kademlia_config.codec,
                 litep2p_config.keep_alive_timeout,
             );
+            let kad = Kademlia::new(
+                service,
+                kademlia_config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
+
             litep2p_config.executor.run(Box::pin(async move {
-                let _ = Kademlia::new(service, kademlia_config).run().await;
+                let _ = kad.run().await;
             }));
         }
 
@@ -313,8 +336,11 @@ impl Litep2p {
         // enable tcp transport if the config exists
         if let Some(config) = litep2p_config.tcp.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
-            let (transport, transport_listen_addresses) =
-                <TcpTransport as TransportBuilder>::new(handle, config)?;
+            let (transport, transport_listen_addresses) = <TcpTransport as TransportBuilder>::new(
+                handle,
+                config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -330,8 +356,11 @@ impl Litep2p {
         #[cfg(feature = "quic")]
         if let Some(config) = litep2p_config.quic.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
-            let (transport, transport_listen_addresses) =
-                <QuicTransport as TransportBuilder>::new(handle, config)?;
+            let (transport, transport_listen_addresses) = <QuicTransport as TransportBuilder>::new(
+                handle,
+                config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -348,7 +377,11 @@ impl Litep2p {
         if let Some(config) = litep2p_config.webrtc.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
-                <WebRtcTransport as TransportBuilder>::new(handle, config)?;
+                <WebRtcTransport as TransportBuilder>::new(
+                    handle,
+                    config,
+                    litep2p_config.metrics_registry.clone(),
+                )?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -365,7 +398,11 @@ impl Litep2p {
         if let Some(config) = litep2p_config.websocket.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
-                <WebSocketTransport as TransportBuilder>::new(handle, config)?;
+                <WebSocketTransport as TransportBuilder>::new(
+                    handle,
+                    config,
+                    litep2p_config.metrics_registry.clone(),
+                )?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -390,7 +427,11 @@ impl Litep2p {
         // if identify was enabled, give it the enabled protocols and listen addresses and start it
         if let Some((service, mut identify_config)) = identify_info.take() {
             identify_config.protocols = transport_manager.protocols().cloned().collect();
-            let identify = Identify::new(service, identify_config);
+            let identify = Identify::new(
+                service,
+                identify_config,
+                litep2p_config.metrics_registry.clone(),
+            )?;
 
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = identify.run().await;

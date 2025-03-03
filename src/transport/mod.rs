@@ -20,7 +20,10 @@
 
 //! Transport protocol implementations provided by [`Litep2p`](`crate::Litep2p`).
 
-use crate::{error::DialError, transport::manager::TransportHandle, types::ConnectionId, PeerId};
+use crate::{
+    error::DialError, metrics::MetricsRegistry, transport::manager::TransportHandle,
+    types::ConnectionId, PeerId,
+};
 
 use futures::Stream;
 use multiaddr::Multiaddr;
@@ -177,7 +180,11 @@ pub(crate) trait TransportBuilder {
     type Transport: Transport;
 
     /// Create new [`Transport`] object.
-    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<(Self, Vec<Multiaddr>)>
+    fn new(
+        context: TransportHandle,
+        config: Self::Config,
+        registry: Option<MetricsRegistry>,
+    ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized;
 }

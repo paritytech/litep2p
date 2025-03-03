@@ -23,6 +23,7 @@
 use crate::{
     error::{Error, SubstreamError},
     executor::Executor,
+    metrics::{MetricGauge, MetricsRegistry},
     protocol::{
         self,
         notification::{
@@ -282,6 +283,19 @@ pub(crate) struct NotificationProtocol {
 
     /// Should `NotificationProtocol` attempt to dial the peer.
     should_dial: bool,
+
+    /// Metrics.
+    metrics: Option<Metrics>,
+}
+
+/// Request-response protocol metrics.
+struct Metrics {
+    connected_peers: MetricGauge,
+    pending_outbound_num: MetricGauge,
+    pending_outbound_handshake_num: MetricGauge,
+    ready_substreams_handshake_num: MetricGauge,
+    pending_validations_num: MetricGauge,
+    timers_num: MetricGauge,
 }
 
 impl NotificationProtocol {
@@ -289,10 +303,50 @@ impl NotificationProtocol {
         service: TransportService,
         config: Config,
         executor: Arc<dyn Executor>,
-    ) -> Self {
+        registry: Option<MetricsRegistry>,
+    ) -> Result<Self, Error> {
         let (shutdown_tx, shutdown_rx) = channel(DEFAULT_CHANNEL_SIZE);
 
-        Self {
+        let metrics = if let Some(registry) = registry {
+            let protocol_name = config.protocol_name.to_metric_string();
+
+            Some(Metrics {
+                connected_peers: registry.register_gauge(
+                    format!("litep2p_notif{}_connected_peers", protocol_name),
+                    "Number of connected peers".to_string(),
+                )?,
+                pending_outbound_num: registry.register_gauge(
+                    format!("litep2p_notif{}_pending_outbound_num", protocol_name),
+                    "Number of pending outbound substreams".to_string(),
+                )?,
+                pending_outbound_handshake_num: registry.register_gauge(
+                    format!(
+                        "litep2p_notif{}_pending_outbound_handshake_num",
+                        protocol_name
+                    ),
+                    "Number of pending outbound substreams with handshake".to_string(),
+                )?,
+                ready_substreams_handshake_num: registry.register_gauge(
+                    format!(
+                        "litep2p_notif{}_ready_substreams_handshake_num",
+                        protocol_name
+                    ),
+                    "Number of ready substreams with handshake".to_string(),
+                )?,
+                pending_validations_num: registry.register_gauge(
+                    format!("litep2p_notif{}_pending_validations_num", protocol_name),
+                    "Number of pending substream validations".to_string(),
+                )?,
+                timers_num: registry.register_gauge(
+                    format!("litep2p_notif{}_timers_num", protocol_name),
+                    "Number of pending timers".to_string(),
+                )?,
+            })
+        } else {
+            None
+        };
+
+        Ok(Self {
             service,
             shutdown_tx,
             shutdown_rx,
@@ -310,7 +364,8 @@ impl NotificationProtocol {
             sync_channel_size: config.sync_channel_size,
             async_channel_size: config.async_channel_size,
             should_dial: config.should_dial,
-        }
+            metrics,
+        })
     }
 
     /// Connection established to remote node.
@@ -1605,8 +1660,24 @@ impl NotificationProtocol {
         }
     }
 
+    /// Report metrics.
+    fn report_metrics(&self) {
+        if let Some(metrics) = &self.metrics {
+            metrics.connected_peers.set(self.peers.len() as u64);
+            metrics.pending_outbound_num.set(self.pending_outbound.len() as u64);
+            metrics
+                .pending_outbound_handshake_num
+                .set(self.negotiation.substreams_len() as u64);
+            metrics.ready_substreams_handshake_num.set(self.negotiation.ready_len() as u64);
+            metrics.pending_validations_num.set(self.pending_validations.len() as u64);
+            metrics.timers_num.set(self.timers.len() as u64);
+        }
+    }
+
     /// Handle next notification event.
     async fn next_event(&mut self) {
+        self.report_metrics();
+
         // biased select is used because the substream events must be prioritized above other events
         // that is because a closed substream is detected by either `substreams` or `negotiation`
         // and if that event is not handled with priority but, e.g., inbound substream is

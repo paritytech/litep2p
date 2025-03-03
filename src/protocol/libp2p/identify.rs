@@ -24,6 +24,7 @@ use crate::{
     codec::ProtocolCodec,
     crypto::PublicKey,
     error::{Error, SubstreamError},
+    metrics::{MetricGauge, MetricsRegistry},
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     transport::Endpoint,
@@ -186,12 +187,42 @@ pub(crate) struct Identify {
 
     /// Pending inbound substreams.
     pending_inbound: FuturesStream<BoxFuture<'static, ()>>,
+
+    /// Metrics.
+    metrics: Option<Metrics>,
+}
+
+struct Metrics {
+    peers: MetricGauge,
+    pending_outbound: MetricGauge,
+    pending_inbound: MetricGauge,
 }
 
 impl Identify {
     /// Create new [`Identify`] protocol.
-    pub(crate) fn new(service: TransportService, config: Config) -> Self {
-        Self {
+    pub(crate) fn new(
+        service: TransportService,
+        config: Config,
+        registry: Option<MetricsRegistry>,
+    ) -> Result<Self, Error> {
+        let metrics = if let Some(registry) = registry {
+            Some(Metrics {
+                peers: registry
+                    .register_gauge("litep2p_identify_peers".into(), "Connected peers".into())?,
+                pending_outbound: registry.register_gauge(
+                    "litep2p_identify_pending_outbound".into(),
+                    "Pending outbound substreams".into(),
+                )?,
+                pending_inbound: registry.register_gauge(
+                    "litep2p_identify_pending_inbound".into(),
+                    "Pending inbound substreams".into(),
+                )?,
+            })
+        } else {
+            None
+        };
+
+        Ok(Self {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
@@ -201,7 +232,8 @@ impl Identify {
             pending_inbound: FuturesStream::new(),
             pending_outbound: FuturesStream::new(),
             protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
-        }
+            metrics,
+        })
     }
 
     /// Connection established to remote peer.
@@ -355,6 +387,12 @@ impl Identify {
         tracing::debug!(target: LOG_TARGET, "starting identify event loop");
 
         loop {
+            if let Some(metrics) = &self.metrics {
+                metrics.peers.set(self.peers.len() as u64);
+                metrics.pending_inbound.set(self.pending_inbound.len() as u64);
+                metrics.pending_outbound.set(self.pending_outbound.len() as u64);
+            }
+
             tokio::select! {
                 event = self.service.next() => match event {
                     None => {

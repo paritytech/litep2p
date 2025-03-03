@@ -25,6 +25,7 @@ use crate::{
         noise::{self, NoiseSocket},
     },
     error::{Error, NegotiationError, SubstreamError},
+    metrics::{MeteredFuturesStream, MetricGauge, ScopeGaugeMetric},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
@@ -37,11 +38,7 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
-use futures::{
-    future::BoxFuture,
-    stream::{FuturesUnordered, StreamExt},
-    AsyncRead, AsyncWrite,
-};
+use futures::{future::BoxFuture, stream::StreamExt, AsyncRead, AsyncWrite};
 use multiaddr::{Multiaddr, Protocol};
 use tokio::net::TcpStream;
 use tokio_util::compat::{
@@ -140,6 +137,16 @@ impl NegotiatedConnection {
     }
 }
 
+/// Connection specific metrics.
+pub struct TcpConnectionMetrics {
+    /// Metric for the number of pending substreams that are negotiated.
+    pub pending_substreams_num: MetricGauge,
+
+    /// Metric incremented when the connection starts
+    /// and decremented when the connection closes.
+    pub _active_connections_num: ScopeGaugeMetric,
+}
+
 /// TCP connection.
 pub struct TcpConnection {
     /// Protocol context.
@@ -168,7 +175,11 @@ pub struct TcpConnection {
 
     /// Pending substreams.
     pending_substreams:
-        FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
+        MeteredFuturesStream<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
+
+    /// Metric incremented when the connection starts
+    /// and decremented when the connection closes.
+    _active_connections_num: Option<ScopeGaugeMetric>,
 }
 
 impl fmt::Debug for TcpConnection {
@@ -187,6 +198,7 @@ impl TcpConnection {
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
         next_substream_id: Arc<AtomicUsize>,
+        metrics: Option<TcpConnectionMetrics>,
     ) -> Self {
         let NegotiatedConnection {
             connection,
@@ -196,6 +208,15 @@ impl TcpConnection {
             substream_open_timeout,
         } = context;
 
+        let (pending_substreams_num, _active_connections_num) = if let Some(metrics) = metrics {
+            (
+                Some(metrics.pending_substreams_num),
+                Some(metrics._active_connections_num),
+            )
+        } else {
+            (None, None)
+        };
+
         Self {
             protocol_set,
             connection,
@@ -204,8 +225,9 @@ impl TcpConnection {
             endpoint,
             bandwidth_sink,
             next_substream_id,
-            pending_substreams: FuturesUnordered::new(),
             substream_open_timeout,
+            pending_substreams: MeteredFuturesStream::new(pending_substreams_num),
+            _active_connections_num,
         }
     }
 
@@ -733,8 +755,12 @@ impl TcpConnection {
                         return Ok(());
                     }
                 },
-                substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
-                   self.handle_negotiated_substream(substream).await;
+                substream = self.pending_substreams.next(), if !self.pending_substreams.is_empty() => {
+                    let Some(substream) = substream else {
+                        continue;
+                    };
+
+                    self.handle_negotiated_substream(substream).await;
                 }
                 protocol = self.protocol_set.next() => {
                     if self.handle_protocol_command(protocol).await? {

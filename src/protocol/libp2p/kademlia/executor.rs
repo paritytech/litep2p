@@ -89,6 +89,11 @@ impl QueryExecutor {
         }
     }
 
+    /// Get number of pending futures.
+    pub fn futures_len(&self) -> usize {
+        self.futures.len()
+    }
+
     /// Send message to remote peer.
     pub fn send_message(&mut self, peer: PeerId, message: Bytes, mut substream: Substream) {
         self.futures.push(Box::pin(async move {

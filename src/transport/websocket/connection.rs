@@ -25,6 +25,7 @@ use crate::{
         noise::{self, NoiseSocket},
     },
     error::{Error, NegotiationError, SubstreamError},
+    metrics::{MeteredFuturesStream, MetricGauge, ScopeGaugeMetric},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream,
@@ -36,7 +37,7 @@ use crate::{
     BandwidthSink, PeerId,
 };
 
-use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
+use futures::{future::BoxFuture, AsyncRead, AsyncWrite, StreamExt};
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -130,6 +131,16 @@ impl NegotiatedConnection {
     }
 }
 
+/// Connection specific metrics.
+pub struct WebSocketConnectionMetrics {
+    /// Metric for the number of pending substreams that are negotiated.
+    pub pending_substreams_num: MetricGauge,
+
+    /// Metric incremented when the connection starts
+    /// and decremented when the connection closes.
+    pub _active_connections_num: ScopeGaugeMetric,
+}
+
 /// WebSocket connection.
 pub(crate) struct WebSocketConnection {
     /// Protocol context.
@@ -159,7 +170,11 @@ pub(crate) struct WebSocketConnection {
 
     /// Pending substreams.
     pending_substreams:
-        FuturesUnordered<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
+        MeteredFuturesStream<BoxFuture<'static, Result<NegotiatedSubstream, ConnectionError>>>,
+
+    /// Metric incremented when the connection starts
+    /// and decremented when the connection closes.
+    _active_connections_num: Option<ScopeGaugeMetric>,
 }
 
 impl WebSocketConnection {
@@ -169,6 +184,7 @@ impl WebSocketConnection {
         protocol_set: ProtocolSet,
         bandwidth_sink: BandwidthSink,
         substream_open_timeout: Duration,
+        metrics: Option<WebSocketConnectionMetrics>,
     ) -> Self {
         let NegotiatedConnection {
             peer,
@@ -176,6 +192,15 @@ impl WebSocketConnection {
             connection,
             control,
         } = connection;
+
+        let (pending_substreams_num, _active_connections_num) = if let Some(metrics) = metrics {
+            (
+                Some(metrics.pending_substreams_num),
+                Some(metrics._active_connections_num),
+            )
+        } else {
+            (None, None)
+        };
 
         Self {
             connection_id: endpoint.connection_id(),
@@ -186,7 +211,8 @@ impl WebSocketConnection {
             endpoint,
             bandwidth_sink,
             substream_open_timeout,
-            pending_substreams: FuturesUnordered::new(),
+            pending_substreams: MeteredFuturesStream::new(pending_substreams_num),
+            _active_connections_num,
         }
     }
 
@@ -423,7 +449,7 @@ impl WebSocketConnection {
     /// Start connection event loop.
     pub(crate) async fn start(mut self) -> crate::Result<()> {
         self.protocol_set
-            .report_connection_established(self.peer, self.endpoint)
+            .report_connection_established(self.peer, self.endpoint.clone())
             .await?;
 
         loop {
@@ -474,7 +500,11 @@ impl WebSocketConnection {
                     }
                 },
                 // TODO: move this to a function
-                substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
+                substream = self.pending_substreams.next(), if !self.pending_substreams.is_empty() => {
+                    let Some(substream) = substream else {
+                        continue;
+                    };
+
                     match substream {
                         // TODO: return error to protocol
                         Err(error) => {
