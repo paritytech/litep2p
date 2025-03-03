@@ -31,8 +31,6 @@ use std::{
     task::{Context, Poll},
 };
 
-// TODO: add tests
-
 const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
 /// Send state.
@@ -177,5 +175,138 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncRead for BufferedStream<S>
             self.read_buffer.advance(len);
             return Poll::Ready(Ok(len));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+    use tokio::io::DuplexStream;
+    use tokio_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
+
+    async fn create_test_stream() -> (BufferedStream<DuplexStream>, BufferedStream<DuplexStream>) {
+        let (client, server) = tokio::io::duplex(1024);
+
+        (
+            BufferedStream::new(WebSocketStream::from_raw_socket(client, Role::Client, None).await),
+            BufferedStream::new(WebSocketStream::from_raw_socket(server, Role::Server, None).await),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_write_to_buffer() {
+        let (mut stream, mut _server) = create_test_stream().await;
+        let data = b"hello";
+
+        let bytes_written = stream.write(data).await.unwrap();
+        assert_eq!(bytes_written, data.len());
+        assert_eq!(&stream.write_buffer[..], data);
+    }
+
+    #[tokio::test]
+    async fn test_flush_empty_buffer() {
+        let (mut stream, mut _server) = create_test_stream().await;
+        assert!(stream.flush().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_write_and_flush() {
+        let (mut stream, mut _server) = create_test_stream().await;
+        let data = b"hello world";
+
+        stream.write_all(data).await.unwrap();
+        assert!(stream.flush().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_close_stream() {
+        let (mut stream, mut _server) = create_test_stream().await;
+        assert!(stream.close().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ping_pong_stream() {
+        let (mut stream, mut server) = create_test_stream().await;
+        stream.write(b"hello").await.unwrap();
+        assert!(stream.flush().await.is_ok());
+
+        let mut message = [0u8; 5];
+        server.read(&mut message).await.unwrap();
+        assert_eq!(&message, b"hello");
+
+        server.write(b"world").await.unwrap();
+        assert!(server.flush().await.is_ok());
+
+        stream.read(&mut message).await.unwrap();
+        assert_eq!(&message, b"world");
+
+        assert!(stream.close().await.is_ok());
+        drop(stream);
+
+        assert!(server.write(b"world").await.is_ok());
+        match server.flush().await {
+            Err(error) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
+            state => panic!("Unexpected state {state:?}"),
+        };
+    }
+
+    #[tokio::test]
+    async fn test_poisoned_state() {
+        let (mut stream, server) = create_test_stream().await;
+        drop(server);
+
+        stream.state = State::Poisoned;
+
+        let mut buffer = [0u8; 10];
+        let result = stream.read(&mut buffer).await;
+        match result {
+            Err(error) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
+            state => panic!("Unexpected state {state:?}"),
+        };
+
+        let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
+        let mut pin_stream = Pin::new(&mut stream);
+
+        // Messages are buffered internally, the socket is not touched.
+        match pin_stream.as_mut().poll_write(&mut cx, &mut buffer) {
+            Poll::Ready(Ok(10)) => {}
+            state => panic!("Unexpected state {state:?}"),
+        }
+        // Socket is poisoned, the flush will fail.
+        match pin_stream.poll_flush(&mut cx) {
+            Poll::Ready(Err(error)) =>
+                if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                    return;
+                },
+            state => panic!("Unexpected state {state:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_poll_pending() {
+        let (mut stream, mut _server) = create_test_stream().await;
+
+        let mut buffer = [0u8; 10];
+        let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
+        let pin_stream = Pin::new(&mut stream);
+
+        assert!(matches!(
+            pin_stream.poll_read(&mut cx, &mut buffer),
+            Poll::Pending
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_read_from_internal_buffers() {
+        let (mut stream, server) = create_test_stream().await;
+        drop(server);
+
+        stream.read_buffer = Bytes::from_static(b"hello world");
+
+        let mut buffer = [0u8; 32];
+        let bytes_read = stream.read(&mut buffer).await.unwrap();
+        assert_eq!(bytes_read, 11);
+        assert_eq!(&buffer[..bytes_read], b"hello world");
     }
 }
