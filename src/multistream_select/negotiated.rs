@@ -267,15 +267,6 @@ where
         }
     }
 
-    // TODO: implement once method is stabilized in the futures crate
-    /*unsafe fn initializer(&self) -> Initializer {
-        match &self.state {
-            State::Completed { io, .. } => io.initializer(),
-            State::Expecting { io, .. } => io.inner_ref().initializer(),
-            State::Invalid => panic!("Negotiated: Invalid state"),
-        }
-    }*/
-
     fn poll_read_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

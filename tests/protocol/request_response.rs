@@ -516,7 +516,6 @@ async fn request_timeout_websocket() {
     .await;
 }
 
-// TODO: configure longer keep-alive timeout for the protocol
 async fn request_timeout(transport1: Transport, transport2: Transport) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

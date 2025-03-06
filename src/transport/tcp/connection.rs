@@ -210,7 +210,7 @@ impl TcpConnection {
     }
 
     /// Open connection to remote peer at `address`.
-    // TODO: this function can be removed
+    // TODO: https://github.com/paritytech/litep2p/issues/347 this function can be removed
     pub(super) async fn open_connection(
         connection_id: ConnectionId,
         keypair: Keypair,
@@ -285,8 +285,8 @@ impl TcpConnection {
             }
         };
 
-        // TODO: protocols don't change after they've been initialized so this should be done only
-        // once
+        // TODO: https://github.com/paritytech/litep2p/issues/346 protocols don't change after
+        // they've been initialized so this should be done only once
         let protocols = std::iter::once(&*protocol)
             .chain(fallback_names.iter().map(|protocol| &**protocol))
             .collect();
@@ -567,7 +567,6 @@ impl TcpConnection {
         result: Result<NegotiatedSubstream, ConnectionError>,
     ) {
         match result {
-            // TODO: return error to protocol
             Err(error) => {
                 tracing::debug!(
                     target: LOG_TARGET,

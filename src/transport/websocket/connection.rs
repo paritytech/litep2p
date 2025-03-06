@@ -403,8 +403,8 @@ impl WebSocketConnection {
             }
         };
 
-        // TODO: protocols don't change after they've been initialized so this should be done only
-        // once
+        // TODO: https://github.com/paritytech/litep2p/issues/346 protocols don't change after
+        // they've been initialized so this should be done only once
         let protocols = std::iter::once(&*protocol)
             .chain(fallback_names.iter().map(|protocol| &**protocol))
             .collect();
@@ -473,10 +473,8 @@ impl WebSocketConnection {
                         return Ok(())
                     }
                 },
-                // TODO: move this to a function
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
                     match substream {
-                        // TODO: return error to protocol
                         Err(error) => {
                             tracing::debug!(
                                 target: LOG_TARGET,

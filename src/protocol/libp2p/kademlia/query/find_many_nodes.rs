@@ -27,8 +27,7 @@ use crate::{
 };
 
 /// Context for multiple `FIND_NODE` queries.
-// TODO: implement finding nodes not present in the routing table,
-//       see https://github.com/paritytech/litep2p/issues/80.
+// TODO: https://github.com/paritytech/litep2p/issues/80 implement finding nodes not present in the routing table.
 #[derive(Debug)]
 pub struct FindManyNodesContext {
     /// Query ID.

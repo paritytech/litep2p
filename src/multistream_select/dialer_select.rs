@@ -82,7 +82,6 @@ where
 /// a protocol iteratively by considering one protocol after the other.
 #[pin_project::pin_project]
 pub struct DialerSelectFuture<R, I: Iterator> {
-    // TODO: It would be nice if eventually N = I::Item = Protocol.
     protocols: iter::Peekable<I>,
     state: State<R, I::Item>,
     version: Version,

@@ -131,7 +131,6 @@ pub enum QueryAction {
     },
 
     /// Store the record to nodes closest to target key.
-    // TODO: horrible name
     PutRecordToFoundNodes {
         /// Target peer.
         record: Record,

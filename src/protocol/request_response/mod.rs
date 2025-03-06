@@ -63,10 +63,6 @@ mod handle;
 #[cfg(test)]
 mod tests;
 
-// TODO: add ability to specify limit for inbound requests?
-// TODO: convert inbound/outbound substreams to use `oneshot:Sender<()>` for sending/rejecting
-// responses.       this way, the code dealing with rejecting/responding doesn't have to block.
-
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::request-response::protocol";
 
@@ -185,8 +181,6 @@ pub(crate) struct RequestResponseProtocol {
     command_rx: Receiver<RequestResponseCommand>,
 
     /// Next request ID.
-    ///
-    /// Inbound requests are assigned an ephemeral ID TODO: finish
     next_request_id: Arc<AtomicUsize>,
 
     /// Timeout for outbound requests.
