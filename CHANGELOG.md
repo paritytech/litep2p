@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2025-03-10
+
+This release downgrades a spamming log message to debug level and adds tests for the WebSocket stream implementation.
+
+Thanks to @dharjeezy for contributing to this release by avoiding to clone the Kademlia peers when yielding the closest nodes!
+
+### Changed
+
+- manager: Downgrade refusing to add address log to debug  ([#355](https://github.com/paritytech/litep2p/pull/355))
+- Clone only needed KademliaPeers when yielding closest nodes  ([#326](https://github.com/paritytech/litep2p/pull/326))
+
+### Added
+
+- websocket/stream/tests: Add tests for the stream implementation  ([#329](https://github.com/paritytech/litep2p/pull/329))
+
 ## [0.9.1] - 2025-01-19
 
 This release enhances compatibility between litep2p and libp2p by using the latest Yamux upstream version. Additionally, it includes various improvements and fixes to boost the stability and performance of the WebSocket stream and the multistream-select protocol.
