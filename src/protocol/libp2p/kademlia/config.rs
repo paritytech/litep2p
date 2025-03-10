@@ -53,7 +53,7 @@ const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
 const REPLICATION_FACTOR: usize = 20usize;
 
 /// Kademlia maximum message size.
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 16 * 1024;
 
 /// Kademlia configuration.
 #[derive(Debug)]
