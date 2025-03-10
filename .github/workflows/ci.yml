@@ -176,12 +176,11 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Install Rust stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+      - name: Install Rust 1.85
+        run: rustup install 1.85.0-x86_64-unknown-linux-gnu
+
+      - name: Use Rust 1.85
+        run: rustup default 1.85.0-x86_64-unknown-linux-gnu
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
