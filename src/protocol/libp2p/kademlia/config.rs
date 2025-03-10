@@ -53,7 +53,7 @@ const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
 const REPLICATION_FACTOR: usize = 20usize;
 
 /// Kademlia maximum message size.
-const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 
 /// Kademlia configuration.
 #[derive(Debug)]
@@ -107,6 +107,7 @@ impl Config {
         record_ttl: Duration,
         provider_ttl: Duration,
         provider_refresh_interval: Duration,
+        max_message_size: usize,
     ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -125,7 +126,7 @@ impl Config {
                 record_ttl,
                 provider_ttl,
                 provider_refresh_interval,
-                codec: ProtocolCodec::UnsignedVarint(Some(MAX_MESSAGE_SIZE)),
+                codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
                 replication_factor,
                 known_peers,
                 cmd_rx,
@@ -147,6 +148,7 @@ impl Config {
             DEFAULT_TTL,
             DEFAULT_PROVIDER_TTL,
             DEFAULT_PROVIDER_REFRESH_INTERVAL,
+            DEFAULT_MAX_MESSAGE_SIZE,
         )
     }
 }
@@ -177,6 +179,9 @@ pub struct ConfigBuilder {
 
     /// Republish interval for the provider records.
     pub(super) provider_refresh_interval: Duration,
+
+    /// Maximum message size.
+    pub(crate) max_message_size: usize,
 }
 
 impl Default for ConfigBuilder {
@@ -197,6 +202,7 @@ impl ConfigBuilder {
             record_ttl: DEFAULT_TTL,
             provider_ttl: DEFAULT_PROVIDER_TTL,
             provider_refresh_interval: DEFAULT_PROVIDER_REFRESH_INTERVAL,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 
@@ -265,6 +271,14 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set the maximum Kademlia message size.
+    ///
+    /// If unspecified, the default maximum message size is 1 MiB.
+    pub fn with_max_message_size(mut self, max_message_size: usize) -> Self {
+        self.max_message_size = max_message_size;
+        self
+    }
+
     /// Build Kademlia [`Config`].
     pub fn build(self) -> (Config, KademliaHandle) {
         Config::new(
@@ -276,6 +290,7 @@ impl ConfigBuilder {
             self.record_ttl,
             self.provider_ttl,
             self.provider_refresh_interval,
+            self.max_message_size,
         )
     }
 }
