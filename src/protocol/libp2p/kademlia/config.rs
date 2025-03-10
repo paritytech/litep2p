@@ -52,6 +52,9 @@ const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
 /// Kademlia replication factor.
 const REPLICATION_FACTOR: usize = 20usize;
 
+/// Kademlia maximum message size.
+const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+
 /// Kademlia configuration.
 #[derive(Debug)]
 pub struct Config {
@@ -122,7 +125,7 @@ impl Config {
                 record_ttl,
                 provider_ttl,
                 provider_refresh_interval,
-                codec: ProtocolCodec::UnsignedVarint(None),
+                codec: ProtocolCodec::UnsignedVarint(Some(MAX_MESSAGE_SIZE)),
                 replication_factor,
                 known_peers,
                 cmd_rx,
