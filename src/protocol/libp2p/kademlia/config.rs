@@ -273,7 +273,7 @@ impl ConfigBuilder {
 
     /// Set the maximum Kademlia message size.
     ///
-    /// If unspecified, the default maximum message size is 16 KiB.
+    ///  Should fit `MemoryStore` max record size. If unspecified, the default maximum message size is 70 KiB.
     pub fn with_max_message_size(mut self, max_message_size: usize) -> Self {
         self.max_message_size = max_message_size;
         self
