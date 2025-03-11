@@ -1270,7 +1270,7 @@ mod tests {
         let config = Config {
             protocol_names: vec![ProtocolName::from("/kad/1")],
             known_peers: HashMap::new(),
-            codec: ProtocolCodec::UnsignedVarint(Some(16 * 1024)),
+            codec: ProtocolCodec::UnsignedVarint(Some(70 * 1024)),
             replication_factor: 20usize,
             update_mode: RoutingTableUpdateMode::Automatic,
             validation_mode: IncomingRecordValidationMode::Automatic,
