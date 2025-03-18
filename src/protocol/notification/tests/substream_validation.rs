@@ -84,9 +84,9 @@ async fn substream_accepted() {
     // connect peer and verify it's in closed state
     notif.next_event().await;
 
-    match notif.peers.get(&peer).unwrap().state {
+    match &notif.peers.get(&peer).unwrap().state {
         PeerState::Closed { .. } => {}
-        _ => panic!("invalid state for peer"),
+        state => panic!("invalid state for peer: {state:?}"),
     }
 
     // open inbound substream and verify that peer state has changed to `Validating`
@@ -182,9 +182,9 @@ async fn substream_rejected() {
     // connect peer and verify it's in closed state
     notif.on_connection_established(peer).await.unwrap();
 
-    match notif.peers.get(&peer).unwrap().state {
+    match &notif.peers.get(&peer).unwrap().state {
         PeerState::Closed { .. } => {}
-        _ => panic!("invalid state for peer"),
+        state => panic!("invalid state for peer: {state:?}"),
     }
 
     // open inbound substream and verify that peer state has changed to `Validating`
@@ -271,9 +271,9 @@ async fn accept_fails_due_to_closed_substream() {
     // connect peer and verify it's in closed state
     notif.next_event().await;
 
-    match notif.peers.get(&peer).unwrap().state {
+    match &notif.peers.get(&peer).unwrap().state {
         PeerState::Closed { .. } => {}
-        _ => panic!("invalid state for peer"),
+        state => panic!("invalid state for peer: {state:?}"),
     }
 
     // open inbound substream and verify that peer state has changed to `InboundOpen`
@@ -329,7 +329,10 @@ async fn accept_fails_due_to_closed_substream() {
     }
     notif.on_handshake_event(peer, event).await;
 
-    // TODO: https://github.com/paritytech/litep2p/issues/340 check state
+    match &notif.peers.get(&peer).unwrap().state {
+        PeerState::Closed { .. } => {}
+        state => panic!("invalid state for peer: {state:?}"),
+    }
 }
 
 #[tokio::test]
