@@ -35,7 +35,6 @@ use crate::{
 
 use bytes::BytesMut;
 use futures::prelude::*;
-use rustls::internal::msgs::hsjoiner::HandshakeJoiner;
 use std::{
     convert::TryFrom as _,
     iter, mem,
