@@ -99,7 +99,6 @@ fn main() {
                                 &mut notif_handle2,
                             )
                         };
-                        panic!("1");
                         match message {
                             FuzzMessage::Kademlia(message) => {
                                 handles.0.fuzz_send_message(message).await;
