@@ -50,7 +50,7 @@ impl Decoder for Identity {
     type Error = Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if src.is_empty() {
+        if src.is_empty() || src.len() < self.payload_len {
             return Ok(None);
         }
 
@@ -94,6 +94,15 @@ mod tests {
 
         let decoded = codec.decode(&mut bytes).unwrap().unwrap();
         assert_eq!(decoded, copy);
+    }
+
+    #[test]
+    fn decoding_smaller_payloads() {
+        let mut codec = Identity::new(100);
+        let bytes = vec![3u8; 64];
+        let mut bytes = BytesMut::from(&bytes[..]);
+
+        let decoded = codec.decode(&mut bytes);
     }
 
     #[test]
