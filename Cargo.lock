@@ -688,6 +688,9 @@ name = "bytes"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f61dac84819c6588b558454b194026eb1f09c293b9036ae9b159e74e73ab6cf9"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "cc"
@@ -754,6 +757,20 @@ dependencies = [
  "multihash 0.18.1",
  "serde",
  "unsigned-varint 0.7.2",
+]
+
+[[package]]
+name = "cid"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3147d8272e8fa0ccd29ce51194dd98f79ddfb8191ba9e3409884e751798acf3a"
+dependencies = [
+ "core2",
+ "multibase",
+ "multihash 0.19.3",
+ "serde",
+ "serde_bytes",
+ "unsigned-varint 0.8.0",
 ]
 
 [[package]]
@@ -3757,7 +3774,7 @@ dependencies = [
  "asynchronous-codec 0.7.0",
  "bs58 0.5.1",
  "bytes",
- "cid 0.10.1",
+ "cid 0.11.1",
  "ed25519-dalek",
  "futures",
  "futures-timer",
@@ -3786,6 +3803,7 @@ dependencies = [
  "sc-utils 17.0.0",
  "serde",
  "serde_json",
+ "serde_millis",
  "sha2 0.10.8",
  "simple-dns 0.9.3",
  "smallvec",
@@ -4068,6 +4086,7 @@ dependencies = [
  "core2",
  "digest 0.10.7",
  "multihash-derive",
+ "serde",
  "sha2 0.10.8",
  "sha3",
  "unsigned-varint 0.7.2",
@@ -4097,6 +4116,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b430e7953c29dd6a09afc29ff0bb69c6e306329ee6794700aee27b76a1aea8d"
 dependencies = [
  "core2",
+ "serde",
  "unsigned-varint 0.8.0",
 ]
 
@@ -6176,6 +6196,15 @@ dependencies = [
  "itoa",
  "memchr",
  "ryu",
+ "serde",
+]
+
+[[package]]
+name = "serde_millis"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6e2dc780ca5ee2c369d1d01d100270203c4ff923d2a4264812d723766434d00"
+dependencies = [
  "serde",
 ]
 
