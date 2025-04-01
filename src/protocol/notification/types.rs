@@ -199,6 +199,7 @@ pub enum NotificationEvent {
 }
 
 /// Notification commands sent to the protocol.
+#[derive(Debug)]
 #[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum NotificationCommand {
     /// Open substreams to one or more peers.

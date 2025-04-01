@@ -259,6 +259,7 @@ pub enum DialOptions {
 }
 
 /// Request-response commands.
+#[derive(Debug)]
 #[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum RequestResponseCommand {
     /// Send request to remote peer.

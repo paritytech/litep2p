@@ -24,7 +24,7 @@ use tokio::time::{timeout, Duration, Instant};
 const TIMEOUT_MILLIS: usize = 100;
 const NUM_WORKER_THREADS: usize = 32;
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum FuzzMessage {
     RequestResponse(RequestResponseCommand),
     Kademlia(KademliaCommand),
@@ -32,15 +32,18 @@ pub enum FuzzMessage {
     Bitswap(BitswapCommand),
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct FuzzData {
     pub data: Vec<(u8, FuzzMessage)>,
 }
 
 fn main() {
+    tracing_subscriber::fmt::init();
     ziggy::fuzz!(|data: &[u8]| {
         let mut data = data;
-        let Ok(mut data) = bincode::deserialize::<FuzzData>(data) else {return};
+        let Ok(mut data) = bincode::deserialize::<FuzzData>(data) else {
+            return;
+        };
         tokio::runtime::Builder::new_current_thread()
             .worker_threads(NUM_WORKER_THREADS)
             .enable_all()
@@ -65,24 +68,8 @@ fn main() {
                 let address = litep2p2.listen_addresses().next().unwrap().clone();
                 let res = litep2p1.dial_address(address).await.unwrap();
                 let peer = litep2p1.local_peer_id().clone();
-                let metrics = tokio::runtime::Handle::current().metrics();
+                let mut spawned = false; 
                 loop {
-                    if metrics.num_alive_tasks() != 6 {
-                        tokio::select! {
-                            _event = litep2p1.next_event() => {},
-                            _event = litep2p2.next_event() => {},
-                            _event = rr_handle1.next() => {},
-                            _event = rr_handle2.next() => {},
-                            _event = kad_handle1.next() => {},
-                            _event = kad_handle2.next() => {},
-                            _event = bitswap_handle1.next() => {},
-                            _event = bitswap_handle2.next() => {},
-                            _event = notif_handle1.next() => {},
-                            _event = notif_handle2.next() => {},
-                        }
-                    } else {
-                        return;
-                    }
                     if let Some((peer, message)) = data.data.pop() {
                         let handles = if peer % 2 == 0 {
                             (
@@ -90,6 +77,7 @@ fn main() {
                                 &mut bitswap_handle1,
                                 &mut rr_handle1,
                                 &mut notif_handle1,
+                                &mut litep2p1,
                             )
                         } else {
                             (
@@ -97,23 +85,40 @@ fn main() {
                                 &mut bitswap_handle2,
                                 &mut rr_handle2,
                                 &mut notif_handle2,
+                                &mut litep2p2,
                             )
                         };
                         match message {
                             FuzzMessage::Kademlia(message) => {
-                                handles.0.fuzz_send_message(message).await;
+                                handles.0.add_known_peer(handles.4.local_peer_id().clone(), vec![handles.4.listen_addresses().next().unwrap().clone()]).await;
+                                tokio::time::timeout(Duration::from_millis(100),handles.0.fuzz_send_message(message)).await;
                             }
                             FuzzMessage::Bitswap(message) => {
-                                handles.1.fuzz_send_message(message).await;
+                                tokio::time::timeout(Duration::from_millis(100),handles.1.fuzz_send_message(message)).await;
                             }
                             FuzzMessage::RequestResponse(message) => {
-                                handles.2.fuzz_send_message(message).await;
+                                tokio::time::timeout(Duration::from_millis(100),handles.2.fuzz_send_message(message)).await;
                             }
                             FuzzMessage::Notification(message) => {
-                                handles.3.fuzz_send_message(message).await;
+                                tokio::time::timeout(Duration::from_millis(100), handles.3.fuzz_send_message(message)).await;
                             }
                         };
                     };
+                    tokio::select! {
+                        _event = litep2p1.next_event() => {},
+                        _event = litep2p2.next_event() => {},
+                        _event = rr_handle1.next() => {},
+                        _event = rr_handle2.next() => {},
+                        _event = kad_handle1.next() => {},
+                        _event = kad_handle2.next() => {},
+                        _event = bitswap_handle1.next() => {},
+                        _event = bitswap_handle2.next() => {},
+                        _event = notif_handle1.next() => {},
+                        _event = notif_handle2.next() => {},
+                    }
+                    if tokio::runtime::Handle::current().metrics().num_alive_tasks() > 6 {
+                        return;
+                    }
                 }
             });
     });

@@ -458,7 +458,7 @@ impl KademliaHandle {
 
     #[cfg(feature = "fuzz")]
     pub async fn fuzz_send_message(&mut self, command: KademliaCommand) -> crate::Result<()> {
-        let _ = self.cmd_tx.try_send(command);
+        let _ = self.cmd_tx.send(command).await;
         Ok(())
     }
 }

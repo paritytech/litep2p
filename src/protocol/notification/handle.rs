@@ -443,7 +443,7 @@ impl NotificationHandle {
         if let NotificationCommand::SendNotification{peer_id, notif} = command {
             self.send_async_notification(peer_id, notif).await?;
         } else {
-            let _ = self.command_tx.try_send(command);
+            let _ = self.command_tx.send(command).await;
         }
         Ok(())
     }
