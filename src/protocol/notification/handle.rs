@@ -437,6 +437,16 @@ impl NotificationHandle {
     pub fn notification_sink(&self, peer: PeerId) -> Option<NotificationSink> {
         self.peers.get(&peer).cloned()
     }
+    
+    #[cfg(feature = "fuzz")]
+    pub async fn fuzz_send_message(&mut self, command: NotificationCommand) -> crate::Result<()> {
+        if let NotificationCommand::SendNotification{peer_id, notif} = command {
+            self.send_async_notification(peer_id, notif).await?;
+        } else {
+            let _ = self.command_tx.try_send(command);
+        }
+        Ok(())
+    }
 }
 
 impl Stream for NotificationHandle {

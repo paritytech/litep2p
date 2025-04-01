@@ -56,6 +56,7 @@ impl SubstreamId {
 
 /// Request ID.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub struct RequestId(usize);
 
 impl RequestId {

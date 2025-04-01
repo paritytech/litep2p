@@ -1,5 +1,8 @@
 fn main() {
-    prost_build::compile_protos(
+    let mut config = prost_build::Config::new();
+    // Configure Prost to add #[derive(Serialize, Deserialize)] to all generated structs
+    config.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
+    config.compile_protos(
         &[
             "src/schema/keys.proto",
             "src/schema/noise.proto",

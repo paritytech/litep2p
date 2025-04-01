@@ -29,7 +29,6 @@ use crate::{
             connection::Connection,
             handle::NotificationEventHandle,
             negotiation::{HandshakeEvent, HandshakeService},
-            types::NotificationCommand,
         },
         TransportEvent, TransportService,
     },
@@ -50,7 +49,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{NotificationHandle, NotificationSink};
-pub use types::{Direction, NotificationError, NotificationEvent, ValidationResult};
+pub use types::{Direction, NotificationError, NotificationEvent, ValidationResult, NotificationCommand};
 
 mod config;
 mod connection;
@@ -1808,6 +1807,8 @@ impl NotificationProtocol {
                     NotificationCommand::ForceClose { peer } => {
                         let _ = self.service.force_close(peer);
                     }
+                    #[cfg(feature = "fuzz")]
+                    NotificationCommand::SendNotification{ .. } => unreachable!()
                 }
             },
         }
