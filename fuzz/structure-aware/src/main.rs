@@ -39,9 +39,7 @@ use litep2p::{
     transport::tcp::config::Config as TcpConfig,
     Litep2p, ProtocolName,
 };
-use tokio::time::{timeout, Duration, Instant};
 
-const TIMEOUT_MILLIS: usize = 100;
 const NUM_WORKER_THREADS: usize = 32;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -58,9 +56,8 @@ pub struct FuzzData {
 }
 
 fn main() {
-    tracing_subscriber::fmt::init();
     ziggy::fuzz!(|data: &[u8]| {
-        let mut data = data;
+        let data = data;
         let Ok(mut data) = bincode::deserialize::<FuzzData>(data) else {
             return;
         };
@@ -70,7 +67,6 @@ fn main() {
             .build()
             .unwrap()
             .block_on(async {
-                let now = Instant::now();
                 let (
                     mut litep2p1,
                     mut kad_handle1,
@@ -86,9 +82,7 @@ fn main() {
                     mut notif_handle2,
                 ) = create_instance(&mut [1u8; 32]);
                 let address = litep2p2.listen_addresses().next().unwrap().clone();
-                let res = litep2p1.dial_address(address).await.unwrap();
-                let peer = litep2p1.local_peer_id().clone();
-                let mut spawned = false; 
+                litep2p1.dial_address(address).await.unwrap();
                 loop {
                     if let Some((peer, message)) = data.data.pop() {
                         let handles = if peer % 2 == 0 {
@@ -110,17 +104,17 @@ fn main() {
                         };
                         match message {
                             FuzzMessage::Kademlia(message) => {
-                                handles.0.add_known_peer(handles.4.local_peer_id().clone(), vec![handles.4.listen_addresses().next().unwrap().clone()]).await;
-                                tokio::time::timeout(Duration::from_millis(100),handles.0.fuzz_send_message(message)).await;
+                                let _ = handles.0.add_known_peer(*handles.4.local_peer_id(), vec![handles.4.listen_addresses().next().unwrap().clone()]).await;
+                                let _ = handles.0.fuzz_send_message(message).await;
                             }
                             FuzzMessage::Bitswap(message) => {
-                                tokio::time::timeout(Duration::from_millis(100),handles.1.fuzz_send_message(message)).await;
+                                let _ = handles.1.fuzz_send_message(message).await;
                             }
                             FuzzMessage::RequestResponse(message) => {
-                                tokio::time::timeout(Duration::from_millis(100),handles.2.fuzz_send_message(message)).await;
+                                let _ = handles.2.fuzz_send_message(message).await;
                             }
                             FuzzMessage::Notification(message) => {
-                                tokio::time::timeout(Duration::from_millis(100), handles.3.fuzz_send_message(message)).await;
+                                let _ = handles.3.fuzz_send_message(message).await;
                             }
                         };
                     };
