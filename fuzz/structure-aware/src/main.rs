@@ -18,7 +18,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use bincode::config;
 use futures::StreamExt;
 use litep2p::{
     config::ConfigBuilder,

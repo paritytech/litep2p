@@ -340,6 +340,7 @@ impl RequestResponseHandle {
     }
 
     #[cfg(feature = "fuzz")]
+    /// Expose functionality for fuzzing
     pub async fn fuzz_send_message(&mut self, command: RequestResponseCommand) -> crate::Result<RequestId> {
         let request_id = self.next_request_id();
         self.command_tx

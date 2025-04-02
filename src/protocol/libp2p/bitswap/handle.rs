@@ -111,6 +111,7 @@ impl BitswapHandle {
     }
 
     #[cfg(feature = "fuzz")]
+    /// Expose functionality for fuzzing
     pub async fn fuzz_send_message(&mut self, command: BitswapCommand) -> crate::Result<()> {
         let _ = self.cmd_tx.try_send(command);
         Ok(())
