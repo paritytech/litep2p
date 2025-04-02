@@ -48,6 +48,7 @@ pub enum BitswapEvent {
 
 /// Response type for received bitswap request.
 #[derive(Debug)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResponseType {
     /// Block.
     Block {
@@ -70,7 +71,8 @@ pub enum ResponseType {
 
 /// Commands sent from the user to `Bitswap`.
 #[derive(Debug)]
-pub(super) enum BitswapCommand {
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
+pub enum BitswapCommand {
     /// Send bitswap response.
     SendResponse {
         /// Peer ID.
@@ -106,6 +108,13 @@ impl BitswapHandle {
     /// Send `response` to `peer`.
     pub async fn send_response(&self, peer: PeerId, responses: Vec<ResponseType>) {
         let _ = self.cmd_tx.send(BitswapCommand::SendResponse { peer, responses }).await;
+    }
+
+    #[cfg(feature = "fuzz")]
+    /// Expose functionality for fuzzing
+    pub async fn fuzz_send_message(&mut self, command: BitswapCommand) -> crate::Result<()> {
+        let _ = self.cmd_tx.try_send(command);
+        Ok(())
     }
 }
 
