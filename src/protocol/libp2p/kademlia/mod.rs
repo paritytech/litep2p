@@ -670,6 +670,8 @@ impl Kademlia {
     fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
         tracing::trace!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
 
+        self.routing_table.remove_address(Key::from(peer), &address);
+
         let Some(actions) = self.pending_dials.remove(&peer) else {
             return;
         };
@@ -921,7 +923,7 @@ impl Kademlia {
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error).await;
                     }
-                    Some(TransportEvent::DialFailure { peer, address, .. }) =>
+                    Some(TransportEvent::DialFailure { peer, address }) =>
                         self.on_dial_failure(peer, address),
                     None => return Err(Error::EssentialTaskClosed),
                 },
