@@ -119,6 +119,20 @@ impl RoutingTable {
         self.buckets[index.get()].entry(key)
     }
 
+    /// Remove the address of the peer from the routing table on dail failures.
+    pub fn on_dial_failure(&mut self, key: Key<PeerId>, address: Multiaddr) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?key,
+            ?address,
+            "on dial failure"
+        );
+
+        if let KBucketEntry::Occupied(entry) = self.entry(key) {
+            entry.addresses.retain(|addr| addr != &address);
+        }
+    }
+
     /// Add known peer to [`RoutingTable`].
     ///
     /// In order to bootstrap the lookup process, the routing table must be aware of
