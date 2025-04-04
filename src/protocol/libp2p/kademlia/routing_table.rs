@@ -120,16 +120,16 @@ impl RoutingTable {
     }
 
     /// Remove the address of the peer from the routing table on dail failures.
-    pub fn remove_address(&mut self, key: Key<PeerId>, address: &Multiaddr) {
+    pub fn remove_addresses(&mut self, key: Key<PeerId>, addresses: &[Multiaddr]) {
         tracing::trace!(
             target: LOG_TARGET,
             ?key,
-            ?address,
+            ?addresses,
             "on dial failure"
         );
 
         if let KBucketEntry::Occupied(entry) = self.entry(key) {
-            entry.addresses.retain(|addr| addr != address);
+            entry.addresses.retain(|addr| !addresses.contains(addr));
         }
     }
 
