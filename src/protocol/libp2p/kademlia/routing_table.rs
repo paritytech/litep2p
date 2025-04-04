@@ -180,7 +180,7 @@ impl RoutingTable {
 
         match self.entry(Key::from(peer)) {
             KBucketEntry::Occupied(entry) => {
-                entry.addresses = addresses;
+                entry.push_addresses(addresses);
                 entry.connection = connection;
             }
             mut entry @ KBucketEntry::Vacant(_) => {

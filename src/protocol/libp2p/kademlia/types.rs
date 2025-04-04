@@ -35,6 +35,9 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+/// Maximum number of addresses to store for a peer.
+const MAX_ADDRESSES: usize = 64;
+
 construct_uint! {
     /// 256-bit unsigned integer.
     pub(super) struct U256(4);
@@ -258,6 +261,18 @@ impl KademliaPeer {
             addresses,
             connection,
             key: Key::from(peer),
+        }
+    }
+
+    /// Add the following addresses to the kademlia peer if there's enough space.
+    pub fn push_addresses(&mut self, addresses: impl IntoIterator<Item = Multiaddr>) {
+        let space = MAX_ADDRESSES.saturating_sub(self.addresses.len());
+
+        // TODO: Replace with `HashSet`.
+        for address in addresses.into_iter().take(space) {
+            if !self.addresses.contains(&address) {
+                self.addresses.push(address);
+            }
         }
     }
 }
