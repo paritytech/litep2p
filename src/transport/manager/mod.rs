@@ -60,7 +60,7 @@ use std::{
 pub use handle::{TransportHandle, TransportManagerHandle};
 pub use types::SupportedTransport;
 
-mod address;
+pub(crate) mod address;
 pub mod limits;
 mod peer_state;
 mod types;
