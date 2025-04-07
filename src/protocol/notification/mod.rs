@@ -49,7 +49,9 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{NotificationHandle, NotificationSink};
-pub use types::{Direction, NotificationError, NotificationEvent, ValidationResult, NotificationCommand};
+pub use types::{
+    Direction, NotificationCommand, NotificationError, NotificationEvent, ValidationResult,
+};
 
 mod config;
 mod connection;

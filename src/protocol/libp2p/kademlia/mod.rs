@@ -55,7 +55,8 @@ use std::{
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{
-    IncomingRecordValidationMode, KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode, KademliaCommand
+    IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, Quorum,
+    RoutingTableUpdateMode,
 };
 pub use query::QueryId;
 pub use record::{ContentProvider, Key as RecordKey, PeerRecord, Record};

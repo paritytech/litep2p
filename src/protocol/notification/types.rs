@@ -219,10 +219,7 @@ pub enum NotificationCommand {
         /// Peer to disconnect.
         peer: PeerId,
     },
-    
+
     #[cfg(feature = "fuzz")]
-    SendNotification {
-        notif: Vec<u8>,
-        peer_id: PeerId,
-    }
+    SendNotification { notif: Vec<u8>, peer_id: PeerId },
 }

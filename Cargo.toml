@@ -5,6 +5,10 @@ license = "MIT"
 version = "0.9.3"
 edition = "2021"
 
+# cargo-machete does not detect serde_millis usage, so we ignore the warning
+[package.metadata.cargo-machete]
+ignored = ["serde_millis"]
+
 [build-dependencies]
 prost-build = "0.13"
 
@@ -28,7 +32,7 @@ pin-project = "1.1.0"
 prost = "0.12.6"
 rand = { version = "0.8.0", features = ["getrandom"] }
 rcgen = "0.10.0"
-serde = { version = "1.0.158", features = ["derive"], optional = true }
+serde = { version = "1.0.158" }
 sha2 = "0.10.8"
 simple-dns = "0.9.3"
 smallvec = "1.13.2"
@@ -83,7 +87,7 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
 
 [features]
-fuzz = ["dep:serde", "serde/rc", "bytes/serde", "dep:serde_millis", "cid/serde", "multihash/serde"]
+fuzz = ["serde/derive", "serde/rc", "bytes/serde", "dep:serde_millis", "cid/serde", "multihash/serde"]
 custom_sc_network = []
 quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring"]
 webrtc = ["dep:str0m"]
