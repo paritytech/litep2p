@@ -242,7 +242,7 @@ impl From<ConnectionType> for i32 {
 }
 
 /// Kademlia peer.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KademliaPeer {
     /// Peer key.
     pub(super) key: Key<PeerId>,
@@ -279,6 +279,11 @@ impl KademliaPeer {
         for address in addresses {
             self.address_store.insert(AddressRecord::from_raw_multiaddr(address));
         }
+    }
+
+    /// Returns the addresses of the peer.
+    pub fn addresses(&self) -> Vec<Multiaddr> {
+        self.address_store.addresses(MAX_ADDRESSES)
     }
 }
 
