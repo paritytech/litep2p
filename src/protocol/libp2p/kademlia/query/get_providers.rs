@@ -117,7 +117,7 @@ impl GetProvidersContext {
         // Merge addresses of different provider records of the same peer.
         let mut providers = HashMap::<PeerId, HashSet<Multiaddr>>::new();
         found_providers.into_iter().for_each(|provider| {
-            providers.entry(provider.peer).or_default().extend(provider.addresses)
+            providers.entry(provider.peer).or_default().extend(provider.addresses())
         });
 
         // Convert into `Vec<KademliaPeer>`
@@ -294,18 +294,13 @@ mod tests {
         KademliaPeer {
             peer,
             key: Key::from(peer),
-            addresses: vec![],
+            address_store: Default::default(),
             connection: ConnectionType::NotConnected,
         }
     }
 
     fn peer_to_kad_with_addresses(peer: PeerId, addresses: Vec<Multiaddr>) -> KademliaPeer {
-        KademliaPeer {
-            peer,
-            key: Key::from(peer),
-            addresses,
-            connection: ConnectionType::NotConnected,
-        }
+        KademliaPeer::new(peer, addresses, ConnectionType::NotConnected)
     }
 
     #[test]
@@ -316,7 +311,12 @@ mod tests {
         assert!(context.is_done());
 
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
+        match event {
+            QueryAction::QueryFailed { query, .. } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        }
     }
 
     #[test]
@@ -443,7 +443,12 @@ mod tests {
 
         // Produces the result.
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+        match event {
+            QueryAction::QuerySucceeded { query, .. } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        }
 
         // Check results.
         let found_providers = context.found_providers();

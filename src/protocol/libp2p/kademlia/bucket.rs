@@ -27,7 +27,7 @@ use crate::{
 };
 
 /// K-bucket entry.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum KBucketEntry<'a> {
     /// Entry points to local node.
     LocalNode,
@@ -48,7 +48,7 @@ impl<'a> KBucketEntry<'a> {
         if let KBucketEntry::Vacant(old) = self {
             old.peer = new.peer;
             old.key = Key::from(new.peer);
-            old.addresses = new.addresses;
+            old.address_store = new.address_store;
             old.connection = new.connection;
         }
     }
@@ -91,6 +91,7 @@ impl KBucket {
         for i in 0..self.nodes.len() {
             match self.nodes[i].connection {
                 ConnectionType::NotConnected | ConnectionType::CannotConnect => {
+                    self.nodes[i].address_store.clear();
                     return KBucketEntry::Vacant(&mut self.nodes[i]);
                 }
                 _ => continue,
@@ -105,7 +106,7 @@ impl KBucket {
     pub fn closest_iter<K: Clone>(&self, target: &Key<K>) -> impl Iterator<Item = &KademliaPeer> {
         let mut nodes: Vec<_> = self.nodes.iter().collect();
         nodes.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
-        nodes.into_iter().filter(|peer| !peer.addresses.is_empty())
+        nodes.into_iter().filter(|peer| !peer.address_store.is_empty())
     }
 }
 

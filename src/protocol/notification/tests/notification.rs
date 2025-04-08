@@ -325,7 +325,7 @@ async fn dial_failure_for_non_dialing_peer() {
     let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
 
     // dial failure for the peer even though it's not dialing
-    notif.on_dial_failure(peer, Multiaddr::empty()).await;
+    notif.on_dial_failure(peer, vec![]).await;
 
     assert!(std::matches!(
         notif.peers.get(&peer),

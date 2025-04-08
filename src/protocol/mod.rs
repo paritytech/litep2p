@@ -82,8 +82,8 @@ pub enum TransportEvent {
         /// Peer ID.
         peer: PeerId,
 
-        /// Dialed address.
-        address: Multiaddr,
+        /// Dialed addresseses.
+        addresses: Vec<Multiaddr>,
     },
 
     /// Substream opened for `peer`.

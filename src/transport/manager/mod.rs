@@ -60,7 +60,7 @@ use std::{
 pub use handle::{TransportHandle, TransportManagerHandle};
 pub use types::SupportedTransport;
 
-mod address;
+pub(crate) mod address;
 pub mod limits;
 mod peer_state;
 mod types;
@@ -1095,7 +1095,7 @@ impl TransportManager {
                                                 );
                                                 match context.tx.try_send(InnerTransportEvent::DialFailure {
                                                     peer,
-                                                    address: address.clone(),
+                                                    addresses: vec![address.clone()],
                                                 }) {
                                                     Ok(()) => {}
                                                     Err(_) => {
@@ -1111,7 +1111,7 @@ impl TransportManager {
                                                             .tx
                                                             .send(InnerTransportEvent::DialFailure {
                                                                 peer,
-                                                                address: address.clone(),
+                                                                addresses: vec![address.clone()],
                                                             })
                                                             .await;
                                                     }
@@ -1237,12 +1237,17 @@ impl TransportManager {
                                         "inform protocols about open failure",
                                     );
 
+                                    let addresses = errors
+                                        .iter()
+                                        .map(|(address, _)| address.clone())
+                                        .collect::<Vec<_>>();
+
                                     for (protocol, context) in &self.protocols {
                                         let _ = match context
                                             .tx
                                             .try_send(InnerTransportEvent::DialFailure {
                                                 peer,
-                                                address: Multiaddr::empty(),
+                                                addresses: addresses.clone(),
                                             }) {
                                             Ok(_) => Ok(()),
                                             Err(_) => {
@@ -1258,7 +1263,7 @@ impl TransportManager {
                                                     .tx
                                                     .send(InnerTransportEvent::DialFailure {
                                                         peer,
-                                                        address: Multiaddr::empty(),
+                                                        addresses: addresses.clone(),
                                                     })
                                                     .await
                                             }
