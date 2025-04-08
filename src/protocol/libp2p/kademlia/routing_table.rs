@@ -375,7 +375,10 @@ mod tests {
         let mut table = RoutingTable::new(own_key.clone());
 
         // verify that local peer id resolves to special entry
-        assert_eq!(table.entry(own_key), KBucketEntry::LocalNode);
+        match table.entry(own_key.clone()) {
+            KBucketEntry::LocalNode => {}
+            state => panic!("invalid state for `KBucketEntry`: {state:?}"),
+        };
 
         let peer = PeerId::random();
         let key = Key::from(peer);
@@ -389,15 +392,17 @@ mod tests {
             ConnectionType::Connected,
         ));
 
-        assert_eq!(
-            table.entry(key.clone()),
-            KBucketEntry::Occupied(&mut KademliaPeer::new(
-                peer,
-                addresses.clone(),
-                ConnectionType::Connected,
-            ))
-        );
+        match table.entry(key.clone()) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(entry.key, key);
+                assert_eq!(entry.peer, peer);
+                assert_eq!(entry.addresses(), addresses);
+                assert_eq!(entry.connection, ConnectionType::Connected);
+            }
+            state => panic!("invalid state for `KBucketEntry`: {state:?}"),
+        };
 
+        // Set the connection state
         match table.entry(key.clone()) {
             KBucketEntry::Occupied(entry) => {
                 entry.connection = ConnectionType::NotConnected;
@@ -405,14 +410,15 @@ mod tests {
             state => panic!("invalid state for `KBucketEntry`: {state:?}"),
         }
 
-        assert_eq!(
-            table.entry(key.clone()),
-            KBucketEntry::Occupied(&mut KademliaPeer::new(
-                peer,
-                addresses,
-                ConnectionType::NotConnected,
-            ))
-        );
+        match table.entry(key.clone()) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(entry.key, key);
+                assert_eq!(entry.peer, peer);
+                assert_eq!(entry.addresses(), addresses);
+                assert_eq!(entry.connection, ConnectionType::NotConnected);
+            }
+            state => panic!("invalid state for `KBucketEntry`: {state:?}"),
+        };
     }
 
     #[test]
@@ -493,14 +499,16 @@ mod tests {
         // verify the node is still there
         let entry = table.entry(key.clone());
         let addresses = vec!["/ip6/::1/tcp/8888".parse().unwrap()];
-        assert_eq!(
-            entry,
-            KBucketEntry::Occupied(&mut KademliaPeer::new(
-                peer,
-                addresses,
-                ConnectionType::CanConnect,
-            ))
-        );
+
+        match entry {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(entry.key, key);
+                assert_eq!(entry.peer, peer);
+                assert_eq!(entry.addresses(), addresses);
+                assert_eq!(entry.connection, ConnectionType::CanConnect);
+            }
+            state => panic!("invalid state for `KBucketEntry`: {state:?}"),
+        }
     }
 
     #[test]

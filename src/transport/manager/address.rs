@@ -147,7 +147,7 @@ impl Ord for AddressRecord {
 }
 
 /// Store for peer addresses.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AddressStore {
     /// Addresses available.
     pub addresses: HashMap<Multiaddr, AddressRecord>,
