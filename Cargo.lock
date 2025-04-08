@@ -3717,7 +3717,7 @@ dependencies = [
  "mockall 0.13.1",
  "multiaddr 0.17.1",
  "multihash 0.17.0",
- "network-interface",
+ "network-interface 1.1.4",
  "nohash-hasher",
  "parking_lot 0.12.3",
  "pin-project",
@@ -3770,7 +3770,7 @@ dependencies = [
  "mockall 0.13.1",
  "multiaddr 0.17.1",
  "multihash 0.17.0",
- "network-interface",
+ "network-interface 2.0.1",
  "parking_lot 0.12.3",
  "pin-project",
  "prost 0.12.6",
@@ -4217,6 +4217,18 @@ name = "network-interface"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4a43439bf756eed340bdf8feba761e2d50c7d47175d87545cd5cbe4a137c4d1"
+dependencies = [
+ "cc",
+ "libc",
+ "thiserror 1.0.69",
+ "winapi",
+]
+
+[[package]]
+name = "network-interface"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3329f515506e4a2de3aa6e07027a6758e22e0f0e8eaf64fa47261cec2282602"
 dependencies = [
  "cc",
  "libc",
