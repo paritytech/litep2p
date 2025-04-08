@@ -1263,8 +1263,11 @@ mod tests {
             KEEP_ALIVE_TIMEOUT,
         },
         types::protocol::ProtocolName,
-        BandwidthSink,
+        BandwidthSink, ConnectionId,
     };
+    use multiaddr::Protocol;
+    use multihash::Multihash;
+    use std::str::FromStr;
     use tokio::sync::mpsc::channel;
 
     #[allow(unused)]
@@ -1404,5 +1407,90 @@ mod tests {
 
         // Check the local storage should not get updated.
         assert!(kademlia.store.get(&key).is_none());
+    }
+
+    #[tokio::test]
+    async fn check_address_store_routing_table_updates() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+
+        let peer = PeerId::random();
+        let address_a = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap().with(
+            Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).unwrap()),
+        );
+        let address_b = Multiaddr::from_str("/dns/domain1.com/tcp/30334").unwrap().with(
+            Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).unwrap()),
+        );
+        let address_c = Multiaddr::from_str("/dns/domain1.com/tcp/30339").unwrap().with(
+            Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).unwrap()),
+        );
+
+        // Added only with address a.
+        kademlia.routing_table.add_known_peer(
+            peer,
+            vec![address_a.clone()],
+            ConnectionType::NotConnected,
+        );
+
+        // Check peer addresses.
+        match kademlia.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(entry.addresses(), vec![address_a.clone()]);
+            }
+            _ => panic!("Peer not found in routing table"),
+        };
+
+        // Report successful connection with address b via dialer endpoint.
+        let _ = kademlia.on_connection_established(
+            peer,
+            Endpoint::Dialer {
+                address: address_b.clone(),
+                connection_id: ConnectionId::from(0),
+            },
+        );
+
+        // Address B has a higher priority, as it was detected via the dialing mechanism of the
+        // transport manager, while address A is not dialed yet.
+        match kademlia.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(
+                    entry.addresses(),
+                    vec![address_b.clone(), address_a.clone()]
+                );
+            }
+            _ => panic!("Peer not found in routing table"),
+        };
+
+        // Report successful connection with a random address via listener endpoint.
+        let _ = kademlia.on_connection_established(
+            peer,
+            Endpoint::Listener {
+                address: address_c.clone(),
+                connection_id: ConnectionId::from(0),
+            },
+        );
+        // Address C was not added, as the peer has dialed us possibly on an ephemeral port.
+        match kademlia.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(
+                    entry.addresses(),
+                    vec![address_b.clone(), address_a.clone()]
+                );
+            }
+            _ => panic!("Peer not found in routing table"),
+        };
+
+        // Address B fails two times (which gives it a lower score than A) and
+        // makes it subject to removal.
+        kademlia.on_dial_failure(peer, vec![address_b.clone(), address_b.clone()]);
+
+        match kademlia.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(
+                    entry.addresses(),
+                    vec![address_a.clone(), address_b.clone()]
+                );
+            }
+            _ => panic!("Peer not found in routing table"),
+        };
     }
 }
