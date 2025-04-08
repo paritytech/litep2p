@@ -26,6 +26,7 @@ use crate::{
         bucket::{KBucket, KBucketEntry},
         types::{ConnectionType, Distance, KademliaPeer, Key, U256},
     },
+    transport::{manager::address::AddressRecord, Endpoint},
     PeerId,
 };
 
@@ -119,8 +120,10 @@ impl RoutingTable {
         self.buckets[index.get()].entry(key)
     }
 
-    /// Remove the address of the peer from the routing table on dail failures.
-    pub fn remove_addresses(&mut self, key: Key<PeerId>, addresses: &[Multiaddr]) {
+    /// Update the addresses of the peer on dial failures.
+    ///
+    /// The addresses are updated with a negative score making them subject to removal.
+    pub fn on_dial_failure(&mut self, key: Key<PeerId>, addresses: &[Multiaddr]) {
         tracing::trace!(
             target: LOG_TARGET,
             ?key,
@@ -129,7 +132,31 @@ impl RoutingTable {
         );
 
         if let KBucketEntry::Occupied(entry) = self.entry(key) {
-            entry.addresses.retain(|addr| !addresses.contains(addr));
+            for address in addresses {
+                entry.address_store.insert(AddressRecord::from_raw_multiaddr_with_score(
+                    address.clone(),
+                    -100i32,
+                ));
+            }
+        }
+    }
+
+    /// Update the status of the peer on connection established.
+    ///
+    /// If the peer exists in the routing table, the connection is set to `Connected`.
+    /// If the endpoint represents an address we have dialed, the address score
+    /// is updated in the store of the peer, making it more likely to be used in the future.
+    pub fn on_connection_established(&mut self, key: Key<PeerId>, endpoint: Endpoint) {
+        tracing::trace!(target: LOG_TARGET, ?key, ?endpoint, "on connection established");
+
+        if let KBucketEntry::Occupied(entry) = self.entry(key) {
+            entry.connection = ConnectionType::Connected;
+
+            if let Endpoint::Dialer { address, .. } = endpoint {
+                entry.address_store.insert(AddressRecord::from_raw_multiaddr_with_score(
+                    address, 100i32,
+                ));
+            }
         }
     }
 
