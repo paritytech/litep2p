@@ -36,6 +36,7 @@ use crate::{
         Direction, TransportEvent, TransportService,
     },
     substream::Substream,
+    transport::Endpoint,
     types::SubstreamId,
     PeerId,
 };
@@ -220,14 +221,18 @@ impl Kademlia {
     }
 
     /// Connection established to remote peer.
-    fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
-                    entry.connection = ConnectionType::Connected;
-                }
+                // Set the conenction type to connected and potentially save the address in the
+                // table.
+                //
+                // Note: this happens regardless of the state of the kademlia managed peers, because
+                // an alread occuped entry in the `self.peers` map does not mean that we are
+                // no longer interested in the address / connection type of the peer.
+                self.routing_table.on_connection_established(Key::from(peer), endpoint);
 
                 let Some(actions) = self.pending_dials.remove(&peer) else {
                     entry.insert(PeerContext::new());
@@ -262,7 +267,21 @@ impl Kademlia {
                 entry.insert(context);
                 Ok(())
             }
-            Entry::Occupied(_) => Err(Error::PeerAlreadyExists(peer)),
+            Entry::Occupied(_) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?endpoint,
+                    "connection already exists, discarding opening substreams, this is unexpected"
+                );
+
+                // Update the connection in the routing table, similar as above. The function call
+                // happens in two places to avoid unnecessary cloning of the endpoint for logging
+                // purposes.
+                self.routing_table.on_connection_established(Key::from(peer), endpoint);
+
+                Err(Error::PeerAlreadyExists(peer))
+            }
         }
     }
 
@@ -395,12 +414,13 @@ impl Kademlia {
             .await;
 
         for info in peers {
-            self.service.add_known_address(&info.peer, info.addresses.iter().cloned());
+            let addresses = info.addresses();
+            self.service.add_known_address(&info.peer, addresses.clone().into_iter());
 
             if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
                 self.routing_table.add_known_peer(
                     info.peer,
-                    info.addresses.clone(),
+                    addresses,
                     self.peers
                         .get(&info.peer)
                         .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
@@ -527,13 +547,15 @@ impl Kademlia {
                 );
 
                 match (providers.len(), providers.pop()) {
-                    (1, Some(provider)) =>
+                    (1, Some(provider)) => {
+                        let addresses = provider.addresses();
+
                         if provider.peer == peer {
                             self.store.put_provider(
                                 key.clone(),
                                 ContentProvider {
                                     peer,
-                                    addresses: provider.addresses.clone(),
+                                    addresses: addresses.clone(),
                                 },
                             );
 
@@ -543,7 +565,7 @@ impl Kademlia {
                                     provided_key: key,
                                     provider: ContentProvider {
                                         peer: provider.peer,
-                                        addresses: provider.addresses,
+                                        addresses,
                                     },
                                 })
                                 .await;
@@ -554,7 +576,8 @@ impl Kademlia {
                                 provider = ?provider.peer,
                                 "ignoring `ADD_PROVIDER` message with `publisher` != `provider`"
                             )
-                        },
+                        }
+                    }
                     (n, _) => {
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -670,7 +693,7 @@ impl Kademlia {
     fn on_dial_failure(&mut self, peer: PeerId, addresses: Vec<Multiaddr>) {
         tracing::trace!(target: LOG_TARGET, ?peer, ?addresses, "failed to dial peer");
 
-        self.routing_table.remove_addresses(Key::from(peer), &addresses);
+        self.routing_table.on_dial_failure(Key::from(peer), &addresses);
 
         let Some(actions) = self.pending_dials.remove(&peer) else {
             return;
@@ -774,7 +797,10 @@ impl Kademlia {
                     .send(KademliaEvent::FindNodeSuccess {
                         target,
                         query_id: query,
-                        peers: peers.into_iter().map(|info| (info.peer, info.addresses)).collect(),
+                        peers: peers
+                            .into_iter()
+                            .map(|info| (info.peer, info.addresses()))
+                            .collect(),
                     })
                     .await;
                 Ok(())
@@ -889,8 +915,8 @@ impl Kademlia {
 
             tokio::select! {
                 event = self.service.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer) {
+                    Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
+                        if let Err(error) = self.on_connection_established(peer, endpoint) {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?error,
@@ -1048,7 +1074,7 @@ impl Kademlia {
 
                                 match self.routing_table.entry(Key::from(peer)) {
                                     KBucketEntry::Occupied(entry) => Some(entry.clone()),
-                                    KBucketEntry::Vacant(entry) if !entry.addresses.is_empty() =>
+                                    KBucketEntry::Vacant(entry) if !entry.address_store.is_empty() =>
                                         Some(entry.clone()),
                                     _ => None,
                                 }
