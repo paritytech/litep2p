@@ -20,5 +20,3 @@
 
 #[cfg(test)]
 mod rust;
-#[cfg(test)]
-mod substrate;

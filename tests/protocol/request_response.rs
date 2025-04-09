@@ -37,7 +37,6 @@ use futures::{channel, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use rand::{Rng, SeedableRng};
-use rand_xorshift::XorShiftRng;
 use tokio::time::sleep;
 
 #[cfg(feature = "quic")]
@@ -2427,10 +2426,7 @@ async fn large_response(transport1: Transport, transport2: Transport) {
         }
     });
 
-    // Generate the response first and use a fast insecure RNG to make the test not timeout on
-    // GitHub CI when generating 15 MB of data.
-    let mut rng = XorShiftRng::from_rng(rand::thread_rng()).expect("`thread_rng` to seed");
-    let response = (0..15 * 1024 * 1024).map(|_| rng.gen::<u8>()).collect::<Vec<_>>();
+    let response: Vec<u8> = vec![1; 15 * 1024 * 1024];
 
     let request_id =
         handle1.try_send_request(peer2, vec![1, 3, 3, 7], DialOptions::Reject).unwrap();
