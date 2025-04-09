@@ -82,7 +82,6 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
 
 [features]
-custom_sc_network = []
 quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring"]
 webrtc = ["dep:str0m"]
 websocket = ["dep:tokio-tungstenite"]
