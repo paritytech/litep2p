@@ -979,7 +979,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
-            ConnectionLimitsConfig::default(),
+            None,
         );
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(

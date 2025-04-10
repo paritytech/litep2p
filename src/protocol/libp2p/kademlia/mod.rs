@@ -1232,7 +1232,7 @@ mod tests {
         crypto::ed25519::Keypair,
         transport::{
             manager::{limits::ConnectionLimitsConfig, TransportManager},
-            KEEP_ALIVE_TIMEOUT,
+            ConnectionLimits, KEEP_ALIVE_TIMEOUT,
         },
         types::protocol::ProtocolName,
         BandwidthSink,
@@ -1251,7 +1251,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
-            ConnectionLimitsConfig::default(),
+            Some(Box::new(ConnectionLimits::new(Default::default()))),
         );
 
         let peer = PeerId::random();

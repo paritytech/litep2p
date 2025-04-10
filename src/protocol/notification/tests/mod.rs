@@ -31,7 +31,7 @@ use crate::{
     },
     transport::{
         manager::{limits::ConnectionLimitsConfig, TransportManager},
-        KEEP_ALIVE_TIMEOUT,
+        ConnectionLimits, KEEP_ALIVE_TIMEOUT,
     },
     types::protocol::ProtocolName,
     BandwidthSink, PeerId,
@@ -56,7 +56,7 @@ fn make_notification_protocol() -> (
         HashSet::new(),
         BandwidthSink::new(),
         8usize,
-        ConnectionLimitsConfig::default(),
+        Some(Box::new(ConnectionLimits::new(Default::default()))),
     );
 
     let peer = PeerId::random();

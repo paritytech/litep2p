@@ -31,7 +31,7 @@ use crate::{
     substream::Substream,
     transport::{
         manager::{limits::ConnectionLimitsConfig, TransportManager},
-        KEEP_ALIVE_TIMEOUT,
+        ConnectionLimits, KEEP_ALIVE_TIMEOUT,
     },
     types::{RequestId, SubstreamId},
     BandwidthSink, Error, PeerId, ProtocolName,
@@ -54,7 +54,7 @@ fn protocol() -> (
         HashSet::new(),
         BandwidthSink::new(),
         8usize,
-        ConnectionLimitsConfig::default(),
+        Some(Box::new(ConnectionLimits::new(Default::default()))),
     );
 
     let peer = PeerId::random();
