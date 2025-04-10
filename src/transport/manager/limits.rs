@@ -217,46 +217,66 @@ mod tests {
         let connection_id_in_3 = ConnectionId::random();
 
         // Establish incoming connection.
-        assert!(limits.can_accept_connection(true).is_ok());
-        limits.accept_established_connection(connection_id_in_1, true);
+        let endpoint = Endpoint::Listener {
+            address: Default::default(),
+            connection_id: connection_id_in_1,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 1);
 
-        assert!(limits.can_accept_connection(true).is_ok());
-        limits.accept_established_connection(connection_id_in_2, true);
+        let endpoint = Endpoint::Listener {
+            address: Default::default(),
+            connection_id: connection_id_in_2,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 2);
 
-        assert!(limits.can_accept_connection(true).is_ok());
-        limits.accept_established_connection(connection_id_in_3, true);
+        let endpoint = Endpoint::Listener {
+            address: Default::default(),
+            connection_id: connection_id_in_3,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 3);
 
         assert_eq!(
-            limits.can_accept_connection(true).unwrap_err(),
+            limits.can_accept_connection(PeerId::random(), &endpoint).unwrap_err(),
             ConnectionLimitsError::MaxIncomingConnectionsExceeded
         );
         assert_eq!(limits.incoming_connections.len(), 3);
 
         // Establish outgoing connection.
-        assert!(limits.can_accept_connection(false).is_ok());
-        limits.accept_established_connection(connection_id_out_1, false);
+        let endpoint = Endpoint::Dialer {
+            address: Default::default(),
+            connection_id: connection_id_out_1,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.accept_established_connection(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 3);
         assert_eq!(limits.outgoing_connections.len(), 1);
 
-        assert!(limits.can_accept_connection(false).is_ok());
-        limits.accept_established_connection(connection_id_out_2, false);
+        let endpoint = Endpoint::Dialer {
+            address: Default::default(),
+            connection_id: connection_id_out_2,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.accept_established_connection(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 3);
         assert_eq!(limits.outgoing_connections.len(), 2);
 
         assert_eq!(
-            limits.can_accept_connection(false).unwrap_err(),
+            limits.can_accept_connection(PeerId::random(), &endpoint).unwrap_err(),
             ConnectionLimitsError::MaxOutgoingConnectionsExceeded
         );
 
-        // Close connections with peer a.
-        limits.on_connection_closed(connection_id_in_1);
+        // Close connections with 1.
+        limits.on_connection_closed(PeerId::random(), connection_id_in_1);
         assert_eq!(limits.incoming_connections.len(), 2);
         assert_eq!(limits.outgoing_connections.len(), 2);
 
-        limits.on_connection_closed(connection_id_out_1);
+        limits.on_connection_closed(PeerId::random(), connection_id_out_1);
         assert_eq!(limits.incoming_connections.len(), 2);
         assert_eq!(limits.outgoing_connections.len(), 1);
     }
