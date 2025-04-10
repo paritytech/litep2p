@@ -39,7 +39,9 @@ pub mod websocket;
 pub(crate) mod dummy;
 pub(crate) mod manager;
 
-pub use manager::limits::{ConnectionLimitsConfig, ConnectionLimitsError};
+pub use manager::limits::{
+    ConnectionLimits, ConnectionLimitsConfig, ConnectionLimitsError, ConnectionMiddleware,
+};
 
 /// Timeout for opening a connection.
 pub(crate) const CONNECTION_OPEN_TIMEOUT: Duration = Duration::from_secs(10);

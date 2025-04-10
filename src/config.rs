@@ -29,8 +29,7 @@ use crate::{
         notification, request_response, UserProtocol,
     },
     transport::{
-        manager::limits::{ConnectionLimitsConfig, ConnectionMiddleware},
-        tcp::config::Config as TcpConfig,
+        manager::limits::ConnectionMiddleware, tcp::config::Config as TcpConfig,
         KEEP_ALIVE_TIMEOUT, MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
@@ -120,9 +119,6 @@ pub struct ConfigBuilder {
     /// Maximum number of parallel dial attempts.
     max_parallel_dials: usize,
 
-    /// Connection limits config.
-    connection_limits: ConnectionLimitsConfig,
-
     /// Close the connection if no substreams are open within this time frame.
     keep_alive_timeout: Duration,
 
@@ -159,7 +155,6 @@ impl ConfigBuilder {
             notification_protocols: HashMap::new(),
             request_response_protocols: HashMap::new(),
             known_addresses: Vec::new(),
-            connection_limits: ConnectionLimitsConfig::default(),
             keep_alive_timeout: KEEP_ALIVE_TIMEOUT,
             connection_middleware: None,
         }

@@ -127,19 +127,13 @@ impl ConnectionLimits {
             outgoing_connections: HashSet::with_capacity(max_outgoing_connections),
         }
     }
+}
 
-    /// Called when dialing an address.
-    ///
-    /// Returns the number of outgoing connections permitted to be established.
-    /// It is guaranteed that at least one connection can be established if the method returns `Ok`.
-    /// The number of available outgoing connections can influence the maximum parallel dials to a
-    /// single address.
-    ///
-    /// If the maximum number of outgoing connections is not set, `Ok(usize::MAX)` is returned.
-    fn on_dial_address(&mut self) -> Result<usize, ConnectionLimitsError> {
+impl ConnectionMiddleware for ConnectionLimits {
+    fn outbound_capacity(&mut self) -> crate::Result<usize> {
         if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
             if self.outgoing_connections.len() >= max_outgoing_connections {
-                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded);
+                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded.into());
             }
 
             return Ok(max_outgoing_connections - self.outgoing_connections.len());
@@ -148,79 +142,46 @@ impl ConnectionLimits {
         Ok(usize::MAX)
     }
 
-    /// Called before accepting a new incoming connection.
-    fn on_incoming(&mut self) -> Result<(), ConnectionLimitsError> {
+    fn check_inbound(&mut self) -> crate::Result<()> {
         if let Some(max_incoming_connections) = self.config.max_incoming_connections {
             if self.incoming_connections.len() >= max_incoming_connections {
-                return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded);
+                return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded.into());
             }
         }
 
         Ok(())
     }
 
-    /// Called when a new connection is established.
-    ///
-    /// Returns an error if the connection cannot be accepted due to connection limits.
-    fn can_accept_connection(&mut self, is_listener: bool) -> Result<(), ConnectionLimitsError> {
+    fn can_accept_connection(&mut self, _peer: PeerId, endpoint: &Endpoint) -> crate::Result<()> {
         // Check connection limits.
-        if is_listener {
+        if endpoint.is_listener() {
             if let Some(max_incoming_connections) = self.config.max_incoming_connections {
                 if self.incoming_connections.len() >= max_incoming_connections {
-                    return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded);
+                    return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded.into());
                 }
             }
         } else if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
             if self.outgoing_connections.len() >= max_outgoing_connections {
-                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded);
+                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded.into());
             }
         }
 
         Ok(())
     }
 
-    /// Accept an established connection.
-    ///
-    /// # Note
-    ///
-    /// This method should be called after the `Self::can_accept_connection` method
-    /// to ensure that the connection can be accepted.
-    fn accept_established_connection(&mut self, connection_id: ConnectionId, is_listener: bool) {
-        if is_listener {
+    fn on_connection_established(&mut self, _peer: PeerId, endpoint: &Endpoint) {
+        if endpoint.is_listener() {
             if self.config.max_incoming_connections.is_some() {
-                self.incoming_connections.insert(connection_id);
+                self.incoming_connections.insert(endpoint.connection_id());
             }
         } else if self.config.max_outgoing_connections.is_some() {
-            self.outgoing_connections.insert(connection_id);
+            self.outgoing_connections.insert(endpoint.connection_id());
         }
     }
 
-    /// Called when a connection is closed.
-    fn on_connection_closed(&mut self, connection_id: ConnectionId) {
+    fn on_connection_closed(&mut self, _peer: PeerId, connection_id: ConnectionId) {
         self.incoming_connections.remove(&connection_id);
         self.outgoing_connections.remove(&connection_id);
-    }
-}
-
-impl ConnectionMiddleware for ConnectionLimits {
-    fn outbound_capacity(&mut self) -> crate::Result<usize> {
-        self.on_dial_address().map_err(Into::into)
-    }
-
-    fn check_inbound(&mut self) -> crate::Result<()> {
-        self.on_incoming().map_err(Into::into)
-    }
-
-    fn can_accept_connection(&mut self, _peer: PeerId, endpoint: &Endpoint) -> crate::Result<()> {
-        self.can_accept_connection(endpoint.is_listener()).map_err(Into::into)
-    }
-
-    fn on_connection_established(&mut self, _peer: PeerId, endpoint: &Endpoint) {
-        self.accept_established_connection(endpoint.connection_id(), endpoint.is_listener());
-    }
-
-    fn on_connection_closed(&mut self, _peer: PeerId, connection_id: ConnectionId) {
-        self.on_connection_closed(connection_id);
     }
 }
 
