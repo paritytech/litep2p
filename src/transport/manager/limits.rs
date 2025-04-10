@@ -20,9 +20,38 @@
 
 //! Limits for the transport manager.
 
-use crate::types::ConnectionId;
+use crate::{transport::Endpoint, types::ConnectionId, PeerId};
 
 use std::collections::HashSet;
+
+/// A middleware trait for implementing connection limits.
+pub trait ConnectionMiddleware {
+    /// Determines the number of outbound connections permitted to be established.
+    ///
+    /// Returns the number of allowed outbound connections. If there is no limit,
+    /// returns `Ok(usize::MAX)`. If the node cannot accept any more outbound
+    /// connections, returns an error.
+    fn outbound_capacity(&mut self) -> crate::Result<usize>;
+
+    /// Checks whether a new inbound connection can be accepted before processing it.
+    fn check_inbound(&mut self) -> crate::Result<()>;
+
+    /// Verifies if a new connection (inbound or outbound) can be established.
+    ///
+    /// Returns an error if connection limits or policy constraints prevent
+    /// establishing the connection.
+    fn check_connection(&mut self, peer: PeerId, endpoint: &Endpoint) -> crate::Result<()>;
+
+    /// Registers a connection as established.
+    ///
+    /// This method will be called after a successful check using [`Self::check_connection`].
+    fn register_connection(&mut self, peer: PeerId, endpoint: &Endpoint);
+
+    /// Deregisters a connection when it is closed.
+    ///
+    /// This method will be called after a [`Self::register_connection`] call.
+    fn deregister_connection(&mut self, peer: PeerId, endpoint: &Endpoint);
+}
 
 /// Configuration for the connection limits.
 #[derive(Debug, Clone, Default)]
