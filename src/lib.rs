@@ -163,7 +163,6 @@ impl Litep2p {
             supported_transports,
             bandwidth_sink.clone(),
             litep2p_config.max_parallel_dials,
-            litep2p_config.connection_limits,
             litep2p_config.connection_middleware,
         );
 

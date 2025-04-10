@@ -271,12 +271,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set connection limits configuration.
-    pub fn with_connection_limits(mut self, config: ConnectionLimitsConfig) -> Self {
-        self.connection_limits = config;
-        self
-    }
-
+    /// Set connection middleware.
     pub fn with_connection_middleware(mut self, middleware: Box<dyn ConnectionMiddleware>) -> Self {
         self.connection_middleware = Some(middleware);
         self
@@ -315,7 +310,6 @@ impl ConfigBuilder {
             notification_protocols: self.notification_protocols,
             request_response_protocols: self.request_response_protocols,
             known_addresses: self.known_addresses,
-            connection_limits: self.connection_limits,
             keep_alive_timeout: self.keep_alive_timeout,
             connection_middleware: self.connection_middleware.take(),
         }
@@ -374,9 +368,6 @@ pub struct Litep2pConfig {
 
     /// Known addresses.
     pub(crate) known_addresses: Vec<(PeerId, Vec<Multiaddr>)>,
-
-    /// Connection limits config.
-    pub(crate) connection_limits: ConnectionLimitsConfig,
 
     /// Close the connection if no substreams are open within this time frame.
     pub(crate) keep_alive_timeout: Duration,
