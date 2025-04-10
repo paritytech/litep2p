@@ -29,7 +29,8 @@ use crate::{
         notification, request_response, UserProtocol,
     },
     transport::{
-        manager::limits::ConnectionLimitsConfig, tcp::config::Config as TcpConfig,
+        manager::limits::{ConnectionLimitsConfig, ConnectionMiddleware},
+        tcp::config::Config as TcpConfig,
         KEEP_ALIVE_TIMEOUT, MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
@@ -124,6 +125,9 @@ pub struct ConfigBuilder {
 
     /// Close the connection if no substreams are open within this time frame.
     keep_alive_timeout: Duration,
+
+    /// Connection middleware.
+    connection_middleware: Option<Box<dyn ConnectionMiddleware>>,
 }
 
 impl Default for ConfigBuilder {
@@ -157,6 +161,7 @@ impl ConfigBuilder {
             known_addresses: Vec::new(),
             connection_limits: ConnectionLimitsConfig::default(),
             keep_alive_timeout: KEEP_ALIVE_TIMEOUT,
+            connection_middleware: None,
         }
     }
 
@@ -272,6 +277,11 @@ impl ConfigBuilder {
         self
     }
 
+    pub fn with_connection_middleware(mut self, middleware: Box<dyn ConnectionMiddleware>) -> Self {
+        self.connection_middleware = Some(middleware);
+        self
+    }
+
     /// Set keep alive timeout for connections.
     pub fn with_keep_alive_timeout(mut self, timeout: Duration) -> Self {
         self.keep_alive_timeout = timeout;
@@ -307,6 +317,7 @@ impl ConfigBuilder {
             known_addresses: self.known_addresses,
             connection_limits: self.connection_limits,
             keep_alive_timeout: self.keep_alive_timeout,
+            connection_middleware: self.connection_middleware.take(),
         }
     }
 }
@@ -369,4 +380,7 @@ pub struct Litep2pConfig {
 
     /// Close the connection if no substreams are open within this time frame.
     pub(crate) keep_alive_timeout: Duration,
+
+    /// Connection middleware.
+    pub(crate) connection_middleware: Option<Box<dyn ConnectionMiddleware>>,
 }
