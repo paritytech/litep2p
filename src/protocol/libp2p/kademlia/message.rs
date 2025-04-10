@@ -240,7 +240,7 @@ impl KademliaMessage {
     }
 
     /// Get [`KademliaMessage`] from bytes.
-    pub fn from_bytes(bytes: BytesMut) -> Option<Self> {
+    pub fn from_bytes(bytes: BytesMut, replication_factor: usize) -> Option<Self> {
         match schema::kademlia::Message::decode(bytes) {
             Ok(message) => match message.r#type {
                 // FIND_NODE
@@ -249,6 +249,7 @@ impl KademliaMessage {
                         .closer_peers
                         .iter()
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .take(replication_factor)
                         .collect();
 
                     Some(Self::FindNode {
@@ -286,6 +287,7 @@ impl KademliaMessage {
                             .closer_peers
                             .iter()
                             .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                            .take(replication_factor)
                             .collect(),
                     })
                 }
@@ -296,6 +298,7 @@ impl KademliaMessage {
                         .provider_peers
                         .iter()
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .take(replication_factor)
                         .collect();
 
                     Some(Self::AddProvider { key, providers })
@@ -307,11 +310,13 @@ impl KademliaMessage {
                         .closer_peers
                         .iter()
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .take(replication_factor)
                         .collect();
                     let providers = message
                         .provider_peers
                         .iter()
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
+                        .take(replication_factor)
                         .collect();
 
                     Some(Self::GetProviders {
