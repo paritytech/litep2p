@@ -206,6 +206,28 @@ impl ConnectionLimits {
     }
 }
 
+impl ConnectionMiddleware for ConnectionLimits {
+    fn outbound_capacity(&mut self) -> crate::Result<usize> {
+        self.on_dial_address().map_err(Into::into)
+    }
+
+    fn check_inbound(&mut self) -> crate::Result<()> {
+        self.on_incoming().map_err(Into::into)
+    }
+
+    fn can_accept_connection(&mut self, _peer: PeerId, endpoint: &Endpoint) -> crate::Result<()> {
+        self.can_accept_connection(endpoint.is_listener()).map_err(Into::into)
+    }
+
+    fn on_connection_established(&mut self, _peer: PeerId, endpoint: &Endpoint) {
+        self.accept_established_connection(endpoint.connection_id(), endpoint.is_listener());
+    }
+
+    fn on_connection_closed(&mut self, _peer: PeerId, connection_id: ConnectionId) {
+        self.on_connection_closed(connection_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
