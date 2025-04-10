@@ -100,7 +100,10 @@ pub enum ConnectionLimitsError {
     MaxOutgoingConnectionsExceeded,
 }
 
-/// Connection limits.
+/// General connection limits.
+///
+/// This is a type of connection middleware that places limits on the number
+/// of incoming and outgoing connections.
 #[derive(Debug, Clone)]
 pub struct ConnectionLimits {
     /// Configuration for the connection limits.
@@ -133,7 +136,7 @@ impl ConnectionLimits {
     /// single address.
     ///
     /// If the maximum number of outgoing connections is not set, `Ok(usize::MAX)` is returned.
-    pub fn on_dial_address(&mut self) -> Result<usize, ConnectionLimitsError> {
+    fn on_dial_address(&mut self) -> Result<usize, ConnectionLimitsError> {
         if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
             if self.outgoing_connections.len() >= max_outgoing_connections {
                 return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded);
@@ -146,7 +149,7 @@ impl ConnectionLimits {
     }
 
     /// Called before accepting a new incoming connection.
-    pub fn on_incoming(&mut self) -> Result<(), ConnectionLimitsError> {
+    fn on_incoming(&mut self) -> Result<(), ConnectionLimitsError> {
         if let Some(max_incoming_connections) = self.config.max_incoming_connections {
             if self.incoming_connections.len() >= max_incoming_connections {
                 return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded);
@@ -159,10 +162,7 @@ impl ConnectionLimits {
     /// Called when a new connection is established.
     ///
     /// Returns an error if the connection cannot be accepted due to connection limits.
-    pub fn can_accept_connection(
-        &mut self,
-        is_listener: bool,
-    ) -> Result<(), ConnectionLimitsError> {
+    fn can_accept_connection(&mut self, is_listener: bool) -> Result<(), ConnectionLimitsError> {
         // Check connection limits.
         if is_listener {
             if let Some(max_incoming_connections) = self.config.max_incoming_connections {
@@ -185,11 +185,7 @@ impl ConnectionLimits {
     ///
     /// This method should be called after the `Self::can_accept_connection` method
     /// to ensure that the connection can be accepted.
-    pub fn accept_established_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        is_listener: bool,
-    ) {
+    fn accept_established_connection(&mut self, connection_id: ConnectionId, is_listener: bool) {
         if is_listener {
             if self.config.max_incoming_connections.is_some() {
                 self.incoming_connections.insert(connection_id);
@@ -200,7 +196,7 @@ impl ConnectionLimits {
     }
 
     /// Called when a connection is closed.
-    pub fn on_connection_closed(&mut self, connection_id: ConnectionId) {
+    fn on_connection_closed(&mut self, connection_id: ConnectionId) {
         self.incoming_connections.remove(&connection_id);
         self.outgoing_connections.remove(&connection_id);
     }
