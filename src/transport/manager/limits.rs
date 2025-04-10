@@ -40,17 +40,32 @@ pub trait ConnectionMiddleware {
     ///
     /// Returns an error if connection limits or policy constraints prevent
     /// establishing the connection.
-    fn check_connection(&mut self, peer: PeerId, endpoint: &Endpoint) -> crate::Result<()>;
+    ///
+    /// # Note
+    ///
+    /// This method is called before the connection is established. However,
+    /// the transport manager can decide to reject the connection even if this
+    /// method returns `Ok(())`. Therefore, the API makes no guarantees of
+    /// further calling [`Self::on_connection_established`].
+    ///
+    /// Implementations should inspect the provided parameters. To avoid leaking
+    /// memory, the implementation should not store the connection ID or endpoint
+    /// at this point in time.
+    fn can_accept_connection(&mut self, peer: PeerId, endpoint: &Endpoint) -> crate::Result<()>;
 
     /// Registers a connection as established.
     ///
     /// This method will be called after a successful check using [`Self::check_connection`].
-    fn register_connection(&mut self, peer: PeerId, endpoint: &Endpoint);
+    /// The peer ID and endpoint are provided to identify the connection and are identical
+    /// to the ones used in [`Self::can_accept_connection`].
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: &Endpoint);
 
     /// Deregisters a connection when it is closed.
     ///
     /// This method will be called after a [`Self::register_connection`] call.
-    fn deregister_connection(&mut self, peer: PeerId, endpoint: &Endpoint);
+    /// The connection ID corresponds the endpoint provided in the
+    /// [`Self::on_connection_established`] method.
+    fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId);
 }
 
 /// Configuration for the connection limits.
