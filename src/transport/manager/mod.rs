@@ -41,6 +41,7 @@ use crate::{
 use address::{scores, AddressStore};
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
+use limits::ConnectionMiddleware;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use parking_lot::RwLock;
@@ -252,6 +253,9 @@ pub struct TransportManager {
 
     /// Opening connections errors.
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
+
+    /// Connection middleware.
+    connection_middleware: Option<Box<dyn ConnectionMiddleware>>,
 }
 
 impl TransportManager {
@@ -263,6 +267,7 @@ impl TransportManager {
         bandwidth_sink: BandwidthSink,
         max_parallel_dials: usize,
         connection_limits_config: limits::ConnectionLimitsConfig,
+        connection_middleware: Option<Box<dyn ConnectionMiddleware>>,
     ) -> (Self, TransportManagerHandle) {
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let peers = Arc::new(RwLock::new(HashMap::new()));
@@ -300,6 +305,7 @@ impl TransportManager {
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
                 connection_limits: limits::ConnectionLimits::new(connection_limits_config),
                 opening_errors: HashMap::new(),
+                connection_middleware,
             },
             handle,
         )
