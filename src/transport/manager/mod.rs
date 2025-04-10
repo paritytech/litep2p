@@ -448,6 +448,14 @@ impl TransportManager {
     pub async fn dial(&mut self, peer: PeerId) -> crate::Result<()> {
         // Don't alter the peer state if there's no capacity to dial.
         let available_capacity = self.connection_limits.on_dial_address()?;
+
+        let middleware_capacity = if let Some(middleware) = &mut self.connection_middleware {
+            middleware.outbound_capacity()?
+        } else {
+            usize::MAX
+        };
+        let available_capacity = available_capacity.min(middleware_capacity);
+
         // The available capacity is the maximum number of connections that can be established,
         // so we limit the number of parallel dials to the minimum of these values.
         let limit = available_capacity.min(self.max_parallel_dials);
@@ -521,6 +529,10 @@ impl TransportManager {
     /// Returns an error if address it not valid.
     pub async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
         self.connection_limits.on_dial_address()?;
+
+        if let Some(middleware) = &mut self.connection_middleware {
+            middleware.outbound_capacity()?;
+        }
 
         let address_record = AddressRecord::from_multiaddr(address)
             .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
@@ -690,6 +702,11 @@ impl TransportManager {
 
     fn on_pending_incoming_connection(&mut self) -> crate::Result<()> {
         self.connection_limits.on_incoming()?;
+
+        if let Some(middleware) = &mut self.connection_middleware {
+            middleware.check_inbound()?;
+        }
+
         Ok(())
     }
 
@@ -702,6 +719,10 @@ impl TransportManager {
         tracing::trace!(target: LOG_TARGET, ?peer, ?connection_id, "connection closed");
 
         self.connection_limits.on_connection_closed(connection_id);
+
+        if let Some(middleware) = &mut self.connection_middleware {
+            middleware.on_connection_closed(peer, connection_id);
+        }
 
         let mut peers = self.peers.write();
         let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
@@ -788,6 +809,18 @@ impl TransportManager {
             );
             return Ok(ConnectionEstablishedResult::Reject);
         }
+        if let Some(middleware) = &mut self.connection_middleware {
+            if let Err(error) = middleware.can_accept_connection(peer, endpoint) {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?endpoint,
+                    ?error,
+                    "connection middleware rejected connection",
+                );
+                return Ok(ConnectionEstablishedResult::Reject);
+            }
+        }
 
         let mut peers = self.peers.write();
         let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
@@ -809,6 +842,10 @@ impl TransportManager {
         if connection_accepted {
             self.connection_limits
                 .accept_established_connection(endpoint.connection_id(), endpoint.is_listener());
+
+            if let Some(middleware) = &mut self.connection_middleware {
+                middleware.on_connection_established(peer, endpoint);
+            }
 
             // Cancel all pending dials if the connection was established.
             if let PeerState::Opening {
