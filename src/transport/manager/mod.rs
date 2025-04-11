@@ -443,7 +443,7 @@ impl TransportManager {
     pub async fn dial(&mut self, peer: PeerId) -> crate::Result<()> {
         // Don't alter the peer state if there's no capacity to dial.
         let available_capacity = if let Some(middleware) = &mut self.connection_middleware {
-            middleware.outbound_capacity()?
+            middleware.outbound_capacity(peer)?
         } else {
             usize::MAX
         };
@@ -521,7 +521,10 @@ impl TransportManager {
     /// Returns an error if address it not valid.
     pub async fn dial_address(&mut self, address: Multiaddr) -> crate::Result<()> {
         if let Some(middleware) = &mut self.connection_middleware {
-            middleware.outbound_capacity()?;
+            let peer = PeerId::try_from_multiaddr(&address)
+                .ok_or(Error::AddressError(AddressError::PeerIdMissing))?;
+
+            middleware.outbound_capacity(peer)?;
         }
 
         let address_record = AddressRecord::from_multiaddr(address)

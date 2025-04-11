@@ -37,10 +37,12 @@ use std::collections::HashSet;
 pub trait ConnectionMiddleware: Send {
     /// Determines the number of outbound connections permitted to be established.
     ///
+    /// This method is called before the node attempts to dial a remote peer.
+    ///
     /// Returns the number of allowed outbound connections.
     /// If there is no limit, returns `Ok(usize::MAX)`.
     /// If the node cannot accept any more outbound connections, returns an error.
-    fn outbound_capacity(&mut self) -> crate::Result<usize>;
+    fn outbound_capacity(&mut self, peer: PeerId) -> crate::Result<usize>;
 
     /// Checks whether a new inbound connection can be accepted before processing it.
     fn check_inbound(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
@@ -139,7 +141,7 @@ impl ConnectionLimits {
 }
 
 impl ConnectionMiddleware for ConnectionLimits {
-    fn outbound_capacity(&mut self) -> crate::Result<usize> {
+    fn outbound_capacity(&mut self, _peer: PeerId) -> crate::Result<usize> {
         if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
             if self.outgoing_connections.len() >= max_outgoing_connections {
                 return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded.into());
