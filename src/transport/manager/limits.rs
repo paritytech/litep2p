@@ -24,24 +24,52 @@ use crate::{transport::Endpoint, types::ConnectionId, PeerId};
 
 use std::{collections::HashSet, net::SocketAddr};
 
-/// A middleware trait for implementing connection limits.
+/// A middleware trait for managing connections.
 ///
-/// The middleware interacts with the transport manager at two entry points:
-/// - before the connection is negotiated via [`Self::outbound_capacity`] and
-///   [`Self::check_inbound`]
-/// - after the connection is established via [`Self::can_accept_connection`],
-///   [`Self::on_connection_established`]  and [`Self::on_connection_closed`].
+/// This middleware allows developers to implement custom connection policies,
+/// enabling a wide range of use cases by exposing hooks into the connection lifecycle.
 ///
-/// Returning an error from any of the methods will prevent the connection from being
-/// accepted by the transport manager.
+/// It interacts with the transport manager at two stages:
+///
+/// ## 1. Before Negotiation
+///
+/// At this stage, the connection has not yet been negotiated. In the context of litep2p,
+/// "negotiation" refers to the handshake and setup of `crypto/noise` (encryption and peer ID
+/// validation) and `yamux` (multiplexing).
+///
+/// The node is either attempting to establish an outbound connection or accept an inbound one.
+///
+/// - Returning an error here will prevent the negotiation from proceeding, saving resources.
+///
+/// - [`Self::outbound_capacity`] is called to determine the number of outbound
+///  connections that can be established. The peerID is provided to further provide connection
+///  details.
+///
+/// - [`Self::check_inbound`] is called to evaluate whether an inbound connection can be accepted.
+///  The peer ID is not yet known, but the socket address is provided to identify the connection.
+///
+/// ## 2. After Negotiation
+///
+/// At this point, the connection has been successfully negotiated and the peer ID is known.
+///
+/// - [`Self::can_accept_connection`] is invoked to determine if the fully negotiated connection
+///   should be accepted. The peer ID, endpoint, and connection ID are provided. Implementations
+///   should check internal limits but **must not** store the connection ID or endpoint here, as the
+///   transport manager might still reject the connection later.
+///
+/// - If the connection is accepted, [`Self::on_connection_established`] is called with the same
+///   peer ID and endpoint. At this point, implementations should begin tracking the connection ID.
+///
+/// - When a connection is closed, [`Self::on_connection_closed`] is called. Implementations must
+///   clean up any resources associated with the connection ID to prevent memory leaks.
 pub trait ConnectionMiddleware: Send {
     /// Determines the number of outbound connections permitted to be established.
     ///
     /// This method is called before the node attempts to dial a remote peer.
     ///
     /// Returns the number of allowed outbound connections.
-    /// If there is no limit, returns `Ok(usize::MAX)`.
-    /// If the node cannot accept any more outbound connections, returns an error.
+    /// - If there is no limit, returns `Ok(usize::MAX)`.
+    /// - If the node cannot accept any more outbound connections, returns an error.
     fn outbound_capacity(&mut self, peer: PeerId) -> crate::Result<usize>;
 
     /// Checks whether a new inbound connection can be accepted before processing it.
