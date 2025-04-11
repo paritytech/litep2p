@@ -103,8 +103,8 @@ mod tests {
         let copy = bytes.clone();
         let mut bytes = BytesMut::from(&bytes[..]);
 
-        let decoded = codec.decode(&mut bytes);
-        assert_eq!(decoded, copy);
+        // The smaller payload will not be decoded as the identity code needs 100 bytes.
+        assert!(codec.decode(&mut bytes).unwrap().is_none());
     }
 
     #[test]
