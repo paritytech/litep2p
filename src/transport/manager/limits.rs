@@ -102,14 +102,14 @@ pub trait ConnectionMiddleware: Send {
 
     /// Registers a connection as established.
     ///
-    /// This method will be called after a successful check using [`Self::check_connection`].
+    /// This method will be called after a successful check using [`Self::can_accept_connection`].
     /// The peer ID and endpoint are provided to identify the connection and are identical
     /// to the ones used in [`Self::can_accept_connection`].
     fn on_connection_established(&mut self, peer: PeerId, endpoint: &Endpoint);
 
     /// Deregisters a connection when it is closed.
     ///
-    /// This method will be called after a [`Self::register_connection`] call.
+    /// This method will be called after a [`Self::on_connection_established`] call.
     /// The connection ID corresponds the endpoint provided in the
     /// [`Self::on_connection_established`] method.
     fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId);
