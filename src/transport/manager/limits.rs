@@ -40,14 +40,10 @@ pub trait ConnectionMiddleware: Send {
     /// Returns the number of allowed outbound connections.
     /// If there is no limit, returns `Ok(usize::MAX)`.
     /// If the node cannot accept any more outbound connections, returns an error.
-    fn outbound_capacity(&mut self) -> crate::Result<usize> {
-        Ok(usize::MAX)
-    }
+    fn outbound_capacity(&mut self) -> crate::Result<usize>;
 
     /// Checks whether a new inbound connection can be accepted before processing it.
-    fn check_inbound(&mut self) -> crate::Result<()> {
-        Ok(())
-    }
+    fn check_inbound(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
 
     /// Verifies if a new connection (inbound or outbound) can be established.
     ///
@@ -155,7 +151,7 @@ impl ConnectionMiddleware for ConnectionLimits {
         Ok(usize::MAX)
     }
 
-    fn check_inbound(&mut self) -> crate::Result<()> {
+    fn check_inbound(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
         if let Some(max_incoming_connections) = self.config.max_incoming_connections {
             if self.incoming_connections.len() >= max_incoming_connections {
                 return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded.into());

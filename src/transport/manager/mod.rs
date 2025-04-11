@@ -690,9 +690,9 @@ impl TransportManager {
         Ok(())
     }
 
-    fn on_pending_incoming_connection(&mut self) -> crate::Result<()> {
+    fn on_pending_incoming_connection(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
         if let Some(middleware) = &mut self.connection_middleware {
-            middleware.check_inbound()?;
+            middleware.check_inbound(connection_id)?;
         }
 
         Ok(())
@@ -1297,7 +1297,7 @@ impl TransportManager {
                             }
                         },
                         TransportEvent::PendingInboundConnection { connection_id } => {
-                            if self.on_pending_incoming_connection().is_ok() {
+                            if self.on_pending_incoming_connection(connection_id).is_ok() {
                                 tracing::trace!(
                                     target: LOG_TARGET,
                                     ?connection_id,
