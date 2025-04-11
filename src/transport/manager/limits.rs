@@ -22,7 +22,7 @@
 
 use crate::{transport::Endpoint, types::ConnectionId, PeerId};
 
-use std::collections::HashSet;
+use std::{collections::HashSet, net::SocketAddr};
 
 /// A middleware trait for implementing connection limits.
 ///
@@ -49,7 +49,11 @@ pub trait ConnectionMiddleware: Send {
     /// At this point, no protocol negotiation has occurred and the peer identity is
     /// unknown. The connection ID provided is the one that will be used for the
     /// connection.
-    fn check_inbound(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+    fn check_inbound(
+        &mut self,
+        connection_id: ConnectionId,
+        address: SocketAddr,
+    ) -> crate::Result<()>;
 
     /// Verifies if a new connection (inbound or outbound) can be established.
     ///
@@ -157,7 +161,11 @@ impl ConnectionMiddleware for ConnectionLimits {
         Ok(usize::MAX)
     }
 
-    fn check_inbound(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+    fn check_inbound(
+        &mut self,
+        _connection_id: ConnectionId,
+        _address: SocketAddr,
+    ) -> crate::Result<()> {
         if let Some(max_incoming_connections) = self.config.max_incoming_connections {
             if self.incoming_connections.len() >= max_incoming_connections {
                 return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded.into());

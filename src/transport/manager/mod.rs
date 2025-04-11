@@ -49,6 +49,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
+    net::SocketAddr,
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -693,9 +694,13 @@ impl TransportManager {
         Ok(())
     }
 
-    fn on_pending_incoming_connection(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+    fn on_pending_incoming_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        address: SocketAddr,
+    ) -> crate::Result<()> {
         if let Some(middleware) = &mut self.connection_middleware {
-            middleware.check_inbound(connection_id)?;
+            middleware.check_inbound(connection_id, address)?;
         }
 
         Ok(())
@@ -1299,8 +1304,8 @@ impl TransportManager {
                                 }
                             }
                         },
-                        TransportEvent::PendingInboundConnection { connection_id, .. } => {
-                            if self.on_pending_incoming_connection(connection_id).is_ok() {
+                        TransportEvent::PendingInboundConnection { connection_id, address } => {
+                            if self.on_pending_incoming_connection(connection_id, address).is_ok() {
                                 tracing::trace!(
                                     target: LOG_TARGET,
                                     ?connection_id,
