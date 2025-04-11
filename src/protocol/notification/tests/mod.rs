@@ -29,10 +29,7 @@ use crate::{
         },
         InnerTransportEvent, ProtocolCommand, TransportService,
     },
-    transport::{
-        manager::{limits::ConnectionLimitsConfig, TransportManager},
-        ConnectionLimits, KEEP_ALIVE_TIMEOUT,
-    },
+    transport::{manager::TransportManager, ConnectionLimits, KEEP_ALIVE_TIMEOUT},
     types::protocol::ProtocolName,
     BandwidthSink, PeerId,
 };

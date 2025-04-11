@@ -1230,10 +1230,7 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
-        transport::{
-            manager::{limits::ConnectionLimitsConfig, TransportManager},
-            ConnectionLimits, KEEP_ALIVE_TIMEOUT,
-        },
+        transport::{manager::TransportManager, ConnectionLimits, KEEP_ALIVE_TIMEOUT},
         types::protocol::ProtocolName,
         BandwidthSink,
     };

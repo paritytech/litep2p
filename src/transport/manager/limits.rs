@@ -279,11 +279,7 @@ mod tests {
         limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 3);
 
-        let err = limits.can_accept_connection(PeerId::random(), &endpoint).unwrap_err();
-        // assert_eq!(
-        //     limits.can_accept_connection(PeerId::random(), &endpoint).unwrap_err(),
-        //     ConnectionLimitsError::MaxIncomingConnectionsExceeded.into(),
-        // );
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_err());
         assert_eq!(limits.incoming_connections.len(), 3);
 
         // Establish outgoing connection.
@@ -304,12 +300,7 @@ mod tests {
         limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 3);
         assert_eq!(limits.outgoing_connections.len(), 2);
-
-        let err = limits.can_accept_connection(PeerId::random(), &endpoint).unwrap_err();
-        // assert_eq!(
-        //     limits.can_accept_connection(PeerId::random(), &endpoint).unwrap_err(),
-        //     ConnectionLimitsError::MaxOutgoingConnectionsExceeded.into(),
-        // );
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_err());
 
         // Close connections with 1.
         limits.on_connection_closed(PeerId::random(), connection_id_in_1);

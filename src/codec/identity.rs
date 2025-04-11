@@ -100,9 +100,11 @@ mod tests {
     fn decoding_smaller_payloads() {
         let mut codec = Identity::new(100);
         let bytes = vec![3u8; 64];
+        let copy = bytes.clone();
         let mut bytes = BytesMut::from(&bytes[..]);
 
         let decoded = codec.decode(&mut bytes);
+        assert_eq!(decoded, copy);
     }
 
     #[test]

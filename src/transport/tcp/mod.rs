@@ -685,9 +685,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
-        transport::manager::{
-            limits::ConnectionLimitsConfig, ProtocolContext, SupportedTransport, TransportManager,
-        },
+        transport::manager::{ProtocolContext, SupportedTransport, TransportManager},
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
     };

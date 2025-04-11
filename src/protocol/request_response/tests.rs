@@ -29,10 +29,7 @@ use crate::{
         InnerTransportEvent, SubstreamError, TransportService,
     },
     substream::Substream,
-    transport::{
-        manager::{limits::ConnectionLimitsConfig, TransportManager},
-        ConnectionLimits, KEEP_ALIVE_TIMEOUT,
-    },
+    transport::{manager::TransportManager, ConnectionLimits, KEEP_ALIVE_TIMEOUT},
     types::{RequestId, SubstreamId},
     BandwidthSink, Error, PeerId, ProtocolName,
 };

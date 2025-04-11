@@ -336,10 +336,7 @@ mod tests {
     use super::*;
     use crate::{
         crypto::ed25519::Keypair,
-        transport::{
-            manager::{limits::ConnectionLimitsConfig, TransportManager},
-            ConnectionLimits,
-        },
+        transport::{manager::TransportManager, ConnectionLimits},
         BandwidthSink,
     };
     use futures::StreamExt;
