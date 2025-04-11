@@ -45,6 +45,10 @@ pub trait ConnectionMiddleware: Send {
     fn outbound_capacity(&mut self, peer: PeerId) -> crate::Result<usize>;
 
     /// Checks whether a new inbound connection can be accepted before processing it.
+    ///
+    /// At this point, no protocol negotiation has occurred and the peer identity is
+    /// unknown. The connection ID provided is the one that will be used for the
+    /// connection.
     fn check_inbound(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
 
     /// Verifies if a new connection (inbound or outbound) can be established.
