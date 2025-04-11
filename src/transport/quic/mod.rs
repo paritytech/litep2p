@@ -660,7 +660,7 @@ mod tests {
 
         let event = transport1.next().await.unwrap();
         match event {
-            TransportEvent::PendingInboundConnection { connection_id } => {
+            TransportEvent::PendingInboundConnection { connection_id, .. } => {
                 transport1.accept_pending(connection_id).unwrap();
             }
             _ => panic!("unexpected event"),

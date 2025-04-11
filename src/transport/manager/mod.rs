@@ -1345,6 +1345,7 @@ mod tests {
     use limits::{ConnectionLimits, ConnectionLimitsConfig};
 
     use multihash::Multihash;
+    use std::net::IpAddr;
 
     use super::*;
     use crate::{
@@ -1452,6 +1453,7 @@ mod tests {
         tx_ws
             .send(TransportEvent::PendingInboundConnection {
                 connection_id: ConnectionId::from(1),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             })
             .await
             .expect("chanel to be open");
@@ -1470,6 +1472,7 @@ mod tests {
         tx_tcp
             .send(TransportEvent::PendingInboundConnection {
                 connection_id: ConnectionId::from(2),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             })
             .await
             .expect("chanel to be open");
@@ -1488,12 +1491,14 @@ mod tests {
         tx_ws
             .send(TransportEvent::PendingInboundConnection {
                 connection_id: ConnectionId::from(3),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             })
             .await
             .expect("chanel to be open");
         tx_tcp
             .send(TransportEvent::PendingInboundConnection {
                 connection_id: ConnectionId::from(4),
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             })
             .await
             .expect("chanel to be open");
