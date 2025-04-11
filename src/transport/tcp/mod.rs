@@ -579,6 +579,7 @@ impl Stream for TcpTransport {
 
                     Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                         connection_id,
+                        address,
                     }))
                 }
             };

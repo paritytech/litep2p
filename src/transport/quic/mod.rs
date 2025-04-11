@@ -501,6 +501,7 @@ impl Stream for QuicTransport {
 
             return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                 connection_id,
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             }));
         }
 

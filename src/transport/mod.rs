@@ -25,7 +25,7 @@ use crate::{error::DialError, transport::manager::TransportHandle, types::Connec
 use futures::Stream;
 use multiaddr::Multiaddr;
 
-use std::{fmt::Debug, time::Duration};
+use std::{fmt::Debug, net::SocketAddr, time::Duration};
 
 pub(crate) mod common;
 #[cfg(feature = "quic")]
@@ -131,6 +131,9 @@ pub(crate) enum TransportEvent {
     PendingInboundConnection {
         /// Connection ID.
         connection_id: ConnectionId,
+
+        /// The socket address which initiated the connection.
+        address: SocketAddr,
     },
 
     /// Connection opened to remote but not yet negotiated.

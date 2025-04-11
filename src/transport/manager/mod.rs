@@ -1299,7 +1299,7 @@ impl TransportManager {
                                 }
                             }
                         },
-                        TransportEvent::PendingInboundConnection { connection_id } => {
+                        TransportEvent::PendingInboundConnection { connection_id, .. } => {
                             if self.on_pending_incoming_connection(connection_id).is_ok() {
                                 tracing::trace!(
                                     target: LOG_TARGET,
