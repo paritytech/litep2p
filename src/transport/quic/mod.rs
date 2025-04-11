@@ -501,6 +501,7 @@ impl Stream for QuicTransport {
 
             return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                 connection_id,
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             }));
         }
 
@@ -659,7 +660,7 @@ mod tests {
 
         let event = transport1.next().await.unwrap();
         match event {
-            TransportEvent::PendingInboundConnection { connection_id } => {
+            TransportEvent::PendingInboundConnection { connection_id, .. } => {
                 transport1.accept_pending(connection_id).unwrap();
             }
             _ => panic!("unexpected event"),

@@ -20,9 +20,100 @@
 
 //! Limits for the transport manager.
 
-use crate::types::ConnectionId;
+use crate::{transport::Endpoint, types::ConnectionId, PeerId};
 
-use std::collections::HashSet;
+use std::{collections::HashSet, net::SocketAddr};
+
+/// A middleware trait for managing connections.
+///
+/// This middleware allows developers to implement custom connection policies,
+/// enabling a wide range of use cases by exposing hooks into the connection lifecycle.
+///
+/// It interacts with the transport manager at two stages:
+///
+/// ## 1. Before Negotiation
+///
+/// At this stage, the connection has not yet been negotiated. In the context of litep2p,
+/// "negotiation" refers to the handshake and setup of `crypto/noise` (encryption and peer ID
+/// validation) and `yamux` (multiplexing).
+///
+/// The node is either attempting to establish an outbound connection or accept an inbound one.
+///
+/// - Returning an error here will prevent the negotiation from proceeding, saving resources.
+///
+/// - [`Self::outbound_capacity`] is called to determine the number of outbound
+///  connections that can be established. The peerID is provided to further provide connection
+///  details.
+///
+/// - [`Self::check_inbound`] is called to evaluate whether an inbound connection can be accepted.
+///  The peer ID is not yet known, but the socket address is provided to identify the connection.
+///
+/// ## 2. After Negotiation
+///
+/// At this point, the connection has been successfully negotiated and the peer ID is known.
+///
+/// - [`Self::can_accept_connection`] is invoked to determine if the fully negotiated connection
+///   should be accepted. The peer ID, endpoint, and connection ID are provided. Implementations
+///   should check internal limits but **must not** store the connection ID or endpoint here, as the
+///   transport manager might still reject the connection later.
+///
+/// - If the connection is accepted, [`Self::on_connection_established`] is called with the same
+///   peer ID and endpoint. At this point, implementations should begin tracking the connection ID.
+///
+/// - When a connection is closed, [`Self::on_connection_closed`] is called. Implementations must
+///   clean up any resources associated with the connection ID to prevent memory leaks.
+pub trait ConnectionMiddleware: Send {
+    /// Determines the number of outbound connections permitted to be established.
+    ///
+    /// This method is called before the node attempts to dial a remote peer.
+    ///
+    /// Returns the number of allowed outbound connections.
+    /// - If there is no limit, returns `Ok(usize::MAX)`.
+    /// - If the node cannot accept any more outbound connections, returns an error.
+    fn outbound_capacity(&mut self, peer: PeerId) -> crate::Result<usize>;
+
+    /// Checks whether a new inbound connection can be accepted before processing it.
+    ///
+    /// At this point, no protocol negotiation has occurred and the peer identity is
+    /// unknown. The connection ID provided is the one that will be used for the
+    /// connection.
+    fn check_inbound(
+        &mut self,
+        connection_id: ConnectionId,
+        address: SocketAddr,
+    ) -> crate::Result<()>;
+
+    /// Verifies if a new connection (inbound or outbound) can be established.
+    ///
+    /// Returns an error if connection limits or policy constraints prevent
+    /// establishing the connection.
+    ///
+    /// # Note
+    ///
+    /// This method is called before the connection is established. However,
+    /// the transport manager can decide to reject the connection even if this
+    /// method returns `Ok(())`. Therefore, the API makes no guarantees of
+    /// further calling [`Self::on_connection_established`].
+    ///
+    /// Implementations should inspect the provided parameters. To avoid leaking
+    /// memory, the implementation should not store the connection ID or endpoint
+    /// at this point in time.
+    fn can_accept_connection(&mut self, peer: PeerId, endpoint: &Endpoint) -> crate::Result<()>;
+
+    /// Registers a connection as established.
+    ///
+    /// This method will be called after a successful check using [`Self::can_accept_connection`].
+    /// The peer ID and endpoint are provided to identify the connection and are identical
+    /// to the ones used in [`Self::can_accept_connection`].
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: &Endpoint);
+
+    /// Deregisters a connection when it is closed.
+    ///
+    /// This method will be called after a [`Self::on_connection_established`] call.
+    /// The connection ID corresponds the endpoint provided in the
+    /// [`Self::on_connection_established`] method.
+    fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId);
+}
 
 /// Configuration for the connection limits.
 #[derive(Debug, Clone, Default)]
@@ -56,7 +147,10 @@ pub enum ConnectionLimitsError {
     MaxOutgoingConnectionsExceeded,
 }
 
-/// Connection limits.
+/// General connection limits.
+///
+/// This is a type of connection middleware that places limits on the number
+/// of incoming and outgoing connections.
 #[derive(Debug, Clone)]
 pub struct ConnectionLimits {
     /// Configuration for the connection limits.
@@ -80,19 +174,13 @@ impl ConnectionLimits {
             outgoing_connections: HashSet::with_capacity(max_outgoing_connections),
         }
     }
+}
 
-    /// Called when dialing an address.
-    ///
-    /// Returns the number of outgoing connections permitted to be established.
-    /// It is guaranteed that at least one connection can be established if the method returns `Ok`.
-    /// The number of available outgoing connections can influence the maximum parallel dials to a
-    /// single address.
-    ///
-    /// If the maximum number of outgoing connections is not set, `Ok(usize::MAX)` is returned.
-    pub fn on_dial_address(&mut self) -> Result<usize, ConnectionLimitsError> {
+impl ConnectionMiddleware for ConnectionLimits {
+    fn outbound_capacity(&mut self, _peer: PeerId) -> crate::Result<usize> {
         if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
             if self.outgoing_connections.len() >= max_outgoing_connections {
-                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded);
+                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded.into());
             }
 
             return Ok(max_outgoing_connections - self.outgoing_connections.len());
@@ -101,62 +189,48 @@ impl ConnectionLimits {
         Ok(usize::MAX)
     }
 
-    /// Called before accepting a new incoming connection.
-    pub fn on_incoming(&mut self) -> Result<(), ConnectionLimitsError> {
+    fn check_inbound(
+        &mut self,
+        _connection_id: ConnectionId,
+        _address: SocketAddr,
+    ) -> crate::Result<()> {
         if let Some(max_incoming_connections) = self.config.max_incoming_connections {
             if self.incoming_connections.len() >= max_incoming_connections {
-                return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded);
+                return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded.into());
             }
         }
 
         Ok(())
     }
 
-    /// Called when a new connection is established.
-    ///
-    /// Returns an error if the connection cannot be accepted due to connection limits.
-    pub fn can_accept_connection(
-        &mut self,
-        is_listener: bool,
-    ) -> Result<(), ConnectionLimitsError> {
+    fn can_accept_connection(&mut self, _peer: PeerId, endpoint: &Endpoint) -> crate::Result<()> {
         // Check connection limits.
-        if is_listener {
+        if endpoint.is_listener() {
             if let Some(max_incoming_connections) = self.config.max_incoming_connections {
                 if self.incoming_connections.len() >= max_incoming_connections {
-                    return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded);
+                    return Err(ConnectionLimitsError::MaxIncomingConnectionsExceeded.into());
                 }
             }
         } else if let Some(max_outgoing_connections) = self.config.max_outgoing_connections {
             if self.outgoing_connections.len() >= max_outgoing_connections {
-                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded);
+                return Err(ConnectionLimitsError::MaxOutgoingConnectionsExceeded.into());
             }
         }
 
         Ok(())
     }
 
-    /// Accept an established connection.
-    ///
-    /// # Note
-    ///
-    /// This method should be called after the `Self::can_accept_connection` method
-    /// to ensure that the connection can be accepted.
-    pub fn accept_established_connection(
-        &mut self,
-        connection_id: ConnectionId,
-        is_listener: bool,
-    ) {
-        if is_listener {
+    fn on_connection_established(&mut self, _peer: PeerId, endpoint: &Endpoint) {
+        if endpoint.is_listener() {
             if self.config.max_incoming_connections.is_some() {
-                self.incoming_connections.insert(connection_id);
+                self.incoming_connections.insert(endpoint.connection_id());
             }
         } else if self.config.max_outgoing_connections.is_some() {
-            self.outgoing_connections.insert(connection_id);
+            self.outgoing_connections.insert(endpoint.connection_id());
         }
     }
 
-    /// Called when a connection is closed.
-    pub fn on_connection_closed(&mut self, connection_id: ConnectionId) {
+    fn on_connection_closed(&mut self, _peer: PeerId, connection_id: ConnectionId) {
         self.incoming_connections.remove(&connection_id);
         self.outgoing_connections.remove(&connection_id);
     }
@@ -181,46 +255,59 @@ mod tests {
         let connection_id_in_3 = ConnectionId::random();
 
         // Establish incoming connection.
-        assert!(limits.can_accept_connection(true).is_ok());
-        limits.accept_established_connection(connection_id_in_1, true);
+        let endpoint = Endpoint::Listener {
+            address: multiaddr::Multiaddr::empty(),
+            connection_id: connection_id_in_1,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 1);
 
-        assert!(limits.can_accept_connection(true).is_ok());
-        limits.accept_established_connection(connection_id_in_2, true);
+        let endpoint = Endpoint::Listener {
+            address: multiaddr::Multiaddr::empty(),
+            connection_id: connection_id_in_2,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 2);
 
-        assert!(limits.can_accept_connection(true).is_ok());
-        limits.accept_established_connection(connection_id_in_3, true);
+        let endpoint = Endpoint::Listener {
+            address: multiaddr::Multiaddr::empty(),
+            connection_id: connection_id_in_3,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 3);
 
-        assert_eq!(
-            limits.can_accept_connection(true).unwrap_err(),
-            ConnectionLimitsError::MaxIncomingConnectionsExceeded
-        );
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_err());
         assert_eq!(limits.incoming_connections.len(), 3);
 
         // Establish outgoing connection.
-        assert!(limits.can_accept_connection(false).is_ok());
-        limits.accept_established_connection(connection_id_out_1, false);
+        let endpoint = Endpoint::Dialer {
+            address: multiaddr::Multiaddr::empty(),
+            connection_id: connection_id_out_1,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 3);
         assert_eq!(limits.outgoing_connections.len(), 1);
 
-        assert!(limits.can_accept_connection(false).is_ok());
-        limits.accept_established_connection(connection_id_out_2, false);
+        let endpoint = Endpoint::Dialer {
+            address: multiaddr::Multiaddr::empty(),
+            connection_id: connection_id_out_2,
+        };
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_ok());
+        limits.on_connection_established(PeerId::random(), &endpoint);
         assert_eq!(limits.incoming_connections.len(), 3);
         assert_eq!(limits.outgoing_connections.len(), 2);
+        assert!(limits.can_accept_connection(PeerId::random(), &endpoint).is_err());
 
-        assert_eq!(
-            limits.can_accept_connection(false).unwrap_err(),
-            ConnectionLimitsError::MaxOutgoingConnectionsExceeded
-        );
-
-        // Close connections with peer a.
-        limits.on_connection_closed(connection_id_in_1);
+        // Close connections with 1.
+        limits.on_connection_closed(PeerId::random(), connection_id_in_1);
         assert_eq!(limits.incoming_connections.len(), 2);
         assert_eq!(limits.outgoing_connections.len(), 2);
 
-        limits.on_connection_closed(connection_id_out_1);
+        limits.on_connection_closed(PeerId::random(), connection_id_out_1);
         assert_eq!(limits.incoming_connections.len(), 2);
         assert_eq!(limits.outgoing_connections.len(), 1);
     }

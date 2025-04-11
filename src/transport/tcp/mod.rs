@@ -579,6 +579,7 @@ impl Stream for TcpTransport {
 
                     Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                         connection_id,
+                        address,
                     }))
                 }
             };
@@ -684,9 +685,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
-        transport::manager::{
-            limits::ConnectionLimitsConfig, ProtocolContext, SupportedTransport, TransportManager,
-        },
+        transport::manager::{ProtocolContext, SupportedTransport, TransportManager},
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
     };
@@ -769,7 +768,7 @@ mod tests {
 
         let event = transport1.next().await.unwrap();
         match event {
-            TransportEvent::PendingInboundConnection { connection_id } => {
+            TransportEvent::PendingInboundConnection { connection_id, .. } => {
                 transport1.accept_pending(connection_id).unwrap();
             }
             _ => panic!("unexpected event"),
@@ -863,7 +862,7 @@ mod tests {
         // Reject connection.
         let event = transport1.next().await.unwrap();
         match event {
-            TransportEvent::PendingInboundConnection { connection_id } => {
+            TransportEvent::PendingInboundConnection { connection_id, .. } => {
                 transport1.reject_pending(connection_id).unwrap();
             }
             _ => panic!("unexpected event"),
@@ -979,7 +978,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
-            ConnectionLimitsConfig::default(),
+            None,
         );
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(

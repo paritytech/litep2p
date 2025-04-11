@@ -100,9 +100,11 @@ mod tests {
     fn decoding_smaller_payloads() {
         let mut codec = Identity::new(100);
         let bytes = vec![3u8; 64];
+        let copy = bytes.clone();
         let mut bytes = BytesMut::from(&bytes[..]);
 
-        let decoded = codec.decode(&mut bytes);
+        // The smaller payload will not be decoded as the identity code needs 100 bytes.
+        assert!(codec.decode(&mut bytes).unwrap().is_none());
     }
 
     #[test]
