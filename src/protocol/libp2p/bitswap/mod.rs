@@ -22,16 +22,15 @@
 
 use crate::{
     error::Error,
-    protocol::{
-        libp2p::bitswap::handle::BitswapCommand, Direction, TransportEvent, TransportService,
-    },
+    protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     types::SubstreamId,
     PeerId,
 };
 
-use cid::{multihash::Code, Version};
+use cid::Version;
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use multihash::Code;
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -39,7 +38,7 @@ use std::{collections::HashMap, time::Duration};
 
 pub use cid::Cid;
 pub use config::Config;
-pub use handle::{BitswapEvent, BitswapHandle, ResponseType};
+pub use handle::{BitswapCommand, BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
 
 mod config;
