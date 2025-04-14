@@ -147,6 +147,7 @@ impl WebSocketTransport {
         let connection_open_timeout = self.config.connection_open_timeout;
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let substream_open_timeout = self.config.substream_open_timeout;
         let address = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
@@ -162,6 +163,7 @@ impl WebSocketTransport {
                     yamux_config,
                     max_read_ahead_factor,
                     max_write_buffer_size,
+                    substream_open_timeout,
                 )
                 .await
                 .map_err(|error| (connection_id, error.into()))
@@ -342,6 +344,7 @@ impl Transport for WebSocketTransport {
         let connection_open_timeout = self.config.connection_open_timeout;
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let substream_open_timeout = self.config.substream_open_timeout;
         let dial_addresses = self.dial_addresses.clone();
         let nodelay = self.config.nodelay;
 
@@ -369,6 +372,7 @@ impl Transport for WebSocketTransport {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                substream_open_timeout,
             )
             .await
             .map_err(|error| (connection_id, error.into()))
@@ -536,6 +540,7 @@ impl Transport for WebSocketTransport {
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let connection_open_timeout = self.config.connection_open_timeout;
+        let substream_open_timeout = self.config.substream_open_timeout;
         let keypair = self.context.keypair.clone();
 
         tracing::trace!(
@@ -559,6 +564,7 @@ impl Transport for WebSocketTransport {
                     yamux_config,
                     max_read_ahead_factor,
                     max_write_buffer_size,
+                    substream_open_timeout,
                 )
                 .await
                 .map_err(|error| (connection_id, error.into()))
