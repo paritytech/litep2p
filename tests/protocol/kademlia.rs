@@ -32,7 +32,6 @@ use litep2p::{
     types::multiaddr::{Multiaddr, Protocol},
     Litep2p, PeerId,
 };
-use sc_network::config::MultiaddrWithPeerId;
 
 fn spawn_litep2p(port: u16) {
     let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
