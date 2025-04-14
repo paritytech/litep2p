@@ -195,18 +195,26 @@ impl WebSocketConnection {
         stream: S,
         role: &Role,
         protocols: Vec<&str>,
+        substream_open_timeout: Duration,
     ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError> {
         tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
 
-        let (protocol, socket) = match role {
-            Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
-            Role::Listener => listener_select_proto(stream, protocols).await,
+        match tokio::time::timeout(substream_open_timeout, async move {
+            match role {
+                Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
+                Role::Listener => listener_select_proto(stream, protocols).await,
+            }
+        })
+        .await
+        {
+            Err(_) => Err(NegotiationError::Timeout),
+            Ok(Err(error)) => Err(NegotiationError::MultistreamSelectError(error)),
+            Ok(Ok((protocol, socket))) => {
+                tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
+
+                Ok((socket, ProtocolName::from(protocol.to_string())))
+            }
         }
-        .map_err(NegotiationError::MultistreamSelectError)?;
-
-        tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
-
-        Ok((socket, ProtocolName::from(protocol.to_string())))
     }
 
     /// Open WebSocket connection.
@@ -220,6 +228,7 @@ impl WebSocketConnection {
         yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        substream_open_timeout: Duration,
     ) -> Result<NegotiatedConnection, NegotiationError> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -239,6 +248,7 @@ impl WebSocketConnection {
             yamux_config,
             max_read_ahead_factor,
             max_write_buffer_size,
+            substream_open_timeout,
         )
         .await
     }
@@ -252,6 +262,7 @@ impl WebSocketConnection {
         yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        substream_open_timeout: Duration,
     ) -> Result<NegotiatedConnection, NegotiationError> {
         let stream = MaybeTlsStream::Plain(stream);
 
@@ -267,6 +278,7 @@ impl WebSocketConnection {
             yamux_config,
             max_read_ahead_factor,
             max_write_buffer_size,
+            substream_open_timeout,
         )
         .await
     }
@@ -282,6 +294,7 @@ impl WebSocketConnection {
         yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        substream_open_timeout: Duration,
     ) -> Result<NegotiatedConnection, NegotiationError> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -294,7 +307,8 @@ impl WebSocketConnection {
         let stream = BufferedStream::new(stream);
 
         // negotiate `noise`
-        let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/noise"]).await?;
+        let (stream, _) =
+            Self::negotiate_protocol(stream, &role, vec!["/noise"], substream_open_timeout).await?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -308,6 +322,7 @@ impl WebSocketConnection {
             role,
             max_read_ahead_factor,
             max_write_buffer_size,
+            substream_open_timeout,
         )
         .await?;
 
@@ -321,7 +336,9 @@ impl WebSocketConnection {
         tracing::trace!(target: LOG_TARGET, "noise handshake done");
 
         // negotiate `yamux`
-        let (stream, _) = Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"]).await?;
+        let (stream, _) =
+            Self::negotiate_protocol(stream, &role, vec!["/yamux/1.0.0"], substream_open_timeout)
+                .await?;
         tracing::trace!(target: LOG_TARGET, "`yamux` negotiated");
 
         let connection = crate::yamux::Connection::new(stream.inner(), yamux_config, role.into());
@@ -349,6 +366,7 @@ impl WebSocketConnection {
         permit: Permit,
         substream_id: SubstreamId,
         protocols: Vec<ProtocolName>,
+        substream_open_timeout: Duration,
     ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -357,7 +375,9 @@ impl WebSocketConnection {
         );
 
         let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
-        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Listener, protocols).await?;
+        let (io, protocol) =
+            Self::negotiate_protocol(stream, &Role::Listener, protocols, substream_open_timeout)
+                .await?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -381,6 +401,7 @@ impl WebSocketConnection {
         substream_id: SubstreamId,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
+        substream_open_timeout: Duration,
     ) -> Result<NegotiatedSubstream, SubstreamError> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
 
@@ -409,7 +430,9 @@ impl WebSocketConnection {
             .chain(fallback_names.iter().map(|protocol| &**protocol))
             .collect();
 
-        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Dialer, protocols).await?;
+        let (io, protocol) =
+            Self::negotiate_protocol(stream, &Role::Dialer, protocols, substream_open_timeout)
+                .await?;
 
         Ok(NegotiatedSubstream {
             io: io.inner(),
@@ -438,7 +461,7 @@ impl WebSocketConnection {
                         self.pending_substreams.push(Box::pin(async move {
                             match tokio::time::timeout(
                                 substream_open_timeout,
-                                Self::accept_substream(stream, permit, substream, protocols),
+                                Self::accept_substream(stream, permit, substream, protocols, substream_open_timeout),
                             )
                             .await
                             {
@@ -537,7 +560,8 @@ impl WebSocketConnection {
                                     permit,
                                     substream_id,
                                     protocol.clone(),
-                                    fallback_names
+                                    fallback_names,
+                                    substream_open_timeout
                                 ),
                             )
                             .await
