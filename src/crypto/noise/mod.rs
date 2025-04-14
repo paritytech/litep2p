@@ -817,14 +817,16 @@ mod tests {
                 &keypair1,
                 Role::Dialer,
                 MAX_READ_AHEAD_FACTOR,
-                MAX_WRITE_BUFFER_SIZE
+                MAX_WRITE_BUFFER_SIZE,
+                std::time::Duration::from_secs(10),
             ),
             handshake(
                 io2,
                 &keypair2,
                 Role::Listener,
                 MAX_READ_AHEAD_FACTOR,
-                MAX_WRITE_BUFFER_SIZE
+                MAX_WRITE_BUFFER_SIZE,
+                std::time::Duration::from_secs(10),
             )
         );
         let (mut res1, mut res2) = (res1.unwrap(), res2.unwrap());
