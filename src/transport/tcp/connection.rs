@@ -437,6 +437,7 @@ impl TcpConnection {
             role,
             max_read_ahead_factor,
             max_write_buffer_size,
+            substream_open_timeout,
         )
         .await?;
 
