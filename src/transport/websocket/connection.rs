@@ -1129,4 +1129,90 @@ mod tests {
             Err(error) => panic!("{error:?}"),
         }
     }
+
+    #[tokio::test]
+    async fn yamux_not_supported_listener() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let keypair = Keypair::generate();
+        let peer_id = PeerId::from_public_key(&keypair.public().into());
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let stream = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let stream = BufferedStream::new(stream);
+
+            let (stream, _proto) = WebSocketConnection::negotiate_protocol(
+                stream,
+                &Role::Listener,
+                vec!["/noise"],
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
+
+            // do a noise handshake
+            let (stream, _peer) = noise::handshake(
+                stream.inner(),
+                &keypair,
+                Role::Listener,
+                5,
+                2,
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
+
+            assert!(WebSocketConnection::negotiate_protocol(
+                stream,
+                &Role::Listener,
+                vec!["/unsupported/1"],
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .is_err());
+        });
+
+        let address = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
+            .with(Protocol::P2p(peer_id.into()));
+
+        let (url, peer) = WebSocketTransport::multiaddr_into_url(address.clone()).unwrap();
+        let (_, stream) = WebSocketTransport::dial_peer(
+            address.clone(),
+            Default::default(),
+            Duration::from_secs(10),
+            false,
+        )
+        .await
+        .unwrap();
+
+        match WebSocketConnection::open_connection(
+            ConnectionId::from(0usize),
+            Keypair::generate(),
+            stream,
+            address.clone(),
+            peer.clone(),
+            url,
+            Default::default(),
+            5,
+            2,
+            Duration::from_secs(10),
+        )
+        .await
+        {
+            Ok(_) => panic!("connection was supposed to fail"),
+            Err(NegotiationError::MultistreamSelectError(
+                crate::multistream_select::NegotiationError::Failed,
+            )) => {}
+            Err(error) => panic!("invalid error: {error:?}"),
+        }
+    }
 }
