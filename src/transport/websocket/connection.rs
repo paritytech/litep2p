@@ -598,3 +598,71 @@ impl WebSocketConnection {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::transport::{common::listener::AddressType, websocket::WebSocketTransport};
+
+    use super::*;
+    use futures::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    #[tokio::test]
+    async fn multistream_select_not_supported_dialer() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            // Negotiate websocket.
+            let stream = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let mut stream = BufferedStream::new(stream);
+            stream.write_all(&vec![0x12u8; 256]).await.unwrap();
+        });
+
+        let peer_id = PeerId::random();
+        let address = Multiaddr::empty()
+            .with(Protocol::from(address.ip()))
+            .with(Protocol::Tcp(address.port()))
+            .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
+            .with(Protocol::P2p(peer_id.into()));
+
+        let (url, peer) = WebSocketTransport::multiaddr_into_url(address.clone()).unwrap();
+
+        let (_, stream) = WebSocketTransport::dial_peer(
+            address.clone(),
+            Default::default(),
+            Duration::from_secs(10),
+            false,
+        )
+        .await
+        .unwrap();
+
+        match WebSocketConnection::open_connection(
+            ConnectionId::from(0usize),
+            Keypair::generate(),
+            stream,
+            address.clone(),
+            peer.clone(),
+            url,
+            Default::default(),
+            5,
+            2,
+            Duration::from_secs(10),
+        )
+        .await
+        {
+            Ok(_) => panic!("connection was supposed to fail"),
+            Err(NegotiationError::MultistreamSelectError(
+                crate::multistream_select::NegotiationError::ProtocolError(_),
+            )) => {}
+            Err(error) => panic!("invalid error: {error:?}"),
+        }
+    }
+}
