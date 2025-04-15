@@ -9,7 +9,7 @@ edition = "2021"
 prost-build = "0.13"
 
 [dependencies]
-async-trait = "0.1.81"
+async-trait = "0.1.88"
 bs58 = "0.5.1"
 bytes = "1.6.1"
 cid = "0.11.1"
