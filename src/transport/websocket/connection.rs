@@ -601,13 +601,11 @@ impl WebSocketConnection {
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::{common::listener::AddressType, websocket::WebSocketTransport};
+    use crate::transport::websocket::WebSocketTransport;
 
     use super::*;
     use futures::AsyncWriteExt;
     use tokio::net::TcpListener;
-
-    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
     #[tokio::test]
     async fn multistream_select_not_supported_dialer() {
@@ -619,7 +617,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
             // Negotiate websocket.
             let stream = tokio_tungstenite::accept_async(stream).await.unwrap();
             let mut stream = BufferedStream::new(stream);
@@ -675,7 +673,7 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
-        let (Ok(mut dialer), Ok((stream, dialer_address))) =
+        let (Ok(dialer), Ok((stream, dialer_address))) =
             tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
         else {
             panic!("failed to establish connection");
@@ -688,7 +686,7 @@ mod tests {
             .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
             .with(Protocol::P2p(peer_id.into()));
 
-        let (url, peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
+        let (url, _peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
 
         tokio::spawn(async move {
             // Negotiate websocket.
@@ -803,12 +801,12 @@ mod tests {
             .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
             .with(Protocol::P2p(peer_id.into()));
 
-        let (url, peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
+        let (url, _peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
 
         tokio::spawn(async move {
             // Negotiate websocket.
             let stream = tokio_tungstenite::client_async_tls(url, dialer).await.unwrap().0;
-            let mut dialer = BufferedStream::new(stream);
+            let dialer = BufferedStream::new(stream);
 
             // attempt to negotiate yamux, skipping noise entirely
             assert!(WebSocketConnection::negotiate_protocol(
@@ -865,12 +863,12 @@ mod tests {
             .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
             .with(Protocol::P2p(peer_id.into()));
 
-        let (url, peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
+        let (url, _peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
 
         tokio::spawn(async move {
             // Negotiate websocket.
             let stream = tokio_tungstenite::client_async_tls(url, dialer).await.unwrap().0;
-            let mut dialer = BufferedStream::new(stream);
+            let dialer = BufferedStream::new(stream);
 
             // Sleep while negotiating /yamux.
             let (stream, _proto) = WebSocketConnection::negotiate_protocol(
@@ -882,7 +880,7 @@ mod tests {
             .await
             .unwrap();
 
-            let (stream, peer) = noise::handshake(
+            let (_stream, _peer) = noise::handshake(
                 stream.inner(),
                 &keypair,
                 Role::Dialer,
@@ -937,12 +935,12 @@ mod tests {
             .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
             .with(Protocol::P2p(peer_id.into()));
 
-        let (url, peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
+        let (url, _peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
 
         tokio::spawn(async move {
             // Negotiate websocket.
             let stream = tokio_tungstenite::client_async_tls(url, dialer).await.unwrap().0;
-            let mut dialer = BufferedStream::new(stream);
+            let dialer = BufferedStream::new(stream);
 
             // Sleep while negotiating /yamux.
             let (stream, _proto) = WebSocketConnection::negotiate_protocol(
@@ -956,7 +954,7 @@ mod tests {
 
             // The next step is providing the noise handshake. However, we jump
             // directly to negotiating yamux.
-            let (stream, _proto) = WebSocketConnection::negotiate_protocol(
+            let (_stream, _proto) = WebSocketConnection::negotiate_protocol(
                 stream,
                 &Role::Dialer,
                 vec!["/yamux/1.0.0"],
@@ -1000,7 +998,7 @@ mod tests {
             let stream = tokio_tungstenite::accept_async(stream).await.unwrap();
             let stream = BufferedStream::new(stream);
 
-            let (stream, _proto) = WebSocketConnection::negotiate_protocol(
+            let (_stream, _proto) = WebSocketConnection::negotiate_protocol(
                 stream,
                 &Role::Listener,
                 vec!["/noise"],
@@ -1058,7 +1056,7 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
-        let (Ok(mut dialer), Ok((stream, dialer_address))) =
+        let (Ok(dialer), Ok((stream, dialer_address))) =
             tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
         else {
             panic!("failed to establish connection");
@@ -1071,12 +1069,12 @@ mod tests {
             .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
             .with(Protocol::P2p(peer_id.into()));
 
-        let (url, peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
+        let (url, _peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
 
         tokio::spawn(async move {
             // Negotiate websocket.
             let stream = tokio_tungstenite::client_async_tls(url, dialer).await.unwrap().0;
-            let mut dialer = BufferedStream::new(stream);
+            let dialer = BufferedStream::new(stream);
 
             let (stream, _proto) = WebSocketConnection::negotiate_protocol(
                 dialer,
@@ -1225,7 +1223,7 @@ mod tests {
         let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
-        let (Ok(mut dialer), Ok((stream, dialer_address))) =
+        let (Ok(dialer), Ok((stream, dialer_address))) =
             tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
         else {
             panic!("failed to establish connection");
@@ -1238,12 +1236,12 @@ mod tests {
             .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
             .with(Protocol::P2p(peer_id.into()));
 
-        let (url, peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
+        let (url, _peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
 
         tokio::spawn(async move {
             // Negotiate websocket.
             let stream = tokio_tungstenite::client_async_tls(url, dialer).await.unwrap().0;
-            let mut dialer = BufferedStream::new(stream);
+            let dialer = BufferedStream::new(stream);
 
             let (stream, _proto) = WebSocketConnection::negotiate_protocol(
                 dialer,
@@ -1315,7 +1313,7 @@ mod tests {
             .unwrap();
 
             // do a noise handshake
-            let (stream, _peer) = noise::handshake(
+            let (_stream, _peer) = noise::handshake(
                 stream.inner(),
                 &keypair,
                 Role::Listener,
