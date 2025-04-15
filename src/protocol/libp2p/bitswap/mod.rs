@@ -30,8 +30,9 @@ use crate::{
     PeerId,
 };
 
-use cid::{multihash::Code, Version};
+use cid::Version;
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use multihash::Code;
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 

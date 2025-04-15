@@ -12,7 +12,7 @@ prost-build = "0.13"
 async-trait = "0.1.81"
 bs58 = "0.5.1"
 bytes = "1.6.1"
-cid = "0.10.1"
+cid = "0.11.1"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.27"
 futures-timer = "3.0.3"
@@ -21,7 +21,7 @@ indexmap = { version = "2.7.1", features = ["std"] }
 libc = "0.2.158"
 mockall = "0.13.1"
 multiaddr = "0.17.0"
-multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
+multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2", "blake2b"] }
 network-interface = "1.1.1"
 parking_lot = "0.12.3"
 pin-project = "1.1.0"
