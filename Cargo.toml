@@ -24,7 +24,7 @@ multiaddr = "0.17.0"
 multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2", "blake2b"] }
 network-interface = "1.1.1"
 parking_lot = "0.12.3"
-pin-project = "1.1.0"
+pin-project = "1.1.10"
 prost = "0.12.6"
 rand = { version = "0.8.0", features = ["getrandom"] }
 serde = "1.0.158"
