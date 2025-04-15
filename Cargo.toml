@@ -35,7 +35,6 @@ snow = { version = "0.9.3", features = ["ring-resolver"], default-features = fal
 socket2 = { version = "0.5.8", features = ["all"] }
 thiserror = "2.0.11"
 tokio-stream = "0.1.12"
-tokio-tungstenite = { version = "0.26.1", features = ["rustls-tls-native-roots", "url"], optional = true }
 tokio-util = { version = "0.7.11", features = ["compat", "io", "codec"] }
 tokio = { version = "1.43.1", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
 tracing = { version = "0.1.40", features = ["log"] }
@@ -48,6 +47,10 @@ x509-parser = "0.17.0"
 yasna = "0.5.0"
 zeroize = "1.8.1"
 yamux = "0.13.4"
+
+# Websocket related dependencies.
+tokio-tungstenite = { version = "0.26.1", features = ["rustls-tls-native-roots", "url"], optional = true }
+# End of websocket related dependencies.
 
 # Quic related dependencies. Quic is an experimental feature flag. The dependencies must be updated.
 quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls", "runtime-tokio"], optional = true }
