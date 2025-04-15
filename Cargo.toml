@@ -27,7 +27,6 @@ parking_lot = "0.12.3"
 pin-project = "1.1.0"
 prost = "0.12.6"
 rand = { version = "0.8.0", features = ["getrandom"] }
-rcgen = "0.10.0"
 serde = "1.0.158"
 sha2 = "0.10.8"
 simple-dns = "0.9.3"
@@ -56,6 +55,7 @@ quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls",
 rustls = { version = "0.20.7", default-features = false, features = ["dangerous_configuration"], optional = true }
 ring = { version = "0.16.20", optional = true }
 webpki = { version = "0.22.4", optional = true }
+rcgen = { version = "0.10.0", optional = true }
 
 [dev-dependencies]
 libp2p = { version = "0.51.4", features = [
@@ -78,7 +78,7 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
 
 [features]
-quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring"]
+quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring", "dep:rcgen"]
 webrtc = ["dep:str0m"]
 websocket = ["dep:tokio-tungstenite"]
 
