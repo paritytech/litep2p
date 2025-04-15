@@ -85,9 +85,13 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
 
 [features]
+# Stable feature flags.
+websocket = ["dep:tokio-tungstenite"]
+
+# Unstable / experimental feature flags. These features are not guaranteed to be stable and may change in the future.
+# They are not yet suitable for production use-cases and should be used with caution.
 quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring", "dep:rcgen"]
 webrtc = ["dep:str0m"]
-websocket = ["dep:tokio-tungstenite"]
 
 [profile.release]
 debug = true
