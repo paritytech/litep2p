@@ -780,4 +780,64 @@ mod tests {
             Err(error) => panic!("invalid error: {error:?}"),
         }
     }
+
+    #[tokio::test]
+    async fn noise_not_supported_listener() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let (Ok(dialer), Ok((stream, dialer_address))) =
+            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+        else {
+            panic!("failed to establish connection");
+        };
+
+        let peer_id = PeerId::random();
+        let dialer_address = Multiaddr::empty()
+            .with(Protocol::from(dialer_address.ip()))
+            .with(Protocol::Tcp(dialer_address.port()))
+            .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
+            .with(Protocol::P2p(peer_id.into()));
+
+        let (url, peer) = WebSocketTransport::multiaddr_into_url(dialer_address.clone()).unwrap();
+
+        tokio::spawn(async move {
+            // Negotiate websocket.
+            let stream = tokio_tungstenite::client_async_tls(url, dialer).await.unwrap().0;
+            let mut dialer = BufferedStream::new(stream);
+
+            // attempt to negotiate yamux, skipping noise entirely
+            assert!(WebSocketConnection::negotiate_protocol(
+                dialer,
+                &Role::Dialer,
+                vec!["/yamux/1.0.0"],
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .is_err());
+        });
+
+        match WebSocketConnection::accept_connection(
+            stream,
+            ConnectionId::from(0usize),
+            Keypair::generate(),
+            dialer_address,
+            Default::default(),
+            5,
+            2,
+            Duration::from_secs(10),
+        )
+        .await
+        {
+            Ok(_) => panic!("connection was supposed to fail"),
+            Err(NegotiationError::MultistreamSelectError(
+                crate::multistream_select::NegotiationError::Failed,
+            )) => {}
+            Err(error) => panic!("invalid error: {error:?}"),
+        }
+    }
 }
