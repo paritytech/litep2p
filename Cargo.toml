@@ -49,7 +49,7 @@ zeroize = "1.8.1"
 yamux = "0.13.4"
 
 # Websocket related dependencies.
-tokio-tungstenite = { version = "0.26.1", features = ["rustls-tls-native-roots", "url"], optional = true }
+tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-native-roots", "url"], optional = true }
 # End of websocket related dependencies.
 
 # Quic related dependencies. Quic is an experimental feature flag. The dependencies must be updated.
