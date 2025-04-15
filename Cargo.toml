@@ -17,7 +17,7 @@ ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.27"
 futures-timer = "3.0.3"
 hex-literal = "0.4.1"
-indexmap = { version = "2.7.1", features = ["std"] }
+indexmap = { version = "2.9.0", features = ["std"] }
 libc = "0.2.158"
 mockall = "0.13.1"
 multiaddr = "0.17.0"
