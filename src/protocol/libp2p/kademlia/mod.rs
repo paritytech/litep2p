@@ -230,7 +230,7 @@ impl Kademlia {
                 // table.
                 //
                 // Note: this happens regardless of the state of the kademlia managed peers, because
-                // an alread occuped entry in the `self.peers` map does not mean that we are
+                // an already occupied entry in the `self.peers` map does not mean that we are
                 // no longer interested in the address / connection type of the peer.
                 self.routing_table.on_connection_established(Key::from(peer), endpoint);
 
