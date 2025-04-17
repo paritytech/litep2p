@@ -217,10 +217,6 @@ impl AddressStore {
         self.addresses.is_empty()
     }
 
-    pub fn clear(&mut self) {
-        self.addresses.clear();
-    }
-
     /// Insert the address record into [`AddressStore`] with the provided score.
     ///
     /// If the address is not in the store, it will be inserted.

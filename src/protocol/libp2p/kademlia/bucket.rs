@@ -91,7 +91,6 @@ impl KBucket {
         for i in 0..self.nodes.len() {
             match self.nodes[i].connection {
                 ConnectionType::NotConnected | ConnectionType::CannotConnect => {
-                    self.nodes[i].address_store.clear();
                     return KBucketEntry::Vacant(&mut self.nodes[i]);
                 }
                 _ => continue,
