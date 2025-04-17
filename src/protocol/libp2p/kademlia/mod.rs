@@ -439,7 +439,9 @@ impl Kademlia {
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "handle message from peer");
 
-        match KademliaMessage::from_bytes(message).ok_or(Error::InvalidData)? {
+        match KademliaMessage::from_bytes(message, self.replication_factor)
+            .ok_or(Error::InvalidData)?
+        {
             KademliaMessage::FindNode { target, peers } => {
                 match query_id {
                     Some(query_id) => {
