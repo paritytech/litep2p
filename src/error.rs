@@ -149,6 +149,9 @@ pub enum AddressError {
     /// The provided address contains an invalid multihash.
     #[error("Multihash does not contain a valid peer ID : `{0:?}`")]
     InvalidPeerId(Multihash),
+    /// The provided multihash is invalid.
+    #[error("The provided multihash is  not valid")]
+    InvalidMultihash,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -179,6 +182,9 @@ pub enum ParseError {
     /// This error is protocol specific.
     #[error("Invalid data")]
     InvalidData,
+    /// The provided reply length is not valid
+    #[error("Invalid reply length")]
+    InvalidReplyLength,
 }
 
 #[derive(Debug, thiserror::Error)]

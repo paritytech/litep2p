@@ -164,6 +164,11 @@ impl NoiseContext {
     /// Get remote public key from the received Noise payload.
     #[cfg(feature = "webrtc")]
     pub fn get_remote_public_key(&mut self, reply: &[u8]) -> Result<PublicKey, NegotiationError> {
+        if reply.len() < 2 {
+            tracing::error!(target: LOG_TARGET, "reply too short to contain length prefix");
+            return Err(NegotiationError::ParseError(ParseError::InvalidReplyLength));
+        }
+
         let (len_slice, reply) = reply.split_at(2);
         let len = u16::from_be_bytes(
             len_slice
