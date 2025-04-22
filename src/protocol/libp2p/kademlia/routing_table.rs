@@ -26,7 +26,10 @@ use crate::{
         bucket::{KBucket, KBucketEntry},
         types::{ConnectionType, Distance, KademliaPeer, Key, U256},
     },
-    transport::{manager::address::AddressRecord, Endpoint},
+    transport::{
+        manager::address::{scores, AddressRecord},
+        Endpoint,
+    },
     PeerId,
 };
 
@@ -135,7 +138,7 @@ impl RoutingTable {
             for address in addresses {
                 entry.address_store.insert(AddressRecord::from_raw_multiaddr_with_score(
                     address.clone(),
-                    -100i32,
+                    scores::CONNECTION_FAILURE,
                 ));
             }
         }
@@ -154,7 +157,8 @@ impl RoutingTable {
 
             if let Endpoint::Dialer { address, .. } = endpoint {
                 entry.address_store.insert(AddressRecord::from_raw_multiaddr_with_score(
-                    address, 100i32,
+                    address,
+                    scores::CONNECTION_ESTABLISHED,
                 ));
             }
         }
