@@ -1606,6 +1606,8 @@ impl NotificationProtocol {
     }
 
     /// Handle next notification event.
+    ///
+    /// Returns `true` when the user command stream was dropped.
     async fn next_event(&mut self) -> bool {
         // biased select is used because the substream events must be prioritized above other events
         // that is because a closed substream is detected by either `substreams` or `negotiation`
