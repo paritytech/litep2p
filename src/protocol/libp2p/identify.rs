@@ -342,8 +342,24 @@ impl Identify {
             let listen_addresses = info
                 .listen_addrs
                 .iter()
-                .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
+                .filter_map(|address| {
+                    let address = Multiaddr::try_from(address.clone()).ok()?;
+
+                    // Ensure the address ends with the provided peer ID and is not empty.
+                    if address.is_empty() {
+                        return None;
+                    }
+                    if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
+                        if peer_id != peer.into() {
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided invalid address");
+                            return None;
+                        }
+                    }
+
+                    Some(address)
+                })
                 .collect();
+
             let observed_address =
                 info.observed_addr.and_then(|address| Multiaddr::try_from(address).ok());
             let protocol_version = info.protocol_version;
