@@ -1117,3 +1117,22 @@ async fn second_inbound_substream_opened_while_outbound_substream_was_opening() 
         state => panic!("invalid state for peer: {state:?}"),
     }
 }
+
+#[tokio::test]
+async fn drop_handle_exits_protocol() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut protocol, handle, _sender, _tx) = make_notification_protocol();
+
+    // Simulate a handle drop.
+    drop(handle);
+
+    // Call `next_event` and ensure it returns true.
+    let result = protocol.next_event().await;
+    assert!(
+        result,
+        "Expected `next_event` to return true when `command_rx` is dropped"
+    );
+}

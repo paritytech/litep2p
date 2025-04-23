@@ -1606,7 +1606,9 @@ impl NotificationProtocol {
     }
 
     /// Handle next notification event.
-    async fn next_event(&mut self) {
+    ///
+    /// Returns `true` when the user command stream was dropped.
+    async fn next_event(&mut self) -> bool {
         // biased select is used because the substream events must be prioritized above other events
         // that is because a closed substream is detected by either `substreams` or `negotiation`
         // and if that event is not handled with priority but, e.g., inbound substream is
@@ -1783,9 +1785,16 @@ impl NotificationProtocol {
                     );
                 }
             }
+
+            // User commands.
             command = self.command_rx.recv() => match command {
                 None => {
-                    tracing::debug!(target: LOG_TARGET, "user protocol has exited, exiting");
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        protocol = %self.protocol,
+                        "user protocol has exited, exiting"
+                    );
+                    return true;
                 }
                 Some(command) => match command {
                     NotificationCommand::OpenSubstream { peers } => {
@@ -1811,14 +1820,14 @@ impl NotificationProtocol {
                 }
             },
         }
+
+        false
     }
 
     /// Start [`NotificationProtocol`] event loop.
     pub(crate) async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting notification event loop");
 
-        loop {
-            self.next_event().await;
-        }
+        while !self.next_event().await {}
     }
 }
