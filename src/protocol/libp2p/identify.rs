@@ -172,6 +172,9 @@ pub(crate) struct Identify {
     // Public key of the local node, filled by `Litep2p`.
     public: PublicKey,
 
+    /// Local peer ID.
+    local_peer_id: PeerId,
+
     /// Protocol version.
     protocol_version: String,
 
@@ -191,11 +194,15 @@ pub(crate) struct Identify {
 impl Identify {
     /// Create new [`Identify`] protocol.
     pub(crate) fn new(service: TransportService, config: Config) -> Self {
+        let public = config.public.expect("public key to be supplied");
+        let local_peer_id = public.to_peer_id();
+
         Self {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            public: config.public.expect("public key to be supplied"),
+            public,
+            local_peer_id,
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
             pending_inbound: FuturesStream::new(),
@@ -313,6 +320,8 @@ impl Identify {
             "outbound substream opened"
         );
 
+        let local_peer_id = self.local_peer_id.clone();
+
         self.pending_outbound.push(Box::pin(async move {
             let payload =
                 match tokio::time::timeout(Duration::from_secs(10), substream.next()).await {
@@ -361,7 +370,23 @@ impl Identify {
                 .collect();
 
             let observed_address =
-                info.observed_addr.and_then(|address| Multiaddr::try_from(address).ok());
+                info.observed_addr.and_then(|address| {
+                    let address = Multiaddr::try_from(address).ok()?;
+
+                    if address.is_empty() {
+                        return None;
+                    }
+
+                    if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
+                        if peer_id != local_peer_id.into() {
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided invalid address");
+                            return None;
+                        }
+                    }
+
+                    Some(address)
+                });
+
             let protocol_version = info.protocol_version;
             let user_agent = info.agent_version;
 
