@@ -1565,12 +1565,12 @@ impl NotificationProtocol {
     }
 
     /// Handle dial failure.
-    async fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
+    async fn on_dial_failure(&mut self, peer: PeerId, addresses: Vec<Multiaddr>) {
         tracing::trace!(
             target: LOG_TARGET,
             ?peer,
             protocol = %self.protocol,
-            ?address,
+            ?addresses,
             "handle dial failure",
         );
 
@@ -1579,7 +1579,7 @@ impl NotificationProtocol {
                 target: LOG_TARGET,
                 ?peer,
                 protocol = %self.protocol,
-                ?address,
+                ?addresses,
                 "dial failure for an unknown peer",
             );
             return;
@@ -1587,7 +1587,7 @@ impl NotificationProtocol {
 
         match context.state {
             PeerState::Dialing => {
-                tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, ?address, "failed to dial peer");
+                tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, ?addresses, "failed to dial peer");
                 self.event_handle
                     .report_notification_stream_open_failure(peer, NotificationError::DialFailure)
                     .await;
@@ -1771,7 +1771,7 @@ impl NotificationProtocol {
                 Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                     self.on_substream_open_failure(substream, error).await;
                 }
-                Some(TransportEvent::DialFailure { peer, address, .. }) => self.on_dial_failure(peer, address).await,
+                Some(TransportEvent::DialFailure { peer, addresses }) => self.on_dial_failure(peer, addresses).await,
                 None => (),
             },
             result = self.pending_validations.select_next_some(), if !self.pending_validations.is_empty() => {
