@@ -326,7 +326,7 @@ mod tests {
         KademliaPeer {
             peer,
             key: Key::from(peer),
-            addresses: vec![],
+            address_store: Default::default(),
             connection: ConnectionType::Connected,
         }
     }
@@ -396,7 +396,12 @@ mod tests {
         let mut context = GetRecordContext::new(config, VecDeque::new(), false);
         assert!(context.is_done());
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
+        match event {
+            QueryAction::QueryFailed { query } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        }
 
         let config = GetRecordConfig {
             known_records: 1,
@@ -405,7 +410,12 @@ mod tests {
         let mut context = GetRecordContext::new(config, VecDeque::new(), false);
         assert!(context.is_done());
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+        match event {
+            QueryAction::QuerySucceeded { query } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        }
     }
 
     #[test]
@@ -562,7 +572,12 @@ mod tests {
 
         // Produces the result.
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+        match event {
+            QueryAction::QuerySucceeded { query } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        }
 
         // Check results.
         assert_eq!(
