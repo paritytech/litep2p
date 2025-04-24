@@ -301,30 +301,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake2s_simd"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e90f7deecfac93095eb874a40febd69427776e24e1bd7f87f33ac62d6f0174df"
-dependencies = [
- "arrayref",
- "arrayvec",
- "constant_time_eq",
-]
-
-[[package]]
-name = "blake3"
-version = "1.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8ee0c1824c4dea5b5f81736aff91bae041d2c07ee1192bec91054e10e3e601e"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -415,19 +391,6 @@ dependencies = [
  "cipher",
  "poly1305",
  "zeroize",
-]
-
-[[package]]
-name = "cid"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd94671561e36e4e7de75f753f577edafb0e7c05d6e4547229fdf7938fbcd2c3"
-dependencies = [
- "core2",
- "multibase",
- "multihash 0.18.1",
- "serde",
- "unsigned-varint 0.7.2",
 ]
 
 [[package]]
@@ -1504,15 +1467,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keccak"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
-dependencies = [
- "cpufeatures",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1940,7 +1894,7 @@ dependencies = [
  "async-trait",
  "bs58 0.5.1",
  "bytes",
- "cid 0.11.1",
+ "cid",
  "ed25519-dalek",
  "futures",
  "futures-timer",
@@ -1967,8 +1921,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_millis",
- "sha2 0.10.8",
- "simple-dns 0.9.3",
+ "sha2",
+ "simple-dns",
  "smallvec",
  "snow",
  "socket2 0.5.8",
@@ -2140,29 +2094,12 @@ version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "835d6ff01d610179fbce3de1694d007e500bf33a7f29689838941d6bf783ae40"
 dependencies = [
+ "blake2b_simd",
  "core2",
  "digest 0.10.7",
  "multihash-derive",
  "serde",
- "sha2 0.10.8",
- "sha3",
- "unsigned-varint 0.7.2",
-]
-
-[[package]]
-name = "multihash"
-version = "0.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfd8a792c1694c6da4f68db0a9d707c72bd260994da179e6030a5dcee00bb815"
-dependencies = [
- "blake2b_simd",
- "blake2s_simd",
- "blake3",
- "core2",
- "digest 0.10.7",
- "multihash-derive",
  "sha2",
- "sha3",
  "unsigned-varint 0.7.2",
 ]
 
@@ -2277,9 +2214,9 @@ dependencies = [
 
 [[package]]
 name = "network-interface"
-version = "1.1.4"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4a43439bf756eed340bdf8feba761e2d50c7d47175d87545cd5cbe4a137c4d1"
+checksum = "c3329f515506e4a2de3aa6e07027a6758e22e0f0e8eaf64fa47261cec2282602"
 dependencies = [
  "cc",
  "libc",
@@ -3283,6 +3220,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes"
+version = "0.11.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8437fd221bde2d4ca316d61b90e337e9e702b3820b87d63caa9ba6c02bd06d96"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.217"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3311,25 +3257,6 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e2dc780ca5ee2c369d1d01d100270203c4ff923d2a4264812d723766434d00"
 dependencies = [
- "serde",
-]
-
-[[package]]
-name = "serde_spanned"
-version = "0.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87607cb1398ed59d48732e575a4c28a7a8ebf2454b964fe3f224f2afc07909e1"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "serdect"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a84f14a19e9a014bb9f4512488d9829a68e04ecabffb0f9904cd1ace94598177"
-dependencies = [
- "base16ct",
  "serde",
 ]
 
@@ -3376,16 +3303,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest 0.10.7",
-]
-
-[[package]]
-name = "sha3"
-version = "0.10.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
-dependencies = [
- "digest 0.10.7",
- "keccak",
 ]
 
 [[package]]
