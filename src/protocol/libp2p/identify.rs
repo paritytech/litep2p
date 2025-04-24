@@ -334,14 +334,22 @@ impl Identify {
                     Ok(Some(Ok(payload))) => payload,
                 };
 
-            let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
+            let info = identify_schema::Identify::decode(payload.to_vec().as_slice()).map_err(
+                |err| {
+                    tracing::debug!(target: LOG_TARGET, ?peer, ?err, "peer identified provided undecodable identify response");
+                    err
+                })?;
 
             tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
 
             // The check ensures the provided public key is the same one as the
             // one exchanged during the connection establishment.
             if let Some(public_key) = &info.public_key {
-                let public_key = PublicKey::from_protobuf_encoding(&public_key)?;
+                let public_key = PublicKey::from_protobuf_encoding(&public_key).map_err(|err| {
+                    tracing::debug!(target: LOG_TARGET, ?peer, ?err, "peer identified provided undecodable public key");
+                    err
+                })?;
+
                 if public_key.to_peer_id() != peer {
                     tracing::debug!(target: LOG_TARGET, ?peer, "peer identified provided invalid public key");
                     return Err(Error::InvalidData);
@@ -356,11 +364,12 @@ impl Identify {
 
                     // Ensure the address ends with the provided peer ID and is not empty.
                     if address.is_empty() {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided empty listen address");
                         return None;
                     }
                     if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
                         if peer_id != peer.into() {
-                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided invalid address");
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided invalid listen address");
                             return None;
                         }
                     }
@@ -374,12 +383,13 @@ impl Identify {
                     let address = Multiaddr::try_from(address).ok()?;
 
                     if address.is_empty() {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided empty observed address");
                         return None;
                     }
 
                     if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
                         if peer_id != local_peer_id.into() {
-                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided invalid address");
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided invalid observed address");
                             return None;
                         }
                     }
