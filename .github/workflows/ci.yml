@@ -223,6 +223,7 @@ jobs:
           # Removing experimental features dependencies:
           sed -i '/# Quic related dependencies/,/# End of Quic related dependencies./d' Cargo.toml
           sed -i '/# WebRTC related dependencies/,/# End of WebRTC related dependencies./d' Cargo.toml
+          sed -i '/# Fuzzing related dependencies/,/# End of fuzzing related dependencies./d' Cargo.toml
 
           # Remove the content of the `[dev-dependencies]` (except the header):
           sed -i '/^\[dev-dependencies\]/,/^\[.*\]/ { /^\[.*\]/!d }' Cargo.toml
@@ -232,6 +233,7 @@ jobs:
           # Remove optional dependencies from our experimental feature flags:
           sed -i 's/^quic = \[.*\]$/quic = []/' Cargo.toml
           sed -i 's/^webrtc = \[.*\]$/webrtc = []/' Cargo.toml
+          sed -i 's/^fuzz = \[.*\]$/fuzz = []/' Cargo.toml
 
           # Building must work for stable features.
           cargo build --release --features "websocket"
