@@ -22,24 +22,23 @@
 
 use crate::{
     error::Error,
-    protocol::{
-        libp2p::bitswap::handle::BitswapCommand, Direction, TransportEvent, TransportService,
-    },
+    protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     types::SubstreamId,
     PeerId,
 };
 
-use cid::{multihash::Code, Version};
+use cid::Version;
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use multihash::Code;
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 pub use cid::Cid;
 pub use config::Config;
-pub use handle::{BitswapEvent, BitswapHandle, ResponseType};
+pub use handle::{BitswapCommand, BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
 
 mod config;
@@ -53,6 +52,9 @@ mod schema {
 
 /// Log target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::bitswap";
+
+/// Write timeout for outbound messages.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Bitswap metadata.
 #[derive(Debug)]
@@ -201,7 +203,8 @@ impl Bitswap {
             }
         }
 
-        let _ = substream.send_framed(response.encode_to_vec().into()).await;
+        let message = response.encode_to_vec().into();
+        let _ = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await;
     }
 
     /// Handle bitswap response.

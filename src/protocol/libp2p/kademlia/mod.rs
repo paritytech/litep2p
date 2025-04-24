@@ -26,7 +26,6 @@ use crate::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
             executor::{QueryContext, QueryExecutor, QueryResult},
-            handle::KademliaCommand,
             message::KademliaMessage,
             query::{QueryAction, QueryEngine},
             routing_table::RoutingTable,
@@ -36,6 +35,7 @@ use crate::{
         Direction, TransportEvent, TransportService,
     },
     substream::Substream,
+    transport::Endpoint,
     types::SubstreamId,
     PeerId,
 };
@@ -56,7 +56,8 @@ use std::{
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{
-    IncomingRecordValidationMode, KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode,
+    IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, Quorum,
+    RoutingTableUpdateMode,
 };
 pub use query::QueryId;
 pub use record::{ContentProvider, Key as RecordKey, PeerRecord, Record};
@@ -220,14 +221,18 @@ impl Kademlia {
     }
 
     /// Connection established to remote peer.
-    fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
         match self.peers.entry(peer) {
             Entry::Vacant(entry) => {
-                if let KBucketEntry::Occupied(entry) = self.routing_table.entry(Key::from(peer)) {
-                    entry.connection = ConnectionType::Connected;
-                }
+                // Set the conenction type to connected and potentially save the address in the
+                // table.
+                //
+                // Note: this happens regardless of the state of the kademlia managed peers, because
+                // an already occupied entry in the `self.peers` map does not mean that we are
+                // no longer interested in the address / connection type of the peer.
+                self.routing_table.on_connection_established(Key::from(peer), endpoint);
 
                 let Some(actions) = self.pending_dials.remove(&peer) else {
                     entry.insert(PeerContext::new());
@@ -262,7 +267,21 @@ impl Kademlia {
                 entry.insert(context);
                 Ok(())
             }
-            Entry::Occupied(_) => Err(Error::PeerAlreadyExists(peer)),
+            Entry::Occupied(_) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?endpoint,
+                    "connection already exists, discarding opening substreams, this is unexpected"
+                );
+
+                // Update the connection in the routing table, similar as above. The function call
+                // happens in two places to avoid unnecessary cloning of the endpoint for logging
+                // purposes.
+                self.routing_table.on_connection_established(Key::from(peer), endpoint);
+
+                Err(Error::PeerAlreadyExists(peer))
+            }
         }
     }
 
@@ -395,12 +414,13 @@ impl Kademlia {
             .await;
 
         for info in peers {
-            self.service.add_known_address(&info.peer, info.addresses.iter().cloned());
+            let addresses = info.addresses();
+            self.service.add_known_address(&info.peer, addresses.clone().into_iter());
 
             if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
                 self.routing_table.add_known_peer(
                     info.peer,
-                    info.addresses.clone(),
+                    addresses,
                     self.peers
                         .get(&info.peer)
                         .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
@@ -419,7 +439,9 @@ impl Kademlia {
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "handle message from peer");
 
-        match KademliaMessage::from_bytes(message).ok_or(Error::InvalidData)? {
+        match KademliaMessage::from_bytes(message, self.replication_factor)
+            .ok_or(Error::InvalidData)?
+        {
             KademliaMessage::FindNode { target, peers } => {
                 match query_id {
                     Some(query_id) => {
@@ -527,13 +549,15 @@ impl Kademlia {
                 );
 
                 match (providers.len(), providers.pop()) {
-                    (1, Some(provider)) =>
+                    (1, Some(provider)) => {
+                        let addresses = provider.addresses();
+
                         if provider.peer == peer {
                             self.store.put_provider(
                                 key.clone(),
                                 ContentProvider {
                                     peer,
-                                    addresses: provider.addresses.clone(),
+                                    addresses: addresses.clone(),
                                 },
                             );
 
@@ -543,7 +567,7 @@ impl Kademlia {
                                     provided_key: key,
                                     provider: ContentProvider {
                                         peer: provider.peer,
-                                        addresses: provider.addresses,
+                                        addresses,
                                     },
                                 })
                                 .await;
@@ -554,7 +578,8 @@ impl Kademlia {
                                 provider = ?provider.peer,
                                 "ignoring `ADD_PROVIDER` message with `publisher` != `provider`"
                             )
-                        },
+                        }
+                    }
                     (n, _) => {
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -667,8 +692,10 @@ impl Kademlia {
     }
 
     /// Handle dial failure.
-    fn on_dial_failure(&mut self, peer: PeerId, address: Multiaddr) {
-        tracing::trace!(target: LOG_TARGET, ?peer, ?address, "failed to dial peer");
+    fn on_dial_failure(&mut self, peer: PeerId, addresses: Vec<Multiaddr>) {
+        tracing::trace!(target: LOG_TARGET, ?peer, ?addresses, "failed to dial peer");
+
+        self.routing_table.on_dial_failure(Key::from(peer), &addresses);
 
         let Some(actions) = self.pending_dials.remove(&peer) else {
             return;
@@ -680,7 +707,7 @@ impl Kademlia {
                     target: LOG_TARGET,
                     ?peer,
                     query = ?query_id,
-                    ?address,
+                    ?addresses,
                     "report failure for pending query",
                 );
 
@@ -772,7 +799,10 @@ impl Kademlia {
                     .send(KademliaEvent::FindNodeSuccess {
                         target,
                         query_id: query,
-                        peers: peers.into_iter().map(|info| (info.peer, info.addresses)).collect(),
+                        peers: peers
+                            .into_iter()
+                            .map(|info| (info.peer, info.addresses()))
+                            .collect(),
                     })
                     .await;
                 Ok(())
@@ -887,8 +917,8 @@ impl Kademlia {
 
             tokio::select! {
                 event = self.service.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        if let Err(error) = self.on_connection_established(peer) {
+                    Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
+                        if let Err(error) = self.on_connection_established(peer, endpoint) {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?error,
@@ -921,8 +951,8 @@ impl Kademlia {
                     Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
                         self.on_substream_open_failure(substream, error).await;
                     }
-                    Some(TransportEvent::DialFailure { peer, address, .. }) =>
-                        self.on_dial_failure(peer, address),
+                    Some(TransportEvent::DialFailure { peer, addresses }) =>
+                        self.on_dial_failure(peer, addresses),
                     None => return Err(Error::EssentialTaskClosed),
                 },
                 context = self.executor.next() => {
@@ -1046,7 +1076,7 @@ impl Kademlia {
 
                                 match self.routing_table.entry(Key::from(peer)) {
                                     KBucketEntry::Occupied(entry) => Some(entry.clone()),
-                                    KBucketEntry::Vacant(entry) if !entry.addresses.is_empty() =>
+                                    KBucketEntry::Vacant(entry) if !entry.address_store.is_empty() =>
                                         Some(entry.clone()),
                                     _ => None,
                                 }
@@ -1235,8 +1265,11 @@ mod tests {
             KEEP_ALIVE_TIMEOUT,
         },
         types::protocol::ProtocolName,
-        BandwidthSink,
+        BandwidthSink, ConnectionId,
     };
+    use multiaddr::Protocol;
+    use multihash::Multihash;
+    use std::str::FromStr;
     use tokio::sync::mpsc::channel;
 
     #[allow(unused)]
@@ -1376,5 +1409,90 @@ mod tests {
 
         // Check the local storage should not get updated.
         assert!(kademlia.store.get(&key).is_none());
+    }
+
+    #[tokio::test]
+    async fn check_address_store_routing_table_updates() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+
+        let peer = PeerId::random();
+        let address_a = Multiaddr::from_str("/dns/domain1.com/tcp/30333").unwrap().with(
+            Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).unwrap()),
+        );
+        let address_b = Multiaddr::from_str("/dns/domain1.com/tcp/30334").unwrap().with(
+            Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).unwrap()),
+        );
+        let address_c = Multiaddr::from_str("/dns/domain1.com/tcp/30339").unwrap().with(
+            Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).unwrap()),
+        );
+
+        // Added only with address a.
+        kademlia.routing_table.add_known_peer(
+            peer,
+            vec![address_a.clone()],
+            ConnectionType::NotConnected,
+        );
+
+        // Check peer addresses.
+        match kademlia.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(entry.addresses(), vec![address_a.clone()]);
+            }
+            _ => panic!("Peer not found in routing table"),
+        };
+
+        // Report successful connection with address b via dialer endpoint.
+        let _ = kademlia.on_connection_established(
+            peer,
+            Endpoint::Dialer {
+                address: address_b.clone(),
+                connection_id: ConnectionId::from(0),
+            },
+        );
+
+        // Address B has a higher priority, as it was detected via the dialing mechanism of the
+        // transport manager, while address A is not dialed yet.
+        match kademlia.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(
+                    entry.addresses(),
+                    vec![address_b.clone(), address_a.clone()]
+                );
+            }
+            _ => panic!("Peer not found in routing table"),
+        };
+
+        // Report successful connection with a random address via listener endpoint.
+        let _ = kademlia.on_connection_established(
+            peer,
+            Endpoint::Listener {
+                address: address_c.clone(),
+                connection_id: ConnectionId::from(0),
+            },
+        );
+        // Address C was not added, as the peer has dialed us possibly on an ephemeral port.
+        match kademlia.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(
+                    entry.addresses(),
+                    vec![address_b.clone(), address_a.clone()]
+                );
+            }
+            _ => panic!("Peer not found in routing table"),
+        };
+
+        // Address B fails two times (which gives it a lower score than A) and
+        // makes it subject to removal.
+        kademlia.on_dial_failure(peer, vec![address_b.clone(), address_b.clone()]);
+
+        match kademlia.routing_table.entry(Key::from(peer)) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(
+                    entry.addresses(),
+                    vec![address_a.clone(), address_b.clone()]
+                );
+            }
+            _ => panic!("Peer not found in routing table"),
+        };
     }
 }

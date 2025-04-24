@@ -5,6 +5,10 @@ license = "MIT"
 version = "0.9.3"
 edition = "2021"
 
+# cargo-machete does not detect serde_millis usage, so we ignore the warning
+[package.metadata.cargo-machete]
+ignored = ["serde_millis"]
+
 [build-dependencies]
 prost-build = "0.13"
 
@@ -12,7 +16,7 @@ prost-build = "0.13"
 async-trait = "0.1.81"
 bs58 = "0.5.1"
 bytes = "1.6.1"
-cid = "0.10.1"
+cid = "0.11.1"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.27"
 futures-timer = "3.0.3"
@@ -21,14 +25,14 @@ indexmap = { version = "2.7.1", features = ["std"] }
 libc = "0.2.158"
 mockall = "0.13.1"
 multiaddr = "0.17.0"
-multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2"] }
+multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2", "blake2b"] }
 network-interface = "1.1.1"
 parking_lot = "0.12.3"
 pin-project = "1.1.0"
 prost = "0.12.6"
 rand = { version = "0.8.0", features = ["getrandom"] }
 rcgen = "0.10.0"
-serde = "1.0.158"
+serde = { version = "1.0.158" }
 sha2 = "0.10.8"
 simple-dns = "0.9.3"
 smallvec = "1.13.2"
@@ -39,7 +43,7 @@ thiserror = "2.0.11"
 tokio-stream = "0.1.12"
 tokio-tungstenite = { version = "0.26.1", features = ["rustls-tls-native-roots", "url"], optional = true }
 tokio-util = { version = "0.7.11", features = ["compat", "io", "codec"] }
-tokio = { version = "1.26.0", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
+tokio = { version = "1.43.1", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
 tracing = { version = "0.1.40", features = ["log"] }
 hickory-resolver = "0.24.2"
 uint = "0.10.0"
@@ -56,9 +60,9 @@ quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls",
 rustls = { version = "0.20.7", default-features = false, features = ["dangerous_configuration"], optional = true }
 ring = { version = "0.16.20", optional = true }
 webpki = { version = "0.22.4", optional = true }
+serde_millis = {version = "0.1", optional = true}
 
 [dev-dependencies]
-asynchronous-codec = "0.7.0"
 libp2p = { version = "0.51.4", features = [
     "tokio",
     "dns",
@@ -74,14 +78,12 @@ libp2p = { version = "0.51.4", features = [
     "quic",
 ]}
 quickcheck = "1.0.3"
-rand_xorshift = "0.3.0"
-sc-network = "0.48.1"
-sc-utils = "17.0.0"
 serde_json = "1.0.122"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
 
 [features]
+fuzz = ["serde/derive", "serde/rc", "bytes/serde", "dep:serde_millis", "cid/serde", "multihash/serde"]
 custom_sc_network = []
 quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring"]
 webrtc = ["dep:str0m"]
