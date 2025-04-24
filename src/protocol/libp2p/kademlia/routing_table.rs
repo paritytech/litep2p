@@ -26,6 +26,10 @@ use crate::{
         bucket::{KBucket, KBucketEntry},
         types::{ConnectionType, Distance, KademliaPeer, Key, U256},
     },
+    transport::{
+        manager::address::{scores, AddressRecord},
+        Endpoint,
+    },
     PeerId,
 };
 
@@ -119,6 +123,47 @@ impl RoutingTable {
         self.buckets[index.get()].entry(key)
     }
 
+    /// Update the addresses of the peer on dial failures.
+    ///
+    /// The addresses are updated with a negative score making them subject to removal.
+    pub fn on_dial_failure(&mut self, key: Key<PeerId>, addresses: &[Multiaddr]) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?key,
+            ?addresses,
+            "on dial failure"
+        );
+
+        if let KBucketEntry::Occupied(entry) = self.entry(key) {
+            for address in addresses {
+                entry.address_store.insert(AddressRecord::from_raw_multiaddr_with_score(
+                    address.clone(),
+                    scores::CONNECTION_FAILURE,
+                ));
+            }
+        }
+    }
+
+    /// Update the status of the peer on connection established.
+    ///
+    /// If the peer exists in the routing table, the connection is set to `Connected`.
+    /// If the endpoint represents an address we have dialed, the address score
+    /// is updated in the store of the peer, making it more likely to be used in the future.
+    pub fn on_connection_established(&mut self, key: Key<PeerId>, endpoint: Endpoint) {
+        tracing::trace!(target: LOG_TARGET, ?key, ?endpoint, "on connection established");
+
+        if let KBucketEntry::Occupied(entry) = self.entry(key) {
+            entry.connection = ConnectionType::Connected;
+
+            if let Endpoint::Dialer { address, .. } = endpoint {
+                entry.address_store.insert(AddressRecord::from_raw_multiaddr_with_score(
+                    address,
+                    scores::CONNECTION_ESTABLISHED,
+                ));
+            }
+        }
+    }
+
     /// Add known peer to [`RoutingTable`].
     ///
     /// In order to bootstrap the lookup process, the routing table must be aware of
@@ -166,7 +211,7 @@ impl RoutingTable {
 
         match self.entry(Key::from(peer)) {
             KBucketEntry::Occupied(entry) => {
-                entry.addresses = addresses;
+                entry.push_addresses(addresses);
                 entry.connection = connection;
             }
             mut entry @ KBucketEntry::Vacant(_) => {
@@ -334,7 +379,10 @@ mod tests {
         let mut table = RoutingTable::new(own_key.clone());
 
         // verify that local peer id resolves to special entry
-        assert_eq!(table.entry(own_key), KBucketEntry::LocalNode);
+        match table.entry(own_key.clone()) {
+            KBucketEntry::LocalNode => {}
+            state => panic!("invalid state for `KBucketEntry`: {state:?}"),
+        };
 
         let peer = PeerId::random();
         let key = Key::from(peer);
@@ -348,15 +396,17 @@ mod tests {
             ConnectionType::Connected,
         ));
 
-        assert_eq!(
-            table.entry(key.clone()),
-            KBucketEntry::Occupied(&mut KademliaPeer::new(
-                peer,
-                addresses.clone(),
-                ConnectionType::Connected,
-            ))
-        );
+        match table.entry(key.clone()) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(entry.key, key);
+                assert_eq!(entry.peer, peer);
+                assert_eq!(entry.addresses(), addresses);
+                assert_eq!(entry.connection, ConnectionType::Connected);
+            }
+            state => panic!("invalid state for `KBucketEntry`: {state:?}"),
+        };
 
+        // Set the connection state
         match table.entry(key.clone()) {
             KBucketEntry::Occupied(entry) => {
                 entry.connection = ConnectionType::NotConnected;
@@ -364,14 +414,15 @@ mod tests {
             state => panic!("invalid state for `KBucketEntry`: {state:?}"),
         }
 
-        assert_eq!(
-            table.entry(key.clone()),
-            KBucketEntry::Occupied(&mut KademliaPeer::new(
-                peer,
-                addresses,
-                ConnectionType::NotConnected,
-            ))
-        );
+        match table.entry(key.clone()) {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(entry.key, key);
+                assert_eq!(entry.peer, peer);
+                assert_eq!(entry.addresses(), addresses);
+                assert_eq!(entry.connection, ConnectionType::NotConnected);
+            }
+            state => panic!("invalid state for `KBucketEntry`: {state:?}"),
+        };
     }
 
     #[test]
@@ -452,14 +503,16 @@ mod tests {
         // verify the node is still there
         let entry = table.entry(key.clone());
         let addresses = vec!["/ip6/::1/tcp/8888".parse().unwrap()];
-        assert_eq!(
-            entry,
-            KBucketEntry::Occupied(&mut KademliaPeer::new(
-                peer,
-                addresses,
-                ConnectionType::CanConnect,
-            ))
-        );
+
+        match entry {
+            KBucketEntry::Occupied(entry) => {
+                assert_eq!(entry.key, key);
+                assert_eq!(entry.peer, peer);
+                assert_eq!(entry.addresses(), addresses);
+                assert_eq!(entry.connection, ConnectionType::CanConnect);
+            }
+            state => panic!("invalid state for `KBucketEntry`: {state:?}"),
+        }
     }
 
     #[test]
