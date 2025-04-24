@@ -34,6 +34,7 @@ use std::{borrow::Borrow, time::Instant};
 
 /// The (opaque) key of a record.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub struct Key(Bytes);
 
 impl Key {
@@ -80,6 +81,7 @@ impl From<Multihash> for Key {
 
 /// A record stored in the DHT.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub struct Record {
     /// Key of the record.
     pub key: Key,
@@ -91,6 +93,7 @@ pub struct Record {
     pub publisher: Option<PeerId>,
 
     /// The expiration time as measured by a local, monotonic clock.
+    #[cfg_attr(feature = "fuzz", serde(with = "serde_millis"))]
     pub expires: Option<Instant>,
 }
 

@@ -26,7 +26,6 @@ use crate::{
         libp2p::kademlia::{
             bucket::KBucketEntry,
             executor::{QueryContext, QueryExecutor, QueryResult},
-            handle::KademliaCommand,
             message::KademliaMessage,
             query::{QueryAction, QueryEngine},
             routing_table::RoutingTable,
@@ -57,7 +56,8 @@ use std::{
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{
-    IncomingRecordValidationMode, KademliaEvent, KademliaHandle, Quorum, RoutingTableUpdateMode,
+    IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, Quorum,
+    RoutingTableUpdateMode,
 };
 pub use query::QueryId;
 pub use record::{ContentProvider, Key as RecordKey, PeerRecord, Record};
