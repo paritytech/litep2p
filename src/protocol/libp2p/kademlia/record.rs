@@ -23,6 +23,7 @@ use crate::{
     protocol::libp2p::kademlia::types::{
         ConnectionType, Distance, KademliaPeer, Key as KademliaKey,
     },
+    transport::manager::address::{AddressRecord, AddressStore},
     Multiaddr, PeerId,
 };
 
@@ -33,6 +34,7 @@ use std::{borrow::Borrow, time::Instant};
 
 /// The (opaque) key of a record.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub struct Key(Bytes);
 
 impl Key {
@@ -79,6 +81,7 @@ impl From<Multihash> for Key {
 
 /// A record stored in the DHT.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub struct Record {
     /// Key of the record.
     pub key: Key,
@@ -90,6 +93,7 @@ pub struct Record {
     pub publisher: Option<PeerId>,
 
     /// The expiration time as measured by a local, monotonic clock.
+    #[cfg_attr(feature = "fuzz", serde(with = "serde_millis"))]
     pub expires: Option<Instant>,
 }
 
@@ -166,10 +170,15 @@ pub struct ContentProvider {
 
 impl From<ContentProvider> for KademliaPeer {
     fn from(provider: ContentProvider) -> Self {
+        let mut address_store = AddressStore::new();
+        for address in provider.addresses.iter() {
+            address_store.insert(AddressRecord::from_raw_multiaddr(address.clone()));
+        }
+
         Self {
             key: KademliaKey::from(provider.peer),
             peer: provider.peer,
-            addresses: provider.addresses,
+            address_store,
             connection: ConnectionType::NotConnected,
         }
     }

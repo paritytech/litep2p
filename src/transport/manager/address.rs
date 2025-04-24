@@ -88,6 +88,27 @@ impl AddressRecord {
         })
     }
 
+    /// Create `AddressRecord` from `Multiaddr`.
+    ///
+    /// This method does not check if the address contains `PeerId`.
+    ///
+    /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
+    pub fn from_raw_multiaddr(address: Multiaddr) -> AddressRecord {
+        AddressRecord {
+            address,
+            score: 0i32,
+        }
+    }
+
+    /// Create `AddressRecord` from `Multiaddr`.
+    ///
+    /// This method does not check if the address contains `PeerId`.
+    ///
+    /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
+    pub fn from_raw_multiaddr_with_score(address: Multiaddr, score: i32) -> AddressRecord {
+        AddressRecord { address, score }
+    }
+
     /// Get address score.
     #[cfg(test)]
     pub fn score(&self) -> i32 {
@@ -126,7 +147,7 @@ impl Ord for AddressRecord {
 }
 
 /// Store for peer addresses.
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct AddressStore {
     /// Addresses available.
     pub addresses: HashMap<Multiaddr, AddressRecord>,

@@ -28,20 +28,30 @@ use std::{
 
 /// Protocol name.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum ProtocolName {
+    #[cfg(not(feature = "fuzz"))]
     Static(&'static str),
     Allocated(Arc<str>),
 }
 
+#[cfg(not(feature = "fuzz"))]
 impl From<&'static str> for ProtocolName {
     fn from(protocol: &'static str) -> Self {
         ProtocolName::Static(protocol)
+    }
+}
+#[cfg(feature = "fuzz")]
+impl From<&'static str> for ProtocolName {
+    fn from(protocol: &'static str) -> Self {
+        ProtocolName::Allocated(Arc::from(protocol.to_string()))
     }
 }
 
 impl Display for ProtocolName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            #[cfg(not(feature = "fuzz"))]
             Self::Static(protocol) => protocol.fmt(f),
             Self::Allocated(protocol) => protocol.fmt(f),
         }
@@ -65,6 +75,7 @@ impl std::ops::Deref for ProtocolName {
 
     fn deref(&self) -> &Self::Target {
         match self {
+            #[cfg(not(feature = "fuzz"))]
             Self::Static(protocol) => protocol,
             Self::Allocated(protocol) => protocol,
         }

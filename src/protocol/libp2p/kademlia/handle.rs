@@ -42,6 +42,7 @@ use std::{
 /// Quorum defines how many peers must be successfully contacted
 /// in order for the query to be considered successful.
 #[derive(Debug, Copy, Clone)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum Quorum {
     /// All peers must be successfully contacted.
     All,
@@ -77,7 +78,8 @@ pub enum IncomingRecordValidationMode {
 
 /// Kademlia commands.
 #[derive(Debug)]
-pub(crate) enum KademliaCommand {
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
+pub enum KademliaCommand {
     /// Add known peer.
     AddKnownPeer {
         /// Peer ID.
@@ -452,6 +454,13 @@ impl KademliaHandle {
     /// Used in combination with [`IncomingRecordValidationMode::Manual`].
     pub fn try_store_record(&mut self, record: Record) -> Result<(), ()> {
         self.cmd_tx.try_send(KademliaCommand::StoreRecord { record }).map_err(|_| ())
+    }
+
+    #[cfg(feature = "fuzz")]
+    /// Expose functionality for fuzzing
+    pub async fn fuzz_send_message(&mut self, command: KademliaCommand) -> crate::Result<()> {
+        let _ = self.cmd_tx.send(command).await;
+        Ok(())
     }
 }
 
