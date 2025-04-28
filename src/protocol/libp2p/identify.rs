@@ -172,6 +172,9 @@ pub(crate) struct Identify {
     // Public key of the local node, filled by `Litep2p`.
     public: PublicKey,
 
+    /// Local peer ID.
+    local_peer_id: PeerId,
+
     /// Protocol version.
     protocol_version: String,
 
@@ -191,11 +194,18 @@ pub(crate) struct Identify {
 impl Identify {
     /// Create new [`Identify`] protocol.
     pub(crate) fn new(service: TransportService, config: Config) -> Self {
+        // The public key is always supplied by litep2p and is the one
+        // used to identify the local peer. This is a similar story to the
+        // supported protocols.
+        let public = config.public.expect("public key to always be supplied by litep2p; qed");
+        let local_peer_id = public.to_peer_id();
+
         Self {
             service,
             tx: config.tx_event,
             peers: HashMap::new(),
-            public: config.public.expect("public key to be supplied"),
+            public,
+            local_peer_id,
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
             pending_inbound: FuturesStream::new(),
@@ -313,6 +323,8 @@ impl Identify {
             "outbound substream opened"
         );
 
+        let local_peer_id = self.local_peer_id.clone();
+
         self.pending_outbound.push(Box::pin(async move {
             let payload =
                 match tokio::time::timeout(Duration::from_secs(10), substream.next()).await {
@@ -325,17 +337,69 @@ impl Identify {
                     Ok(Some(Ok(payload))) => payload,
                 };
 
-            let info = identify_schema::Identify::decode(payload.to_vec().as_slice())?;
+            let info = identify_schema::Identify::decode(payload.to_vec().as_slice()).map_err(
+                |err| {
+                    tracing::debug!(target: LOG_TARGET, ?peer, ?err, "peer identified provided undecodable identify response");
+                    err
+                })?;
 
             tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
+
+            // The check ensures the provided public key is the same one as the
+            // one exchanged during the connection establishment.
+            if let Some(public_key) = &info.public_key {
+                let public_key = PublicKey::from_protobuf_encoding(&public_key).map_err(|err| {
+                    tracing::debug!(target: LOG_TARGET, ?peer, ?err, "peer identified provided undecodable public key");
+                    err
+                })?;
+
+                if public_key.to_peer_id() != peer {
+                    tracing::debug!(target: LOG_TARGET, ?peer, "peer identified provided invalid public key");
+                    return Err(Error::InvalidData);
+                }
+            }
 
             let listen_addresses = info
                 .listen_addrs
                 .iter()
-                .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
+                .filter_map(|address| {
+                    let address = Multiaddr::try_from(address.clone()).ok()?;
+
+                    // Ensure the address ends with the provided peer ID and is not empty.
+                    if address.is_empty() {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided empty listen address");
+                        return None;
+                    }
+                    if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
+                        if peer_id != peer.into() {
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided listen address with incorrect peer ID; discarding the address");
+                            return None;
+                        }
+                    }
+
+                    Some(address)
+                })
                 .collect();
+
             let observed_address =
-                info.observed_addr.and_then(|address| Multiaddr::try_from(address).ok());
+                info.observed_addr.and_then(|address| {
+                    let address = Multiaddr::try_from(address).ok()?;
+
+                    if address.is_empty() {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided empty observed address");
+                        return None;
+                    }
+
+                    if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
+                        if peer_id != local_peer_id.into() {
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided observed address with peer ID not matching our peer ID; discarding address");
+                            return None;
+                        }
+                    }
+
+                    Some(address)
+                });
+
             let protocol_version = info.protocol_version;
             let user_agent = info.agent_version;
 
