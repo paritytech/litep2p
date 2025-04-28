@@ -34,6 +34,7 @@ use std::{
 const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
 /// Send state.
+#[derive(Debug)]
 enum State {
     /// State is poisoned.
     Poisoned,
@@ -46,6 +47,7 @@ enum State {
 }
 
 /// Buffered stream which implements `AsyncRead + AsyncWrite`
+#[derive(Debug)]
 pub(super) struct BufferedStream<S: AsyncRead + AsyncWrite + Unpin> {
     /// Write buffer.
     write_buffer: BytesMut,
@@ -124,7 +126,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
                         Poll::Ready(Err(_error)) =>
                             return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
                         Poll::Pending => {
-                            self.state = State::ReadyToSend;
+                            self.state = State::FlushPending;
                             return Poll::Pending;
                         }
                     }
