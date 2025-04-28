@@ -194,7 +194,10 @@ pub(crate) struct Identify {
 impl Identify {
     /// Create new [`Identify`] protocol.
     pub(crate) fn new(service: TransportService, config: Config) -> Self {
-        let public = config.public.expect("public key to be supplied");
+        // The public key is always supplied by litep2p and is the one
+        // used to identify the local peer. This is a similar story to the
+        // supported protocols.
+        let public = config.public.expect("public key to always be supplied by litep2p; qed");
         let local_peer_id = public.to_peer_id();
 
         Self {
