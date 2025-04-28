@@ -372,7 +372,7 @@ impl Identify {
                     }
                     if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
                         if peer_id != peer.into() {
-                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided invalid listen address");
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided listen address with incorrect peer ID; discarding the address");
                             return None;
                         }
                     }
