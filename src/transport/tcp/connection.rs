@@ -437,6 +437,7 @@ impl TcpConnection {
             role,
             max_read_ahead_factor,
             max_write_buffer_size,
+            substream_open_timeout,
         )
         .await?;
 
@@ -1146,8 +1147,16 @@ mod tests {
             let keypair = Keypair::generate();
 
             // do a noise handshake
-            let (stream, _peer) =
-                noise::handshake(stream.inner(), &keypair, Role::Dialer, 5, 2).await.unwrap();
+            let (stream, _peer) = noise::handshake(
+                stream.inner(),
+                &keypair,
+                Role::Dialer,
+                5,
+                2,
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
             let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
             // after the handshake, try to negotiate some random protocol instead of yamux
@@ -1196,8 +1205,16 @@ mod tests {
 
             // do a noise handshake
             let keypair = Keypair::generate();
-            let (stream, _peer) =
-                noise::handshake(stream.inner(), &keypair, Role::Listener, 5, 2).await.unwrap();
+            let (stream, _peer) = noise::handshake(
+                stream.inner(),
+                &keypair,
+                Role::Listener,
+                5,
+                2,
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
             let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
             // after the handshake, try to negotiate some random protocol instead of yamux
@@ -1262,8 +1279,16 @@ mod tests {
 
             // do a noise handshake
             let keypair = Keypair::generate();
-            let (stream, _peer) =
-                noise::handshake(stream.inner(), &keypair, Role::Dialer, 5, 2).await.unwrap();
+            let (stream, _peer) = noise::handshake(
+                stream.inner(),
+                &keypair,
+                Role::Dialer,
+                5,
+                2,
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
             let _stream: NoiseSocket<Compat<TcpStream>> = stream;
 
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -1307,8 +1332,16 @@ mod tests {
 
             // do a noise handshake
             let keypair = Keypair::generate();
-            let (stream, _peer) =
-                noise::handshake(stream.inner(), &keypair, Role::Listener, 5, 2).await.unwrap();
+            let (stream, _peer) = noise::handshake(
+                stream.inner(),
+                &keypair,
+                Role::Listener,
+                5,
+                2,
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
             let _stream: NoiseSocket<Compat<TcpStream>> = stream;
 
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
