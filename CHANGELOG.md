@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.4] - 2025-04-29
 
+This release brings several improvements and fixes to litep2p, advancing its stability and readiness for production use.
+
+### Performance Improvements
+
+This release addresses an issue where notification protocols failed to exit on handle drop, lowering CPU usage in scenarios like minimal-relay-chains from 7% to 0.1%.
+
+### Robustness Improvements
+
+- Kademlia:
+  - Optimized address store by sorting addresses based on dialing score, bounding memory consumption and improving efficiency.
+  - Limited `FIND_NODE` responses to the replication factor, reducing data stored in the routing table.
+  - Address store improvements enhance robustness against routing table alterations.
+
+- Identify Codec:
+  - Enhanced message decoding to manage malformed or unexpected messages gracefully.
+
+- Bitswap:
+  - Introduced a write timeout for sending frames, preventing protocol hangs or delays.
+
+### Testing and Reliability
+
+- Fuzzing Harness: Added a fuzzing harness by SRLabs to uncover and resolve potential issues, improving code robustness. Thanks to @R9295 for the contribution!
+
+- Testing Enhancements: Improved notification state machine testing. Thanks to Dominique (@Imod7) for the contribution!
+
+### Dependency Management
+
+- Updated all dependencies for stable feature flags (default and "websocket") to their latest versions.
+
+- Reorganized dependencies under specific feature flags, shrinking the default feature set and avoiding exposure of outdated dependencies from experimental features.
+
 ### Fixed
 
 - notifications: Exit protocols on handle drop to save up CPU of `minimal-relay-chains`  ([#376](https://github.com/paritytech/litep2p/pull/376))
