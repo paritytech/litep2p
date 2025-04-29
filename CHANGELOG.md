@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] - 2025-04-29
+
+### Fixed
+
+- notifications: Exit protocols on handle drop to save up CPU of `minimal-relay-chains`  ([#376](https://github.com/paritytech/litep2p/pull/376))
+- identify: Improve identify message decoding  ([#379](https://github.com/paritytech/litep2p/pull/379))
+- crypto/noise: Set timeout limits for the noise handshake  ([#373](https://github.com/paritytech/litep2p/pull/373))
+- kad: Improve robustness of addresses from the routing table  ([#369](https://github.com/paritytech/litep2p/pull/369))
+- kad: Bound kademlia messages to the replication factor  ([#371](https://github.com/paritytech/litep2p/pull/371))
+- codec: Decode smaller payloads for identity to None  ([#362](https://github.com/paritytech/litep2p/pull/362))
+
+### Added
+
+- bitswap: Add write timeout for sending frames  ([#361](https://github.com/paritytech/litep2p/pull/361))
+- notif/tests: check test state  ([#360](https://github.com/paritytech/litep2p/pull/360))
+- SRLabs: Introduce simple fuzzing harness  ([#367](https://github.com/paritytech/litep2p/pull/367))
+- SRLabs: Introduce Fuzzing Harness  ([#365](https://github.com/paritytech/litep2p/pull/365))
+
+### Changed
+
+- features: Move quic related dependencies under feature flag  ([#359](https://github.com/paritytech/litep2p/pull/359))
+- tests/substrate: Remove outdated substrate specific conformace testing  ([#370](https://github.com/paritytech/litep2p/pull/370))
+- ci: Update stable dependencies  ([#375](https://github.com/paritytech/litep2p/pull/375))
+- build(deps): bump hex-literal from 0.4.1 to 1.0.0  ([#381](https://github.com/paritytech/litep2p/pull/381))
+- build(deps): bump tokio from 1.44.1 to 1.44.2 in /fuzz/structure-aware  ([#378](https://github.com/paritytech/litep2p/pull/378))
+- build(deps): bump Swatinem/rust-cache from 2.7.7 to 2.7.8  ([#363](https://github.com/paritytech/litep2p/pull/363))
+- build(deps): bump tokio from 1.43.0 to 1.43.1  ([#368](https://github.com/paritytech/litep2p/pull/368))
+- build(deps): bump openssl from 0.10.70 to 0.10.72  ([#366](https://github.com/paritytech/litep2p/pull/366))
+
 ## [0.9.3] - 2025-03-11
 
 This release introduces an API for setting the maximum kademlia message size.
