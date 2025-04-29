@@ -1886,7 +1886,7 @@ checksum = "23fb14cb19457329c82206317a5663005a4d404783dc74f4252769b0d5f42856"
 
 [[package]]
 name = "litep2p"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "async-trait",
  "bs58 0.5.1",
