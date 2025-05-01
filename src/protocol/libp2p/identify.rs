@@ -345,20 +345,6 @@ impl Identify {
 
             tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
 
-            // The check ensures the provided public key is the same one as the
-            // one exchanged during the connection establishment.
-            if let Some(public_key) = &info.public_key {
-                let public_key = PublicKey::from_protobuf_encoding(&public_key).map_err(|err| {
-                    tracing::debug!(target: LOG_TARGET, ?peer, ?err, "peer identified provided undecodable public key");
-                    err
-                })?;
-
-                if public_key.to_peer_id() != peer {
-                    tracing::debug!(target: LOG_TARGET, ?peer, "peer identified provided invalid public key");
-                    return Err(Error::InvalidData);
-                }
-            }
-
             let listen_addresses = info
                 .listen_addrs
                 .iter()
