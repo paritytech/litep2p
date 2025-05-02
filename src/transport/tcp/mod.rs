@@ -42,14 +42,17 @@ use futures::{
     stream::{AbortHandle, FuturesUnordered, Stream, StreamExt},
     TryFutureExt,
 };
+use hickory_resolver::TokioAsyncResolver;
 use multiaddr::Multiaddr;
 use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
 
 use std::{
+    borrow::Borrow,
     collections::HashMap,
     net::SocketAddr,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -129,6 +132,9 @@ pub(crate) struct TcpTransport {
     /// Connections which have been opened and negotiated but are being validated by the
     /// `TransportManager`.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
+
+    /// DNS resolver.
+    resolver: Arc<TokioAsyncResolver>,
 }
 
 impl TcpTransport {
@@ -176,11 +182,14 @@ impl TcpTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
+        resolver: impl Borrow<TokioAsyncResolver>,
     ) -> Result<(Multiaddr, TcpStream), DialError> {
         let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
 
         let remote_address =
-            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
+            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip(resolver))
+                .await
+            {
                 Err(_) => {
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -288,6 +297,10 @@ impl TransportBuilder for TcpTransport {
         Ok((
             Self {
                 listener,
+                resolver: Arc::new(TokioAsyncResolver::tokio(
+                    config.resolver_config.clone(),
+                    config.resolver_opts.clone(),
+                )),
                 config,
                 context,
                 dial_addresses,
@@ -317,13 +330,19 @@ impl Transport for TcpTransport {
         let dial_addresses = self.dial_addresses.clone();
         let keypair = self.context.keypair.clone();
         let nodelay = self.config.nodelay;
+        let resolver = self.resolver.clone();
 
         self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
-            let (_, stream) =
-                TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout, nodelay)
-                    .await
-                    .map_err(|error| (connection_id, error))?;
+            let (_, stream) = TcpTransport::dial_peer(
+                address,
+                dial_addresses,
+                connection_open_timeout,
+                nodelay,
+                resolver,
+            )
+            .await
+            .map_err(|error| (connection_id, error))?;
 
             TcpConnection::open_connection(
                 connection_id,
@@ -426,6 +445,7 @@ impl Transport for TcpTransport {
                 let dial_addresses = self.dial_addresses.clone();
                 let connection_open_timeout = self.config.connection_open_timeout;
                 let nodelay = self.config.nodelay;
+                let resolver = self.resolver.clone();
 
                 async move {
                     TcpTransport::dial_peer(
@@ -433,6 +453,7 @@ impl Transport for TcpTransport {
                         dial_addresses,
                         connection_open_timeout,
                         nodelay,
+                        resolver,
                     )
                     .await
                     .map_err(|error| (address, error))

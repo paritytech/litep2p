@@ -751,6 +751,10 @@ mod tests {
     use crate::transport::tcp::TcpTransport;
 
     use super::*;
+    use hickory_resolver::{
+        config::{ResolverConfig, ResolverOpts},
+        TokioAsyncResolver,
+    };
     use tokio::{io::AsyncWriteExt, net::TcpListener};
 
     #[tokio::test]
@@ -774,6 +778,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
         )
         .await
         .unwrap();
@@ -869,6 +874,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
         )
         .await
         .unwrap();
@@ -1011,6 +1017,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
         )
         .await
         .unwrap();
@@ -1057,6 +1064,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
         )
         .await
         .unwrap();
@@ -1228,6 +1236,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
         )
         .await
         .unwrap();
@@ -1354,6 +1363,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
         )
         .await
         .unwrap();
