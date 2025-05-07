@@ -80,6 +80,9 @@ pub struct Config {
     /// How long should litep2p wait for a substream to be opened before considering
     /// the substream rejected.
     pub substream_open_timeout: std::time::Duration,
+
+    /// Use system's DNS config.
+    pub use_system_dns_config: bool,
 }
 
 impl Default for Config {
@@ -96,6 +99,7 @@ impl Default for Config {
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,
             connection_open_timeout: CONNECTION_OPEN_TIMEOUT,
             substream_open_timeout: SUBSTREAM_OPEN_TIMEOUT,
+            use_system_dns_config: false,
         }
     }
 }

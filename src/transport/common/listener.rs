@@ -26,16 +26,14 @@ use crate::{
 };
 
 use futures::Stream;
-use hickory_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
+use hickory_resolver::TokioAsyncResolver;
 use multiaddr::{Multiaddr, Protocol};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
 use std::{
+    borrow::Borrow,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
@@ -73,7 +71,10 @@ pub enum DnsType {
 
 impl AddressType {
     /// Resolve the address to a concrete IP.
-    pub async fn lookup_ip(self) -> Result<SocketAddr, DnsError> {
+    pub async fn lookup_ip(
+        self,
+        resolver: impl Borrow<TokioAsyncResolver>,
+    ) -> Result<SocketAddr, DnsError> {
         let (url, port, dns_type) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),
@@ -84,23 +85,19 @@ impl AddressType {
             } => (address, port, dns_type),
         };
 
-        let lookup =
-            match TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
-                .lookup_ip(url.clone())
-                .await
-            {
-                Ok(lookup) => lookup,
-                Err(error) => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "failed to resolve DNS address `{}`",
-                        url
-                    );
+        let lookup = match resolver.borrow().lookup_ip(url.clone()).await {
+            Ok(lookup) => lookup,
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to resolve DNS address `{}`",
+                    url
+                );
 
-                    return Err(DnsError::ResolveError(url));
-                }
-            };
+                return Err(DnsError::ResolveError(url));
+            }
+        };
 
         let Some(ip) = lookup.iter().find(|ip| match dns_type {
             DnsType::Dns => true,
