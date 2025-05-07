@@ -294,13 +294,16 @@ impl TransportBuilder for TcpTransport {
             config.nodelay,
         );
 
+        let (resolver_config, resolver_opts) = if config.use_system_dns_config {
+            hickory_resolver::system_conf::read_system_conf()
+                .expect("TODO failed to read system DNS config")
+        } else {
+            (Default::default(), Default::default())
+        };
+
         Ok((
             Self {
                 listener,
-                resolver: Arc::new(TokioAsyncResolver::tokio(
-                    config.resolver_config.clone(),
-                    config.resolver_opts.clone(),
-                )),
                 config,
                 context,
                 dial_addresses,
@@ -311,6 +314,7 @@ impl TransportBuilder for TcpTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
+                resolver: Arc::new(TokioAsyncResolver::tokio(resolver_config, resolver_opts)),
             },
             listen_addresses,
         ))

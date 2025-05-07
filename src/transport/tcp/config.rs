@@ -81,11 +81,8 @@ pub struct Config {
     /// the substream rejected.
     pub substream_open_timeout: std::time::Duration,
 
-    /// DNS resolver config.
-    pub resolver_config: hickory_resolver::config::ResolverConfig,
-
-    /// DNS resolver options.
-    pub resolver_opts: hickory_resolver::config::ResolverOpts,
+    /// Use system's DNS config.
+    pub use_system_dns_config: bool,
 }
 
 impl Default for Config {
@@ -102,18 +99,7 @@ impl Default for Config {
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,
             connection_open_timeout: CONNECTION_OPEN_TIMEOUT,
             substream_open_timeout: SUBSTREAM_OPEN_TIMEOUT,
-            resolver_config: Default::default(),
-            resolver_opts: Default::default(),
+            use_system_dns_config: false,
         }
-    }
-}
-
-impl Config {
-    /// Set DNS resolver according to system configuration.
-    pub fn set_system_resolver(&mut self) -> hickory_resolver::error::ResolveResult<()> {
-        let (resolver_config, resolver_opts) = hickory_resolver::system_conf::read_system_conf()?;
-        self.resolver_config = resolver_config;
-        self.resolver_opts = resolver_opts;
-        Ok(())
     }
 }

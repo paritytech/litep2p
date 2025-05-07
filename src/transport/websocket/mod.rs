@@ -42,9 +42,10 @@ use futures::{
     stream::{AbortHandle, FuturesUnordered},
     Stream, StreamExt, TryFutureExt,
 };
+use hickory_resolver::TokioAsyncResolver;
 use multiaddr::{Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
-use std::net::SocketAddr;
+use std::{borrow::Borrow, net::SocketAddr, sync::Arc};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -132,6 +133,9 @@ pub(crate) struct WebSocketTransport {
 
     /// Negotiated connections waiting validation.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
+
+    /// DNS resolver.
+    resolver: Arc<TokioAsyncResolver>,
 }
 
 impl WebSocketTransport {
@@ -224,12 +228,15 @@ impl WebSocketTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
+        resolver: impl Borrow<TokioAsyncResolver>,
     ) -> Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>), DialError> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
 
         let (socket_address, _) = WebSocketAddress::multiaddr_to_socket_address(&address)?;
         let remote_address =
-            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
+            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip(resolver))
+                .await
+            {
                 Err(_) => return Err(DialError::Timeout),
                 Ok(Err(error)) => return Err(error.into()),
                 Ok(Ok(address)) => address,
@@ -317,6 +324,13 @@ impl TransportBuilder for WebSocketTransport {
             config.nodelay,
         );
 
+        let (resolver_config, resolver_opts) = if config.use_system_dns_config {
+            hickory_resolver::system_conf::read_system_conf()
+                .expect("TODO failed to read system DNS config")
+        } else {
+            (Default::default(), Default::default())
+        };
+
         Ok((
             Self {
                 listener,
@@ -330,6 +344,7 @@ impl TransportBuilder for WebSocketTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
+                resolver: Arc::new(TokioAsyncResolver::tokio(resolver_config, resolver_opts)),
             },
             listen_addresses,
         ))
@@ -347,6 +362,7 @@ impl Transport for WebSocketTransport {
         let substream_open_timeout = self.config.substream_open_timeout;
         let dial_addresses = self.dial_addresses.clone();
         let nodelay = self.config.nodelay;
+        let resolver = self.resolver.clone();
 
         self.pending_dials.insert(connection_id, address.clone());
 
@@ -358,6 +374,7 @@ impl Transport for WebSocketTransport {
                 dial_addresses,
                 connection_open_timeout,
                 nodelay,
+                resolver,
             )
             .await
             .map_err(|error| (connection_id, error))?;
@@ -475,6 +492,7 @@ impl Transport for WebSocketTransport {
                 let connection_open_timeout = self.config.connection_open_timeout;
                 let dial_addresses = self.dial_addresses.clone();
                 let nodelay = self.config.nodelay;
+                let resolver = self.resolver.clone();
 
                 async move {
                     WebSocketTransport::dial_peer(
@@ -482,6 +500,7 @@ impl Transport for WebSocketTransport {
                         dial_addresses,
                         connection_open_timeout,
                         nodelay,
+                        resolver,
                     )
                     .await
                     .map_err(|error| (address, error))
