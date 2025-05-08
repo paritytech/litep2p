@@ -155,15 +155,13 @@ impl PeerState {
     pub fn can_dial(&self) -> StateDialResult {
         match self {
             // The peer is already connected, no need to dial again.
-            Self::Connected { .. } => return StateDialResult::AlreadyConnected,
+            Self::Connected { .. } => StateDialResult::AlreadyConnected,
             // The dialing state is already in progress, an event will be emitted later.
             Self::Dialing { .. }
             | Self::Opening { .. }
             | Self::Disconnected {
                 dial_record: Some(_),
-            } => {
-                return StateDialResult::DialingInProgress;
-            }
+            } => StateDialResult::DialingInProgress,
 
             Self::Disconnected { dial_record: None } => StateDialResult::Ok,
         }
@@ -328,7 +326,7 @@ impl PeerState {
             _ => {}
         };
 
-        return false;
+        false
     }
 
     /// Returns `true` if the connection was closed.
@@ -393,7 +391,7 @@ impl PeerState {
                     return true;
                 }
 
-                return false;
+                false
             }
             _ => false,
         }

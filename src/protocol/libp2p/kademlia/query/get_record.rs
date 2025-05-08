@@ -517,7 +517,7 @@ mod tests {
 
         // Provide different response from peer b with peer d as candidate.
         let record = Record::new(key.clone(), vec![4, 5, 6]);
-        context.register_response(peer_b, Some(record), vec![peer_to_kad(peer_d.clone())]);
+        context.register_response(peer_b, Some(record), vec![peer_to_kad(peer_d)]);
         // Check propagated action.
         let record = context.next_action().unwrap();
         match record {

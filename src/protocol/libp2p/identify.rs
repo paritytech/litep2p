@@ -323,7 +323,7 @@ impl Identify {
             "outbound substream opened"
         );
 
-        let local_peer_id = self.local_peer_id.clone();
+        let local_peer_id = self.local_peer_id;
 
         self.pending_outbound.push(Box::pin(async move {
             let payload =
@@ -484,7 +484,7 @@ mod tests {
         // Create two instances of litep2p
         let (mut litep2p1, mut event_stream1, peer1) = create_litep2p();
         let (mut litep2p2, mut event_stream2, _peer2) = create_litep2p();
-        let litep2p1_address = litep2p1.listen_addresses().into_iter().next().unwrap();
+        let litep2p1_address = litep2p1.listen_addresses().next().unwrap();
 
         let multiaddr: Multiaddr = "/ip6/::9/tcp/111".parse().unwrap();
         // Litep2p1 is now reporting the new address.

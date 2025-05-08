@@ -233,7 +233,7 @@ impl RoutingTable {
     /// Get `limit` closest peers to `target` from the k-buckets.
     pub fn closest<K: Clone>(&mut self, target: &Key<K>, limit: usize) -> Vec<KademliaPeer> {
         ClosestBucketsIter::new(self.local_key.distance(&target))
-            .flat_map(|index| self.buckets[index.get()].closest_iter(&target))
+            .flat_map(|index| self.buckets[index.get()].closest_iter(target))
             .take(limit)
             .cloned()
             .collect()
@@ -564,10 +564,8 @@ mod tests {
         // the implementation and keep it consistent with `libp2p` it's kept as is. There are
         // virtually no practical consequences of this, because to have bucket 0 populated we have
         // to encounter two sha256 hash values differing only in one least significant bit.
-        let expected_buckets = vec![7, 4, 3, 1, 0, 0, 2, 5, 6]
-            .into_iter()
-            .chain(8..=255)
-            .map(|i| BucketIndex(i));
+        let expected_buckets =
+            vec![7, 4, 3, 1, 0, 0, 2, 5, 6].into_iter().chain(8..=255).map(BucketIndex);
         for expected in expected_buckets {
             let got = iter.next().unwrap();
             assert_eq!(got, expected);
@@ -581,7 +579,7 @@ mod tests {
         let d = Distance(U256::from(0b01011010));
         let mut iter = ClosestBucketsIter::new(d);
         let expected_buckets =
-            vec![6, 4, 3, 1, 0, 2, 5, 7].into_iter().chain(8..=255).map(|i| BucketIndex(i));
+            vec![6, 4, 3, 1, 0, 2, 5, 7].into_iter().chain(8..=255).map(BucketIndex);
         for expected in expected_buckets {
             let got = iter.next().unwrap();
             assert_eq!(got, expected);

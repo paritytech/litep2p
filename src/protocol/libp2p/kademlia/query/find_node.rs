@@ -309,7 +309,7 @@ mod tests {
             replication_factor: 20,
             parallelism_factor: 10,
             query: QueryId(0),
-            target: Key::new(vec![1, 2, 3].into()),
+            target: Key::new(vec![1, 2, 3]),
         }
     }
 
@@ -498,7 +498,7 @@ mod tests {
         assert_eq!(context.responses.len(), 1);
 
         // Provide different response from peer b with peer d as candidate.
-        context.register_response(peer_b, vec![peer_to_kad(peer_d.clone())]);
+        context.register_response(peer_b, vec![peer_to_kad(peer_d)]);
         assert_eq!(context.pending.len(), 1);
         assert_eq!(context.queried.len(), 2);
         assert_eq!(context.responses.len(), 2);

@@ -812,7 +812,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(mut dialer), Ok((stream, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -905,7 +905,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -949,7 +949,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -1091,7 +1091,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(_dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -1131,7 +1131,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -1264,7 +1264,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept())
+            tokio::join!(TcpStream::connect(address), listener.accept())
         else {
             panic!("failed to establish connection");
         };

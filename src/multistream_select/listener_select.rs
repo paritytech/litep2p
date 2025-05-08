@@ -405,20 +405,17 @@ mod tests {
 
     #[test]
     fn webrtc_listener_negotiate_works() {
-        let mut local_protocols = vec![
+        let mut local_protocols = [
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
             ProtocolName::from("/13371338/proto/3"),
             ProtocolName::from("/13371338/proto/4"),
         ];
-        let message = webrtc_encode_multistream_message(
-            vec![
-                Message::Protocol(Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap()),
-                Message::Protocol(Protocol::try_from(&b"/sup/proto/1"[..]).unwrap()),
-            ]
-            .into_iter(),
-        )
+        let message = webrtc_encode_multistream_message(vec![
+            Message::Protocol(Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap()),
+            Message::Protocol(Protocol::try_from(&b"/sup/proto/1"[..]).unwrap()),
+        ])
         .unwrap()
         .freeze();
 
@@ -433,7 +430,7 @@ mod tests {
 
     #[test]
     fn invalid_message() {
-        let mut local_protocols = vec![
+        let mut local_protocols = [
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
@@ -455,7 +452,7 @@ mod tests {
 
     #[test]
     fn only_header_line_received() {
-        let mut local_protocols = vec![
+        let mut local_protocols = [
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
@@ -466,7 +463,7 @@ mod tests {
         // send only header line
         let mut bytes = BytesMut::with_capacity(32);
         let message = Message::Header(HeaderLine::V1);
-        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+        message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
             Err(error) => assert!(std::matches!(
@@ -481,7 +478,7 @@ mod tests {
 
     #[test]
     fn header_line_missing() {
-        let mut local_protocols = vec![
+        let mut local_protocols = [
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
@@ -495,7 +492,7 @@ mod tests {
             Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
             Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
         ]);
-        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+        message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
             Err(error) => assert!(std::matches!(
@@ -510,19 +507,16 @@ mod tests {
 
     #[test]
     fn protocol_not_supported() {
-        let mut local_protocols = vec![
+        let mut local_protocols = [
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
             ProtocolName::from("/13371338/proto/3"),
             ProtocolName::from("/13371338/proto/4"),
         ];
-        let message = webrtc_encode_multistream_message(
-            vec![Message::Protocol(
-                Protocol::try_from(&b"/13371339/proto/1"[..]).unwrap(),
-            )]
-            .into_iter(),
-        )
+        let message = webrtc_encode_multistream_message(vec![Message::Protocol(
+            Protocol::try_from(&b"/13371339/proto/1"[..]).unwrap(),
+        )])
         .unwrap()
         .freeze();
 

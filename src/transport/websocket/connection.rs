@@ -647,7 +647,7 @@ mod tests {
             Keypair::generate(),
             stream,
             address.clone(),
-            peer.clone(),
+            peer,
             url,
             Default::default(),
             5,
@@ -674,7 +674,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((stream, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -762,7 +762,7 @@ mod tests {
             Keypair::generate(),
             stream,
             address.clone(),
-            peer.clone(),
+            peer,
             url,
             Default::default(),
             5,
@@ -789,7 +789,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((stream, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -849,7 +849,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((stream, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -922,7 +922,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((stream, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -1032,7 +1032,7 @@ mod tests {
             Keypair::generate(),
             stream,
             address.clone(),
-            peer.clone(),
+            peer,
             url,
             Default::default(),
             5,
@@ -1057,7 +1057,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((stream, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -1197,7 +1197,7 @@ mod tests {
             Keypair::generate(),
             stream,
             address.clone(),
-            peer.clone(),
+            peer,
             url,
             Default::default(),
             5,
@@ -1224,7 +1224,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((stream, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -1348,7 +1348,7 @@ mod tests {
             Keypair::generate(),
             stream,
             address.clone(),
-            peer.clone(),
+            peer,
             url,
             Default::default(),
             5,

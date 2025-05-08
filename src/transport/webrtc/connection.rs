@@ -486,7 +486,7 @@ impl WebRtcConnection {
         };
 
         match state {
-            ChannelState::InboundOpening =>
+            ChannelState::InboundOpening => {
                 match self.on_inbound_opening_channel_data(channel_id, data).await {
                     Ok((substream_id, handle, permit)) => {
                         self.handles.insert(channel_id, handle);
@@ -511,7 +511,8 @@ impl WebRtcConnection {
                         self.channels.insert(channel_id, ChannelState::Closing);
                         self.rtc.direct_api().close_data_channel(channel_id);
                     }
-                },
+                }
+            }
             ChannelState::OutboundOpening {
                 context,
                 dialer_state,

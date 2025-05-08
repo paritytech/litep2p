@@ -418,25 +418,22 @@ async fn get_record_retrieves_remote_records() {
             event = litep2p1.next_event() => {}
             event = litep2p2.next_event() => {}
             event = kad_handle1.next() => {
-                match event {
-                    Some(KademliaEvent::QueryFailed { query_id }) => {
-                        // Query failed, but the record was stored locally.
-                        assert_eq!(query_id, query1);
+                if let Some(KademliaEvent::QueryFailed { query_id }) = event {
+                    // Query failed, but the record was stored locally.
+                    assert_eq!(query_id, query1);
 
-                        // Let peer2 know about peer1.
-                        kad_handle2
-                            .add_known_peer(
-                                *litep2p1.local_peer_id(),
-                                litep2p1.listen_addresses().cloned().collect(),
-                            )
-                            .await;
+                    // Let peer2 know about peer1.
+                    kad_handle2
+                        .add_known_peer(
+                            *litep2p1.local_peer_id(),
+                            litep2p1.listen_addresses().cloned().collect(),
+                        )
+                        .await;
 
-                        // Let peer2 get record from peer1.
-                        let query_id = kad_handle2
-                            .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::One).await;
-                        query2 = Some(query_id);
-                    }
-                    _ => {}
+                    // Let peer2 get record from peer1.
+                    let query_id = kad_handle2
+                        .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::One).await;
+                    query2 = Some(query_id);
                 }
             }
             event = kad_handle2.next() => {
@@ -720,13 +717,10 @@ async fn provider_added_to_remote_node() {
             event = litep2p2.next_event() => {}
             event = kad_handle1.next() => {}
             event = kad_handle2.next() => {
-                match event {
-                    Some(KademliaEvent::IncomingProvider { provided_key, provider }) => {
-                        assert_eq!(provided_key, key);
-                        assert_eq!(provider, expected_provider);
-                        break
-                    }
-                    _ => {}
+                if let Some(KademliaEvent::IncomingProvider { provided_key, provider }) = event {
+                    assert_eq!(provided_key, key);
+                    assert_eq!(provider, expected_provider);
+                    break
                 }
             }
         }

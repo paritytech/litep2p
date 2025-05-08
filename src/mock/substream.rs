@@ -102,10 +102,7 @@ impl DummySubstream {
 impl Sink<bytes::Bytes> for DummySubstream {
     type Error = SubstreamError;
 
-    fn poll_ready<'a>(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'a>,
-    ) -> Poll<Result<(), SubstreamError>> {
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), SubstreamError>> {
         Poll::Pending
     }
 
@@ -113,17 +110,11 @@ impl Sink<bytes::Bytes> for DummySubstream {
         Ok(())
     }
 
-    fn poll_flush<'a>(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'a>,
-    ) -> Poll<Result<(), SubstreamError>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), SubstreamError>> {
         Poll::Pending
     }
 
-    fn poll_close<'a>(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'a>,
-    ) -> Poll<Result<(), SubstreamError>> {
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), SubstreamError>> {
         Poll::Ready(Ok(()))
     }
 }
@@ -131,9 +122,9 @@ impl Sink<bytes::Bytes> for DummySubstream {
 impl Stream for DummySubstream {
     type Item = Result<BytesMut, SubstreamError>;
 
-    fn poll_next<'a>(
+    fn poll_next(
         self: Pin<&mut Self>,
-        _cx: &mut Context<'a>,
+        _cx: &mut Context<'_>,
     ) -> Poll<Option<Result<BytesMut, SubstreamError>>> {
         Poll::Pending
     }

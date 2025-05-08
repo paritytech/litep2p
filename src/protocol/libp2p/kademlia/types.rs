@@ -19,6 +19,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+// Note: This is coming from the external construct_uint crate.
+#![allow(clippy::manual_div_ceil)]
+
 //! Kademlia types.
 
 use crate::{
