@@ -336,7 +336,7 @@ mod tests {
     use super::*;
     use crate::{
         crypto::ed25519::Keypair,
-        transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
+        transport::{manager::TransportManager, ConnectionLimits},
         BandwidthSink,
     };
     use futures::StreamExt;
@@ -354,7 +354,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
-            ConnectionLimitsConfig::default(),
+            Some(Box::new(ConnectionLimits::new(Default::default()))),
         );
 
         let mdns1 = Mdns::new(
@@ -377,7 +377,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
-            ConnectionLimitsConfig::default(),
+            Some(Box::new(ConnectionLimits::new(Default::default()))),
         );
 
         let mdns2 = Mdns::new(

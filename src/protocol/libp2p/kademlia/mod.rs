@@ -1260,10 +1260,7 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
-        transport::{
-            manager::{limits::ConnectionLimitsConfig, TransportManager},
-            KEEP_ALIVE_TIMEOUT,
-        },
+        transport::{manager::TransportManager, ConnectionLimits, KEEP_ALIVE_TIMEOUT},
         types::protocol::ProtocolName,
         BandwidthSink, ConnectionId,
     };
@@ -1284,7 +1281,7 @@ mod tests {
             HashSet::new(),
             BandwidthSink::new(),
             8usize,
-            ConnectionLimitsConfig::default(),
+            Some(Box::new(ConnectionLimits::new(Default::default()))),
         );
 
         let peer = PeerId::random();

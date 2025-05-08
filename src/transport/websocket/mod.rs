@@ -631,6 +631,7 @@ impl Stream for WebSocketTransport {
 
                     Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                         connection_id,
+                        address,
                     }))
                 }
             };
