@@ -59,6 +59,7 @@ use types::ConnectionId;
 
 use std::{collections::HashSet, sync::Arc};
 
+use crate::error::AddressError;
 pub use bandwidth::BandwidthSink;
 pub use error::Error;
 pub use peer_id::PeerId;
@@ -352,9 +353,9 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(
-                    Multihash::from_bytes(&local_peer_id.to_bytes()).unwrap(),
-                )));
+                let peer_id_multihash = Multihash::from_bytes(&local_peer_id.to_bytes())
+                    .map_err(|_e| Error::AddressError(AddressError::InvalidMultihash))?;
+                listen_addresses.push(address.with(Protocol::P2p(peer_id_multihash)));
             }
 
             transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
