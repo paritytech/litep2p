@@ -27,8 +27,7 @@ use crate::{
 
 use futures::Stream;
 use hickory_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
+    config::ResolverConfig, name_server::TokioConnectionProvider, TokioResolver,
 };
 use multiaddr::{Multiaddr, Protocol};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
@@ -84,23 +83,25 @@ impl AddressType {
             } => (address, port, dns_type),
         };
 
-        let lookup =
-            match TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
-                .lookup_ip(url.clone())
-                .await
-            {
-                Ok(lookup) => lookup,
-                Err(error) => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "failed to resolve DNS address `{}`",
-                        url
-                    );
+        let resolver = TokioResolver::builder_with_config(
+            ResolverConfig::default(),
+            TokioConnectionProvider::default(),
+        )
+        .build();
 
-                    return Err(DnsError::ResolveError(url));
-                }
-            };
+        let lookup = match resolver.lookup_ip(url.clone()).await {
+            Ok(lookup) => lookup,
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to resolve DNS address `{}`",
+                    url
+                );
+
+                return Err(DnsError::ResolveError(url));
+            }
+        };
 
         let Some(ip) = lookup.iter().find(|ip| match dns_type {
             DnsType::Dns => true,
