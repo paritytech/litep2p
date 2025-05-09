@@ -261,8 +261,7 @@ mod tests {
         let peer = PeerId::from_public_key(&keypair.public().into());
         let (mut listener, listen_addresses) =
             QuicListener::new(&keypair, vec![address.clone()]).unwrap();
-        let Some(Protocol::Udp(port)) =
-            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        let Some(Protocol::Udp(port)) = listen_addresses.first().unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
@@ -303,14 +302,13 @@ mod tests {
         let (mut listener, listen_addresses) =
             QuicListener::new(&keypair, vec![address1, address2]).unwrap();
 
-        let Some(Protocol::Udp(port1)) =
-            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        let Some(Protocol::Udp(port1)) = listen_addresses.first().unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
 
         let Some(Protocol::Udp(port2)) =
-            listen_addresses.iter().skip(1).next().unwrap().clone().iter().skip(1).next()
+            listen_addresses.iter().nth(1).unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
@@ -378,8 +376,7 @@ mod tests {
         )
         .unwrap();
 
-        let Some(Protocol::Udp(port)) =
-            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        let Some(Protocol::Udp(port)) = listen_addresses.first().unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };

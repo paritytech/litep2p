@@ -307,7 +307,7 @@ impl ProtocolSet {
             fallback,
             direction,
             substream,
-            connection_id: self.connection.connection_id().clone(),
+            connection_id: *self.connection.connection_id(),
         };
 
         protocol_context

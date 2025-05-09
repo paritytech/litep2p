@@ -679,9 +679,8 @@ fn parse_and_verify_peer_id(
     let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
     let remote_public_key = PublicKey::from_protobuf_encoding(&identity)?;
     let remote_key_signature =
-        payload.identity_sig.ok_or(NegotiationError::BadSignature).map_err(|err| {
+        payload.identity_sig.ok_or(NegotiationError::BadSignature).inspect_err(|_err| {
             tracing::debug!(target: LOG_TARGET, "payload without signature");
-            err
         })?;
 
     let peer_id = PeerId::from_public_key(&remote_public_key);

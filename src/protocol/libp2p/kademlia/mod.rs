@@ -87,6 +87,7 @@ mod schema {
 
 /// Peer action.
 #[derive(Debug, Clone)]
+#[allow(clippy::enum_variant_names)]
 enum PeerAction {
     /// Send `FIND_NODE` message to peer.
     SendFindNode(QueryId),
@@ -633,9 +634,11 @@ impl Kademlia {
 
                         // Make sure local provider addresses are up to date.
                         let local_peer_id = self.local_key.clone().into_preimage();
-                        providers.iter_mut().find(|p| p.peer == local_peer_id).as_mut().map(|p| {
+                        if let Some(p) =
+                            providers.iter_mut().find(|p| p.peer == local_peer_id).as_mut()
+                        {
                             p.addresses = self.service.public_addresses().get_addresses();
-                        });
+                        }
 
                         let closer_peers = self
                             .routing_table

@@ -95,7 +95,7 @@ impl MemoryStore {
         let is_expired = self
             .records
             .get(key)
-            .map_or(false, |record| record.is_expired(std::time::Instant::now()));
+            .is_some_and(|record| record.is_expired(std::time::Instant::now()));
 
         if is_expired {
             self.records.remove(key);
@@ -153,7 +153,7 @@ impl MemoryStore {
     ///
     /// Returns a non-empty list of providers, if any.
     pub fn get_providers(&mut self, key: &Key) -> Vec<ContentProvider> {
-        let drop_key = self.provider_keys.get_mut(key).map_or(false, |providers| {
+        let drop_key = self.provider_keys.get_mut(key).is_some_and(|providers| {
             let now = std::time::Instant::now();
             providers.retain(|p| !p.is_expired(now));
 
@@ -168,7 +168,7 @@ impl MemoryStore {
             self.provider_keys
                 .get(key)
                 .cloned()
-                .unwrap_or_else(|| Vec::default())
+                .unwrap_or_else(Vec::default)
                 .into_iter()
                 .map(|p| ContentProvider {
                     peer: p.provider,
@@ -545,9 +545,9 @@ mod tests {
             let target = KademliaKey::new(key.clone());
             let mut providers = providers;
             providers.sort_by(|p1, p2| {
-                KademliaKey::from(p1.peer.clone())
+                KademliaKey::from(p1.peer)
                     .distance(&target)
-                    .cmp(&KademliaKey::from(p2.peer.clone()).distance(&target))
+                    .cmp(&KademliaKey::from(p2.peer).distance(&target))
             });
             providers
         };
@@ -603,9 +603,9 @@ mod tests {
             let target = KademliaKey::new(key.clone());
             let mut providers = providers;
             providers.sort_by(|p1, p2| {
-                KademliaKey::from(p1.peer.clone())
+                KademliaKey::from(p1.peer)
                     .distance(&target)
-                    .cmp(&KademliaKey::from(p2.peer.clone()).distance(&target))
+                    .cmp(&KademliaKey::from(p2.peer).distance(&target))
             });
             providers.truncate(10);
             providers
@@ -635,9 +635,9 @@ mod tests {
             let target = KademliaKey::new(key.clone());
             let mut providers = providers;
             providers.sort_by(|p1, p2| {
-                KademliaKey::from(p1.peer.clone())
+                KademliaKey::from(p1.peer)
                     .distance(&target)
-                    .cmp(&KademliaKey::from(p2.peer.clone()).distance(&target))
+                    .cmp(&KademliaKey::from(p2.peer).distance(&target))
             });
             providers
         };
@@ -681,9 +681,9 @@ mod tests {
             let target = KademliaKey::new(key.clone());
             let mut providers = providers;
             providers.sort_by(|p1, p2| {
-                KademliaKey::from(p1.peer.clone())
+                KademliaKey::from(p1.peer)
                     .distance(&target)
-                    .cmp(&KademliaKey::from(p2.peer.clone()).distance(&target))
+                    .cmp(&KademliaKey::from(p2.peer).distance(&target))
             });
             providers
         };

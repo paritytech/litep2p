@@ -428,7 +428,7 @@ mod tests {
             .collect::<HashMap<_, _>>();
         store.extend(records);
 
-        for record in store.addresses.values().cloned() {
+        for record in store.addresses.values() {
             let stored = cloned.get(record.address()).unwrap();
             assert_eq!(stored.score(), record.score());
             assert_eq!(stored.address(), record.address());
@@ -459,7 +459,7 @@ mod tests {
         let cloned = records.iter().cloned().collect::<HashMap<_, _>>();
         store.extend(records.iter().map(|(_, record)| record));
 
-        for record in store.addresses.values().cloned() {
+        for record in store.addresses.values() {
             let stored = cloned.get(record.address()).unwrap();
             assert_eq!(stored.score(), record.score());
             assert_eq!(stored.address(), record.address());

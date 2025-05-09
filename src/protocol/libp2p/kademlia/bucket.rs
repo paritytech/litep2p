@@ -131,7 +131,7 @@ mod tests {
         let mut iter = bucket.closest_iter(&target);
         let mut prev = None;
 
-        while let Some(node) = iter.next() {
+        for node in iter {
             if let Some(distance) = prev {
                 assert!(distance < target.distance(&node.key));
             }
@@ -177,7 +177,7 @@ mod tests {
         let mut prev = None;
         let mut num_peers = 0usize;
 
-        while let Some(node) = iter.next() {
+        for node in iter {
             if let Some(distance) = prev {
                 assert!(distance < target.distance(&node.key));
             }

@@ -683,7 +683,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
             state:
                 PeerState::Validating {
                     direction: Direction::Inbound,
-                    outbound: OutboundState::Closed { .. },
+                    outbound: OutboundState::Closed,
                     inbound: InboundState::ReadingHandshake,
                     ..
                 },
@@ -713,7 +713,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
             state:
                 PeerState::Validating {
                     direction: Direction::Inbound,
-                    outbound: OutboundState::Closed { .. },
+                    outbound: OutboundState::Closed,
                     inbound: InboundState::Validating { .. },
                     ..
                 },

@@ -209,7 +209,7 @@ impl TransportManagerHandle {
                 peer_addresses.insert(address);
             } else {
                 // Add the provided peer ID to the address.
-                let address = address.with(Protocol::P2p(multihash::Multihash::from(peer.clone())));
+                let address = address.with(Protocol::P2p(multihash::Multihash::from(*peer)));
                 peer_addresses.insert(address);
             }
         }
@@ -224,15 +224,13 @@ impl TransportManagerHandle {
         );
 
         let mut peers = self.peers.write();
-        let entry = peers.entry(*peer).or_insert_with(|| PeerContext::default());
+        let entry = peers.entry(*peer).or_default();
 
         // All addresses should be valid at this point, since the peer ID was either added or
         // double checked.
-        entry.addresses.extend(
-            peer_addresses
-                .into_iter()
-                .filter_map(|addr| AddressRecord::from_multiaddr(addr)),
-        );
+        entry
+            .addresses
+            .extend(peer_addresses.into_iter().filter_map(AddressRecord::from_multiaddr));
 
         num_added
     }

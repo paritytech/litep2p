@@ -798,7 +798,7 @@ impl RequestResponseProtocol {
                     "failed to open substream",
                 );
 
-                return Err(RequestResponseError::Rejected(error.into()));
+                Err(RequestResponseError::Rejected(error.into()))
             }
         }
     }

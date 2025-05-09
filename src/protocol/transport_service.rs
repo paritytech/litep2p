@@ -186,7 +186,9 @@ impl KeepAliveTracker {
         );
 
         // Wake any pending poll.
-        self.waker.take().map(|waker| waker.wake());
+        if let Some(waker) = self.waker.take() {
+            waker.wake()
+        }
     }
 }
 
@@ -251,11 +253,9 @@ impl Stream for KeepAliveTracker {
                     "keep-alive timeout triggered",
                 );
                 self.last_activity.remove(&key);
-                return Poll::Ready(Some(key));
+                Poll::Ready(Some(key))
             }
-            Poll::Ready(None) | Poll::Pending => {
-                return Poll::Pending;
-            }
+            Poll::Ready(None) | Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -492,7 +492,7 @@ impl TransportService {
             .ok_or(SubstreamError::PeerDoesNotExist(peer))?
             .primary;
 
-        let connection_id = connection.connection_id().clone();
+        let connection_id = *connection.connection_id();
 
         let permit = connection.try_get_permit().ok_or(SubstreamError::ConnectionClosed)?;
         let substream_id =

@@ -419,7 +419,7 @@ impl Substream {
         match &mut self.substream {
             #[cfg(test)]
             SubstreamType::Mock(ref mut substream) =>
-                futures::SinkExt::send(substream, bytes).await.map_err(Into::into),
+                futures::SinkExt::send(substream, bytes).await,
             SubstreamType::Tcp(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
                 ProtocolCodec::Identity(payload_size) =>

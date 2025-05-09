@@ -144,12 +144,10 @@ async fn main() {
         tokio::select! {
             _ = executor2.next() => {}
             _ = litep2p2.next_event() => {},
-            event = ping_event_stream2.next() => match event {
-                Some(PingEvent::Ping { peer, ping }) => tracing::info!(
-                    "ping time with {peer:?}: {ping:?}"
-                ),
-                _ => {}
-            }
+            event = ping_event_stream2.next() =>
+                if let Some(PingEvent::Ping { peer, ping }) = event {
+                    tracing::info!("ping time with {peer:?}: {ping:?}")
+                }
         }
     }
 }

@@ -450,12 +450,12 @@ mod tests {
 
         // try to write one more byte but since all available bandwidth
         // is taken the call will block
-        futures::future::poll_fn(|cx| {
-            match Pin::new(&mut substream).poll_write(cx, &vec![0u8; 1]) {
+        futures::future::poll_fn(
+            |cx| match Pin::new(&mut substream).poll_write(cx, &[0u8; 1]) {
                 Poll::Pending => Poll::Ready(()),
                 _ => panic!("invalid event"),
-            }
-        })
+            },
+        )
         .await;
     }
 }
