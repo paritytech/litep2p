@@ -170,6 +170,28 @@ impl RoutingTable {
         reachable: Vec<Multiaddr>,
         unreachable: Vec<Multiaddr>,
     ) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?key,
+            ?reachable,
+            ?unreachable,
+            "on addresses update"
+        );
+
+        if let KBucketEntry::Occupied(entry) = self.entry(key) {
+            for address in reachable {
+                entry.address_store.insert(AddressRecord::from_raw_multiaddr_with_score(
+                    address,
+                    scores::CONNECTION_ESTABLISHED,
+                ));
+            }
+            for address in unreachable {
+                entry.address_store.insert(AddressRecord::from_raw_multiaddr_with_score(
+                    address,
+                    scores::CONNECTION_FAILURE,
+                ));
+            }
+        }
     }
 
     /// Add known peer to [`RoutingTable`].
