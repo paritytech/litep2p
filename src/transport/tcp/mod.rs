@@ -48,7 +48,7 @@ use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
@@ -157,8 +157,6 @@ pub(crate) struct TcpTransport {
     /// `TransportManager`.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
 
-    /// Pending events that have a lower priority than the connection events.
-    pending_events: VecDeque<TransportEvent>,
     /// The stream of events that are not connection events.
     kademlia_leftover: FuturesStream<BoxFuture<'static, (Vec<Multiaddr>, Vec<Multiaddr>)>>,
 }
@@ -330,7 +328,6 @@ impl TransportBuilder for TcpTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_connections: HashSet::new(),
-                pending_events: VecDeque::with_capacity(32),
                 kademlia_leftover: FuturesStream::new(),
             },
             listen_addresses,
@@ -685,12 +682,10 @@ impl Stream for TcpTransport {
                             "raw connection cancelled that failed",
                         );
 
-                        self.pending_events.push_back(TransportEvent::KademliaAddressUpdate {
+                        return Poll::Ready(Some(TransportEvent::KademliaAddressUpdate {
                             reachable: vec![],
                             unreachable: errors.into_iter().map(|(addr, _)| addr).collect(),
-                        });
-
-                        continue;
+                        }));
                     }
 
                     return Poll::Ready(Some(TransportEvent::OpenFailure {
@@ -726,6 +721,15 @@ impl Stream for TcpTransport {
                     }
                 }
             }
+        }
+
+        while let Poll::Ready(Some((reachable, unreachable))) =
+            self.kademlia_leftover.poll_next_unpin(cx)
+        {
+            return Poll::Ready(Some(TransportEvent::KademliaAddressUpdate {
+                reachable,
+                unreachable,
+            }));
         }
 
         Poll::Pending
