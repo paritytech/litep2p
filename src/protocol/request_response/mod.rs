@@ -931,6 +931,9 @@ impl RequestResponseProtocol {
             }
 
             TransportEvent::DialFailure { peer, .. } => self.on_dial_failure(peer).await,
+
+            // We don't care about address updates.
+            TransportEvent::AddressesUpdate { .. } => {}
         }
     }
 

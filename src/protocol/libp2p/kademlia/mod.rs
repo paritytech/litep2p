@@ -956,6 +956,15 @@ impl Kademlia {
                     }
                     Some(TransportEvent::DialFailure { peer, addresses }) =>
                         self.on_dial_failure(peer, addresses),
+                    Some(TransportEvent::AddressesUpdate {
+                        reachable,
+                        unreachable,
+                    }) => {
+                        self.routing_table.on_addresses_update(
+                            reachable,
+                            unreachable,
+                        );
+                    }
                     None => return Err(Error::EssentialTaskClosed),
                 },
                 context = self.executor.next() => {

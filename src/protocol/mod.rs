@@ -82,7 +82,7 @@ pub enum TransportEvent {
         /// Peer ID.
         peer: PeerId,
 
-        /// Dialed addresseses.
+        /// Dialed addresses.
         addresses: Vec<Multiaddr>,
     },
 
@@ -126,6 +126,15 @@ pub enum TransportEvent {
 
         /// Error that occurred when the substream was being opened.
         error: SubstreamError,
+    },
+
+    /// The reachable addresses of a peer.
+    AddressesUpdate {
+        /// Reachable addresses.
+        reachable: Vec<Multiaddr>,
+
+        /// Unreachable addresses.
+        unreachable: Vec<Multiaddr>,
     },
 }
 

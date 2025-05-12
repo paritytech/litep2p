@@ -1333,6 +1333,33 @@ impl TransportManager {
                                 ?unreachable,
                                 "kademlia address update",
                             );
+
+                            let Some(kad_name) = &self.kademlia_protocol_name else {
+                                continue;
+                            };
+                            let Some(context) = self.protocols.get(kad_name) else {
+                                continue;
+                            };
+
+
+                            if let Ok(permit) = context.tx.try_reserve() {
+                                permit.send(InnerTransportEvent::AddressesUpdate {
+                                    reachable: reachable,
+                                    unreachable: unreachable,
+                                });
+                            } else {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    "kademlia address update channel is clogged, use await",
+                                );
+                                let _ = context
+                                    .tx
+                                    .send(InnerTransportEvent::AddressesUpdate {
+                                        reachable: reachable,
+                                        unreachable: unreachable,
+                                    })
+                                    .await;
+                            }
                         }
                         event => panic!("event not supported: {event:?}"),
                     }

@@ -1773,6 +1773,8 @@ impl NotificationProtocol {
                     self.on_substream_open_failure(substream, error).await;
                 }
                 Some(TransportEvent::DialFailure { peer, addresses }) => self.on_dial_failure(peer, addresses).await,
+                // We don't care about address updates.
+                Some(TransportEvent::AddressesUpdate { .. }) => {},
                 None => (),
             },
             result = self.pending_validations.select_next_some(), if !self.pending_validations.is_empty() => {

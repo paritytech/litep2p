@@ -139,6 +139,15 @@ pub enum InnerTransportEvent {
         /// Error that occurred when the substream was being opened.
         error: SubstreamError,
     },
+
+    /// The reachable addresses of a peer.
+    AddressesUpdate {
+        /// Reachable addresses.
+        reachable: Vec<Multiaddr>,
+
+        /// Unreachable addresses.
+        unreachable: Vec<Multiaddr>,
+    },
 }
 
 impl From<InnerTransportEvent> for TransportEvent {
@@ -162,6 +171,13 @@ impl From<InnerTransportEvent> for TransportEvent {
             },
             InnerTransportEvent::SubstreamOpenFailure { substream, error } =>
                 TransportEvent::SubstreamOpenFailure { substream, error },
+            InnerTransportEvent::AddressesUpdate {
+                reachable,
+                unreachable,
+            } => TransportEvent::AddressesUpdate {
+                reachable,
+                unreachable,
+            },
             event => panic!("cannot convert {event:?}"),
         }
     }

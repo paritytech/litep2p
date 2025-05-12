@@ -164,6 +164,8 @@ impl RoutingTable {
         }
     }
 
+    pub fn on_addresses_update(&mut self, reachable: Vec<Multiaddr>, unreachable: Vec<Multiaddr>) {}
+
     /// Add known peer to [`RoutingTable`].
     ///
     /// In order to bootstrap the lookup process, the routing table must be aware of
