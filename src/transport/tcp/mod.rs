@@ -974,6 +974,7 @@ mod tests {
                     TransportEvent::ConnectionOpened { .. } => {}
                     TransportEvent::OpenFailure { .. } => {}
                     TransportEvent::PendingInboundConnection { .. } => {}
+                    TransportEvent::KademliaAddressUpdate { .. } => {}
                 }
             }
         });

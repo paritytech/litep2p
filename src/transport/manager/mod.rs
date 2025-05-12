@@ -214,6 +214,9 @@ pub struct TransportManager {
     /// All names (main and fallback(s)) of the installed protocols.
     protocol_names: HashSet<ProtocolName>,
 
+    /// Kademlia receives extra messages for optimization purposes.
+    kademlia_protocol_name: Option<ProtocolName>,
+
     /// Listen addresses.
     listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 
@@ -300,6 +303,7 @@ impl TransportManager {
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
                 connection_limits: limits::ConnectionLimits::new(connection_limits_config),
                 opening_errors: HashMap::new(),
+                kademlia_protocol_name: None,
             },
             handle,
         )
@@ -358,6 +362,13 @@ impl TransportManager {
         self.protocol_names.extend(fallback_names);
 
         service
+    }
+
+    /// Set the main protocol name for Kademlia.
+    ///
+    /// Kademlia receives extra messages for optimization purposes.
+    pub(crate) fn set_kademlia_protocol_name(&mut self, protocol: ProtocolName) {
+        self.kademlia_protocol_name = Some(protocol);
     }
 
     /// Acquire `TransportHandle`.
@@ -1312,6 +1323,17 @@ impl TransportManager {
                                     .reject_pending(connection_id);
                             }
                         },
+                        TransportEvent::KademliaAddressUpdate {
+                            reachable,
+                            unreachable,
+                        } => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?reachable,
+                                ?unreachable,
+                                "kademlia address update",
+                            );
+                        }
                         event => panic!("event not supported: {event:?}"),
                     }
                 },

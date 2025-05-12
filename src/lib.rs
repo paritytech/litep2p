@@ -258,6 +258,7 @@ impl Litep2p {
                 kademlia_config.protocol_names.first().expect("protocol name to exist");
             let fallback_names = kademlia_config.protocol_names.iter().skip(1).cloned().collect();
 
+            transport_manager.set_kademlia_protocol_name(main_protocol.clone());
             let service = transport_manager.register_protocol(
                 main_protocol.clone(),
                 fallback_names,
