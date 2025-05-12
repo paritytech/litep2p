@@ -78,6 +78,7 @@ enum RawConnectionResult {
         connection_id: ConnectionId,
         address: Multiaddr,
         stream: TcpStream,
+        errors: Vec<(Multiaddr, DialError)>,
     },
 
     /// All connection attempts failed.
@@ -446,6 +447,7 @@ impl Transport for TcpTransport {
                             connection_id,
                             address,
                             stream,
+                            errors,
                         },
                     Err(error) => {
                         tracing::debug!(
@@ -582,6 +584,7 @@ impl Stream for TcpTransport {
                     connection_id,
                     address,
                     stream,
+                    errors,
                 } => {
                     if self.cancel_connections.remove(&connection_id) {
                         tracing::debug!(
