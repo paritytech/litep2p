@@ -1324,6 +1324,7 @@ impl TransportManager {
                             }
                         },
                         TransportEvent::KademliaAddressUpdate {
+                            peer_id,
                             reachable,
                             unreachable,
                         } => {
@@ -1344,6 +1345,7 @@ impl TransportManager {
 
                             if let Ok(permit) = context.tx.try_reserve() {
                                 permit.send(InnerTransportEvent::AddressesUpdate {
+                                    peer_id,
                                     reachable: reachable,
                                     unreachable: unreachable,
                                 });
@@ -1355,6 +1357,7 @@ impl TransportManager {
                                 let _ = context
                                     .tx
                                     .send(InnerTransportEvent::AddressesUpdate {
+                                        peer_id,
                                         reachable: reachable,
                                         unreachable: unreachable,
                                     })

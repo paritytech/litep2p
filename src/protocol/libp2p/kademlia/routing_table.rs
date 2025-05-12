@@ -164,7 +164,13 @@ impl RoutingTable {
         }
     }
 
-    pub fn on_addresses_update(&mut self, reachable: Vec<Multiaddr>, unreachable: Vec<Multiaddr>) {}
+    pub fn on_addresses_update(
+        &mut self,
+        key: Key<PeerId>,
+        reachable: Vec<Multiaddr>,
+        unreachable: Vec<Multiaddr>,
+    ) {
+    }
 
     /// Add known peer to [`RoutingTable`].
     ///

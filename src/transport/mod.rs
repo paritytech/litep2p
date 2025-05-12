@@ -173,6 +173,9 @@ pub(crate) enum TransportEvent {
 
     /// Propagate the address update to the kademlia routing table.
     KademliaAddressUpdate {
+        /// Peer ID.
+        peer_id: PeerId,
+
         /// Reachable addresses.
         reachable: Vec<Multiaddr>,
 

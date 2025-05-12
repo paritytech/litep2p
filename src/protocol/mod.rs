@@ -130,6 +130,9 @@ pub enum TransportEvent {
 
     /// The reachable addresses of a peer.
     AddressesUpdate {
+        /// The peer ID.
+        peer_id: PeerId,
+
         /// Reachable addresses.
         reachable: Vec<Multiaddr>,
 

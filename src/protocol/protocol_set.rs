@@ -142,6 +142,9 @@ pub enum InnerTransportEvent {
 
     /// The reachable addresses of a peer.
     AddressesUpdate {
+        /// The peer ID.
+        peer_id: PeerId,
+
         /// Reachable addresses.
         reachable: Vec<Multiaddr>,
 
@@ -172,9 +175,11 @@ impl From<InnerTransportEvent> for TransportEvent {
             InnerTransportEvent::SubstreamOpenFailure { substream, error } =>
                 TransportEvent::SubstreamOpenFailure { substream, error },
             InnerTransportEvent::AddressesUpdate {
+                peer_id,
                 reachable,
                 unreachable,
             } => TransportEvent::AddressesUpdate {
+                peer_id,
                 reachable,
                 unreachable,
             },

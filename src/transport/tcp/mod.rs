@@ -35,6 +35,7 @@ use crate::{
     },
     types::ConnectionId,
     utils::futures_stream::FuturesStream,
+    PeerId,
 };
 
 use futures::{
@@ -682,7 +683,23 @@ impl Stream for TcpTransport {
                             "raw connection cancelled that failed",
                         );
 
+                        let peer_id = errors.first().and_then(|(addr, _)| {
+                            let (_, peer_id) =
+                                TcpAddress::multiaddr_to_socket_address(addr).ok()?;
+                            Some(peer_id)
+                        })
+                        .flatten()
+                        .unwrap_or_else(|| {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                "Invalid address in KademliaAddressUpdate event, generating random peer ID",
+                            );
+
+                            PeerId::random()
+                        });
+
                         return Poll::Ready(Some(TransportEvent::KademliaAddressUpdate {
+                            peer_id,
                             reachable: vec![],
                             unreachable: errors.into_iter().map(|(addr, _)| addr).collect(),
                         }));
@@ -726,7 +743,30 @@ impl Stream for TcpTransport {
         while let Poll::Ready(Some((reachable, unreachable))) =
             self.kademlia_leftover.poll_next_unpin(cx)
         {
+            // Transport manager must ensure that all addresses are valid and suffixed
+            // with a peer ID. It is considered a bug to call `Transport::open` without
+            // at least one valid address. For those cases, we generate a random peer ID
+            // instead of an panic. The random peer ID event will then get ignored.
+            let peer_id = reachable
+                .iter()
+                .chain(unreachable.iter())
+                .next()
+                .and_then(|addr| {
+                    let (_, peer_id) = TcpAddress::multiaddr_to_socket_address(addr).ok()?;
+                    Some(peer_id)
+                })
+                .flatten()
+                .unwrap_or_else(|| {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        "Invalid address in KademliaAddressUpdate event, generating random peer ID",
+                    );
+
+                    PeerId::random()
+                });
+
             return Poll::Ready(Some(TransportEvent::KademliaAddressUpdate {
+                peer_id,
                 reachable,
                 unreachable,
             }));

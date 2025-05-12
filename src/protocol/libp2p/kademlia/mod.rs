@@ -957,10 +957,12 @@ impl Kademlia {
                     Some(TransportEvent::DialFailure { peer, addresses }) =>
                         self.on_dial_failure(peer, addresses),
                     Some(TransportEvent::AddressesUpdate {
+                        peer_id,
                         reachable,
                         unreachable,
                     }) => {
                         self.routing_table.on_addresses_update(
+                            Key::from(peer_id),
                             reachable,
                             unreachable,
                         );
