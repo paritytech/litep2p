@@ -39,15 +39,14 @@ use crate::{
 
 use futures::{
     future::BoxFuture,
-    stream::{AbortHandle, FuturesUnordered, Stream, StreamExt},
-    TryFutureExt,
+    stream::{FuturesUnordered, Stream, StreamExt},
 };
 use multiaddr::Multiaddr;
 use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
@@ -86,9 +85,6 @@ enum RawConnectionResult {
         connection_id: ConnectionId,
         errors: Vec<(Multiaddr, DialError)>,
     },
-
-    /// Future was canceled.
-    Canceled { connection_id: ConnectionId },
 }
 
 /// TCP transport.
@@ -124,7 +120,7 @@ pub(crate) struct TcpTransport {
     /// Cancel raw connections futures.
     ///
     /// This is cancelling `Self::pending_raw_connections`.
-    cancel_futures: HashMap<ConnectionId, AbortHandle>,
+    cancel_connections: HashSet<ConnectionId>,
 
     /// Connections which have been opened and negotiated but are being validated by the
     /// `TransportManager`.
@@ -297,7 +293,7 @@ impl TransportBuilder for TcpTransport {
                 pending_inbound_connections: HashMap::new(),
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
-                cancel_futures: HashMap::new(),
+                cancel_connections: HashSet::new(),
             },
             listen_addresses,
         ))
@@ -469,10 +465,8 @@ impl Transport for TcpTransport {
             }
         };
 
-        let (fut, handle) = futures::future::abortable(future);
-        let fut = fut.unwrap_or_else(move |_| RawConnectionResult::Canceled { connection_id });
-        self.pending_raw_connections.push(Box::pin(fut));
-        self.cancel_futures.insert(connection_id, handle);
+        self.pending_raw_connections.push(Box::pin(future));
+        self.cancel_connections.insert(connection_id);
 
         Ok(())
     }
@@ -529,11 +523,7 @@ impl Transport for TcpTransport {
     }
 
     fn cancel(&mut self, connection_id: ConnectionId) {
-        // Cancel the future if it exists.
-        // State clean-up happens inside the `poll_next`.
-        if let Some(handle) = self.cancel_futures.get(&connection_id) {
-            handle.abort();
-        }
+        self.cancel_connections.remove(&connection_id);
     }
 }
 
@@ -593,55 +583,42 @@ impl Stream for TcpTransport {
                     address,
                     stream,
                 } => {
-                    let Some(handle) = self.cancel_futures.remove(&connection_id) else {
-                        tracing::warn!(
+                    if self.cancel_connections.remove(&connection_id) {
+                        tracing::debug!(
                             target: LOG_TARGET,
                             ?connection_id,
                             ?address,
-                            "raw connection without a cancel handle",
+                            "raw connection cancelled",
                         );
                         continue;
-                    };
-
-                    if !handle.is_aborted() {
-                        self.opened_raw.insert(connection_id, (stream, address.clone()));
-
-                        return Poll::Ready(Some(TransportEvent::ConnectionOpened {
-                            connection_id,
-                            address,
-                        }));
                     }
+
+                    self.opened_raw.insert(connection_id, (stream, address.clone()));
+
+                    return Poll::Ready(Some(TransportEvent::ConnectionOpened {
+                        connection_id,
+                        address,
+                    }));
                 }
 
                 RawConnectionResult::Failed {
                     connection_id,
                     errors,
                 } => {
-                    let Some(handle) = self.cancel_futures.remove(&connection_id) else {
-                        tracing::warn!(
+                    if self.cancel_connections.remove(&connection_id) {
+                        tracing::debug!(
                             target: LOG_TARGET,
                             ?connection_id,
                             ?errors,
-                            "raw connection without a cancel handle",
+                            "raw connection cancelled that failed",
                         );
                         continue;
-                    };
+                    }
 
-                    if !handle.is_aborted() {
-                        return Poll::Ready(Some(TransportEvent::OpenFailure {
-                            connection_id,
-                            errors,
-                        }));
-                    }
-                }
-                RawConnectionResult::Canceled { connection_id } => {
-                    if self.cancel_futures.remove(&connection_id).is_none() {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?connection_id,
-                            "raw cancelled connection without a cancel handle",
-                        );
-                    }
+                    return Poll::Ready(Some(TransportEvent::OpenFailure {
+                        connection_id,
+                        errors,
+                    }));
                 }
             }
         }
