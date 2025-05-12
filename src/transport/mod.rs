@@ -170,6 +170,15 @@ pub(crate) enum TransportEvent {
         /// Errors.
         errors: Vec<(Multiaddr, DialError)>,
     },
+
+    /// Propagate the address update to the kademlia routing table.
+    KademliaAddressUpdate {
+        /// Reachable addresses.
+        reachable: Vec<Multiaddr>,
+
+        /// Unreachable addresses.
+        unreachable: Vec<Multiaddr>,
+    },
 }
 
 pub(crate) trait TransportBuilder {

@@ -46,7 +46,7 @@ use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
@@ -126,6 +126,9 @@ pub(crate) struct TcpTransport {
     /// Connections which have been opened and negotiated but are being validated by the
     /// `TransportManager`.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
+
+    /// Pending events that have a lower priority than the connection events.
+    pending_events: VecDeque<TransportEvent>,
 }
 
 impl TcpTransport {
@@ -295,6 +298,7 @@ impl TransportBuilder for TcpTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_connections: HashSet::new(),
+                pending_events: VecDeque::with_capacity(32),
             },
             listen_addresses,
         ))
@@ -593,6 +597,12 @@ impl Stream for TcpTransport {
                             ?address,
                             "raw connection cancelled",
                         );
+
+                        self.pending_events.push_back(TransportEvent::KademliaAddressUpdate {
+                            reachable: vec![address],
+                            unreachable: errors.into_iter().map(|(addr, _)| addr).collect(),
+                        });
+
                         continue;
                     }
 
@@ -615,6 +625,12 @@ impl Stream for TcpTransport {
                             ?errors,
                             "raw connection cancelled that failed",
                         );
+
+                        self.pending_events.push_back(TransportEvent::KademliaAddressUpdate {
+                            reachable: vec![],
+                            unreachable: errors.into_iter().map(|(addr, _)| addr).collect(),
+                        });
+
                         continue;
                     }
 
