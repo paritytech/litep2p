@@ -40,7 +40,9 @@ use crate::{
 use futures::{
     future::BoxFuture,
     stream::{FuturesUnordered, Stream, StreamExt},
+    FutureExt,
 };
+
 use multiaddr::Multiaddr;
 use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
@@ -71,14 +73,18 @@ struct PendingInboundConnection {
     address: SocketAddr,
 }
 
-#[derive(Debug)]
 enum RawConnectionResult {
     /// The first successful connection.
     Connected {
+        /// The connection ID.
         connection_id: ConnectionId,
+        /// The address that was dialed successfully.
         address: Multiaddr,
+        /// The stream that was opened.
         stream: TcpStream,
-        errors: Vec<(Multiaddr, DialError)>,
+
+        /// Leftover futures remaining to dial.
+        leftover: Option<BoxFuture<'static, (Vec<Multiaddr>, Vec<Multiaddr>)>>,
     },
 
     /// All connection attempts failed.
@@ -86,6 +92,30 @@ enum RawConnectionResult {
         connection_id: ConnectionId,
         errors: Vec<(Multiaddr, DialError)>,
     },
+}
+
+impl std::fmt::Debug for RawConnectionResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RawConnectionResult::Connected {
+                connection_id,
+                address,
+                ..
+            } => f
+                .debug_struct("RawConnectionResult")
+                .field("connection_id", connection_id)
+                .field("address", address)
+                .finish(),
+            RawConnectionResult::Failed {
+                connection_id,
+                errors,
+            } => f
+                .debug_struct("RawConnectionResult")
+                .field("connection_id", connection_id)
+                .field("errors", errors)
+                .finish(),
+        }
+    }
 }
 
 /// TCP transport.
@@ -129,6 +159,8 @@ pub(crate) struct TcpTransport {
 
     /// Pending events that have a lower priority than the connection events.
     pending_events: VecDeque<TransportEvent>,
+    /// The stream of events that are not connection events.
+    kademlia_leftover: FuturesStream<BoxFuture<'static, (Vec<Multiaddr>, Vec<Multiaddr>)>>,
 }
 
 impl TcpTransport {
@@ -299,6 +331,7 @@ impl TransportBuilder for TcpTransport {
                 pending_raw_connections: FuturesStream::new(),
                 cancel_connections: HashSet::new(),
                 pending_events: VecDeque::with_capacity(32),
+                kademlia_leftover: FuturesStream::new(),
             },
             listen_addresses,
         ))
@@ -438,6 +471,7 @@ impl Transport for TcpTransport {
                     .await
                     .map_err(|error| (address, error))
                 }
+                .boxed()
             })
             .collect();
 
@@ -446,13 +480,39 @@ impl Transport for TcpTransport {
             let mut errors = Vec::with_capacity(num_addresses);
             while let Some(result) = futures.next().await {
                 match result {
-                    Ok((address, stream)) =>
+                    Ok((address, stream)) => {
+                        let leftover = if !futures.is_empty() {
+                            // If we still have futures that need to finish, we'll move them to the
+                            // kademlia leftover worker. Pending errors will be reported into a
+                            // single event for optimization purposes.
+                            let future = async move {
+                                let mut reachable = Vec::with_capacity(futures.len());
+                                let mut unreachable =
+                                    errors.into_iter().map(|(addr, _)| addr).collect::<Vec<_>>();
+
+                                while let Some(result) = futures.next().await {
+                                    match result {
+                                        Ok((address, _socket)) => reachable.push(address),
+                                        Err((address, _error)) => unreachable.push(address),
+                                    }
+                                }
+                                (reachable, unreachable)
+                            }
+                            .boxed();
+
+                            Some(future)
+                        } else {
+                            None
+                        };
+
                         return RawConnectionResult::Connected {
                             connection_id,
                             address,
                             stream,
-                            errors,
-                        },
+                            leftover,
+                        };
+                    }
+
                     Err(error) => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -588,8 +648,12 @@ impl Stream for TcpTransport {
                     connection_id,
                     address,
                     stream,
-                    errors,
+                    leftover,
                 } => {
+                    if let Some(leftover) = leftover {
+                        self.kademlia_leftover.push(leftover);
+                    }
+
                     if self.cancel_connections.remove(&connection_id) {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -597,11 +661,6 @@ impl Stream for TcpTransport {
                             ?address,
                             "raw connection cancelled",
                         );
-
-                        self.pending_events.push_back(TransportEvent::KademliaAddressUpdate {
-                            reachable: vec![address],
-                            unreachable: errors.into_iter().map(|(addr, _)| addr).collect(),
-                        });
 
                         continue;
                     }
