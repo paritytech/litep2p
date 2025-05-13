@@ -1795,6 +1795,9 @@ impl NotificationProtocol {
                         protocol = %self.protocol,
                         "user protocol has exited, exiting"
                     );
+
+                    self.service.unregister_protocol();
+
                     return true;
                 }
                 Some(command) => match command {
