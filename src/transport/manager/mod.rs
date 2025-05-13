@@ -372,6 +372,12 @@ impl TransportManager {
                 tracing::error!(target: LOG_TARGET, ?fallback, ?protocol, "Cannot unregister fallback protocol, not registered");
             }
         }
+
+        tracing::info!(
+            target: LOG_TARGET,
+            ?protocol,
+            "Protocol fully unregistered"
+        );
     }
 
     /// Acquire `TransportHandle`.
