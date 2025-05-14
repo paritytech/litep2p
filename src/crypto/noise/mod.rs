@@ -350,6 +350,7 @@ pub struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin> {
     read_buffer: Vec<u8>,
     canonical_max_read: usize,
     decrypt_buffer: Option<Vec<u8>>,
+    peer: PeerId,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
@@ -358,6 +359,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
         noise: NoiseContext,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        peer: PeerId,
     ) -> Self {
         Self {
             io,
@@ -380,6 +382,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
                 max_read: max_read_ahead_factor * MAX_NOISE_MSG_LEN,
             },
             canonical_max_read: max_read_ahead_factor * MAX_NOISE_MSG_LEN,
+            peer,
         }
     }
 
@@ -764,6 +767,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
                 noise.into_transport()?,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                peer,
             ),
             peer,
         ))
