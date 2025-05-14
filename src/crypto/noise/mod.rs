@@ -350,6 +350,7 @@ pub struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin> {
     read_buffer: Vec<u8>,
     canonical_max_read: usize,
     decrypt_buffer: Option<Vec<u8>>,
+    peer: PeerId,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
@@ -358,6 +359,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
         noise: NoiseContext,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        peer: PeerId,
     ) -> Self {
         Self {
             io,
@@ -380,6 +382,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
                 max_read: max_read_ahead_factor * MAX_NOISE_MSG_LEN,
             },
             canonical_max_read: max_read_ahead_factor * MAX_NOISE_MSG_LEN,
+            peer,
         }
     }
 
@@ -542,7 +545,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                 buf,
                             ) {
                                 Err(error) => {
-                                    tracing::error!(target: LOG_TARGET, ?error, "failed to decrypt message");
+                                    tracing::error!(
+                                        target: LOG_TARGET,
+                                        ?error,
+                                        peer = ?this.peer,
+                                        "failed to decrypt message for bigger buffers"
+                                    );
+
                                     return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                                 }
                                 Ok(nread) => {
@@ -560,7 +569,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                     &mut buffer,
                                 ) {
                                     Err(error) => {
-                                        tracing::error!(target: LOG_TARGET, ?error, "failed to decrypt message");
+                                        tracing::error!(
+                                            target: LOG_TARGET,
+                                            ?error,
+                                            peer = ?this.peer,
+                                            "failed to decrypt message for smaller buffers"
+                                        );
+
                                         return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                                     }
                                     Ok(nread) => {
@@ -764,6 +779,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
                 noise.into_transport()?,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                peer,
             ),
             peer,
         ))
