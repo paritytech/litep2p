@@ -545,7 +545,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                 buf,
                             ) {
                                 Err(error) => {
-                                    tracing::error!(target: LOG_TARGET, ?error, "failed to decrypt message");
+                                    tracing::error!(target: LOG_TARGET, ?error, peer = ?this.peer, "failed to decrypt message for bigger buffers");
                                     return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                                 }
                                 Ok(nread) => {
@@ -563,7 +563,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                     &mut buffer,
                                 ) {
                                     Err(error) => {
-                                        tracing::error!(target: LOG_TARGET, ?error, "failed to decrypt message");
+                                        tracing::error!(target: LOG_TARGET, ?error, "failed to decrypt message for smaller buffers");
                                         return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                                     }
                                     Ok(nread) => {
