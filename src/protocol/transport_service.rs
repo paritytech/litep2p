@@ -28,8 +28,7 @@ use crate::{
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
-use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
+use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
@@ -43,6 +42,8 @@ use std::{
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
+
+use super::sort_address;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::transport-service";
@@ -467,15 +468,7 @@ impl TransportService {
     ///
     /// The list is filtered for duplicates and unsupported transports.
     pub fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
-        let addresses: HashSet<Multiaddr> = addresses
-            .filter_map(|address| {
-                if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
-                    Some(address.with(Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).ok()?)))
-                } else {
-                    Some(address)
-                }
-            })
-            .collect();
+        let addresses = sort_address(addresses.into_iter(), *peer);
 
         self.transport_handle.add_known_address(peer, addresses.into_iter());
     }

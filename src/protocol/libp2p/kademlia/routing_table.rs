@@ -22,9 +22,12 @@
 //! Kademlia routing table implementation.
 
 use crate::{
-    protocol::libp2p::kademlia::{
-        bucket::{KBucket, KBucketEntry},
-        types::{ConnectionType, Distance, KademliaPeer, Key, U256},
+    protocol::{
+        libp2p::kademlia::{
+            bucket::{KBucket, KBucketEntry},
+            types::{ConnectionType, Distance, KademliaPeer, Key, U256},
+        },
+        sort_address,
     },
     transport::{
         manager::address::{scores, AddressRecord},
@@ -33,8 +36,7 @@ use crate::{
     PeerId,
 };
 
-use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
+use multiaddr::Multiaddr;
 
 /// Number of k-buckets.
 const NUM_BUCKETS: usize = 256;
@@ -188,17 +190,7 @@ impl RoutingTable {
         );
 
         // TODO: https://github.com/paritytech/litep2p/issues/337 this has to be moved elsewhere at some point
-        let addresses: Vec<Multiaddr> = addresses
-            .into_iter()
-            .filter_map(|address| {
-                let last = address.iter().last();
-                if std::matches!(last, Some(Protocol::P2p(_))) {
-                    Some(address)
-                } else {
-                    Some(address.with(Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).ok()?)))
-                }
-            })
-            .collect();
+        let addresses: Vec<Multiaddr> = sort_address(addresses.into_iter(), peer);
 
         if addresses.is_empty() {
             tracing::debug!(
@@ -304,7 +296,7 @@ impl Iterator for ClosestBucketsIter {
                 self.state = ClosestBucketsIterState::ZoomIn(i);
                 Some(i)
             }
-            ClosestBucketsIterState::ZoomIn(i) =>
+            ClosestBucketsIterState::ZoomIn(i) => {
                 if let Some(i) = self.next_in(i) {
                     self.state = ClosestBucketsIterState::ZoomIn(i);
                     Some(i)
@@ -312,15 +304,17 @@ impl Iterator for ClosestBucketsIter {
                     let i = BucketIndex(0);
                     self.state = ClosestBucketsIterState::ZoomOut(i);
                     Some(i)
-                },
-            ClosestBucketsIterState::ZoomOut(i) =>
+                }
+            }
+            ClosestBucketsIterState::ZoomOut(i) => {
                 if let Some(i) = self.next_out(i) {
                     self.state = ClosestBucketsIterState::ZoomOut(i);
                     Some(i)
                 } else {
                     self.state = ClosestBucketsIterState::Done;
                     None
-                },
+                }
+            }
             ClosestBucketsIterState::Done => None,
         }
     }
