@@ -74,7 +74,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S
             }
             Err(err) => {
                 tracing::debug!(target: LOG_TARGET, "Error during poll ready: {:?}", err);
-                return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()));
+                Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()))
             }
         }
     }
