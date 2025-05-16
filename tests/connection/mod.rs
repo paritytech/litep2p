@@ -44,6 +44,8 @@ use crate::common::{add_transport, Transport};
 
 #[cfg(test)]
 mod protocol_dial_invalid_address;
+#[cfg(test)]
+mod stability;
 
 #[tokio::test]
 async fn two_litep2ps_work_tcp() {

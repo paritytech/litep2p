@@ -21,7 +21,7 @@
 //! Stream implementation for `tokio_tungstenite::WebSocketStream` that implements
 //! `AsyncRead + AsyncWrite`
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, Bytes};
 use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
@@ -31,27 +31,11 @@ use std::{
     task::{Context, Poll},
 };
 
-const DEFAULT_BUF_SIZE: usize = 8 * 1024;
-
-/// Send state.
-#[derive(Debug)]
-enum State {
-    /// State is poisoned.
-    Poisoned,
-
-    /// Sink is accepting input.
-    ReadyToSend,
-
-    /// Flush is pending for the sink.
-    FlushPending,
-}
+const LOG_TARGET: &str = "litep2p::transport::websocket::stream";
 
 /// Buffered stream which implements `AsyncRead + AsyncWrite`
 #[derive(Debug)]
 pub(super) struct BufferedStream<S: AsyncRead + AsyncWrite + Unpin> {
-    /// Write buffer.
-    write_buffer: BytesMut,
-
     /// Read buffer.
     ///
     /// The buffer is taken directly from the WebSocket stream.
@@ -59,19 +43,14 @@ pub(super) struct BufferedStream<S: AsyncRead + AsyncWrite + Unpin> {
 
     /// Underlying WebSocket stream.
     stream: WebSocketStream<S>,
-
-    /// Read state.
-    state: State,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> BufferedStream<S> {
     /// Create new [`BufferedStream`].
     pub(super) fn new(stream: WebSocketStream<S>) -> Self {
         Self {
-            write_buffer: BytesMut::with_capacity(DEFAULT_BUF_SIZE),
             read_buffer: Bytes::new(),
             stream,
-            state: State::ReadyToSend,
         }
     }
 }
@@ -79,73 +58,39 @@ impl<S: AsyncRead + AsyncWrite + Unpin> BufferedStream<S> {
 impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncWrite for BufferedStream<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        self.write_buffer.extend_from_slice(buf);
+        match futures::ready!(self.stream.poll_ready_unpin(cx)) {
+            Ok(()) => {
+                let message = Message::Binary(Bytes::copy_from_slice(buf));
 
-        Poll::Ready(Ok(buf.len()))
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        if self.write_buffer.is_empty() {
-            return self
-                .stream
-                .poll_ready_unpin(cx)
-                .map_err(|_| std::io::ErrorKind::UnexpectedEof.into());
-        }
-
-        loop {
-            match std::mem::replace(&mut self.state, State::Poisoned) {
-                State::ReadyToSend => {
-                    match self.stream.poll_ready_unpin(cx) {
-                        Poll::Ready(Ok(())) => {}
-                        Poll::Ready(Err(_error)) =>
-                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
-                        Poll::Pending => {
-                            self.state = State::ReadyToSend;
-                            return Poll::Pending;
-                        }
-                    }
-
-                    let message = std::mem::take(&mut self.write_buffer);
-                    match self.stream.start_send_unpin(Message::Binary(message.freeze())) {
-                        Ok(()) => {}
-                        Err(_error) =>
-                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
-                    }
-
-                    // Transition to flush pending state.
-                    self.state = State::FlushPending;
-                    continue;
+                if let Err(err) = self.stream.start_send_unpin(message) {
+                    tracing::debug!(target: LOG_TARGET, "Error during start send: {:?}", err);
+                    return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()));
                 }
 
-                State::FlushPending => {
-                    match self.stream.poll_flush_unpin(cx) {
-                        Poll::Ready(Ok(())) => {}
-                        Poll::Ready(Err(_error)) =>
-                            return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
-                        Poll::Pending => {
-                            self.state = State::FlushPending;
-                            return Poll::Pending;
-                        }
-                    }
-
-                    self.state = State::ReadyToSend;
-                    self.write_buffer = BytesMut::with_capacity(DEFAULT_BUF_SIZE);
-                    return Poll::Ready(Ok(()));
-                }
-                State::Poisoned =>
-                    return Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into())),
+                Poll::Ready(Ok(buf.len()))
+            }
+            Err(err) => {
+                tracing::debug!(target: LOG_TARGET, "Error during poll ready: {:?}", err);
+                Poll::Ready(Err(std::io::ErrorKind::UnexpectedEof.into()))
             }
         }
     }
 
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.stream.poll_flush_unpin(cx).map_err(|err| {
+            tracing::debug!(target: LOG_TARGET, "Error during poll flush: {:?}", err);
+            std::io::ErrorKind::UnexpectedEof.into()
+        })
+    }
+
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match futures::ready!(self.stream.poll_close_unpin(cx)) {
-            Ok(_) => Poll::Ready(Ok(())),
-            Err(_) => Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into())),
-        }
+        self.stream.poll_close_unpin(cx).map_err(|err| {
+            tracing::debug!(target: LOG_TARGET, "Error during poll close: {:?}", err);
+            std::io::ErrorKind::PermissionDenied.into()
+        })
     }
 }
 
@@ -183,7 +128,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncRead for BufferedStream<S>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+    use futures::{AsyncRead, AsyncReadExt, AsyncWriteExt};
     use tokio::io::DuplexStream;
     use tokio_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
 
@@ -203,7 +148,6 @@ mod tests {
 
         let bytes_written = stream.write(data).await.unwrap();
         assert_eq!(bytes_written, data.len());
-        assert_eq!(&stream.write_buffer[..], data);
     }
 
     #[tokio::test]
@@ -251,38 +195,6 @@ mod tests {
             Err(error) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
             state => panic!("Unexpected state {state:?}"),
         };
-    }
-
-    #[tokio::test]
-    async fn test_poisoned_state() {
-        let (mut stream, server) = create_test_stream().await;
-        drop(server);
-
-        stream.state = State::Poisoned;
-
-        let mut buffer = [0u8; 10];
-        let result = stream.read(&mut buffer).await;
-        match result {
-            Err(error) => if error.kind() == std::io::ErrorKind::UnexpectedEof {},
-            state => panic!("Unexpected state {state:?}"),
-        };
-
-        let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
-        let mut pin_stream = Pin::new(&mut stream);
-
-        // Messages are buffered internally, the socket is not touched.
-        match pin_stream.as_mut().poll_write(&mut cx, &mut buffer) {
-            Poll::Ready(Ok(10)) => {}
-            state => panic!("Unexpected state {state:?}"),
-        }
-        // Socket is poisoned, the flush will fail.
-        match pin_stream.poll_flush(&mut cx) {
-            Poll::Ready(Err(error)) =>
-                if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                    return;
-                },
-            state => panic!("Unexpected state {state:?}"),
-        }
     }
 
     #[tokio::test]
