@@ -20,6 +20,7 @@
 
 #![allow(clippy::single_match)]
 #![allow(clippy::result_large_err)]
+#![allow(clippy::large_enum_variant)]
 #![allow(clippy::redundant_pattern_matching)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::result_unit_err)]
