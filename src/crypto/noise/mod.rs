@@ -351,6 +351,7 @@ pub struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin> {
     canonical_max_read: usize,
     decrypt_buffer: Option<Vec<u8>>,
     peer: PeerId,
+    ty: HandshakeTransport,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
@@ -360,6 +361,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
         peer: PeerId,
+        ty: HandshakeTransport,
     ) -> Self {
         Self {
             io,
@@ -383,6 +385,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
             },
             canonical_max_read: max_read_ahead_factor * MAX_NOISE_MSG_LEN,
             peer,
+            ty,
         }
     }
 
@@ -427,7 +430,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                         },
                     };
 
-                    tracing::trace!(target: LOG_TARGET, ?nread, "read data from socket");
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?nread,
+                        ty = ?this.ty,
+                        peer = ?this.peer,
+                        "read data from socket"
+                    );
 
                     this.nread += nread;
                     this.read_state = ReadState::ReadFrameLen;
@@ -436,13 +445,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                     let mut remaining = match this.nread.checked_sub(this.offset) {
                         Some(remaining) => remaining,
                         None => {
-                            tracing::error!(target: LOG_TARGET, "offset is larger than the number of bytes read");
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ty = ?this.ty,
+                                peer = ?this.peer,
+                                nread = ?this.nread,
+                                offset = ?this.offset,
+                                "offset is larger than the number of bytes read"
+                            );
                             return Poll::Ready(Err(io::ErrorKind::PermissionDenied.into()));
                         }
                     };
 
                     if remaining < 2 {
-                        tracing::trace!(target: LOG_TARGET, "reset read buffer");
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ty = ?this.ty,
+                            peer = ?this.peer,
+                            "reset read buffer"
+                        );
                         this.reset_read_state(remaining);
                         continue;
                     }
@@ -459,13 +480,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                         }
                     };
 
-                    tracing::trace!(target: LOG_TARGET, "current frame size = {frame_size}");
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ty = ?this.ty,
+                        peer = ?this.peer,
+                        "current frame size = {frame_size}"
+                    );
 
                     if remaining < frame_size {
                         // `read_buffer` can fit the full frame size.
                         if this.nread + frame_size < this.canonical_max_read {
                             tracing::trace!(
                                 target: LOG_TARGET,
+                                ty = ?this.ty,
+                                peer = ?this.peer,
                                 max_size = ?this.canonical_max_read,
                                 next_frame_size = ?(this.nread + frame_size),
                                 "read buffer can fit the full frame",
@@ -478,7 +506,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                             continue;
                         }
 
-                        tracing::trace!(target: LOG_TARGET, "use auxiliary buffer extension");
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ty = ?this.ty,
+                            peer = ?this.peer,
+                            "use auxiliary buffer extension"
+                        );
 
                         // use the auxiliary memory at the end of the read buffer for reading the
                         // frame
@@ -492,6 +525,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                     if frame_size <= NOISE_EXTRA_ENCRYPT_SPACE {
                         tracing::error!(
                             target: LOG_TARGET,
+                            ty = ?this.ty,
+                            peer = ?this.peer,
                             ?frame_size,
                             max_size = ?NOISE_EXTRA_ENCRYPT_SPACE,
                             "invalid frame size",
@@ -547,10 +582,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                 Err(error) => {
                                     tracing::error!(
                                         target: LOG_TARGET,
-                                        ?error,
+                                        ty = ?this.ty,
                                         peer = ?this.peer,
                                         buf_len = ?buf.len(),
                                         frame_size = ?frame_size,
+                                        ?error,
                                         "failed to decrypt message"
                                     );
 
@@ -573,10 +609,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                     Err(error) => {
                                         tracing::error!(
                                             target: LOG_TARGET,
-                                            ?error,
+                                            ty = ?this.ty,
                                             peer = ?this.peer,
                                             buf_len = ?buf.len(),
                                             frame_size = ?frame_size,
+                                            ?error,
                                             "failed to decrypt message for smaller buffer"
                                         );
 
@@ -624,7 +661,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
 
                     match this.noise.write_message(chunk, &mut this.encrypt_buffer[offset + 2..]) {
                         Err(error) => {
-                            tracing::error!(target: LOG_TARGET, ?error, "failed to encrypt message");
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?error,
+                                ty = ?this.ty,
+                                peer = ?this.peer,
+                                "failed to encrypt message"
+                            );
+
                             return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                         }
                         Ok(nwritten) => {
@@ -720,6 +764,15 @@ fn parse_and_verify_peer_id(
     Ok(peer_id)
 }
 
+/// The type of the transport used for the crypto/noise protocol.
+///
+/// This is used for logging purposes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeTransport {
+    Tcp,
+    WebSocket,
+}
+
 /// Perform Noise handshake.
 pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     mut io: S,
@@ -728,9 +781,10 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     max_read_ahead_factor: usize,
     max_write_buffer_size: usize,
     timeout: std::time::Duration,
+    ty: HandshakeTransport,
 ) -> Result<(NoiseSocket<S>, PeerId), NegotiationError> {
     let handle_handshake = async move {
-        tracing::debug!(target: LOG_TARGET, ?role, "start noise handshake");
+        tracing::debug!(target: LOG_TARGET, ?role, ?ty, "start noise handshake");
 
         let mut noise = NoiseContext::new(keypair, role)?;
         let payload = match role {
@@ -746,7 +800,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
                 let payload = handshake_schema::NoiseHandshakePayload::decode(message)
                 .map_err(ParseError::from)
                 .map_err(|err| {
-                    tracing::error!(target: LOG_TARGET, ?err, "failed to decode remote identity message");
+                    tracing::error!(target: LOG_TARGET, ?err, ?ty, "failed to decode remote identity message");
                     err
                 })?;
 
@@ -784,6 +838,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
                 max_read_ahead_factor,
                 max_write_buffer_size,
                 peer,
+                ty,
             ),
             peer,
         ))
