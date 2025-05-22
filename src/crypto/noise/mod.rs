@@ -549,7 +549,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                         target: LOG_TARGET,
                                         ?error,
                                         peer = ?this.peer,
-                                        "failed to decrypt message for bigger buffers"
+                                        buf_len = ?buf.len(),
+                                        frame_size = ?frame_size,
+                                        "failed to decrypt message"
                                     );
 
                                     return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
@@ -573,7 +575,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                             target: LOG_TARGET,
                                             ?error,
                                             peer = ?this.peer,
-                                            "failed to decrypt message for smaller buffers"
+                                            buf_len = ?buf.len(),
+                                            frame_size = ?frame_size,
+                                            "failed to decrypt message for smaller buffer"
                                         );
 
                                         return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
