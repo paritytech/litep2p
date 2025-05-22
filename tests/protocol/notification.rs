@@ -2223,7 +2223,7 @@ async fn zero_byte_handshake(transport1: Transport, transport2: Transport, hands
     );
 
     // This step ensures we have not messed with the notification frames.
-    tracing::info!("Send async notification...");
+    tracing::info!("Send sync notification...");
     handle1.send_sync_notification(peer2, vec![1, 3, 3, 7]).unwrap();
     handle2.send_sync_notification(peer1, vec![1, 3, 3, 8]).unwrap();
 
@@ -2239,6 +2239,46 @@ async fn zero_byte_handshake(transport1: Transport, transport2: Transport, hands
         NotificationEvent::NotificationReceived {
             peer: peer2,
             notification: BytesMut::from(&[1, 3, 3, 8][..]),
+        }
+    );
+
+    // Ensure the handle can send empty notifications.
+    tracing::info!("Send empty sync notification...");
+    handle1.send_sync_notification(peer2, vec![]).unwrap();
+    handle2.send_sync_notification(peer1, vec![]).unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer1,
+            notification: BytesMut::from(&[][..]),
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer2,
+            notification: BytesMut::from(&[][..]),
+        }
+    );
+
+    // Double check non-empty notifications.
+    tracing::info!("Send sync notification...");
+    handle1.send_sync_notification(peer2, vec![1, 3, 3, 9]).unwrap();
+    handle2.send_sync_notification(peer1, vec![1, 3, 3, 4]).unwrap();
+
+    assert_eq!(
+        handle2.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer1,
+            notification: BytesMut::from(&[1, 3, 3, 9][..]),
+        }
+    );
+    assert_eq!(
+        handle1.next().await.unwrap(),
+        NotificationEvent::NotificationReceived {
+            peer: peer2,
+            notification: BytesMut::from(&[1, 3, 3, 4][..]),
         }
     );
 }
