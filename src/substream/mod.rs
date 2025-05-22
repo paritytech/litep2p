@@ -645,6 +645,13 @@ impl Stream for Substream {
                                                 }
 
                                                 this.offset = 0;
+                                                // Handle empty payloads detected as 0-length frame.
+                                                // The offset must be cleared to 0 to not interfere
+                                                // with next framing.
+                                                if size == 0 {
+                                                    return Poll::Ready(Some(Ok(BytesMut::new())));
+                                                }
+
                                                 this.current_frame_size = Some(size);
                                                 this.read_buffer = BytesMut::zeroed(size);
                                             }
