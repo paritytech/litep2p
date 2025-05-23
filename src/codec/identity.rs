@@ -102,7 +102,7 @@ mod tests {
         let bytes = [3u8; 64];
         let mut bytes = BytesMut::from(&bytes[..]);
 
-        let decoded = codec.decode(&mut bytes);
+        assert!(codec.decode(&mut bytes).unwrap().is_none());
     }
 
     #[test]

@@ -24,7 +24,7 @@ use libp2p::{
     identify, identity,
     kad::{
         self, store::RecordStore, AddProviderOk, GetProvidersOk, InboundRequest,
-        KademliaEvent as Libp2pKademliaEvent, QueryResult, RecordKey as Libp2pRecordKey,
+        KademliaEvent as Libp2pKademliaEvent, QueryResult,
     },
     swarm::{keep_alive, AddressScore, NetworkBehaviour, SwarmBuilder, SwarmEvent},
     PeerId, Swarm,

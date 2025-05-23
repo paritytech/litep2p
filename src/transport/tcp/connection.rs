@@ -438,6 +438,7 @@ impl TcpConnection {
             max_read_ahead_factor,
             max_write_buffer_size,
             substream_open_timeout,
+            noise::HandshakeTransport::Tcp,
         )
         .await?;
 
@@ -1154,6 +1155,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::Tcp,
             )
             .await
             .unwrap();
@@ -1212,6 +1214,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::Tcp,
             )
             .await
             .unwrap();
@@ -1286,6 +1289,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::Tcp,
             )
             .await
             .unwrap();
@@ -1339,6 +1343,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::Tcp,
             )
             .await
             .unwrap();
