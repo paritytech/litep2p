@@ -888,6 +888,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::WebSocket,
             )
             .await
             .unwrap();

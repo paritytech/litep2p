@@ -893,6 +893,7 @@ mod tests {
                 MAX_READ_AHEAD_FACTOR,
                 MAX_WRITE_BUFFER_SIZE,
                 std::time::Duration::from_secs(10),
+                HandshakeTransport::Tcp,
             ),
             handshake(
                 io2,
@@ -901,6 +902,7 @@ mod tests {
                 MAX_READ_AHEAD_FACTOR,
                 MAX_WRITE_BUFFER_SIZE,
                 std::time::Duration::from_secs(10),
+                HandshakeTransport::Tcp,
             )
         );
         let (mut res1, mut res2) = (res1.unwrap(), res2.unwrap());
