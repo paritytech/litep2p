@@ -544,6 +544,14 @@ impl TransportService {
     pub fn local_peer_id(&self) -> PeerId {
         self.local_peer_id
     }
+
+    /// Dynamically unregister a protocol.
+    ///
+    /// This must be called when a protocol is no longer needed (e.g. user dropped the protocol
+    /// handle).
+    pub fn unregister_protocol(&self) {
+        self.transport_handle.unregister_protocol(self.protocol.clone());
+    }
 }
 
 impl Stream for TransportService {
