@@ -128,7 +128,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let target = Key::from(PeerId::random());
-        let mut iter = bucket.closest_iter(&target);
+        let iter = bucket.closest_iter(&target);
         let mut prev = None;
 
         for node in iter {
@@ -173,7 +173,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let target = Key::from(PeerId::random());
-        let mut iter = bucket.closest_iter(&target);
+        let iter = bucket.closest_iter(&target);
         let mut prev = None;
         let mut num_peers = 0usize;
 

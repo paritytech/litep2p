@@ -323,6 +323,7 @@ impl WebSocketConnection {
             max_read_ahead_factor,
             max_write_buffer_size,
             substream_open_timeout,
+            noise::HandshakeTransport::WebSocket,
         )
         .await?;
 
@@ -887,6 +888,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::WebSocket,
             )
             .await
             .unwrap();
@@ -1094,6 +1096,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::WebSocket,
             )
             .await
             .unwrap();
@@ -1162,6 +1165,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::WebSocket,
             )
             .await
             .unwrap();
@@ -1261,6 +1265,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::WebSocket,
             )
             .await
             .unwrap();
@@ -1320,6 +1325,7 @@ mod tests {
                 5,
                 2,
                 std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::WebSocket,
             )
             .await
             .unwrap();

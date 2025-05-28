@@ -370,6 +370,6 @@ impl From<NegotiationError> for io::Error {
         if let NegotiationError::ProtocolError(e) = err {
             return e.into();
         }
-        io::Error::new(io::ErrorKind::Other, err)
+        io::Error::other(err)
     }
 }
