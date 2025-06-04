@@ -60,6 +60,11 @@ pub enum InnerTransportManagerCommand {
         /// Remote address.
         address: Multiaddr,
     },
+
+    UnregisterProtocol {
+        /// Protocol name.
+        protocol: ProtocolName,
+    },
 }
 
 /// Handle for communicating with [`crate::transport::manager::TransportManager`].
@@ -284,6 +289,29 @@ impl TransportManagerHandle {
                 TrySendError::Full(_) => ImmediateDialError::ChannelClogged,
                 TrySendError::Closed(_) => ImmediateDialError::TaskClosed,
             })
+    }
+
+    /// Dynamically unregister a protocol.
+    ///
+    /// This must be called when a protocol is no longer needed (e.g. user dropped the protocol
+    /// handle).
+    pub fn unregister_protocol(&self, protocol: ProtocolName) {
+        tracing::info!(
+            target: LOG_TARGET,
+            ?protocol,
+            "Unregistering user protocol on handle drop"
+        );
+
+        if let Err(err) = self
+            .cmd_tx
+            .try_send(InnerTransportManagerCommand::UnregisterProtocol { protocol })
+        {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?err,
+                "Failed to unregister protocol"
+            );
+        }
     }
 }
 

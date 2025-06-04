@@ -360,6 +360,26 @@ impl TransportManager {
         service
     }
 
+    /// Unregister a protocol in response of the user dropping the protocol handle.
+    fn unregister_protocol(&mut self, protocol: ProtocolName) {
+        let Some(context) = self.protocols.remove(&protocol) else {
+            tracing::error!(target: LOG_TARGET, ?protocol, "Cannot unregister protocol, not registered");
+            return;
+        };
+
+        for fallback in &context.fallback_names {
+            if !self.protocol_names.remove(fallback) {
+                tracing::error!(target: LOG_TARGET, ?fallback, ?protocol, "Cannot unregister fallback protocol, not registered");
+            }
+        }
+
+        tracing::info!(
+            target: LOG_TARGET,
+            ?protocol,
+            "Protocol fully unregistered"
+        );
+    }
+
     /// Acquire `TransportHandle`.
     pub fn transport_handle(&self, executor: Arc<dyn Executor>) -> TransportHandle {
         TransportHandle {
@@ -1043,6 +1063,9 @@ impl TransportManager {
                                 tracing::debug!(target: LOG_TARGET, ?error, "failed to dial peer")
                             }
                         }
+                        InnerTransportManagerCommand::UnregisterProtocol { protocol } => {
+                            self.unregister_protocol(protocol);
+                        }
                     }
                 },
 
@@ -1257,7 +1280,7 @@ impl TransportManager {
                                                     ?peer,
                                                     %protocol,
                                                     ?connection_id,
-                                                    "call to protocol would, block try sending in a blocking way",
+                                                    "call to protocol would block try sending in a blocking way",
                                                 );
 
                                                 context
