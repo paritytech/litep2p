@@ -143,7 +143,10 @@ pub trait UserProtocol: Send {
     async fn run(self: Box<Self>, service: TransportService) -> crate::Result<()>;
 }
 
-pub fn sort_address(addresses: impl Iterator<Item = Multiaddr>, peer_id: PeerId) -> Vec<Multiaddr> {
+pub fn ensure_address_with_peer(
+    addresses: impl Iterator<Item = Multiaddr>,
+    peer_id: PeerId,
+) -> Vec<Multiaddr> {
     addresses
         .filter_map(|address| {
             let last = address.iter().last();

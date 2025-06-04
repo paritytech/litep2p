@@ -23,11 +23,11 @@
 
 use crate::{
     protocol::{
+        ensure_address_with_peer,
         libp2p::kademlia::{
             bucket::{KBucket, KBucketEntry},
             types::{ConnectionType, Distance, KademliaPeer, Key, U256},
         },
-        sort_address,
     },
     transport::{
         manager::address::{scores, AddressRecord},
@@ -189,8 +189,7 @@ impl RoutingTable {
             "add known peer"
         );
 
-        // TODO: https://github.com/paritytech/litep2p/issues/337 this has to be moved elsewhere at some point
-        let addresses: Vec<Multiaddr> = sort_address(addresses.into_iter(), peer);
+        let addresses: Vec<Multiaddr> = ensure_address_with_peer(addresses.into_iter(), peer);
 
         if addresses.is_empty() {
             tracing::debug!(
