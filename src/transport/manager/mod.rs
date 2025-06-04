@@ -572,11 +572,10 @@ impl TransportManager {
                 #[cfg(feature = "websocket")]
                 Some(Protocol::Ws(_)) | Some(Protocol::Wss(_)) => SupportedTransport::WebSocket,
                 Some(Protocol::P2p(_)) => SupportedTransport::Tcp,
-                _ => {
+                _ =>
                     return Err(Error::TransportNotSupported(
                         address_record.address().clone(),
-                    ))
-                }
+                    )),
             },
             #[cfg(feature = "quic")]
             Protocol::Udp(_) => match protocol_stack
