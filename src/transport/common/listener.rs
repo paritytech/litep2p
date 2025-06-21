@@ -26,13 +26,7 @@ use crate::{
 };
 
 use futures::Stream;
-<<<<<<< HEAD
-use hickory_resolver::{
-    config::ResolverConfig, name_server::TokioConnectionProvider, TokioResolver,
-};
-=======
-use hickory_resolver::TokioAsyncResolver;
->>>>>>> d275270 (transport: Allow changing DNS resolver config)
+use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use socket2::{Domain, Socket, Type};
@@ -79,7 +73,7 @@ impl AddressType {
     /// Resolve the address to a concrete IP.
     pub async fn lookup_ip(
         self,
-        resolver: impl Borrow<TokioAsyncResolver>,
+        resolver: impl Borrow<TokioResolver>,
     ) -> Result<SocketAddr, DnsError> {
         let (url, port, dns_type) = match self {
             // We already have the IP address.

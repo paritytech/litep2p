@@ -42,7 +42,7 @@ use futures::{
     stream::{AbortHandle, FuturesUnordered, Stream, StreamExt},
     TryFutureExt,
 };
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
 use multiaddr::Multiaddr;
 use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
@@ -134,7 +134,7 @@ pub(crate) struct TcpTransport {
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
 
     /// DNS resolver.
-    resolver: Arc<TokioAsyncResolver>,
+    resolver: Arc<TokioResolver>,
 }
 
 impl TcpTransport {
@@ -182,7 +182,7 @@ impl TcpTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
-        resolver: impl Borrow<TokioAsyncResolver>,
+        resolver: impl Borrow<TokioResolver>,
     ) -> Result<(Multiaddr, TcpStream), DialError> {
         let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
 
@@ -314,7 +314,14 @@ impl TransportBuilder for TcpTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
-                resolver: Arc::new(TokioAsyncResolver::tokio(resolver_config, resolver_opts)),
+                resolver: Arc::new(
+                    TokioResolver::builder_with_config(
+                        resolver_config,
+                        TokioConnectionProvider::default(),
+                    )
+                    .with_options(resolver_opts)
+                    .build(),
+                ),
             },
             listen_addresses,
         ))
