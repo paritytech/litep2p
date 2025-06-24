@@ -176,14 +176,15 @@ impl Bitswap {
             return;
         };
 
-        let mut response = schema::bitswap::Message::default();
-
-        // `Wantlist` field must always be present. This is what the official Kubo IPFS
-        // implementation does.
-        response.wantlist = Some(schema::bitswap::Wantlist {
-            entries: Vec::new(),
-            full: false,
-        });
+        let mut response = schema::bitswap::Message {
+            // `Wantlist` field must always be present. This is what the official Kubo IPFS
+            // implementation does.
+            wantlist: Some(schema::bitswap::Wantlist {
+                entries: Vec::new(),
+                full: false,
+            }),
+            ..Default::default()
+        };
 
         for entry in entries {
             match entry {
