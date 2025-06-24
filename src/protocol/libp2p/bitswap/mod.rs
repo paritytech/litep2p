@@ -178,6 +178,13 @@ impl Bitswap {
 
         let mut response = schema::bitswap::Message::default();
 
+        // `Wantlist` field must always be present. This is what the official Kubo IPFS
+        // implementation does.
+        response.wantlist = Some(schema::bitswap::Wantlist {
+            entries: Vec::new(),
+            full: false,
+        });
+
         for entry in entries {
             match entry {
                 ResponseType::Block { cid, block } => {
@@ -205,6 +212,8 @@ impl Bitswap {
 
         let message = response.encode_to_vec().into();
         let _ = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await;
+
+        substream.close().await;
     }
 
     /// Handle bitswap response.
