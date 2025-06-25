@@ -176,7 +176,12 @@ impl Bitswap {
             return;
         };
 
-        let mut response = schema::bitswap::Message::default();
+        let mut response = schema::bitswap::Message {
+            // `wantlist` field must always be present. This is what the official Kubo IPFS
+            // implementation does.
+            wantlist: Some(Default::default()),
+            ..Default::default()
+        };
 
         for entry in entries {
             match entry {
@@ -205,6 +210,8 @@ impl Bitswap {
 
         let message = response.encode_to_vec().into();
         let _ = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await;
+
+        substream.close().await;
     }
 
     /// Handle bitswap response.
