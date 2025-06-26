@@ -468,7 +468,10 @@ impl TransportService {
     ///
     /// The list is filtered for duplicates and unsupported transports.
     pub fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
-        let addresses = ensure_address_with_peer(addresses.into_iter(), *peer);
+        let mut addresses = ensure_address_with_peer(addresses.into_iter(), *peer);
+
+        addresses.sort();
+        addresses.dedup();
 
         self.transport_handle.add_known_address(peer, addresses.into_iter());
     }
