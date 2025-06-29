@@ -42,7 +42,7 @@ use futures::{
     stream::{AbortHandle, FuturesUnordered},
     Stream, StreamExt, TryFutureExt,
 };
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
 use std::{borrow::Borrow, net::SocketAddr, sync::Arc};
@@ -135,7 +135,7 @@ pub(crate) struct WebSocketTransport {
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
 
     /// DNS resolver.
-    resolver: Arc<TokioAsyncResolver>,
+    resolver: Arc<TokioResolver>,
 }
 
 impl WebSocketTransport {
@@ -228,7 +228,7 @@ impl WebSocketTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
-        resolver: impl Borrow<TokioAsyncResolver>,
+        resolver: impl Borrow<TokioResolver>,
     ) -> Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>), DialError> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
 
@@ -309,6 +309,7 @@ impl TransportBuilder for WebSocketTransport {
     fn new(
         context: TransportHandle,
         mut config: Self::Config,
+        resolver: Arc<TokioResolver>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
@@ -324,13 +325,6 @@ impl TransportBuilder for WebSocketTransport {
             config.nodelay,
         );
 
-        let (resolver_config, resolver_opts) = if config.use_system_dns_config {
-            hickory_resolver::system_conf::read_system_conf()
-                .expect("TODO failed to read system DNS config")
-        } else {
-            (Default::default(), Default::default())
-        };
-
         Ok((
             Self {
                 listener,
@@ -344,7 +338,7 @@ impl TransportBuilder for WebSocketTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
-                resolver: Arc::new(TokioAsyncResolver::tokio(resolver_config, resolver_opts)),
+                resolver,
             },
             listen_addresses,
         ))
