@@ -33,6 +33,7 @@ use crate::{
 
 use futures::{future::BoxFuture, Future, Stream};
 use futures_timer::Delay;
+use hickory_resolver::TokioResolver;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
 use str0m::{
@@ -423,7 +424,11 @@ impl TransportBuilder for WebRtcTransport {
     type Transport = WebRtcTransport;
 
     /// Create new [`Transport`] object.
-    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<(Self, Vec<Multiaddr>)>
+    fn new(
+        context: TransportHandle,
+        config: Self::Config,
+        _resolver: Arc<TokioResolver>,
+    ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
     {

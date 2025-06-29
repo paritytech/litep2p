@@ -53,6 +53,7 @@ use crate::transport::webrtc::WebRtcTransport;
 #[cfg(feature = "websocket")]
 use crate::transport::websocket::WebSocketTransport;
 
+use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use transport::Endpoint;
@@ -157,6 +158,18 @@ impl Litep2p {
         let local_peer_id = PeerId::from_public_key(&litep2p_config.keypair.public().into());
         let bandwidth_sink = BandwidthSink::new();
         let mut listen_addresses = vec![];
+
+        let (resolver_config, resolver_opts) = if litep2p_config.use_system_dns_config {
+            hickory_resolver::system_conf::read_system_conf()
+                .map_err(|_| Error::CannotReadSystemDnsConfig)?
+        } else {
+            (Default::default(), Default::default())
+        };
+        let resolver = Arc::new(
+            TokioResolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
+                .with_options(resolver_opts)
+                .build(),
+        );
 
         let supported_transports = Self::supported_transports(&litep2p_config);
         let (mut transport_manager, transport_handle) = TransportManager::new(
@@ -315,7 +328,7 @@ impl Litep2p {
         if let Some(config) = litep2p_config.tcp.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
-                <TcpTransport as TransportBuilder>::new(handle, config)?;
+                <TcpTransport as TransportBuilder>::new(handle, config, resolver.clone())?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -332,7 +345,7 @@ impl Litep2p {
         if let Some(config) = litep2p_config.quic.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
-                <QuicTransport as TransportBuilder>::new(handle, config)?;
+                <QuicTransport as TransportBuilder>::new(handle, config, resolver.clone())?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -349,7 +362,7 @@ impl Litep2p {
         if let Some(config) = litep2p_config.webrtc.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
-                <WebRtcTransport as TransportBuilder>::new(handle, config)?;
+                <WebRtcTransport as TransportBuilder>::new(handle, config, resolver.clone())?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -366,7 +379,7 @@ impl Litep2p {
         if let Some(config) = litep2p_config.websocket.take() {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
-                <WebSocketTransport as TransportBuilder>::new(handle, config)?;
+                <WebSocketTransport as TransportBuilder>::new(handle, config, resolver)?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());

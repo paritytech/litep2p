@@ -124,6 +124,9 @@ pub struct ConfigBuilder {
 
     /// Close the connection if no substreams are open within this time frame.
     keep_alive_timeout: Duration,
+
+    /// Use system's DNS config.
+    use_system_dns_config: bool,
 }
 
 impl Default for ConfigBuilder {
@@ -157,6 +160,7 @@ impl ConfigBuilder {
             known_addresses: Vec::new(),
             connection_limits: ConnectionLimitsConfig::default(),
             keep_alive_timeout: KEEP_ALIVE_TIMEOUT,
+            use_system_dns_config: false,
         }
     }
 
@@ -278,6 +282,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set DNS resolver according to system configuration instead of default (Google).
+    pub fn with_system_resolver(mut self) -> Self {
+        self.use_system_dns_config = true;
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     pub fn build(mut self) -> Litep2pConfig {
         let keypair = match self.keypair {
@@ -307,6 +317,7 @@ impl ConfigBuilder {
             known_addresses: self.known_addresses,
             connection_limits: self.connection_limits,
             keep_alive_timeout: self.keep_alive_timeout,
+            use_system_dns_config: self.use_system_dns_config,
         }
     }
 }
@@ -369,4 +380,7 @@ pub struct Litep2pConfig {
 
     /// Close the connection if no substreams are open within this time frame.
     pub(crate) keep_alive_timeout: Duration,
+
+    /// Use system's DNS config.
+    pub(crate) use_system_dns_config: bool,
 }

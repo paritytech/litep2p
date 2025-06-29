@@ -26,15 +26,14 @@ use crate::{
 };
 
 use futures::Stream;
-use hickory_resolver::{
-    config::ResolverConfig, name_server::TokioConnectionProvider, TokioResolver,
-};
+use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
 use std::{
+    borrow::Borrow,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
@@ -72,7 +71,10 @@ pub enum DnsType {
 
 impl AddressType {
     /// Resolve the address to a concrete IP.
-    pub async fn lookup_ip(self) -> Result<SocketAddr, DnsError> {
+    pub async fn lookup_ip(
+        self,
+        resolver: impl Borrow<TokioResolver>,
+    ) -> Result<SocketAddr, DnsError> {
         let (url, port, dns_type) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),
@@ -83,13 +85,7 @@ impl AddressType {
             } => (address, port, dns_type),
         };
 
-        let resolver = TokioResolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioConnectionProvider::default(),
-        )
-        .build();
-
-        let lookup = match resolver.lookup_ip(url.clone()).await {
+        let lookup = match resolver.borrow().lookup_ip(url.clone()).await {
             Ok(lookup) => lookup,
             Err(error) => {
                 tracing::debug!(
