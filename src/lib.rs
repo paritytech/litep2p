@@ -161,7 +161,7 @@ impl Litep2p {
 
         let (resolver_config, resolver_opts) = if litep2p_config.use_system_dns_config {
             hickory_resolver::system_conf::read_system_conf()
-                .map_err(|_| Error::CannotReadSystemDnsConfig)?
+                .map_err(|e| Error::CannotReadSystemDnsConfig(e))?
         } else {
             (Default::default(), Default::default())
         };

@@ -182,7 +182,7 @@ impl TcpTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
-        resolver: impl Borrow<TokioResolver>,
+        resolver: Arc<TokioResolver>,
     ) -> Result<(Multiaddr, TcpStream), DialError> {
         let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
 

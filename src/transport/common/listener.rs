@@ -73,7 +73,7 @@ impl AddressType {
     /// Resolve the address to a concrete IP.
     pub async fn lookup_ip(
         self,
-        resolver: impl Borrow<TokioResolver>,
+        resolver: Arc<TokioResolver>,
     ) -> Result<SocketAddr, DnsError> {
         let (url, port, dns_type) = match self {
             // We already have the IP address.
@@ -85,7 +85,7 @@ impl AddressType {
             } => (address, port, dns_type),
         };
 
-        let lookup = match resolver.borrow().lookup_ip(url.clone()).await {
+        let lookup = match resolver.lookup_ip(url.clone()).await {
             Ok(lookup) => lookup,
             Err(error) => {
                 tracing::debug!(

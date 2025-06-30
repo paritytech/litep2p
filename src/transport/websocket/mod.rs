@@ -228,7 +228,7 @@ impl WebSocketTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
-        resolver: impl Borrow<TokioResolver>,
+        resolver: Arc<TokioResolver>,
     ) -> Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>), DialError> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
 
