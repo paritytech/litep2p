@@ -33,7 +33,6 @@ use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
 use std::{
-    borrow::Borrow,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
@@ -71,10 +70,7 @@ pub enum DnsType {
 
 impl AddressType {
     /// Resolve the address to a concrete IP.
-    pub async fn lookup_ip(
-        self,
-        resolver: Arc<TokioResolver>,
-    ) -> Result<SocketAddr, DnsError> {
+    pub async fn lookup_ip(self, resolver: Arc<TokioResolver>) -> Result<SocketAddr, DnsError> {
         let (url, port, dns_type) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),

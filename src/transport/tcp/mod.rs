@@ -48,7 +48,6 @@ use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
 
 use std::{
-    borrow::Borrow,
     collections::HashMap,
     net::SocketAddr,
     pin::Pin,
