@@ -45,7 +45,7 @@ use futures::{
 use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
-use std::{borrow::Borrow, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 

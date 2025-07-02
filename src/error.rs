@@ -126,7 +126,7 @@ pub enum Error {
     ConnectionLimit(ConnectionLimitsError),
     #[error("Failed to dial peer immediately")]
     ImmediateDialError(#[from] ImmediateDialError),
-    #[error("Cannot read system DNS config")]
+    #[error("Cannot read system DNS config: `{0}`")]
     CannotReadSystemDnsConfig(hickory_resolver::ResolveError),
 }
 
