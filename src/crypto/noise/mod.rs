@@ -770,6 +770,7 @@ fn parse_and_verify_peer_id(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandshakeTransport {
     Tcp,
+    #[cfg(feature = "websocket")]
     WebSocket,
 }
 

@@ -20,9 +20,12 @@
 
 use crate::{
     codec::ProtocolCodec,
-    protocol::libp2p::kademlia::handle::{
-        IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle,
-        RoutingTableUpdateMode,
+    protocol::libp2p::kademlia::{
+        handle::{
+            IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle,
+            RoutingTableUpdateMode,
+        },
+        store::MemoryStoreConfig,
     },
     types::protocol::ProtocolName,
     PeerId, DEFAULT_CHANNEL_SIZE,
@@ -40,11 +43,26 @@ use std::{
 /// Default TTL for the records.
 const DEFAULT_TTL: Duration = Duration::from_secs(36 * 60 * 60);
 
-/// Default provider record TTL.
-pub(super) const DEFAULT_PROVIDER_TTL: Duration = Duration::from_secs(48 * 60 * 60);
+/// Default max number of records.
+pub(super) const DEFAULT_MAX_RECORDS: usize = 1024;
+
+/// Default max record size.
+pub(super) const DEFAULT_MAX_RECORD_SIZE_BYTES: usize = 65 * 1024;
+
+/// Default max provider keys.
+pub(super) const DEFAULT_MAX_PROVIDER_KEYS: usize = 1024;
+
+/// Default max provider addresses.
+pub(super) const DEFAULT_MAX_PROVIDER_ADDRESSES: usize = 30;
+
+/// Default max providers per key.
+pub(super) const DEFAULT_MAX_PROVIDERS_PER_KEY: usize = 20;
 
 /// Default provider republish interval.
 pub(super) const DEFAULT_PROVIDER_REFRESH_INTERVAL: Duration = Duration::from_secs(22 * 60 * 60);
+
+/// Default provider record TTL.
+pub(super) const DEFAULT_PROVIDER_TTL: Duration = Duration::from_secs(48 * 60 * 60);
 
 /// Protocol name.
 const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
@@ -82,10 +100,7 @@ pub struct Config {
     pub(super) record_ttl: Duration,
 
     /// Provider record TTL.
-    pub(super) provider_ttl: Duration,
-
-    /// Provider republish interval.
-    pub(super) provider_refresh_interval: Duration,
+    pub(super) memory_store_config: MemoryStoreConfig,
 
     /// TX channel for sending events to `KademliaHandle`.
     pub(super) event_tx: Sender<KademliaEvent>,
@@ -105,8 +120,7 @@ impl Config {
         update_mode: RoutingTableUpdateMode,
         validation_mode: IncomingRecordValidationMode,
         record_ttl: Duration,
-        provider_ttl: Duration,
-        provider_refresh_interval: Duration,
+        memory_store_config: MemoryStoreConfig,
         max_message_size: usize,
     ) -> (Self, KademliaHandle) {
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
@@ -124,8 +138,7 @@ impl Config {
                 update_mode,
                 validation_mode,
                 record_ttl,
-                provider_ttl,
-                provider_refresh_interval,
+                memory_store_config,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
                 replication_factor,
                 known_peers,
@@ -146,8 +159,7 @@ impl Config {
             RoutingTableUpdateMode::Automatic,
             IncomingRecordValidationMode::Automatic,
             DEFAULT_TTL,
-            DEFAULT_PROVIDER_TTL,
-            DEFAULT_PROVIDER_REFRESH_INTERVAL,
+            Default::default(),
             DEFAULT_MAX_MESSAGE_SIZE,
         )
     }
@@ -174,11 +186,8 @@ pub struct ConfigBuilder {
     /// Default TTL for the records.
     pub(super) record_ttl: Duration,
 
-    /// TTL for the provider records.
-    pub(super) provider_ttl: Duration,
-
-    /// Republish interval for the provider records.
-    pub(super) provider_refresh_interval: Duration,
+    /// Memory store configuration.
+    pub(super) memory_store_config: MemoryStoreConfig,
 
     /// Maximum message size.
     pub(crate) max_message_size: usize,
@@ -200,8 +209,7 @@ impl ConfigBuilder {
             update_mode: RoutingTableUpdateMode::Automatic,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: DEFAULT_TTL,
-            provider_ttl: DEFAULT_PROVIDER_TTL,
-            provider_refresh_interval: DEFAULT_PROVIDER_REFRESH_INTERVAL,
+            memory_store_config: Default::default(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
@@ -255,11 +263,51 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set maximum number of records in the memory store.
+    ///
+    /// If unspecified, the default maximum number of records is 1024.
+    pub fn with_max_records(mut self, max_records: usize) -> Self {
+        self.memory_store_config.max_records = max_records;
+        self
+    }
+
+    /// Set maximum record size in bytes.
+    ///
+    /// If unspecified, the default maximum record size is 65 KiB.
+    pub fn with_max_record_size(mut self, max_record_size_bytes: usize) -> Self {
+        self.memory_store_config.max_record_size_bytes = max_record_size_bytes;
+        self
+    }
+
+    /// Set maximum number of provider keys in the memory store.
+    ///
+    /// If unspecified, the default maximum number of provider keys is 1024.
+    pub fn with_max_provider_keys(mut self, max_provider_keys: usize) -> Self {
+        self.memory_store_config.max_provider_keys = max_provider_keys;
+        self
+    }
+
+    /// Set maximum number of provider addresses per provider in the memory store.
+    ///
+    /// If unspecified, the default maximum number of provider addresses is 30.
+    pub fn with_max_provider_addresses(mut self, max_provider_addresses: usize) -> Self {
+        self.memory_store_config.max_provider_addresses = max_provider_addresses;
+        self
+    }
+
+    /// Set maximum number of providers per key in the memory store.
+    ///
+    /// If unspecified, the default maximum number of providers per key is 20.
+    pub fn with_max_providers_per_key(mut self, max_providers_per_key: usize) -> Self {
+        self.memory_store_config.max_providers_per_key = max_providers_per_key;
+        self
+    }
+
     /// Set TTL for the provider records. Recommended value is 2 * (refresh interval) + 10%.
     ///
     /// If unspecified, the default TTL is 48 hours.
     pub fn with_provider_record_ttl(mut self, provider_record_ttl: Duration) -> Self {
-        self.provider_ttl = provider_record_ttl;
+        self.memory_store_config.provider_ttl = provider_record_ttl;
         self
     }
 
@@ -267,7 +315,7 @@ impl ConfigBuilder {
     ///
     /// If unspecified, the default interval is 22 hours.
     pub fn with_provider_refresh_interval(mut self, provider_refresh_interval: Duration) -> Self {
-        self.provider_refresh_interval = provider_refresh_interval;
+        self.memory_store_config.provider_refresh_interval = provider_refresh_interval;
         self
     }
 
@@ -289,8 +337,7 @@ impl ConfigBuilder {
             self.update_mode,
             self.validation_mode,
             self.record_ttl,
-            self.provider_ttl,
-            self.provider_refresh_interval,
+            self.memory_store_config,
             self.max_message_size,
         )
     }
