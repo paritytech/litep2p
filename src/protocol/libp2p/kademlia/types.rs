@@ -284,10 +284,10 @@ impl KademliaPeer {
     }
 }
 
-impl TryFrom<&schema::kademlia::Peer> for KademliaPeer {
+impl TryFrom<schema::kademlia::Peer> for KademliaPeer {
     type Error = ();
 
-    fn try_from(record: &schema::kademlia::Peer) -> Result<Self, Self::Error> {
+    fn try_from(record: schema::kademlia::Peer) -> Result<Self, Self::Error> {
         let peer = PeerId::from_bytes(&record.id).map_err(|_| ())?;
         let addresses = record.addrs.into_iter().filter_map(|addr| Multiaddr::try_from(addr).ok());
 
@@ -307,7 +307,6 @@ impl From<&KademliaPeer> for schema::kademlia::Peer {
             addrs: peer
                 .address_store
                 .addresses(MAX_ADDRESSES)
-                .iter()
                 .map(|address| address.to_vec())
                 .collect(),
             connection: peer.connection.into(),
