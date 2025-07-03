@@ -26,7 +26,7 @@
 
 use crate::{
     protocol::libp2p::kademlia::schema,
-    transport::manager::address::{AddressRecord, AddressStore},
+    transport::manager::address::{AddressRecord, AddressStore, AddressStoreBuckets},
     PeerId,
 };
 
@@ -254,7 +254,7 @@ pub struct KademliaPeer {
     pub(super) peer: PeerId,
 
     /// Known addresses of peer.
-    pub(super) address_store: AddressStore,
+    pub(super) address_store: AddressStoreBuckets,
 
     /// Connection type.
     pub(super) connection: ConnectionType,
@@ -263,15 +263,9 @@ pub struct KademliaPeer {
 impl KademliaPeer {
     /// Create new [`KademliaPeer`].
     pub fn new(peer: PeerId, addresses: Vec<Multiaddr>, connection: ConnectionType) -> Self {
-        let mut address_store = AddressStore::new();
-
-        for address in addresses.into_iter() {
-            address_store.insert(AddressRecord::from_raw_multiaddr(address));
-        }
-
         Self {
             peer,
-            address_store,
+            address_store: AddressStoreBuckets::from_unknown(addresses),
             connection,
             key: Key::from(peer),
         }
@@ -295,19 +289,12 @@ impl TryFrom<&schema::kademlia::Peer> for KademliaPeer {
 
     fn try_from(record: &schema::kademlia::Peer) -> Result<Self, Self::Error> {
         let peer = PeerId::from_bytes(&record.id).map_err(|_| ())?;
-
-        let mut address_store = AddressStore::new();
-        for address in record.addrs.iter() {
-            let Ok(address) = Multiaddr::try_from(address.clone()) else {
-                continue;
-            };
-            address_store.insert(AddressRecord::from_raw_multiaddr(address));
-        }
+        let addresses = record.addrs.into_iter().filter_map(|addr| Multiaddr::try_from(addr).ok());
 
         Ok(KademliaPeer {
             key: Key::from(peer),
             peer,
-            address_store,
+            address_store: AddressStoreBuckets::from_unknown(addresses),
             connection: ConnectionType::try_from(record.connection)?,
         })
     }
