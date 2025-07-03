@@ -261,6 +261,25 @@ impl AddressStore {
     }
 }
 
+/// Buckets for storing addresses based on dial results.
+///
+/// This is a more optimized version of [`AddressStore`] that separates addresses
+/// based on their dial results (success, unknown, failure).
+///
+/// It allows for more efficient management of addresses based on their dial outcomes,
+/// reducing the need for sorting and filtering during address selection.
+#[derive(Debug, Clone, Default)]
+pub struct AddressStoreBuckets {
+    /// Addresses with successful dials.
+    pub success: HashMap<PeerId, AddressRecord>,
+
+    /// Addresses not yet dialed.
+    pub unknown: HashMap<PeerId, AddressRecord>,
+
+    /// Addresses with dial failures.
+    pub failure: HashMap<PeerId, AddressRecord>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
