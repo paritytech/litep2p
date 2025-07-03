@@ -304,15 +304,10 @@ impl AddressStoreBuckets {
     /// If the addresses exceed the maximum capacity, they will be truncated.
     pub fn from_unknown(addresses: impl IntoIterator<Item = Multiaddr>) -> Self {
         let mut store = Self::new();
-        for address in addresses.take(MAX_UNKNOWN_ADDRESSES) {
+        for address in addresses.into_iter().take(MAX_UNKNOWN_ADDRESSES) {
             store.unknown.insert(address);
         }
         store
-    }
-
-    /// Get the score for a given error.
-    pub fn error_score(_error: &DialError) -> i32 {
-        scores::CONNECTION_FAILURE
     }
 
     /// Insert an address record into the appropriate bucket based on its score.

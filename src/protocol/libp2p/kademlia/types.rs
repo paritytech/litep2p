@@ -26,7 +26,7 @@
 
 use crate::{
     protocol::libp2p::kademlia::schema,
-    transport::manager::address::{AddressRecord, AddressStore, AddressStoreBuckets},
+    transport::manager::address::{AddressRecord, AddressStoreBuckets},
     PeerId,
 };
 
@@ -279,7 +279,7 @@ impl KademliaPeer {
     }
 
     /// Returns the addresses of the peer.
-    pub fn addresses(&self) -> Vec<Multiaddr> {
+    pub fn addresses(&self) -> impl Iterator<Item = &Multiaddr> {
         self.address_store.addresses(MAX_ADDRESSES)
     }
 }
