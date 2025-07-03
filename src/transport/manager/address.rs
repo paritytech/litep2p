@@ -337,6 +337,15 @@ impl AddressStoreBuckets {
     pub fn is_empty(&self) -> bool {
         self.success.is_empty() && self.unknown.is_empty() && self.failure.is_empty()
     }
+
+    /// Return the available addresses from all buckets.
+    pub fn addresses(&self, limit: usize) -> impl Iterator<Item = &Multiaddr> {
+        self.success
+            .iter()
+            .chain(self.unknown.iter())
+            .chain(self.failure.iter())
+            .take(limit)
+    }
 }
 
 #[cfg(test)]
