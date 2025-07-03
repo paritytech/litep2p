@@ -23,10 +23,19 @@ use crate::{error::DialError, PeerId};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
+
+/// Maximum number of addresses tracked for a peer in the success bucket.
+const MAX_SUCCESS_ADDRESSES: usize = 32;
+
+/// Maximum number of addresses tracked for a peer in the unknown bucket.
+const MAX_UNKNOWN_ADDRESSES: usize = 16;
+
+/// Maximum number of addresses tracked for a peer in the failure bucket.
+const MAX_FAILURE_ADDRESSES: usize = 16;
 
 /// Scores for address records.
 pub mod scores {
@@ -271,13 +280,63 @@ impl AddressStore {
 #[derive(Debug, Clone, Default)]
 pub struct AddressStoreBuckets {
     /// Addresses with successful dials.
-    pub success: HashMap<PeerId, AddressRecord>,
+    pub success: HashSet<Multiaddr>,
 
     /// Addresses not yet dialed.
-    pub unknown: HashMap<PeerId, AddressRecord>,
+    pub unknown: HashSet<Multiaddr>,
 
     /// Addresses with dial failures.
-    pub failure: HashMap<PeerId, AddressRecord>,
+    pub failure: HashSet<Multiaddr>,
+}
+
+impl AddressStoreBuckets {
+    /// Create new [`AddressStoreBuckets`].
+    pub fn new() -> Self {
+        Self {
+            success: HashSet::with_capacity(MAX_SUCCESS_ADDRESSES),
+            unknown: HashSet::with_capacity(MAX_UNKNOWN_ADDRESSES),
+            failure: HashSet::with_capacity(MAX_FAILURE_ADDRESSES),
+        }
+    }
+
+    /// Get the score for a given error.
+    pub fn error_score(_error: &DialError) -> i32 {
+        scores::CONNECTION_FAILURE
+    }
+
+    /// Insert an address record into the appropriate bucket based on its score.
+    pub fn insert(&mut self, record: AddressRecord) {
+        let AddressRecord { score, address } = record;
+
+        match score {
+            score if score > 0 => {
+                // Moves directly to the success bucket.
+                self.unknown.remove(&address);
+                self.failure.remove(&address);
+
+                self.success.insert(address);
+            }
+            0 => {
+                // Moves to the unknown bucket.
+                self.success.remove(&address);
+                self.failure.remove(&address);
+
+                self.unknown.insert(address);
+            }
+            _ => {
+                // Moves to the failure bucket.
+                self.success.remove(&address);
+                self.unknown.remove(&address);
+
+                self.failure.insert(address);
+            }
+        }
+    }
+
+    /// Check if the store is empty.
+    pub fn is_empty(&self) -> bool {
+        self.success.is_empty() && self.unknown.is_empty() && self.failure.is_empty()
+    }
 }
 
 #[cfg(test)]
