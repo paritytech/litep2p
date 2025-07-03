@@ -1431,7 +1431,10 @@ mod tests {
         // Check peer addresses.
         match kademlia.routing_table.entry(Key::from(peer)) {
             KBucketEntry::Occupied(entry) => {
-                assert_eq!(entry.addresses(), vec![address_a.clone()]);
+                assert_eq!(
+                    entry.addresses().cloned().collect::<Vec<_>>(),
+                    vec![address_a.clone()]
+                );
             }
             _ => panic!("Peer not found in routing table"),
         };
@@ -1450,7 +1453,7 @@ mod tests {
         match kademlia.routing_table.entry(Key::from(peer)) {
             KBucketEntry::Occupied(entry) => {
                 assert_eq!(
-                    entry.addresses(),
+                    entry.addresses().cloned().collect::<Vec<_>>(),
                     vec![address_b.clone(), address_a.clone()]
                 );
             }
@@ -1469,7 +1472,7 @@ mod tests {
         match kademlia.routing_table.entry(Key::from(peer)) {
             KBucketEntry::Occupied(entry) => {
                 assert_eq!(
-                    entry.addresses(),
+                    entry.addresses().cloned().collect::<Vec<_>>(),
                     vec![address_b.clone(), address_a.clone()]
                 );
             }
@@ -1483,7 +1486,7 @@ mod tests {
         match kademlia.routing_table.entry(Key::from(peer)) {
             KBucketEntry::Occupied(entry) => {
                 assert_eq!(
-                    entry.addresses(),
+                    entry.addresses().cloned().collect::<Vec<_>>(),
                     vec![address_a.clone(), address_b.clone()]
                 );
             }
