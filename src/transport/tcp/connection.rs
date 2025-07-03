@@ -776,11 +776,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_with_config(
-                Default::default(),
-                TokioConnectionProvider::default(),
-            )
-            .build(),
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -876,11 +878,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_with_config(
-                Default::default(),
-                TokioConnectionProvider::default(),
-            )
-            .build(),
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -1023,11 +1027,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_with_config(
-                Default::default(),
-                TokioConnectionProvider::default(),
-            )
-            .build(),
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -1074,11 +1080,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_with_config(
-                Default::default(),
-                TokioConnectionProvider::default(),
-            )
-            .build(),
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -1252,11 +1260,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_with_config(
-                Default::default(),
-                TokioConnectionProvider::default(),
-            )
-            .build(),
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -1385,11 +1395,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_with_config(
-                Default::default(),
-                TokioConnectionProvider::default(),
-            )
-            .build(),
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();

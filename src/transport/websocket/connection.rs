@@ -607,6 +607,7 @@ mod tests {
     use super::*;
     use futures::AsyncWriteExt;
     use hickory_resolver::TokioResolver;
+    use std::sync::Arc;
     use tokio::net::TcpListener;
 
     #[tokio::test]
@@ -640,7 +641,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_tokio().unwrap().build(),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
         )
         .await
         .unwrap();
@@ -756,7 +757,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_tokio().unwrap().build(),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
         )
         .await
         .unwrap();
@@ -1028,7 +1029,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_tokio().unwrap().build(),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
         )
         .await
         .unwrap();
@@ -1196,7 +1197,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_tokio().unwrap().build(),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
         )
         .await
         .unwrap();
@@ -1350,7 +1351,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            TokioResolver::builder_tokio().unwrap().build(),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
         )
         .await
         .unwrap();
