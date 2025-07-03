@@ -320,6 +320,7 @@ impl AddressStoreBuckets {
                 self.unknown.remove(&address);
                 self.failure.remove(&address);
 
+                Self::ensure_space(&mut self.success);
                 self.success.insert(address);
             }
             0 => {
@@ -327,6 +328,7 @@ impl AddressStoreBuckets {
                 self.success.remove(&address);
                 self.failure.remove(&address);
 
+                Self::ensure_space(&mut self.unknown);
                 self.unknown.insert(address);
             }
             _ => {
@@ -334,8 +336,21 @@ impl AddressStoreBuckets {
                 self.success.remove(&address);
                 self.unknown.remove(&address);
 
+                Self::ensure_space(&mut self.failure);
                 self.failure.insert(address);
             }
+        }
+    }
+
+    /// Ensure that there is space in the bucket.
+    fn ensure_space(bucket: &mut HashSet<Multiaddr>) {
+        if bucket.len() < bucket.capacity() {
+            return;
+        }
+
+        // Remove the first element to ensure space.
+        if let Some(first) = bucket.iter().next().cloned() {
+            bucket.remove(&first);
         }
     }
 
