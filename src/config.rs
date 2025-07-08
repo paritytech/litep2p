@@ -124,6 +124,9 @@ pub struct ConfigBuilder {
 
     /// Close the connection if no substreams are open within this time frame.
     keep_alive_timeout: Duration,
+
+    /// True if litep2p should attempt to dial local addresses.
+    use_private_ip: bool,
 }
 
 impl Default for ConfigBuilder {
@@ -157,6 +160,7 @@ impl ConfigBuilder {
             known_addresses: Vec::new(),
             connection_limits: ConnectionLimitsConfig::default(),
             keep_alive_timeout: KEEP_ALIVE_TIMEOUT,
+            use_private_ip: true,
         }
     }
 
@@ -278,6 +282,23 @@ impl ConfigBuilder {
         self
     }
 
+    /// Allow or forbid connecting to private IPv4/IPv6 addresses.
+    ///
+    /// When the private IP is enabled, litep2p will attempt to dial local addresses.
+    /// This is useful for testing or when you want to preserve local connections.
+    ///
+    /// However, for production use, it is recommended to disable the private IP dialing
+    /// to avoid unnecessary local traffic. Furthermore, it is not recommended
+    /// to enable private IP dialing when running a validator in a cloud provider, as this behavior
+    /// might be misinterpreted by the cloud provider's network policies as port scanning.
+    ///
+    /// Address allocation for private networks is specified by
+    /// [RFC1918](https://tools.ietf.org/html/rfc1918)).
+    pub fn with_private_ip(mut self, enable: bool) -> Self {
+        self.use_private_ip = enable;
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     pub fn build(mut self) -> Litep2pConfig {
         let keypair = match self.keypair {
@@ -307,6 +328,7 @@ impl ConfigBuilder {
             known_addresses: self.known_addresses,
             connection_limits: self.connection_limits,
             keep_alive_timeout: self.keep_alive_timeout,
+            use_private_ip: self.use_private_ip,
         }
     }
 }
@@ -369,4 +391,7 @@ pub struct Litep2pConfig {
 
     /// Close the connection if no substreams are open within this time frame.
     pub(crate) keep_alive_timeout: Duration,
+
+    /// True if litep2p should attempt to dial local addresses.
+    pub(crate) use_private_ip: bool,
 }
