@@ -101,8 +101,14 @@ impl TransportManagerHandle {
         supported_transport: HashSet<SupportedTransport>,
         listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
         public_addresses: PublicAddresses,
-        ip_dialing_mode: IpDialingMode,
+        use_private_ip: bool,
     ) -> Self {
+        let ip_dialing_mode = if use_private_ip {
+            IpDialingMode::All
+        } else {
+            IpDialingMode::GlobalOnly
+        };
+
         Self {
             peers,
             cmd_tx,
@@ -397,6 +403,7 @@ mod tests {
                 supported_transport: HashSet::new(),
                 listen_addresses: Default::default(),
                 public_addresses: PublicAddresses::new(local_peer_id),
+                ip_dialing_mode: IpDialingMode::default(),
             },
             cmd_rx,
         )
@@ -789,6 +796,7 @@ mod tests {
             supported_transport: HashSet::new(),
             listen_addresses,
             public_addresses: PublicAddresses::new(local_peer_id),
+            ip_dialing_mode: IpDialingMode::default(),
         };
 
         // local addresses

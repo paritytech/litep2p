@@ -662,6 +662,7 @@ mod tests {
             HashSet::new(),
             Default::default(),
             PublicAddresses::new(peer),
+            true,
         );
 
         let (service, sender) = TransportService::new(

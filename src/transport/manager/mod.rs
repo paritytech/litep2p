@@ -199,12 +199,12 @@ impl Stream for TransportContext {
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum IpDialingMode {
     /// Dial only global addresses.
-    #[default]
     GlobalOnly,
 
     /// Dial all addresses, including private IPs.
     ///
     /// This setup is not recommended for production use-cases.
+    #[default]
     All,
 }
 
@@ -312,13 +312,6 @@ impl TransportManager {
         let (event_tx, event_rx) = channel(256);
         let listen_addresses = Arc::new(RwLock::new(HashSet::new()));
         let public_addresses = PublicAddresses::new(local_peer_id);
-
-        let ip_dialing_mode = if use_private_ip {
-            IpDialingMode::All
-        } else {
-            IpDialingMode::GlobalOnly
-        };
-
         let handle = TransportManagerHandle::new(
             local_peer_id,
             peers.clone(),
@@ -326,8 +319,14 @@ impl TransportManager {
             supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
-            ip_dialing_mode,
+            use_private_ip,
         );
+
+        let ip_dialing_mode = if use_private_ip {
+            IpDialingMode::All
+        } else {
+            IpDialingMode::GlobalOnly
+        };
 
         (
             Self {
