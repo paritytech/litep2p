@@ -577,6 +577,11 @@ impl TransportManager {
             return Err(Error::TriedToDialSelf);
         }
 
+        if !self.use_private_ip && !Self::is_address_global(address_record.address()) {
+            tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "dial address is not global, skipping");
+            return Err(Error::AddressError(AddressError::AddressNotAvailable));
+        }
+
         tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "dial address");
 
         let mut protocol_stack = address_record.as_ref().iter();
