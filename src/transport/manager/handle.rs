@@ -109,6 +109,12 @@ impl TransportManagerHandle {
             IpDialingMode::GlobalOnly
         };
 
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?ip_dialing_mode,
+            "Transport manager handle created",
+        );
+
         Self {
             peers,
             cmd_tx,
@@ -307,7 +313,7 @@ impl TransportManagerHandle {
             return Err(ImmediateDialError::PeerIdMissing);
         }
 
-        if self.ip_dialing_mode.allows_address(&address) {
+        if !self.ip_dialing_mode.allows_address(&address) {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?address,

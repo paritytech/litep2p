@@ -328,6 +328,12 @@ impl TransportManager {
             IpDialingMode::GlobalOnly
         };
 
+        tracing::debug!(
+           target: LOG_TARGET,
+           ?ip_dialing_mode,
+           "Transport manager created",
+        );
+
         (
             Self {
                 peers,
