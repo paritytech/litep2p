@@ -461,6 +461,19 @@ impl TransportManager {
         transports
     }
 
+    /// Check if the IP address in the given `Multiaddr` is global.
+    fn is_address_global(address: &Multiaddr) -> bool {
+        let ip = match address.iter().next() {
+            Some(Protocol::Ip4(ip)) => ip_network::IpNetwork::from(ip),
+            Some(Protocol::Ip6(ip)) => ip_network::IpNetwork::from(ip),
+            Some(Protocol::Dns(_)) | Some(Protocol::Dns4(_)) | Some(Protocol::Dns6(_)) =>
+                return true,
+            _ => return false,
+        };
+
+        ip.is_global()
+    }
+
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
@@ -487,7 +500,23 @@ impl TransportManager {
 
         // The addresses are sorted by score and contain the remote peer ID.
         // We double checked above that the remote peer is not the local peer.
-        let dial_addresses = context.addresses.addresses(limit);
+        let dial_addresses = context
+            .addresses
+            .addresses_iter()
+            .filter_map(|addr| {
+                if self.use_private_ip {
+                    return Some(addr.clone());
+                }
+
+                if Self::is_address_global(addr) {
+                    Some(addr.clone())
+                } else {
+                    None
+                }
+            })
+            .take(limit)
+            .collect::<Vec<_>>();
+
         if dial_addresses.is_empty() {
             return Err(Error::NoAddressAvailable(peer));
         }
@@ -3393,6 +3422,7 @@ mod tests {
             ConnectionLimitsConfig::default()
                 .max_incoming_connections(Some(3))
                 .max_outgoing_connections(Some(2)),
+            true,
         );
         // The connection limit is agnostic of the underlying transports.
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -3469,6 +3499,7 @@ mod tests {
             ConnectionLimitsConfig::default()
                 .max_incoming_connections(Some(3))
                 .max_outgoing_connections(Some(2)),
+            true,
         );
         // The connection limit is agnostic of the underlying transports.
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));

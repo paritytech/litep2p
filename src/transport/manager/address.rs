@@ -217,6 +217,11 @@ impl AddressStore {
         self.addresses.is_empty()
     }
 
+    /// Remove the address record from [`AddressStore`] by its address.
+    pub fn remove(&mut self, address: &Multiaddr) -> Option<AddressRecord> {
+        self.addresses.remove(address)
+    }
+
     /// Insert the address record into [`AddressStore`] with the provided score.
     ///
     /// If the address is not in the store, it will be inserted.
@@ -258,6 +263,13 @@ impl AddressStore {
         let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
         records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
         records.into_iter().take(limit).map(|record| record.address).collect()
+    }
+
+    /// Similar to [`Self::addresses`], but returns an iterator over the addresses.
+    pub fn addresses_iter(&self) -> impl Iterator<Item = &Multiaddr> {
+        let mut records = self.addresses.values().collect::<Vec<_>>();
+        records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
+        records.into_iter().map(|record| &record.address)
     }
 }
 
