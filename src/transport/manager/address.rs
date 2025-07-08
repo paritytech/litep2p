@@ -217,11 +217,6 @@ impl AddressStore {
         self.addresses.is_empty()
     }
 
-    /// Remove the address record from [`AddressStore`] by its address.
-    pub fn remove(&mut self, address: &Multiaddr) -> Option<AddressRecord> {
-        self.addresses.remove(address)
-    }
-
     /// Insert the address record into [`AddressStore`] with the provided score.
     ///
     /// If the address is not in the store, it will be inserted.
