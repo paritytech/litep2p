@@ -28,7 +28,7 @@ use crate::{
         address::AddressRecord,
         peer_state::StateDialResult,
         types::{PeerContext, SupportedTransport},
-        ProtocolContext, TransportManagerEvent, LOG_TARGET,
+        IpDialingMode, ProtocolContext, TransportManagerEvent, LOG_TARGET,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -87,6 +87,9 @@ pub struct TransportManagerHandle {
 
     /// Public addresses.
     public_addresses: PublicAddresses,
+
+    /// IP dialing mode.
+    ip_dialing_mode: IpDialingMode,
 }
 
 impl TransportManagerHandle {
@@ -98,6 +101,7 @@ impl TransportManagerHandle {
         supported_transport: HashSet<SupportedTransport>,
         listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
         public_addresses: PublicAddresses,
+        ip_dialing_mode: IpDialingMode,
     ) -> Self {
         Self {
             peers,
@@ -106,6 +110,7 @@ impl TransportManagerHandle {
             supported_transport,
             listen_addresses,
             public_addresses,
+            ip_dialing_mode,
         }
     }
 

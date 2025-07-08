@@ -194,6 +194,44 @@ impl Stream for TransportContext {
     }
 }
 
+/// The IP dialing mode determines how the transport manager handles dialing
+/// IP addresses. It can either dial only global addresses or all addresses, including private IPs.
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum IpDialingMode {
+    /// Dial only global addresses.
+    #[default]
+    GlobalOnly,
+
+    /// Dial all addresses, including private IPs.
+    ///
+    /// This setup is not recommended for production use-cases.
+    All,
+}
+
+impl IpDialingMode {
+    /// Check if the IP address in the given `Multiaddr` is global.
+    pub fn is_address_global(address: &Multiaddr) -> bool {
+        let ip = match address.iter().next() {
+            Some(Protocol::Ip4(ip)) => ip_network::IpNetwork::from(ip),
+            Some(Protocol::Ip6(ip)) => ip_network::IpNetwork::from(ip),
+            Some(Protocol::Dns(_)) | Some(Protocol::Dns4(_)) | Some(Protocol::Dns6(_)) =>
+                return true,
+            _ => return false,
+        };
+
+        ip.is_global()
+    }
+
+    /// Check if the IP dialing mode allows dialing private IPs.
+    pub fn allows_address(&self, address: &Multiaddr) -> bool {
+        match self {
+            Self::GlobalOnly => Self::is_address_global(address),
+            // All IP addresses are allowed.
+            Self::All => true,
+        }
+    }
+}
+
 /// Litep2p connection manager.
 pub struct TransportManager {
     /// Local peer ID.
@@ -253,8 +291,8 @@ pub struct TransportManager {
     /// Opening connections errors.
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
 
-    /// True if litep2p should attempt to dial local addresses.
-    use_private_ip: bool,
+    /// IP dialing mode.
+    ip_dialing_mode: IpDialingMode,
 }
 
 impl TransportManager {
@@ -281,7 +319,14 @@ impl TransportManager {
             supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
+            use_private_ip,
         );
+
+        let ip_dialing_mode = if use_private_ip {
+            IpDialingMode::All
+        } else {
+            IpDialingMode::GlobalOnly
+        };
 
         (
             Self {
@@ -304,7 +349,7 @@ impl TransportManager {
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
                 connection_limits: limits::ConnectionLimits::new(connection_limits_config),
                 opening_errors: HashMap::new(),
-                use_private_ip,
+                ip_dialing_mode,
             },
             handle,
         )
@@ -461,19 +506,6 @@ impl TransportManager {
         transports
     }
 
-    /// Check if the IP address in the given `Multiaddr` is global.
-    fn is_address_global(address: &Multiaddr) -> bool {
-        let ip = match address.iter().next() {
-            Some(Protocol::Ip4(ip)) => ip_network::IpNetwork::from(ip),
-            Some(Protocol::Ip6(ip)) => ip_network::IpNetwork::from(ip),
-            Some(Protocol::Dns(_)) | Some(Protocol::Dns4(_)) | Some(Protocol::Dns6(_)) =>
-                return true,
-            _ => return false,
-        };
-
-        ip.is_global()
-    }
-
     /// Dial peer using `PeerId`.
     ///
     /// Returns an error if the peer is unknown or the peer is already connected.
@@ -503,17 +535,7 @@ impl TransportManager {
         let dial_addresses = context
             .addresses
             .addresses_iter()
-            .filter_map(|addr| {
-                if self.use_private_ip {
-                    return Some(addr.clone());
-                }
-
-                if Self::is_address_global(addr) {
-                    Some(addr.clone())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|addr| self.ip_dialing_mode.allows_address(addr).then(|| addr.clone()))
             .take(limit)
             .collect::<Vec<_>>();
 
@@ -577,7 +599,7 @@ impl TransportManager {
             return Err(Error::TriedToDialSelf);
         }
 
-        if !self.use_private_ip && !Self::is_address_global(address_record.address()) {
+        if !self.ip_dialing_mode.allows_address(address_record.address()) {
             tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "dial address is not global, skipping");
             return Err(Error::AddressError(AddressError::AddressNotAvailable));
         }
