@@ -253,7 +253,11 @@ impl TransportManagerHandle {
 
         {
             let peers = self.peers.read();
-            let Some(PeerContext { state, addresses }) = peers.get(peer) else {
+            let Some(PeerContext {
+                state,
+                addresses: address_store,
+            }) = peers.get(peer)
+            else {
                 return Err(ImmediateDialError::NoAddressAvailable);
             };
 
@@ -265,7 +269,18 @@ impl TransportManagerHandle {
             };
 
             // Check if we have enough addresses to dial.
-            if addresses.is_empty() {
+            if address_store.is_empty() {
+                return Err(ImmediateDialError::NoAddressAvailable);
+            }
+
+            // Check if we can dial at least one address from the store in the current operating
+            // mode. If the mode is `IpDialingMode::All`, this will always return
+            // `true` on the first address.
+            let has_dialable_address = address_store
+                .addresses
+                .iter()
+                .any(|(address, _record)| self.ip_dialing_mode.allows_address(address));
+            if !has_dialable_address {
                 return Err(ImmediateDialError::NoAddressAvailable);
             }
         }
@@ -284,6 +299,15 @@ impl TransportManagerHandle {
     pub fn dial_address(&self, address: Multiaddr) -> Result<(), ImmediateDialError> {
         if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
             return Err(ImmediateDialError::PeerIdMissing);
+        }
+
+        if self.ip_dialing_mode.allows_address(&address) {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?address,
+                "Dialing address is not global, skipping",
+            );
+            return Err(ImmediateDialError::NoAddressAvailable);
         }
 
         self.cmd_tx

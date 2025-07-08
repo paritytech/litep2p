@@ -312,6 +312,13 @@ impl TransportManager {
         let (event_tx, event_rx) = channel(256);
         let listen_addresses = Arc::new(RwLock::new(HashSet::new()));
         let public_addresses = PublicAddresses::new(local_peer_id);
+
+        let ip_dialing_mode = if use_private_ip {
+            IpDialingMode::All
+        } else {
+            IpDialingMode::GlobalOnly
+        };
+
         let handle = TransportManagerHandle::new(
             local_peer_id,
             peers.clone(),
@@ -319,14 +326,8 @@ impl TransportManager {
             supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
-            use_private_ip,
+            ip_dialing_mode,
         );
-
-        let ip_dialing_mode = if use_private_ip {
-            IpDialingMode::All
-        } else {
-            IpDialingMode::GlobalOnly
-        };
 
         (
             Self {
@@ -535,7 +536,13 @@ impl TransportManager {
         let dial_addresses = context
             .addresses
             .addresses_iter()
-            .filter_map(|addr| self.ip_dialing_mode.allows_address(addr).then(|| addr.clone()))
+            .filter_map(|addr| {
+                if self.ip_dialing_mode.allows_address(addr) {
+                    Some(addr.clone())
+                } else {
+                    None
+                }
+            })
             .take(limit)
             .collect::<Vec<_>>();
 
