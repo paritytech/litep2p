@@ -1281,6 +1281,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            true
         );
 
         let peer = PeerId::random();
