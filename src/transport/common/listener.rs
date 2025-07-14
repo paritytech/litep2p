@@ -26,9 +26,7 @@ use crate::{
 };
 
 use futures::Stream;
-use hickory_resolver::{
-    config::ResolverConfig, name_server::TokioConnectionProvider, TokioResolver,
-};
+use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use socket2::{Domain, Socket, Type};
@@ -72,7 +70,7 @@ pub enum DnsType {
 
 impl AddressType {
     /// Resolve the address to a concrete IP.
-    pub async fn lookup_ip(self) -> Result<SocketAddr, DnsError> {
+    pub async fn lookup_ip(self, resolver: Arc<TokioResolver>) -> Result<SocketAddr, DnsError> {
         let (url, port, dns_type) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),
@@ -82,12 +80,6 @@ impl AddressType {
                 dns_type,
             } => (address, port, dns_type),
         };
-
-        let resolver = TokioResolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioConnectionProvider::default(),
-        )
-        .build();
 
         let lookup = match resolver.lookup_ip(url.clone()).await {
             Ok(lookup) => lookup,
