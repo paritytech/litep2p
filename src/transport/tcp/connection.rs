@@ -437,6 +437,8 @@ impl TcpConnection {
             role,
             max_read_ahead_factor,
             max_write_buffer_size,
+            substream_open_timeout,
+            noise::HandshakeTransport::Tcp,
         )
         .await?;
 
@@ -750,6 +752,7 @@ mod tests {
     use crate::transport::tcp::TcpTransport;
 
     use super::*;
+    use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
     use tokio::{io::AsyncWriteExt, net::TcpListener};
 
     #[tokio::test]
@@ -773,6 +776,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -811,7 +821,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(mut dialer), Ok((stream, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -868,6 +878,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -904,7 +921,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -948,7 +965,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -1010,6 +1027,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -1056,6 +1080,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -1090,7 +1121,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(_dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -1130,7 +1161,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept(),)
+            tokio::join!(TcpStream::connect(address), listener.accept(),)
         else {
             panic!("failed to establish connection");
         };
@@ -1146,8 +1177,17 @@ mod tests {
             let keypair = Keypair::generate();
 
             // do a noise handshake
-            let (stream, _peer) =
-                noise::handshake(stream.inner(), &keypair, Role::Dialer, 5, 2).await.unwrap();
+            let (stream, _peer) = noise::handshake(
+                stream.inner(),
+                &keypair,
+                Role::Dialer,
+                5,
+                2,
+                std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::Tcp,
+            )
+            .await
+            .unwrap();
             let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
             // after the handshake, try to negotiate some random protocol instead of yamux
@@ -1196,8 +1236,17 @@ mod tests {
 
             // do a noise handshake
             let keypair = Keypair::generate();
-            let (stream, _peer) =
-                noise::handshake(stream.inner(), &keypair, Role::Listener, 5, 2).await.unwrap();
+            let (stream, _peer) = noise::handshake(
+                stream.inner(),
+                &keypair,
+                Role::Listener,
+                5,
+                2,
+                std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::Tcp,
+            )
+            .await
+            .unwrap();
             let stream: NoiseSocket<Compat<TcpStream>> = stream;
 
             // after the handshake, try to negotiate some random protocol instead of yamux
@@ -1211,6 +1260,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();
@@ -1247,7 +1303,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let (Ok(dialer), Ok((listener, dialer_address))) =
-            tokio::join!(TcpStream::connect(address.clone()), listener.accept())
+            tokio::join!(TcpStream::connect(address), listener.accept())
         else {
             panic!("failed to establish connection");
         };
@@ -1262,8 +1318,17 @@ mod tests {
 
             // do a noise handshake
             let keypair = Keypair::generate();
-            let (stream, _peer) =
-                noise::handshake(stream.inner(), &keypair, Role::Dialer, 5, 2).await.unwrap();
+            let (stream, _peer) = noise::handshake(
+                stream.inner(),
+                &keypair,
+                Role::Dialer,
+                5,
+                2,
+                std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::Tcp,
+            )
+            .await
+            .unwrap();
             let _stream: NoiseSocket<Compat<TcpStream>> = stream;
 
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -1307,8 +1372,17 @@ mod tests {
 
             // do a noise handshake
             let keypair = Keypair::generate();
-            let (stream, _peer) =
-                noise::handshake(stream.inner(), &keypair, Role::Listener, 5, 2).await.unwrap();
+            let (stream, _peer) = noise::handshake(
+                stream.inner(),
+                &keypair,
+                Role::Listener,
+                5,
+                2,
+                std::time::Duration::from_secs(10),
+                noise::HandshakeTransport::Tcp,
+            )
+            .await
+            .unwrap();
             let _stream: NoiseSocket<Compat<TcpStream>> = stream;
 
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -1321,6 +1395,13 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
+            Arc::new(
+                TokioResolver::builder_with_config(
+                    Default::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build(),
+            ),
         )
         .await
         .unwrap();

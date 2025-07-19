@@ -199,7 +199,9 @@ pub enum NotificationEvent {
 }
 
 /// Notification commands sent to the protocol.
-pub(crate) enum NotificationCommand {
+#[derive(Debug)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
+pub enum NotificationCommand {
     /// Open substreams to one or more peers.
     OpenSubstream {
         /// Peer IDs.
@@ -217,4 +219,7 @@ pub(crate) enum NotificationCommand {
         /// Peer to disconnect.
         peer: PeerId,
     },
+
+    #[cfg(feature = "fuzz")]
+    SendNotification { notif: Vec<u8>, peer_id: PeerId },
 }

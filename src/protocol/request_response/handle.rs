@@ -94,14 +94,13 @@ impl From<SubstreamError> for RejectReason {
     fn from(error: SubstreamError) -> Self {
         // Convert `ErrorKind::NotConnected` to `RejectReason::ConnectionClosed`.
         match error {
-            SubstreamError::IoError(error) if error == ErrorKind::NotConnected =>
-                RejectReason::ConnectionClosed,
+            SubstreamError::IoError(ErrorKind::NotConnected) => RejectReason::ConnectionClosed,
             SubstreamError::YamuxError(crate::yamux::ConnectionError::Io(error), _)
                 if error.kind() == ErrorKind::NotConnected =>
                 RejectReason::ConnectionClosed,
-            SubstreamError::NegotiationError(crate::error::NegotiationError::IoError(error))
-                if error == ErrorKind::NotConnected =>
-                RejectReason::ConnectionClosed,
+            SubstreamError::NegotiationError(crate::error::NegotiationError::IoError(
+                ErrorKind::NotConnected,
+            )) => RejectReason::ConnectionClosed,
             SubstreamError::NegotiationError(
                 crate::error::NegotiationError::MultistreamSelectError(
                     crate::multistream_select::NegotiationError::ProtocolError(
@@ -243,6 +242,7 @@ pub enum RequestResponseEvent {
 
 /// Dial behavior when sending requests.
 #[derive(Debug)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum DialOptions {
     /// If the peer is not currently connected, attempt to dial them before sending a request.
     ///
@@ -258,7 +258,9 @@ pub enum DialOptions {
 }
 
 /// Request-response commands.
-pub(crate) enum RequestResponseCommand {
+#[derive(Debug)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
+pub enum RequestResponseCommand {
     /// Send request to remote peer.
     SendRequest {
         /// Peer ID.
@@ -334,6 +336,16 @@ impl RequestResponseHandle {
             next_request_id,
             pending_responses: HashMap::new(),
         }
+    }
+
+    #[cfg(feature = "fuzz")]
+    /// Expose functionality for fuzzing
+    pub async fn fuzz_send_message(
+        &mut self,
+        command: RequestResponseCommand,
+    ) -> crate::Result<RequestId> {
+        let request_id = self.next_request_id();
+        self.command_tx.send(command).await.map(|_| request_id).map_err(From::from)
     }
 
     /// Reject an inbound request.

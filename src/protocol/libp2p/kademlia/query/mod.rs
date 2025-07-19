@@ -49,6 +49,7 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
 
 /// Type representing a query ID.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub struct QueryId(pub usize);
 
 /// Query type.
@@ -104,7 +105,7 @@ enum QueryType {
 }
 
 /// Query action.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum QueryAction {
     /// Send message to peer.
     SendMessage {

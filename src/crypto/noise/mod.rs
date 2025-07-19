@@ -355,6 +355,8 @@ pub struct NoiseSocket<S: AsyncRead + AsyncWrite + Unpin> {
     read_buffer: Vec<u8>,
     canonical_max_read: usize,
     decrypt_buffer: Option<Vec<u8>>,
+    peer: PeerId,
+    ty: HandshakeTransport,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
@@ -363,6 +365,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
         noise: NoiseContext,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
+        peer: PeerId,
+        ty: HandshakeTransport,
     ) -> Self {
         Self {
             io,
@@ -385,6 +389,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
                 max_read: max_read_ahead_factor * MAX_NOISE_MSG_LEN,
             },
             canonical_max_read: max_read_ahead_factor * MAX_NOISE_MSG_LEN,
+            peer,
+            ty,
         }
     }
 
@@ -429,7 +435,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                         },
                     };
 
-                    tracing::trace!(target: LOG_TARGET, ?nread, "read data from socket");
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?nread,
+                        ty = ?this.ty,
+                        peer = ?this.peer,
+                        "read data from socket"
+                    );
 
                     this.nread += nread;
                     this.read_state = ReadState::ReadFrameLen;
@@ -438,13 +450,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                     let mut remaining = match this.nread.checked_sub(this.offset) {
                         Some(remaining) => remaining,
                         None => {
-                            tracing::error!(target: LOG_TARGET, "offset is larger than the number of bytes read");
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ty = ?this.ty,
+                                peer = ?this.peer,
+                                nread = ?this.nread,
+                                offset = ?this.offset,
+                                "offset is larger than the number of bytes read"
+                            );
                             return Poll::Ready(Err(io::ErrorKind::PermissionDenied.into()));
                         }
                     };
 
                     if remaining < 2 {
-                        tracing::trace!(target: LOG_TARGET, "reset read buffer");
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ty = ?this.ty,
+                            peer = ?this.peer,
+                            "reset read buffer"
+                        );
                         this.reset_read_state(remaining);
                         continue;
                     }
@@ -461,13 +485,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                         }
                     };
 
-                    tracing::trace!(target: LOG_TARGET, "current frame size = {frame_size}");
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ty = ?this.ty,
+                        peer = ?this.peer,
+                        "current frame size = {frame_size}"
+                    );
 
                     if remaining < frame_size {
                         // `read_buffer` can fit the full frame size.
                         if this.nread + frame_size < this.canonical_max_read {
                             tracing::trace!(
                                 target: LOG_TARGET,
+                                ty = ?this.ty,
+                                peer = ?this.peer,
                                 max_size = ?this.canonical_max_read,
                                 next_frame_size = ?(this.nread + frame_size),
                                 "read buffer can fit the full frame",
@@ -480,7 +511,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                             continue;
                         }
 
-                        tracing::trace!(target: LOG_TARGET, "use auxiliary buffer extension");
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ty = ?this.ty,
+                            peer = ?this.peer,
+                            "use auxiliary buffer extension"
+                        );
 
                         // use the auxiliary memory at the end of the read buffer for reading the
                         // frame
@@ -494,6 +530,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                     if frame_size <= NOISE_EXTRA_ENCRYPT_SPACE {
                         tracing::error!(
                             target: LOG_TARGET,
+                            ty = ?this.ty,
+                            peer = ?this.peer,
                             ?frame_size,
                             max_size = ?NOISE_EXTRA_ENCRYPT_SPACE,
                             "invalid frame size",
@@ -547,7 +585,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                 buf,
                             ) {
                                 Err(error) => {
-                                    tracing::error!(target: LOG_TARGET, ?error, "failed to decrypt message");
+                                    tracing::error!(
+                                        target: LOG_TARGET,
+                                        ty = ?this.ty,
+                                        peer = ?this.peer,
+                                        buf_len = ?buf.len(),
+                                        frame_size = ?frame_size,
+                                        ?error,
+                                        "failed to decrypt message"
+                                    );
+
                                     return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                                 }
                                 Ok(nread) => {
@@ -565,7 +612,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                     &mut buffer,
                                 ) {
                                     Err(error) => {
-                                        tracing::error!(target: LOG_TARGET, ?error, "failed to decrypt message");
+                                        tracing::error!(
+                                            target: LOG_TARGET,
+                                            ty = ?this.ty,
+                                            peer = ?this.peer,
+                                            buf_len = ?buf.len(),
+                                            frame_size = ?frame_size,
+                                            ?error,
+                                            "failed to decrypt message for smaller buffer"
+                                        );
+
                                         return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                                     }
                                     Ok(nread) => {
@@ -610,7 +666,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
 
                     match this.noise.write_message(chunk, &mut this.encrypt_buffer[offset + 2..]) {
                         Err(error) => {
-                            tracing::error!(target: LOG_TARGET, ?error, "failed to encrypt message");
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?error,
+                                ty = ?this.ty,
+                                peer = ?this.peer,
+                                "failed to encrypt message"
+                            );
+
                             return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
                         }
                         Ok(nwritten) => {
@@ -684,9 +747,8 @@ fn parse_and_verify_peer_id(
     let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
     let remote_public_key = PublicKey::from_protobuf_encoding(&identity)?;
     let remote_key_signature =
-        payload.identity_sig.ok_or(NegotiationError::BadSignature).map_err(|err| {
+        payload.identity_sig.ok_or(NegotiationError::BadSignature).inspect_err(|_err| {
             tracing::debug!(target: LOG_TARGET, "payload without signature");
-            err
         })?;
 
     let peer_id = PeerId::from_public_key(&remote_public_key);
@@ -707,6 +769,16 @@ fn parse_and_verify_peer_id(
     Ok(peer_id)
 }
 
+/// The type of the transport used for the crypto/noise protocol.
+///
+/// This is used for logging purposes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeTransport {
+    Tcp,
+    #[cfg(feature = "websocket")]
+    WebSocket,
+}
+
 /// Perform Noise handshake.
 pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     mut io: S,
@@ -714,62 +786,74 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     role: Role,
     max_read_ahead_factor: usize,
     max_write_buffer_size: usize,
+    timeout: std::time::Duration,
+    ty: HandshakeTransport,
 ) -> Result<(NoiseSocket<S>, PeerId), NegotiationError> {
-    tracing::debug!(target: LOG_TARGET, ?role, "start noise handshake");
+    let handle_handshake = async move {
+        tracing::debug!(target: LOG_TARGET, ?role, ?ty, "start noise handshake");
 
-    let mut noise = NoiseContext::new(keypair, role)?;
-    let payload = match role {
-        Role::Dialer => {
-            // write initial message
-            let first_message = noise.first_message(Role::Dialer)?;
-            let _ = io.write(&first_message).await?;
-            io.flush().await?;
+        let mut noise = NoiseContext::new(keypair, role)?;
+        let payload = match role {
+            Role::Dialer => {
+                // write initial message
+                let first_message = noise.first_message(Role::Dialer)?;
+                let _ = io.write(&first_message).await?;
+                io.flush().await?;
 
-            // read back response which contains the remote peer id
-            let message = noise.read_handshake_message(&mut io).await?;
-            // Decode the remote identity message.
-            let payload = handshake_schema::NoiseHandshakePayload::decode(message)
+                // read back response which contains the remote peer id
+                let message = noise.read_handshake_message(&mut io).await?;
+                // Decode the remote identity message.
+                let payload = handshake_schema::NoiseHandshakePayload::decode(message)
                 .map_err(ParseError::from)
                 .map_err(|err| {
-                    tracing::error!(target: LOG_TARGET, ?err, "failed to decode remote identity message");
+                    tracing::error!(target: LOG_TARGET, ?err, ?ty, "failed to decode remote identity message");
                     err
                 })?;
 
-            // send the final message which contains local peer id
-            let second_message = noise.second_message()?;
-            let _ = io.write(&second_message).await?;
-            io.flush().await?;
+                // send the final message which contains local peer id
+                let second_message = noise.second_message()?;
+                let _ = io.write(&second_message).await?;
+                io.flush().await?;
 
-            payload
-        }
-        Role::Listener => {
-            // read remote's first message
-            let _ = noise.read_handshake_message(&mut io).await?;
+                payload
+            }
+            Role::Listener => {
+                // read remote's first message
+                let _ = noise.read_handshake_message(&mut io).await?;
 
-            // send local peer id.
-            let second_message = noise.second_message()?;
-            let _ = io.write(&second_message).await?;
-            io.flush().await?;
+                // send local peer id.
+                let second_message = noise.second_message()?;
+                let _ = io.write(&second_message).await?;
+                io.flush().await?;
 
-            // read remote's second message which contains their peer id
-            let message = noise.read_handshake_message(&mut io).await?;
-            // Decode the remote identity message.
-            handshake_schema::NoiseHandshakePayload::decode(message).map_err(ParseError::from)?
-        }
+                // read remote's second message which contains their peer id
+                let message = noise.read_handshake_message(&mut io).await?;
+                // Decode the remote identity message.
+                handshake_schema::NoiseHandshakePayload::decode(message)
+                    .map_err(ParseError::from)?
+            }
+        };
+
+        let dh_remote_pubkey = noise.get_handshake_dh_remote_pubkey()?;
+        let peer = parse_and_verify_peer_id(payload, dh_remote_pubkey)?;
+
+        Ok((
+            NoiseSocket::new(
+                io,
+                noise.into_transport()?,
+                max_read_ahead_factor,
+                max_write_buffer_size,
+                peer,
+                ty,
+            ),
+            peer,
+        ))
     };
 
-    let dh_remote_pubkey = noise.get_handshake_dh_remote_pubkey()?;
-    let peer = parse_and_verify_peer_id(payload, dh_remote_pubkey)?;
-
-    Ok((
-        NoiseSocket::new(
-            io,
-            noise.into_transport()?,
-            max_read_ahead_factor,
-            max_write_buffer_size,
-        ),
-        peer,
-    ))
+    match tokio::time::timeout(timeout, handle_handshake).await {
+        Err(_) => Err(NegotiationError::Timeout),
+        Ok(result) => result,
+    }
 }
 
 // TODO: https://github.com/paritytech/litep2p/issues/125 add more tests
@@ -813,14 +897,18 @@ mod tests {
                 &keypair1,
                 Role::Dialer,
                 MAX_READ_AHEAD_FACTOR,
-                MAX_WRITE_BUFFER_SIZE
+                MAX_WRITE_BUFFER_SIZE,
+                std::time::Duration::from_secs(10),
+                HandshakeTransport::Tcp,
             ),
             handshake(
                 io2,
                 &keypair2,
                 Role::Listener,
                 MAX_READ_AHEAD_FACTOR,
-                MAX_WRITE_BUFFER_SIZE
+                MAX_WRITE_BUFFER_SIZE,
+                std::time::Duration::from_secs(10),
+                HandshakeTransport::Tcp,
             )
         );
         let (mut res1, mut res2) = (res1.unwrap(), res2.unwrap());

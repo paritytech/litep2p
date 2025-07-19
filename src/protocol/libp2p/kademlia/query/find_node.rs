@@ -309,7 +309,7 @@ mod tests {
             replication_factor: 20,
             parallelism_factor: 10,
             query: QueryId(0),
-            target: Key::new(vec![1, 2, 3].into()),
+            target: Key::new(vec![1, 2, 3]),
         }
     }
 
@@ -317,7 +317,7 @@ mod tests {
         KademliaPeer {
             peer,
             key: Key::from(peer),
-            addresses: vec![],
+            address_store: Default::default(),
             connection: ConnectionType::Connected,
         }
     }
@@ -353,7 +353,12 @@ mod tests {
         let mut context = FindNodeContext::new(config, VecDeque::new());
         assert!(context.is_done());
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
+        match event {
+            QueryAction::QueryFailed { query, .. } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        };
     }
 
     #[test]
@@ -493,7 +498,7 @@ mod tests {
         assert_eq!(context.responses.len(), 1);
 
         // Provide different response from peer b with peer d as candidate.
-        context.register_response(peer_b, vec![peer_to_kad(peer_d.clone())]);
+        context.register_response(peer_b, vec![peer_to_kad(peer_d)]);
         assert_eq!(context.pending.len(), 1);
         assert_eq!(context.queried.len(), 2);
         assert_eq!(context.responses.len(), 2);
@@ -522,7 +527,12 @@ mod tests {
 
         // Produces the result.
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+        match event {
+            QueryAction::QuerySucceeded { query, .. } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        };
     }
 
     #[test]
@@ -550,7 +560,12 @@ mod tests {
         context.register_response(closest, vec![]);
 
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+        match event {
+            QueryAction::QuerySucceeded { query } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        };
     }
 
     #[test]
@@ -602,7 +617,12 @@ mod tests {
         context.register_response(closest, vec![]);
 
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+        match event {
+            QueryAction::QuerySucceeded { query, .. } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        };
     }
 
     #[test]
@@ -665,7 +685,12 @@ mod tests {
 
         // Produces the result.
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+        match event {
+            QueryAction::QuerySucceeded { query } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        };
 
         // Because the FindNode query keeps a window of the best K (3 in this case) peers,
         // we expect to produce the best K peers. As opposed to having only the last entry

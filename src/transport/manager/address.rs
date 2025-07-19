@@ -88,6 +88,27 @@ impl AddressRecord {
         })
     }
 
+    /// Create `AddressRecord` from `Multiaddr`.
+    ///
+    /// This method does not check if the address contains `PeerId`.
+    ///
+    /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
+    pub fn from_raw_multiaddr(address: Multiaddr) -> AddressRecord {
+        AddressRecord {
+            address,
+            score: 0i32,
+        }
+    }
+
+    /// Create `AddressRecord` from `Multiaddr`.
+    ///
+    /// This method does not check if the address contains `PeerId`.
+    ///
+    /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
+    pub fn from_raw_multiaddr_with_score(address: Multiaddr, score: i32) -> AddressRecord {
+        AddressRecord { address, score }
+    }
+
     /// Get address score.
     #[cfg(test)]
     pub fn score(&self) -> i32 {
@@ -126,7 +147,7 @@ impl Ord for AddressRecord {
 }
 
 /// Store for peer addresses.
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct AddressStore {
     /// Addresses available.
     pub addresses: HashMap<Multiaddr, AddressRecord>,
@@ -407,7 +428,7 @@ mod tests {
             .collect::<HashMap<_, _>>();
         store.extend(records);
 
-        for record in store.addresses.values().cloned() {
+        for record in store.addresses.values() {
             let stored = cloned.get(record.address()).unwrap();
             assert_eq!(stored.score(), record.score());
             assert_eq!(stored.address(), record.address());
@@ -438,7 +459,7 @@ mod tests {
         let cloned = records.iter().cloned().collect::<HashMap<_, _>>();
         store.extend(records.iter().map(|(_, record)| record));
 
-        for record in store.addresses.values().cloned() {
+        for record in store.addresses.values() {
             let stored = cloned.get(record.address()).unwrap();
             assert_eq!(stored.score(), record.score());
             assert_eq!(stored.address(), record.address());

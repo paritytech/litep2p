@@ -227,14 +227,8 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
 
     while !litep2p1_ready && !litep2p2_ready {
         tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => litep2p1_ready = true,
-                _ => {}
-            },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => litep2p2_ready = true,
-                _ => {}
-            },
+            event = litep2p1.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() { litep2p1_ready = true },
+            event = litep2p2.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() { litep2p2_ready = true },
         }
     }
 }

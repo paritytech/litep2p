@@ -24,8 +24,8 @@ use crate::{
     error::{Error, NegotiationError, SubstreamError},
     multistream_select::NegotiationError::Failed as MultistreamFailed,
     protocol::{
-        request_response::handle::{InnerRequestResponseEvent, RequestResponseCommand},
-        Direction, TransportEvent, TransportService,
+        request_response::handle::InnerRequestResponseEvent, Direction, TransportEvent,
+        TransportService,
     },
     substream::Substream,
     types::{protocol::ProtocolName, RequestId, SubstreamId},
@@ -55,7 +55,8 @@ use std::{
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{
-    DialOptions, RejectReason, RequestResponseError, RequestResponseEvent, RequestResponseHandle,
+    DialOptions, RejectReason, RequestResponseCommand, RequestResponseError, RequestResponseEvent,
+    RequestResponseHandle,
 };
 
 mod config;
@@ -797,7 +798,7 @@ impl RequestResponseProtocol {
                     "failed to open substream",
                 );
 
-                return Err(RequestResponseError::Rejected(error.into()));
+                Err(RequestResponseError::Rejected(error.into()))
             }
         }
     }

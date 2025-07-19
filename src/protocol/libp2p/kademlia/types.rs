@@ -19,9 +19,16 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+// Note: This is coming from the external construct_uint crate.
+#![allow(clippy::manual_div_ceil)]
+
 //! Kademlia types.
 
-use crate::{protocol::libp2p::kademlia::schema, PeerId};
+use crate::{
+    protocol::libp2p::kademlia::schema,
+    transport::manager::address::{AddressRecord, AddressStore},
+    PeerId,
+};
 
 use multiaddr::Multiaddr;
 use sha2::{
@@ -34,6 +41,9 @@ use std::{
     borrow::Borrow,
     hash::{Hash, Hasher},
 };
+
+/// Maximum number of addresses to store for a peer.
+const MAX_ADDRESSES: usize = 32;
 
 construct_uint! {
     /// 256-bit unsigned integer.
@@ -235,7 +245,7 @@ impl From<ConnectionType> for i32 {
 }
 
 /// Kademlia peer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct KademliaPeer {
     /// Peer key.
     pub(super) key: Key<PeerId>,
@@ -244,7 +254,7 @@ pub struct KademliaPeer {
     pub(super) peer: PeerId,
 
     /// Known addresses of peer.
-    pub(super) addresses: Vec<Multiaddr>,
+    pub(super) address_store: AddressStore,
 
     /// Connection type.
     pub(super) connection: ConnectionType,
@@ -253,12 +263,30 @@ pub struct KademliaPeer {
 impl KademliaPeer {
     /// Create new [`KademliaPeer`].
     pub fn new(peer: PeerId, addresses: Vec<Multiaddr>, connection: ConnectionType) -> Self {
+        let mut address_store = AddressStore::new();
+
+        for address in addresses.into_iter() {
+            address_store.insert(AddressRecord::from_raw_multiaddr(address));
+        }
+
         Self {
             peer,
-            addresses,
+            address_store,
             connection,
             key: Key::from(peer),
         }
+    }
+
+    /// Add the following addresses to the kademlia peer if there's enough space.
+    pub fn push_addresses(&mut self, addresses: impl IntoIterator<Item = Multiaddr>) {
+        for address in addresses {
+            self.address_store.insert(AddressRecord::from_raw_multiaddr(address));
+        }
+    }
+
+    /// Returns the addresses of the peer.
+    pub fn addresses(&self) -> Vec<Multiaddr> {
+        self.address_store.addresses(MAX_ADDRESSES)
     }
 }
 
@@ -268,14 +296,18 @@ impl TryFrom<&schema::kademlia::Peer> for KademliaPeer {
     fn try_from(record: &schema::kademlia::Peer) -> Result<Self, Self::Error> {
         let peer = PeerId::from_bytes(&record.id).map_err(|_| ())?;
 
+        let mut address_store = AddressStore::new();
+        for address in record.addrs.iter() {
+            let Ok(address) = Multiaddr::try_from(address.clone()) else {
+                continue;
+            };
+            address_store.insert(AddressRecord::from_raw_multiaddr(address));
+        }
+
         Ok(KademliaPeer {
             key: Key::from(peer),
             peer,
-            addresses: record
-                .addrs
-                .iter()
-                .filter_map(|address| Multiaddr::try_from(address.clone()).ok())
-                .collect(),
+            address_store,
             connection: ConnectionType::try_from(record.connection)?,
         })
     }
@@ -285,7 +317,12 @@ impl From<&KademliaPeer> for schema::kademlia::Peer {
     fn from(peer: &KademliaPeer) -> Self {
         schema::kademlia::Peer {
             id: peer.peer.to_bytes(),
-            addrs: peer.addresses.iter().map(|address| address.to_vec()).collect(),
+            addrs: peer
+                .address_store
+                .addresses(MAX_ADDRESSES)
+                .iter()
+                .map(|address| address.to_vec())
+                .collect(),
             connection: peer.connection.into(),
         }
     }

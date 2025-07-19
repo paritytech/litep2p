@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2025-05-26
+
+This release primarily focuses on strengthening the stability of the websocket transport. We've resolved an issue where higher-level buffering was causing the Noise protocol to fail when decoding messages.
+
+We've also significantly improved connectivity between litep2p and Smoldot (the Substrate-based light client). Empty frames are now handled correctly, preventing handshake timeouts and ensuring smoother communication.
+
+Finally, we've carried out several dependency updates to keep the library current with the latest versions of its underlying components.
+
+### Fixed
+
+- substream/fix: Allow empty payloads with 0-length frame  ([#395](https://github.com/paritytech/litep2p/pull/395))
+- websocket: Fix connection stability on decrypt messages  ([#393](https://github.com/paritytech/litep2p/pull/393))
+
+### Changed
+
+- crypto/noise: Show peerIDs that fail to decode  ([#392](https://github.com/paritytech/litep2p/pull/392))
+- cargo: Bump yamux to 0.13.5 and tokio to 1.45.0  ([#396](https://github.com/paritytech/litep2p/pull/396))
+- ci: Enforce and apply clippy rules  ([#388](https://github.com/paritytech/litep2p/pull/388))
+- build(deps): bump ring from 0.16.20 to 0.17.14  ([#389](https://github.com/paritytech/litep2p/pull/389))
+- Update hickory-resolver 0.24.2 -> 0.25.2  ([#386](https://github.com/paritytech/litep2p/pull/386))
+
+## [0.9.4] - 2025-05-01
+
+This release brings several improvements and fixes to litep2p, advancing its stability and readiness for production use.
+
+### Performance Improvements
+
+This release addresses an issue where notification protocols failed to exit on handle drop, lowering CPU usage in scenarios like minimal-relay-chains from 7% to 0.1%.
+
+### Robustness Improvements
+
+- Kademlia:
+  - Optimized address store by sorting addresses based on dialing score, bounding memory consumption and improving efficiency.
+  - Limited `FIND_NODE` responses to the replication factor, reducing data stored in the routing table.
+  - Address store improvements enhance robustness against routing table alterations.
+
+- Identify Codec:
+  - Enhanced message decoding to manage malformed or unexpected messages gracefully.
+
+- Bitswap:
+  - Introduced a write timeout for sending frames, preventing protocol hangs or delays.
+
+### Testing and Reliability
+
+- Fuzzing Harness: Added a fuzzing harness by SRLabs to uncover and resolve potential issues, improving code robustness. Thanks to @R9295 for the contribution!
+
+- Testing Enhancements: Improved notification state machine testing. Thanks to Dominique (@Imod7) for the contribution!
+
+### Dependency Management
+
+- Updated all dependencies for stable feature flags (default and "websocket") to their latest versions.
+
+- Reorganized dependencies under specific feature flags, shrinking the default feature set and avoiding exposure of outdated dependencies from experimental features.
+
+### Fixed
+
+- notifications: Exit protocols on handle drop to save up CPU of `minimal-relay-chains`  ([#376](https://github.com/paritytech/litep2p/pull/376))
+- identify: Improve identify message decoding  ([#379](https://github.com/paritytech/litep2p/pull/379))
+- crypto/noise: Set timeout limits for the noise handshake  ([#373](https://github.com/paritytech/litep2p/pull/373))
+- kad: Improve robustness of addresses from the routing table  ([#369](https://github.com/paritytech/litep2p/pull/369))
+- kad: Bound kademlia messages to the replication factor  ([#371](https://github.com/paritytech/litep2p/pull/371))
+- codec: Decode smaller payloads for identity to None  ([#362](https://github.com/paritytech/litep2p/pull/362))
+
+### Added
+
+- bitswap: Add write timeout for sending frames  ([#361](https://github.com/paritytech/litep2p/pull/361))
+- notif/tests: check test state  ([#360](https://github.com/paritytech/litep2p/pull/360))
+- SRLabs: Introduce simple fuzzing harness  ([#367](https://github.com/paritytech/litep2p/pull/367))
+- SRLabs: Introduce Fuzzing Harness  ([#365](https://github.com/paritytech/litep2p/pull/365))
+
+### Changed
+
+- features: Move quic related dependencies under feature flag  ([#359](https://github.com/paritytech/litep2p/pull/359))
+- tests/substrate: Remove outdated substrate specific conformace testing  ([#370](https://github.com/paritytech/litep2p/pull/370))
+- ci: Update stable dependencies  ([#375](https://github.com/paritytech/litep2p/pull/375))
+- build(deps): bump hex-literal from 0.4.1 to 1.0.0  ([#381](https://github.com/paritytech/litep2p/pull/381))
+- build(deps): bump tokio from 1.44.1 to 1.44.2 in /fuzz/structure-aware  ([#378](https://github.com/paritytech/litep2p/pull/378))
+- build(deps): bump Swatinem/rust-cache from 2.7.7 to 2.7.8  ([#363](https://github.com/paritytech/litep2p/pull/363))
+- build(deps): bump tokio from 1.43.0 to 1.43.1  ([#368](https://github.com/paritytech/litep2p/pull/368))
+- build(deps): bump openssl from 0.10.70 to 0.10.72  ([#366](https://github.com/paritytech/litep2p/pull/366))
+
 ## [0.9.3] - 2025-03-11
 
 This release introduces an API for setting the maximum kademlia message size.

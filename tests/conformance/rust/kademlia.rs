@@ -24,7 +24,7 @@ use libp2p::{
     identify, identity,
     kad::{
         self, store::RecordStore, AddProviderOk, GetProvidersOk, InboundRequest,
-        KademliaEvent as Libp2pKademliaEvent, QueryResult, RecordKey as Libp2pRecordKey,
+        KademliaEvent as Libp2pKademliaEvent, QueryResult,
     },
     swarm::{keep_alive, AddressScore, NetworkBehaviour, SwarmBuilder, SwarmEvent},
     PeerId, Swarm,
@@ -170,17 +170,15 @@ async fn find_node() {
     let _ = kad_handle.find_node(target).await;
 
     loop {
-        match kad_handle.next().await {
-            Some(KademliaEvent::FindNodeSuccess {
-                target: query_target,
-                peers,
-                ..
-            }) => {
-                assert_eq!(target, query_target);
-                assert!(!peers.is_empty());
-                break;
-            }
-            _ => {}
+        if let Some(KademliaEvent::FindNodeSuccess {
+            target: query_target,
+            peers,
+            ..
+        }) = kad_handle.next().await
+        {
+            assert_eq!(target, query_target);
+            assert!(!peers.is_empty());
+            break;
         }
     }
 }
@@ -360,11 +358,8 @@ async fn get_record() {
 
     loop {
         tokio::select! {
-            event = libp2p.select_next_some() => match event {
-                SwarmEvent::NewListenAddr { address, .. } => {
-                    listen_addr = Some(address);
-                }
-                _ => {}
+            event = libp2p.select_next_some() => if let SwarmEvent::NewListenAddr { address, .. } = event {
+                listen_addr = Some(address);
             },
             _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
                 if counter.load(std::sync::atomic::Ordering::SeqCst) == 3 {
@@ -538,7 +533,7 @@ async fn litep2p_get_providers_from_libp2p() {
                     assert_eq!(id, query_id);
                     assert!(
                         matches!(result, QueryResult::StartProviding(Ok(AddProviderOk { key }))
-                                if key == Libp2pRecordKey::from(key.clone()))
+                                if key == key.clone())
                     );
 
                     provider_stored = true;
@@ -627,26 +622,23 @@ async fn libp2p_get_providers_from_litep2p() {
     loop {
         tokio::select! {
             event = libp2p.select_next_some() => {
-                match event {
-                    SwarmEvent::Behaviour(BehaviourEvent::Kad(
+                if let SwarmEvent::Behaviour(BehaviourEvent::Kad(
                         Libp2pKademliaEvent::OutboundQueryProgressed { id, result, .. })
-                    ) => {
-                        assert_eq!(id, query_id);
-                        if let QueryResult::GetProviders(Ok(
-                            GetProvidersOk::FoundProviders { key, providers }
-                        )) = result {
-                            assert_eq!(key, original_key.clone().into());
-                            assert_eq!(providers.len(), 1);
-                            assert!(providers.contains(&litep2p_peerid));
-                            // It looks like `libp2p` discards the cached provider addresses received
-                            // in `GET_PROVIDERS` response, so we can't check it here.
-                            // The addresses are neither used to extend the `libp2p` routing table.
-                            break
-                        } else {
-                            panic!("invalid query result")
-                        }
+                    ) = event {
+                    assert_eq!(id, query_id);
+                    if let QueryResult::GetProviders(Ok(
+                        GetProvidersOk::FoundProviders { key, providers }
+                    )) = result {
+                        assert_eq!(key, original_key.clone().into());
+                        assert_eq!(providers.len(), 1);
+                        assert!(providers.contains(&litep2p_peerid));
+                        // It looks like `libp2p` discards the cached provider addresses received
+                        // in `GET_PROVIDERS` response, so we can't check it here.
+                        // The addresses are neither used to extend the `libp2p` routing table.
+                        break
+                    } else {
+                        panic!("invalid query result")
                     }
-                    _ => {}
                 }
             }
             _ = litep2p.next_event() => {}

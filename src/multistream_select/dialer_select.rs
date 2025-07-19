@@ -557,7 +557,7 @@ mod tests {
                 futures_ringbuf::Endpoint::pair(100, 100);
 
             let server = tokio::spawn(async move {
-                let protos = vec!["/proto2"];
+                let protos = ["/proto2"];
 
                 let multistream = b"/multistream/1.0.0\n";
                 let len = multistream.len();
@@ -638,7 +638,7 @@ mod tests {
         let (client_connection, mut server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
 
         let server = tokio::spawn(async move {
-            let protos = vec!["/proto2"];
+            let protos = ["/proto2"];
 
             let multistream = b"/multistream/1.0.0\n";
             let len = multistream.len();
@@ -695,7 +695,7 @@ mod tests {
         let (client_connection, mut server_connection) = futures_ringbuf::Endpoint::pair(100, 100);
 
         let server = tokio::spawn(async move {
-            let protos = vec!["/proto2"];
+            let protos = ["/proto2"];
 
             let multistream = b"/multistream/1.0.0\n";
             let len = multistream.len();
@@ -809,7 +809,7 @@ mod tests {
         // send only header line
         let mut bytes = BytesMut::with_capacity(32);
         let message = Message::Header(HeaderLine::V1);
-        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+        message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         let (mut dialer_state, _message) =
             WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
@@ -828,7 +828,7 @@ mod tests {
             Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
             Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
         ]);
-        let _ = message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+        message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         let (mut dialer_state, _message) =
             WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
@@ -841,12 +841,9 @@ mod tests {
 
     #[test]
     fn negotiate_main_protocol() {
-        let message = webrtc_encode_multistream_message(
-            vec![Message::Protocol(
-                Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
-            )]
-            .into_iter(),
-        )
+        let message = webrtc_encode_multistream_message(vec![Message::Protocol(
+            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
+        )])
         .unwrap()
         .freeze();
 
@@ -857,20 +854,18 @@ mod tests {
         .unwrap();
 
         match dialer_state.register_response(message.to_vec()) {
-            Ok(HandshakeResult::Succeeded(negotiated)) =>
-                assert_eq!(negotiated, ProtocolName::from("/13371338/proto/1")),
+            Ok(HandshakeResult::Succeeded(negotiated)) => {
+                assert_eq!(negotiated, ProtocolName::from("/13371338/proto/1"))
+            }
             event => panic!("invalid event {event:?}"),
         }
     }
 
     #[test]
     fn negotiate_fallback_protocol() {
-        let message = webrtc_encode_multistream_message(
-            vec![Message::Protocol(
-                Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
-            )]
-            .into_iter(),
-        )
+        let message = webrtc_encode_multistream_message(vec![Message::Protocol(
+            Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
+        )])
         .unwrap()
         .freeze();
 
@@ -881,8 +876,9 @@ mod tests {
         .unwrap();
 
         match dialer_state.register_response(message.to_vec()) {
-            Ok(HandshakeResult::Succeeded(negotiated)) =>
-                assert_eq!(negotiated, ProtocolName::from("/sup/proto/1")),
+            Ok(HandshakeResult::Succeeded(negotiated)) => {
+                assert_eq!(negotiated, ProtocolName::from("/sup/proto/1"))
+            }
             _ => panic!("invalid event"),
         }
     }

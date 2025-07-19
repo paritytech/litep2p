@@ -88,8 +88,8 @@ pub enum InnerTransportEvent {
         /// Peer ID.
         peer: PeerId,
 
-        /// Dialed address.
-        address: Multiaddr,
+        /// Dialed addresses.
+        addresses: Vec<Multiaddr>,
     },
 
     /// Substream opened for `peer`.
@@ -144,8 +144,8 @@ pub enum InnerTransportEvent {
 impl From<InnerTransportEvent> for TransportEvent {
     fn from(event: InnerTransportEvent) -> Self {
         match event {
-            InnerTransportEvent::DialFailure { peer, address } =>
-                TransportEvent::DialFailure { peer, address },
+            InnerTransportEvent::DialFailure { peer, addresses } =>
+                TransportEvent::DialFailure { peer, addresses },
             InnerTransportEvent::SubstreamOpened {
                 peer,
                 protocol,
@@ -307,7 +307,7 @@ impl ProtocolSet {
             fallback,
             direction,
             substream,
-            connection_id: self.connection.connection_id().clone(),
+            connection_id: *self.connection.connection_id(),
         };
 
         protocol_context

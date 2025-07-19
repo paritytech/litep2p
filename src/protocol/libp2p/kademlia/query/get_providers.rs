@@ -117,7 +117,7 @@ impl GetProvidersContext {
         // Merge addresses of different provider records of the same peer.
         let mut providers = HashMap::<PeerId, HashSet<Multiaddr>>::new();
         found_providers.into_iter().for_each(|provider| {
-            providers.entry(provider.peer).or_default().extend(provider.addresses)
+            providers.entry(provider.peer).or_default().extend(provider.addresses())
         });
 
         // Convert into `Vec<KademliaPeer>`
@@ -294,18 +294,13 @@ mod tests {
         KademliaPeer {
             peer,
             key: Key::from(peer),
-            addresses: vec![],
+            address_store: Default::default(),
             connection: ConnectionType::NotConnected,
         }
     }
 
     fn peer_to_kad_with_addresses(peer: PeerId, addresses: Vec<Multiaddr>) -> KademliaPeer {
-        KademliaPeer {
-            peer,
-            key: Key::from(peer),
-            addresses,
-            connection: ConnectionType::NotConnected,
-        }
+        KademliaPeer::new(peer, addresses, ConnectionType::NotConnected)
     }
 
     #[test]
@@ -316,7 +311,12 @@ mod tests {
         assert!(context.is_done());
 
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QueryFailed { query: QueryId(0) });
+        match event {
+            QueryAction::QueryFailed { query, .. } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        }
     }
 
     #[test]
@@ -412,7 +412,7 @@ mod tests {
 
         // Provide different response from peer b with peer d as candidate.
         let providers = vec![provider2.clone().into(), provider3.clone().into()];
-        let candidates = vec![peer_to_kad(peer_d.clone())];
+        let candidates = vec![peer_to_kad(peer_d)];
         context.register_response(peer_b, providers, candidates);
         assert_eq!(context.pending.len(), 1);
         assert_eq!(context.queried.len(), 2);
@@ -443,7 +443,12 @@ mod tests {
 
         // Produces the result.
         let event = context.next_action().unwrap();
-        assert_eq!(event, QueryAction::QuerySucceeded { query: QueryId(0) });
+        match event {
+            QueryAction::QuerySucceeded { query, .. } => {
+                assert_eq!(query, QueryId(0));
+            }
+            _ => panic!("Unexpected event"),
+        }
 
         // Check results.
         let found_providers = context.found_providers();
@@ -459,7 +464,7 @@ mod tests {
         let target = Key::new(vec![1, 2, 3].into());
 
         let mut peers = (0..10).map(|_| PeerId::random()).collect::<Vec<_>>();
-        let providers = peers.iter().map(|peer| peer_to_kad(peer.clone())).collect::<Vec<_>>();
+        let providers = peers.iter().map(|peer| peer_to_kad(*peer)).collect::<Vec<_>>();
 
         let found_providers =
             GetProvidersContext::merge_and_sort_providers(providers, target.clone());
@@ -484,13 +489,12 @@ mod tests {
         let address4 = multiaddr!(Ip4([1, 1, 1, 1]), Tcp(10000u16));
         let address5 = multiaddr!(Ip4([8, 8, 8, 8]), Tcp(10000u16));
 
-        let provider1 = peer_to_kad_with_addresses(peer.clone(), vec![address1.clone()]);
+        let provider1 = peer_to_kad_with_addresses(peer, vec![address1.clone()]);
         let provider2 = peer_to_kad_with_addresses(
-            peer.clone(),
+            peer,
             vec![address2.clone(), address3.clone(), address4.clone()],
         );
-        let provider3 =
-            peer_to_kad_with_addresses(peer.clone(), vec![address4.clone(), address5.clone()]);
+        let provider3 = peer_to_kad_with_addresses(peer, vec![address4.clone(), address5.clone()]);
 
         let providers = vec![provider1, provider2, provider3];
 
@@ -501,7 +505,7 @@ mod tests {
 
         assert_eq!(found_providers.len(), 1);
 
-        let addresses = &found_providers.get(0).unwrap().addresses;
+        let addresses = &found_providers.first().unwrap().addresses;
         assert_eq!(addresses.len(), 5);
         assert!(addresses.contains(&address1));
         assert!(addresses.contains(&address2));

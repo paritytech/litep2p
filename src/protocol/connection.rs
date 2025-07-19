@@ -129,7 +129,7 @@ impl ConnectionHandle {
             protocol: protocol.clone(),
             fallback_names,
             substream_id,
-            connection_id: self.connection_id.clone(),
+            connection_id: self.connection_id,
             permit,
         })
         .map_err(|error| match error {

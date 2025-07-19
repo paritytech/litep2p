@@ -26,10 +26,7 @@ use crate::{
 };
 
 use futures::Stream;
-use hickory_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
+use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use socket2::{Domain, Socket, Type};
@@ -73,7 +70,7 @@ pub enum DnsType {
 
 impl AddressType {
     /// Resolve the address to a concrete IP.
-    pub async fn lookup_ip(self) -> Result<SocketAddr, DnsError> {
+    pub async fn lookup_ip(self, resolver: Arc<TokioResolver>) -> Result<SocketAddr, DnsError> {
         let (url, port, dns_type) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),
@@ -84,23 +81,19 @@ impl AddressType {
             } => (address, port, dns_type),
         };
 
-        let lookup =
-            match TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
-                .lookup_ip(url.clone())
-                .await
-            {
-                Ok(lookup) => lookup,
-                Err(error) => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "failed to resolve DNS address `{}`",
-                        url
-                    );
+        let lookup = match resolver.lookup_ip(url.clone()).await {
+            Ok(lookup) => lookup,
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to resolve DNS address `{}`",
+                    url
+                );
 
-                    return Err(DnsError::ResolveError(url));
-                }
-            };
+                return Err(DnsError::ResolveError(url));
+            }
+        };
 
         let Some(ip) = lookup.iter().find(|ip| match dns_type {
             DnsType::Dns => true,
@@ -285,14 +278,15 @@ impl SocketListener {
                                             IpAddr::V4(inner.ip),
                                             local_address.port(),
                                         )),
-                                        (Addr::V6(inner), false) =>
+                                        (Addr::V6(inner), false) => {
                                             match inner.ip.segments().first() {
                                                 Some(0xfe80) => None,
                                                 _ => Some(SocketAddr::new(
                                                     IpAddr::V6(inner.ip),
                                                     local_address.port(),
                                                 )),
-                                            },
+                                            }
+                                        }
                                         _ => None,
                                     }
                                 })
@@ -641,8 +635,7 @@ mod tests {
         let (mut listener, listen_addresses, _) =
             SocketListener::new::<TcpAddress>(vec![address.clone()], true, false);
 
-        let Some(Protocol::Tcp(port)) =
-            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        let Some(Protocol::Tcp(port)) = listen_addresses.first().unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
@@ -658,8 +651,7 @@ mod tests {
         let address: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
         let (mut listener, listen_addresses, _) =
             SocketListener::new::<WebSocketAddress>(vec![address.clone()], true, false);
-        let Some(Protocol::Tcp(port)) =
-            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        let Some(Protocol::Tcp(port)) = listen_addresses.first().unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
@@ -676,14 +668,13 @@ mod tests {
         let address2: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
         let (mut listener, listen_addresses, _) =
             SocketListener::new::<TcpAddress>(vec![address1, address2], true, false);
-        let Some(Protocol::Tcp(port1)) =
-            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        let Some(Protocol::Tcp(port1)) = listen_addresses.first().unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
 
         let Some(Protocol::Tcp(port2)) =
-            listen_addresses.iter().skip(1).next().unwrap().clone().iter().skip(1).next()
+            listen_addresses.iter().nth(1).unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
@@ -705,14 +696,13 @@ mod tests {
         let (mut listener, listen_addresses, _) =
             SocketListener::new::<WebSocketAddress>(vec![address1, address2], true, false);
 
-        let Some(Protocol::Tcp(port1)) =
-            listen_addresses.iter().next().unwrap().clone().iter().skip(1).next()
+        let Some(Protocol::Tcp(port1)) = listen_addresses.first().unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
 
         let Some(Protocol::Tcp(port2)) =
-            listen_addresses.iter().skip(1).next().unwrap().clone().iter().skip(1).next()
+            listen_addresses.iter().nth(1).unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
