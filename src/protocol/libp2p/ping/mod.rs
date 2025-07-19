@@ -77,6 +77,8 @@ pub(crate) struct Ping {
 
     /// Pending inbound substreams.
     pending_inbound: FuturesUnordered<BoxFuture<'static, crate::Result<()>>>,
+
+    ping_interval: Duration,
 }
 
 impl Ping {
@@ -84,6 +86,7 @@ impl Ping {
     pub fn new(service: TransportService, config: Config) -> Self {
         Self {
             service,
+            ping_interval: config.ping_interval,
             tx: config.tx_event,
             peers: HashSet::new(),
             pending_outbound: FuturesUnordered::new(),
@@ -96,7 +99,6 @@ impl Ping {
     fn on_connection_established(&mut self, peer: PeerId) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-        self.service.open_substream(peer)?;
         self.peers.insert(peer);
 
         Ok(())
@@ -166,12 +168,13 @@ impl Ping {
     /// Start [`Ping`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting ping event loop");
+        let mut interval = tokio::time::interval(self.ping_interval);
 
         loop {
             tokio::select! {
                 event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                        let _ = self.on_connection_established(peer);
+                        self.on_connection_established(peer);
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.on_connection_closed(peer);
@@ -192,6 +195,19 @@ impl Ping {
                     Some(_) => {}
                     None => return,
                 },
+                _ = interval.tick() => {
+                    for peer in &self.peers {
+                        tracing::trace!(target: LOG_TARGET, ?peer, "sending ping");
+                        if let Err(error) = self.service.open_substream(*peer) {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?error,
+                                "failed to open substream for ping"
+                            );
+                        }
+                    }
+                }
                 _event = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => {
                     match event {
