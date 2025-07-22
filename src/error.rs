@@ -151,9 +151,6 @@ pub enum AddressError {
     /// The provided address contains an invalid multihash.
     #[error("Multihash does not contain a valid peer ID : `{0:?}`")]
     InvalidPeerId(Multihash),
-    /// The provided multihash is invalid.
-    #[error("The provided multihash is  not valid")]
-    InvalidMultihash,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
