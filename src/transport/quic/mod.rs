@@ -39,6 +39,7 @@ use futures::{
     stream::{AbortHandle, FuturesUnordered},
     Stream, StreamExt, TryFutureExt,
 };
+use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
 use quinn::{ClientConfig, Connecting, Connection, Endpoint, IdleTimeout};
 
@@ -215,6 +216,7 @@ impl TransportBuilder for QuicTransport {
     fn new(
         context: TransportHandle,
         mut config: Self::Config,
+        _resolver: Arc<TokioResolver>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
@@ -621,9 +623,10 @@ mod tests {
                 },
             )]),
         };
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
 
         let (mut transport1, listen_addresses) =
-            QuicTransport::new(handle1, Default::default()).unwrap();
+            QuicTransport::new(handle1, Default::default(), resolver.clone()).unwrap();
         let listen_address = listen_addresses[0].clone();
 
         let keypair2 = Keypair::generate();
@@ -648,7 +651,8 @@ mod tests {
             )]),
         };
 
-        let (mut transport2, _) = QuicTransport::new(handle2, Default::default()).unwrap();
+        let (mut transport2, _) =
+            QuicTransport::new(handle2, Default::default(), resolver).unwrap();
         let peer1: PeerId = PeerId::from_public_key(&keypair1.public().into());
         let _peer2: PeerId = PeerId::from_public_key(&keypair2.public().into());
         let listen_address = listen_address.with(Protocol::P2p(

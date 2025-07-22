@@ -60,7 +60,7 @@ use std::{
 pub use handle::{TransportHandle, TransportManagerHandle};
 pub use types::SupportedTransport;
 
-mod address;
+pub(crate) mod address;
 pub mod limits;
 mod peer_state;
 mod types;
@@ -360,6 +360,26 @@ impl TransportManager {
         service
     }
 
+    /// Unregister a protocol in response of the user dropping the protocol handle.
+    fn unregister_protocol(&mut self, protocol: ProtocolName) {
+        let Some(context) = self.protocols.remove(&protocol) else {
+            tracing::error!(target: LOG_TARGET, ?protocol, "Cannot unregister protocol, not registered");
+            return;
+        };
+
+        for fallback in &context.fallback_names {
+            if !self.protocol_names.remove(fallback) {
+                tracing::error!(target: LOG_TARGET, ?fallback, ?protocol, "Cannot unregister fallback protocol, not registered");
+            }
+        }
+
+        tracing::info!(
+            target: LOG_TARGET,
+            ?protocol,
+            "Protocol fully unregistered"
+        );
+    }
+
     /// Acquire `TransportHandle`.
     pub fn transport_handle(&self, executor: Arc<dyn Executor>) -> TransportHandle {
         TransportHandle {
@@ -451,7 +471,7 @@ impl TransportManager {
         }
         let mut peers = self.peers.write();
 
-        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        let context = peers.entry(peer).or_default();
 
         // Check if dialing is possible before allocating addresses.
         match context.state.can_dial() {
@@ -597,7 +617,7 @@ impl TransportManager {
         {
             let mut peers = self.peers.write();
 
-            let context = peers.entry(remote_peer_id).or_insert_with(|| PeerContext::default());
+            let context = peers.entry(remote_peer_id).or_default();
 
             // Keep the provided record around for possible future dials.
             context.addresses.insert(address_record.clone());
@@ -637,7 +657,7 @@ impl TransportManager {
         };
 
         // We need a valid context for this peer to keep track of failed addresses.
-        let context = peers.entry(peer_id).or_insert_with(|| PeerContext::default());
+        let context = peers.entry(peer_id).or_default();
         context.addresses.insert(AddressRecord::new(&peer_id, address.clone(), score));
     }
 
@@ -657,7 +677,7 @@ impl TransportManager {
         })?;
 
         let mut peers = self.peers.write();
-        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        let context = peers.entry(peer).or_default();
         let previous_state = context.state.clone();
 
         if !context.state.on_dial_failure(connection_id) {
@@ -698,7 +718,7 @@ impl TransportManager {
         self.connection_limits.on_connection_closed(connection_id);
 
         let mut peers = self.peers.write();
-        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        let context = peers.entry(peer).or_default();
 
         let previous_state = context.state.clone();
         let connection_closed = context.state.on_connection_closed(connection_id);
@@ -746,7 +766,7 @@ impl TransportManager {
             scores::CONNECTION_ESTABLISHED,
         );
 
-        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        let context = peers.entry(peer).or_default();
         context.addresses.insert(record);
     }
 
@@ -755,7 +775,7 @@ impl TransportManager {
         peer: PeerId,
         endpoint: &Endpoint,
     ) -> crate::Result<ConnectionEstablishedResult> {
-        self.update_address_on_connection_established(peer, &endpoint);
+        self.update_address_on_connection_established(peer, endpoint);
 
         if let Some(dialed_peer) = self.pending_connections.remove(&endpoint.connection_id()) {
             if dialed_peer != peer {
@@ -784,7 +804,7 @@ impl TransportManager {
         }
 
         let mut peers = self.peers.write();
-        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        let context = peers.entry(peer).or_default();
 
         let previous_state = context.state.clone();
         let connection_accepted = context
@@ -860,7 +880,7 @@ impl TransportManager {
         };
 
         let mut peers = self.peers.write();
-        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        let context = peers.entry(peer).or_default();
 
         // Keep track of the address.
         context.addresses.insert(AddressRecord::new(
@@ -958,7 +978,7 @@ impl TransportManager {
         };
 
         let mut peers = self.peers.write();
-        let context = peers.entry(peer).or_insert_with(|| PeerContext::default());
+        let context = peers.entry(peer).or_default();
 
         let previous_state = context.state.clone();
         let last_transport = context.state.on_open_failure(transport);
@@ -1042,6 +1062,9 @@ impl TransportManager {
                                 tracing::debug!(target: LOG_TARGET, ?error, "failed to dial peer")
                             }
                         }
+                        InnerTransportManagerCommand::UnregisterProtocol { protocol } => {
+                            self.unregister_protocol(protocol);
+                        }
                     }
                 },
 
@@ -1095,7 +1118,7 @@ impl TransportManager {
                                                 );
                                                 match context.tx.try_send(InnerTransportEvent::DialFailure {
                                                     peer,
-                                                    address: address.clone(),
+                                                    addresses: vec![address.clone()],
                                                 }) {
                                                     Ok(()) => {}
                                                     Err(_) => {
@@ -1111,7 +1134,7 @@ impl TransportManager {
                                                             .tx
                                                             .send(InnerTransportEvent::DialFailure {
                                                                 peer,
-                                                                address: address.clone(),
+                                                                addresses: vec![address.clone()],
                                                             })
                                                             .await;
                                                     }
@@ -1237,12 +1260,17 @@ impl TransportManager {
                                         "inform protocols about open failure",
                                     );
 
+                                    let addresses = errors
+                                        .iter()
+                                        .map(|(address, _)| address.clone())
+                                        .collect::<Vec<_>>();
+
                                     for (protocol, context) in &self.protocols {
                                         let _ = match context
                                             .tx
                                             .try_send(InnerTransportEvent::DialFailure {
                                                 peer,
-                                                address: Multiaddr::empty(),
+                                                addresses: addresses.clone(),
                                             }) {
                                             Ok(_) => Ok(()),
                                             Err(_) => {
@@ -1251,14 +1279,14 @@ impl TransportManager {
                                                     ?peer,
                                                     %protocol,
                                                     ?connection_id,
-                                                    "call to protocol would, block try sending in a blocking way",
+                                                    "call to protocol would block try sending in a blocking way",
                                                 );
 
                                                 context
                                                     .tx
                                                     .send(InnerTransportEvent::DialFailure {
                                                         peer,
-                                                        address: Multiaddr::empty(),
+                                                        addresses: addresses.clone(),
                                                     })
                                                     .await
                                             }

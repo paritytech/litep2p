@@ -94,12 +94,11 @@ impl QueryExecutor {
         self.futures.push(Box::pin(async move {
             match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
                 // Timeout error.
-                Err(_) =>
-                    return QueryContext {
-                        peer,
-                        query_id: None,
-                        result: QueryResult::Timeout,
-                    },
+                Err(_) => QueryContext {
+                    peer,
+                    query_id: None,
+                    result: QueryResult::Timeout,
+                },
                 // Writing message to substream failed.
                 Ok(Err(_)) => QueryContext {
                     peer,

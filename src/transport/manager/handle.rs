@@ -60,6 +60,11 @@ pub enum InnerTransportManagerCommand {
         /// Remote address.
         address: Multiaddr,
     },
+
+    UnregisterProtocol {
+        /// Protocol name.
+        protocol: ProtocolName,
+    },
 }
 
 /// Handle for communicating with [`crate::transport::manager::TransportManager`].
@@ -138,23 +143,21 @@ impl TransportManagerHandle {
 
         match iter.next() {
             None => false,
-            Some(Protocol::Tcp(_)) => match iter.next() {
-                Some(Protocol::P2p(_)) =>
+            Some(Protocol::Tcp(_)) => match (iter.next(), iter.next(), iter.next()) {
+                (Some(Protocol::P2p(_)), None, None) =>
                     self.supported_transport.contains(&SupportedTransport::Tcp),
                 #[cfg(feature = "websocket")]
-                Some(Protocol::Ws(_)) =>
+                (Some(Protocol::Ws(_)), Some(Protocol::P2p(_)), None) =>
                     self.supported_transport.contains(&SupportedTransport::WebSocket),
                 #[cfg(feature = "websocket")]
-                Some(Protocol::Wss(_)) =>
+                (Some(Protocol::Wss(_)), Some(Protocol::P2p(_)), None) =>
                     self.supported_transport.contains(&SupportedTransport::WebSocket),
                 _ => false,
             },
             #[cfg(feature = "quic")]
-            Some(Protocol::Udp(_)) => match (
-                iter.next(),
-                self.supported_transport.contains(&SupportedTransport::Quic),
-            ) {
-                (Some(Protocol::QuicV1), true) => true,
+            Some(Protocol::Udp(_)) => match (iter.next(), iter.next(), iter.next()) {
+                (Some(Protocol::QuicV1), Some(Protocol::P2p(_)), None) =>
+                    self.supported_transport.contains(&SupportedTransport::Quic),
                 _ => false,
             },
             _ => false,
@@ -209,7 +212,7 @@ impl TransportManagerHandle {
                 peer_addresses.insert(address);
             } else {
                 // Add the provided peer ID to the address.
-                let address = address.with(Protocol::P2p(multihash::Multihash::from(peer.clone())));
+                let address = address.with(Protocol::P2p(multihash::Multihash::from(*peer)));
                 peer_addresses.insert(address);
             }
         }
@@ -224,15 +227,13 @@ impl TransportManagerHandle {
         );
 
         let mut peers = self.peers.write();
-        let entry = peers.entry(*peer).or_insert_with(|| PeerContext::default());
+        let entry = peers.entry(*peer).or_default();
 
         // All addresses should be valid at this point, since the peer ID was either added or
         // double checked.
-        entry.addresses.extend(
-            peer_addresses
-                .into_iter()
-                .filter_map(|addr| AddressRecord::from_multiaddr(addr)),
-        );
+        entry
+            .addresses
+            .extend(peer_addresses.into_iter().filter_map(AddressRecord::from_multiaddr));
 
         num_added
     }
@@ -286,6 +287,29 @@ impl TransportManagerHandle {
                 TrySendError::Full(_) => ImmediateDialError::ChannelClogged,
                 TrySendError::Closed(_) => ImmediateDialError::TaskClosed,
             })
+    }
+
+    /// Dynamically unregister a protocol.
+    ///
+    /// This must be called when a protocol is no longer needed (e.g. user dropped the protocol
+    /// handle).
+    pub fn unregister_protocol(&self, protocol: ProtocolName) {
+        tracing::info!(
+            target: LOG_TARGET,
+            ?protocol,
+            "Unregistering user protocol on handle drop"
+        );
+
+        if let Err(err) = self
+            .cmd_tx
+            .try_send(InnerTransportManagerCommand::UnregisterProtocol { protocol })
+        {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?err,
+                "Failed to unregister protocol"
+            );
+        }
     }
 }
 
@@ -361,6 +385,29 @@ mod tests {
         assert!(handle.supported_transport(&address));
     }
 
+    #[tokio::test]
+    async fn tcp_unsupported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+
+        let address =
+            "/dns4/google.com/tcp/24928/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
+                .parse()
+                .unwrap();
+        assert!(!handle.supported_transport(&address));
+    }
+
+    #[tokio::test]
+    async fn tcp_non_terminal_unsupported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Tcp);
+
+        let address =
+            "/dns4/google.com/tcp/24928/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy/p2p-circuit"
+                .parse()
+                .unwrap();
+        assert!(!handle.supported_transport(&address));
+    }
+
     #[cfg(feature = "websocket")]
     #[tokio::test]
     async fn websocket_supported() {
@@ -372,6 +419,107 @@ mod tests {
                 .parse()
                 .unwrap();
         assert!(handle.supported_transport(&address));
+    }
+
+    #[cfg(feature = "websocket")]
+    #[tokio::test]
+    async fn websocket_unsupported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+
+        let address =
+            "/dns4/google.com/tcp/24928/ws/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
+                .parse()
+                .unwrap();
+        assert!(!handle.supported_transport(&address));
+    }
+
+    #[cfg(feature = "websocket")]
+    #[tokio::test]
+    async fn websocket_non_terminal_unsupported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::WebSocket);
+
+        let address =
+            "/dns4/google.com/tcp/24928/ws/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy/p2p-circuit"
+                .parse()
+                .unwrap();
+        assert!(!handle.supported_transport(&address));
+    }
+
+    #[cfg(feature = "websocket")]
+    #[tokio::test]
+    async fn wss_supported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::WebSocket);
+
+        let address =
+            "/dns4/google.com/tcp/24928/wss/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
+                .parse()
+                .unwrap();
+        assert!(handle.supported_transport(&address));
+    }
+
+    #[cfg(feature = "websocket")]
+    #[tokio::test]
+    async fn wss_unsupported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+
+        let address =
+            "/dns4/google.com/tcp/24928/wss/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
+                .parse()
+                .unwrap();
+        assert!(!handle.supported_transport(&address));
+    }
+
+    #[cfg(feature = "websocket")]
+    #[tokio::test]
+    async fn wss_non_terminal_unsupported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::WebSocket);
+
+        let address =
+            "/dns4/google.com/tcp/24928/wss/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy/p2p-circuit"
+                .parse()
+                .unwrap();
+        assert!(!handle.supported_transport(&address));
+    }
+
+    #[cfg(feature = "quic")]
+    #[tokio::test]
+    async fn quic_supported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Quic);
+
+        let address =
+            "/dns4/google.com/udp/24928/quic-v1/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
+                .parse()
+                .unwrap();
+        assert!(handle.supported_transport(&address));
+    }
+
+    #[cfg(feature = "quic")]
+    #[tokio::test]
+    async fn quic_unsupported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+
+        let address =
+            "/dns4/google.com/udp/24928/quic-v1/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
+                .parse()
+                .unwrap();
+        assert!(!handle.supported_transport(&address));
+    }
+
+    #[cfg(feature = "quic")]
+    #[tokio::test]
+    async fn quic_non_terminal_unsupported() {
+        let (mut handle, _rx) = make_transport_manager_handle();
+        handle.supported_transport.insert(SupportedTransport::Quic);
+
+        let address =
+            "/dns4/google.com/udp/24928/quic-v1/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy/p2p-circuit"
+                .parse()
+                .unwrap();
+        assert!(!handle.supported_transport(&address));
     }
 
     #[test]

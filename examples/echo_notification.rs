@@ -50,10 +50,10 @@ async fn client_event_loop(mut litep2p: Litep2p, mut handle: NotificationHandle,
     loop {
         tokio::select! {
             _ = litep2p.next_event() => {}
-            event = handle.next() => match event.unwrap() {
-                NotificationEvent::NotificationStreamOpened { .. } => break,
-                _ => {},
-            }
+            event = handle.next() =>
+                if let NotificationEvent::NotificationStreamOpened { .. } = event.unwrap() {
+                    break
+                }
         }
     }
 
@@ -61,12 +61,10 @@ async fn client_event_loop(mut litep2p: Litep2p, mut handle: NotificationHandle,
     loop {
         tokio::select! {
             _ = litep2p.next_event() => {}
-            event = handle.next() => match event.unwrap() {
-                NotificationEvent::NotificationReceived { peer, notification } => {
+            event = handle.next() =>
+                if let NotificationEvent::NotificationReceived { peer, notification } = event.unwrap() {
                     println!("received response from server ({peer:?}): {notification:?}");
-                }
-                _ => {},
-            },
+                },
             _ = tokio::time::sleep(Duration::from_secs(3)) => {
                 handle.send_sync_notification(peer, vec![1, 3, 3, 7]).unwrap();
             }

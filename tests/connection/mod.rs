@@ -44,6 +44,8 @@ use crate::common::{add_transport, Transport};
 
 #[cfg(test)]
 mod protocol_dial_invalid_address;
+#[cfg(test)]
+mod stability;
 
 #[tokio::test]
 async fn two_litep2ps_work_tcp() {
@@ -762,7 +764,7 @@ async fn simultaneous_dial_ipv6_quic() {
     }
 }
 
-#[cfg(feature = "webscocket")]
+#[cfg(feature = "websocket")]
 #[tokio::test]
 async fn websocket_over_ipv6() {
     let _ = tracing_subscriber::fmt()
@@ -1041,7 +1043,7 @@ async fn multiple_listen_addresses(
     let (mut litep2p3, _event_stream) = make_dummy_litep2p(transport3).await;
 
     let addresses: Vec<_> = litep2p1.listen_addresses().cloned().collect();
-    let address1 = addresses.get(0).unwrap().clone();
+    let address1 = addresses.first().unwrap().clone();
     let address2 = addresses.get(1).unwrap().clone();
 
     tokio::spawn(async move {
@@ -1421,8 +1423,8 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
     let peer1 = *litep2p1.local_peer_id();
     let peer2 = *litep2p2.local_peer_id();
 
-    litep2p1.add_known_address(peer2, litep2p2.listen_addresses().into_iter().cloned());
-    litep2p2.add_known_address(peer1, litep2p1.listen_addresses().into_iter().cloned());
+    litep2p1.add_known_address(peer2, litep2p2.listen_addresses().cloned());
+    litep2p2.add_known_address(peer1, litep2p1.listen_addresses().cloned());
 
     let (_, _) = tokio::join!(litep2p1.dial(&peer2), litep2p2.dial(&peer1));
 
@@ -1431,17 +1433,11 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
 
     while !peer1_open || !peer2_open {
         tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    peer1_open = true;
-                }
-                _ => {},
+            event = litep2p1.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                peer1_open = true;
             },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    peer2_open = true;
-                }
-                _ => {},
+            event = litep2p2.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                peer2_open = true;
             },
         }
     }
@@ -1451,17 +1447,11 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
 
     while !peer1_close || !peer2_close {
         tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionClosed { .. } => {
-                    peer1_close = true;
-                }
-                _ => {},
+            event = litep2p1.next_event() => if let Litep2pEvent::ConnectionClosed { .. } = event.unwrap() {
+                peer1_close = true;
             },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionClosed { .. } => {
-                    peer2_close = true;
-                }
-                _ => {},
+            event = litep2p2.next_event() => if let Litep2pEvent::ConnectionClosed { .. } = event.unwrap() {
+                peer2_close = true;
             },
         }
     }
@@ -1474,24 +1464,17 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
 
         while !peer1_open || !peer2_open {
             tokio::select! {
-                event = litep2p1.next_event() => match event.unwrap() {
-                    Litep2pEvent::ConnectionEstablished { .. } => {
-                        peer1_open = true;
-                    }
-                    _ => {},
+                event = litep2p1.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                    peer1_open = true;
                 },
-                event = litep2p2.next_event() => match event.unwrap() {
-                    Litep2pEvent::ConnectionEstablished { .. } => {
-                        peer2_open = true;
-                    }
-                    _ => {},
+                event = litep2p2.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                    peer2_open = true;
                 },
             }
         }
     };
 
-    match tokio::time::timeout(std::time::Duration::from_secs(10), future).await {
-        Err(_) => panic!("failed to open notification stream"),
-        _ => {}
+    if let Err(_) = tokio::time::timeout(std::time::Duration::from_secs(10), future).await {
+        panic!("failed to open notification stream")
     }
 }

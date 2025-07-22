@@ -33,8 +33,8 @@ use crate::PeerId;
 ///
 /// # Note
 ///
-/// - The addresses are reported to the identify protocol and are used by other nodes
-///  to establish a connection with the local node.
+/// - The addresses are reported to the identify protocol and are used by other nodes to establish a
+///   connection with the local node.
 ///
 /// - Users must ensure that the addresses are reachable from the network.
 #[derive(Debug, Clone)]

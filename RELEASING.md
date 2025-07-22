@@ -42,7 +42,7 @@ We also assume that ongoing work done is being merged directly to the `master` b
     2. Perform a final sanity check that everything looks ok.
 
         ```bash
-        cargo test --all-targets
+        cargo test --all-targets --all-features
         ```
 
     3. Run the following command to publish the crate on crates.io:

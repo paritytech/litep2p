@@ -166,17 +166,11 @@ async fn custom_executor() {
 
     loop {
         tokio::select! {
-            event = litep2p1.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    litep2p1_connected = true;
-                }
-                _ => {},
+            event = litep2p1.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                litep2p1_connected = true;
             },
-            event = litep2p2.next_event() => match event.unwrap() {
-                Litep2pEvent::ConnectionEstablished { .. } => {
-                    litep2p2_connected = true;
-                }
-                _ => {},
+            event = litep2p2.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
+                litep2p2_connected = true;
             }
         }
 

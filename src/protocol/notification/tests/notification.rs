@@ -325,7 +325,7 @@ async fn dial_failure_for_non_dialing_peer() {
     let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
 
     // dial failure for the peer even though it's not dialing
-    notif.on_dial_failure(peer, Multiaddr::empty()).await;
+    notif.on_dial_failure(peer, vec![]).await;
 
     assert!(std::matches!(
         notif.peers.get(&peer),
@@ -683,7 +683,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
             state:
                 PeerState::Validating {
                     direction: Direction::Inbound,
-                    outbound: OutboundState::Closed { .. },
+                    outbound: OutboundState::Closed,
                     inbound: InboundState::ReadingHandshake,
                     ..
                 },
@@ -713,7 +713,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
             state:
                 PeerState::Validating {
                     direction: Direction::Inbound,
-                    outbound: OutboundState::Closed { .. },
+                    outbound: OutboundState::Closed,
                     inbound: InboundState::Validating { .. },
                     ..
                 },
@@ -1116,4 +1116,23 @@ async fn second_inbound_substream_opened_while_outbound_substream_was_opening() 
         }
         state => panic!("invalid state for peer: {state:?}"),
     }
+}
+
+#[tokio::test]
+async fn drop_handle_exits_protocol() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (mut protocol, handle, _sender, _tx) = make_notification_protocol();
+
+    // Simulate a handle drop.
+    drop(handle);
+
+    // Call `next_event` and ensure it returns true.
+    let result = protocol.next_event().await;
+    assert!(
+        result,
+        "Expected `next_event` to return true when `command_rx` is dropped"
+    );
 }

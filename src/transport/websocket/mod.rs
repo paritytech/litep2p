@@ -42,9 +42,10 @@ use futures::{
     stream::{AbortHandle, FuturesUnordered},
     Stream, StreamExt, TryFutureExt,
 };
+use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -132,6 +133,9 @@ pub(crate) struct WebSocketTransport {
 
     /// Negotiated connections waiting validation.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
+
+    /// DNS resolver.
+    resolver: Arc<TokioResolver>,
 }
 
 impl WebSocketTransport {
@@ -147,6 +151,7 @@ impl WebSocketTransport {
         let connection_open_timeout = self.config.connection_open_timeout;
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let substream_open_timeout = self.config.substream_open_timeout;
         let address = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
@@ -162,6 +167,7 @@ impl WebSocketTransport {
                     yamux_config,
                     max_read_ahead_factor,
                     max_write_buffer_size,
+                    substream_open_timeout,
                 )
                 .await
                 .map_err(|error| (connection_id, error.into()))
@@ -222,12 +228,15 @@ impl WebSocketTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
+        resolver: Arc<TokioResolver>,
     ) -> Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>), DialError> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
 
         let (socket_address, _) = WebSocketAddress::multiaddr_to_socket_address(&address)?;
         let remote_address =
-            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
+            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip(resolver))
+                .await
+            {
                 Err(_) => return Err(DialError::Timeout),
                 Ok(Err(error)) => return Err(error.into()),
                 Ok(Ok(address)) => address,
@@ -300,6 +309,7 @@ impl TransportBuilder for WebSocketTransport {
     fn new(
         context: TransportHandle,
         mut config: Self::Config,
+        resolver: Arc<TokioResolver>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
@@ -328,6 +338,7 @@ impl TransportBuilder for WebSocketTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
+                resolver,
             },
             listen_addresses,
         ))
@@ -342,8 +353,10 @@ impl Transport for WebSocketTransport {
         let connection_open_timeout = self.config.connection_open_timeout;
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let substream_open_timeout = self.config.substream_open_timeout;
         let dial_addresses = self.dial_addresses.clone();
         let nodelay = self.config.nodelay;
+        let resolver = self.resolver.clone();
 
         self.pending_dials.insert(connection_id, address.clone());
 
@@ -355,6 +368,7 @@ impl Transport for WebSocketTransport {
                 dial_addresses,
                 connection_open_timeout,
                 nodelay,
+                resolver,
             )
             .await
             .map_err(|error| (connection_id, error))?;
@@ -369,6 +383,7 @@ impl Transport for WebSocketTransport {
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
+                substream_open_timeout,
             )
             .await
             .map_err(|error| (connection_id, error.into()))
@@ -471,6 +486,7 @@ impl Transport for WebSocketTransport {
                 let connection_open_timeout = self.config.connection_open_timeout;
                 let dial_addresses = self.dial_addresses.clone();
                 let nodelay = self.config.nodelay;
+                let resolver = self.resolver.clone();
 
                 async move {
                     WebSocketTransport::dial_peer(
@@ -478,6 +494,7 @@ impl Transport for WebSocketTransport {
                         dial_addresses,
                         connection_open_timeout,
                         nodelay,
+                        resolver,
                     )
                     .await
                     .map_err(|error| (address, error))
@@ -536,6 +553,7 @@ impl Transport for WebSocketTransport {
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let connection_open_timeout = self.config.connection_open_timeout;
+        let substream_open_timeout = self.config.substream_open_timeout;
         let keypair = self.context.keypair.clone();
 
         tracing::trace!(
@@ -559,6 +577,7 @@ impl Transport for WebSocketTransport {
                     yamux_config,
                     max_read_ahead_factor,
                     max_write_buffer_size,
+                    substream_open_timeout,
                 )
                 .await
                 .map_err(|error| (connection_id, error.into()))
