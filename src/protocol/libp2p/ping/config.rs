@@ -18,6 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::time::Duration;
 use crate::{
     codec::ProtocolCodec, protocol::libp2p::ping::PingEvent, types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE,
@@ -36,6 +37,8 @@ const PING_PAYLOAD_SIZE: usize = 32;
 /// Maximum PING failures.
 const MAX_FAILURES: usize = 3;
 
+pub const PING_INTERVAL: Duration = Duration::from_secs(15);
+
 /// Ping configuration.
 pub struct Config {
     /// Protocol name.
@@ -49,6 +52,8 @@ pub struct Config {
 
     /// TX channel for sending events to the user protocol.
     pub(crate) tx_event: Sender<PingEvent>,
+
+    pub(crate) ping_interval: Duration,
 }
 
 impl Config {
@@ -61,6 +66,7 @@ impl Config {
         (
             Self {
                 tx_event,
+                ping_interval: PING_INTERVAL,
                 max_failures: MAX_FAILURES,
                 protocol: ProtocolName::from(PROTOCOL_NAME),
                 codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
@@ -80,6 +86,7 @@ pub struct ConfigBuilder {
 
     /// Maximum failures before the peer is considered unreachable.
     max_failures: usize,
+    ping_interval: Duration,
 }
 
 impl Default for ConfigBuilder {
@@ -92,6 +99,7 @@ impl ConfigBuilder {
     /// Create new default [`Config`] which can be modified by the user.
     pub fn new() -> Self {
         Self {
+            ping_interval: PING_INTERVAL,
             max_failures: MAX_FAILURES,
             protocol: ProtocolName::from(PROTOCOL_NAME),
             codec: ProtocolCodec::Identity(PING_PAYLOAD_SIZE),
@@ -104,6 +112,11 @@ impl ConfigBuilder {
         self
     }
 
+    pub fn with_ping_interval(mut self, ping_interval: Duration) -> Self {
+        self.ping_interval = ping_interval;
+        self
+    }
+
     /// Build [`Config`].
     pub fn build(self) -> (Config, Box<dyn Stream<Item = PingEvent> + Send + Unpin>) {
         let (tx_event, rx_event) = channel(DEFAULT_CHANNEL_SIZE);
@@ -111,6 +124,7 @@ impl ConfigBuilder {
         (
             Config {
                 tx_event,
+                ping_interval: self.ping_interval,
                 max_failures: self.max_failures,
                 protocol: self.protocol,
                 codec: self.codec,
