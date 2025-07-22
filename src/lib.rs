@@ -55,7 +55,6 @@ use crate::transport::websocket::WebSocketTransport;
 
 use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use transport::Endpoint;
 use types::ConnectionId;
 
@@ -331,11 +330,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                let peer_id_multihash = match Multihash::from_bytes(&local_peer_id.to_bytes()) {
-                    Ok(hash) => hash,
-                    Err(_) => continue,
-                };
-                listen_addresses.push(address.with(Protocol::P2p(peer_id_multihash)));
+                listen_addresses.push(address.with( Protocol::P2p(local_peer_id.as_ref().clone())));
             }
 
             transport_manager.register_transport(SupportedTransport::Tcp, Box::new(transport));
@@ -350,11 +345,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                let peer_id_multihash = match Multihash::from_bytes(&local_peer_id.to_bytes()) {
-                    Ok(hash) => hash,
-                    Err(_) => continue,
-                };
-                listen_addresses.push(address.with(Protocol::P2p(peer_id_multihash)));
+                listen_addresses.push(address.with( Protocol::P2p(local_peer_id.as_ref().clone())));
             }
 
             transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
@@ -369,11 +360,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                let peer_id_multihash = match Multihash::from_bytes(&local_peer_id.to_bytes()) {
-                    Ok(hash) => hash,
-                    Err(_) => continue,
-                };
-                listen_addresses.push(address.with(Protocol::P2p(peer_id_multihash)));
+                listen_addresses.push(address.with( Protocol::P2p(local_peer_id.as_ref().clone())));
             }
 
             transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
@@ -388,11 +375,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                let peer_id_multihash = match Multihash::from_bytes(&local_peer_id.to_bytes()) {
-                    Ok(hash) => hash,
-                    Err(_) => continue,
-                };
-                listen_addresses.push(address.with(Protocol::P2p(peer_id_multihash)));
+                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.as_ref().clone())));
             }
 
             transport_manager
