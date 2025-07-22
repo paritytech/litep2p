@@ -330,7 +330,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.as_ref().clone())));
+                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
             }
 
             transport_manager.register_transport(SupportedTransport::Tcp, Box::new(transport));
@@ -345,7 +345,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.as_ref().clone())));
+                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
             }
 
             transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
@@ -360,7 +360,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.as_ref().clone())));
+                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
             }
 
             transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
@@ -375,7 +375,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.as_ref().clone())));
+                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
             }
 
             transport_manager
