@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2025-07-22
+
+This release adds the ability to use system DNS resolver and change Kademlia DNS memory store capacity. It also fixes the Bitswap protocol implementation and correctly handles the dropped notification substreams by unregistering them from the protocol list.
+
+### Added
+
+- kad: Expose memory store configuration ([#407](https://github.com/paritytech/litep2p/pull/407))
+- transport: Allow changing DNS resolver config ([#384](https://github.com/paritytech/litep2p/pull/384))
+
+### Fixed
+
+- notification: Unregister dropped protocols ([#391](https://github.com/paritytech/litep2p/pull/391))
+- bitswap: Fix protocol implementation ([#402](https://github.com/paritytech/litep2p/pull/402))
+- transport-manager: stricter supported multiaddress check ([#403](https://github.com/paritytech/litep2p/pull/403))
+
 ## [0.9.5] - 2025-05-26
 
 This release primarily focuses on strengthening the stability of the websocket transport. We've resolved an issue where higher-level buffering was causing the Noise protocol to fail when decoding messages.
