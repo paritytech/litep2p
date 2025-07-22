@@ -23,10 +23,19 @@ use crate::{error::DialError, PeerId};
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
+
+/// Maximum number of addresses tracked for a peer in the success bucket.
+const MAX_SUCCESS_ADDRESSES: usize = 32;
+
+/// Maximum number of addresses tracked for a peer in the unknown bucket.
+const MAX_UNKNOWN_ADDRESSES: usize = 16;
+
+/// Maximum number of addresses tracked for a peer in the failure bucket.
+const MAX_FAILURE_ADDRESSES: usize = 16;
 
 /// Scores for address records.
 pub mod scores {
@@ -258,6 +267,105 @@ impl AddressStore {
         let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
         records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
         records.into_iter().take(limit).map(|record| record.address).collect()
+    }
+}
+
+/// Buckets for storing addresses based on dial results.
+///
+/// This is a more optimized version of [`AddressStore`] that separates addresses
+/// based on their dial results (success, unknown, failure).
+///
+/// It allows for more efficient management of addresses based on their dial outcomes,
+/// reducing the need for sorting and filtering during address selection.
+#[derive(Debug, Clone, Default)]
+pub struct AddressStoreBuckets {
+    /// Addresses with successful dials.
+    pub success: HashSet<Multiaddr>,
+
+    /// Addresses not yet dialed.
+    pub unknown: HashSet<Multiaddr>,
+
+    /// Addresses with dial failures.
+    pub failure: HashSet<Multiaddr>,
+}
+
+impl AddressStoreBuckets {
+    /// Create new [`AddressStoreBuckets`].
+    pub fn new() -> Self {
+        Self {
+            success: HashSet::with_capacity(MAX_SUCCESS_ADDRESSES),
+            unknown: HashSet::with_capacity(MAX_UNKNOWN_ADDRESSES),
+            failure: HashSet::with_capacity(MAX_FAILURE_ADDRESSES),
+        }
+    }
+
+    /// Create [`AddressStoreBuckets`] from a set of unknown addresses.
+    ///
+    /// If the addresses exceed the maximum capacity, they will be truncated.
+    pub fn from_unknown(addresses: impl IntoIterator<Item = Multiaddr>) -> Self {
+        let mut store = Self::new();
+        for address in addresses.into_iter().take(MAX_UNKNOWN_ADDRESSES) {
+            store.unknown.insert(address);
+        }
+        store
+    }
+
+    /// Insert an address record into the appropriate bucket based on its score.
+    pub fn insert(&mut self, record: AddressRecord) {
+        let AddressRecord { score, address } = record;
+
+        match score {
+            score if score > 0 => {
+                // Moves directly to the success bucket.
+                self.unknown.remove(&address);
+                self.failure.remove(&address);
+
+                Self::ensure_space(&mut self.success);
+                self.success.insert(address);
+            }
+            0 => {
+                // Moves to the unknown bucket.
+                self.success.remove(&address);
+                self.failure.remove(&address);
+
+                Self::ensure_space(&mut self.unknown);
+                self.unknown.insert(address);
+            }
+            _ => {
+                // Moves to the failure bucket.
+                self.success.remove(&address);
+                self.unknown.remove(&address);
+
+                Self::ensure_space(&mut self.failure);
+                self.failure.insert(address);
+            }
+        }
+    }
+
+    /// Ensure that there is space in the bucket.
+    fn ensure_space(bucket: &mut HashSet<Multiaddr>) {
+        if bucket.len() < bucket.capacity() {
+            return;
+        }
+
+        // Remove the first element to ensure space.
+        if let Some(first) = bucket.iter().next().cloned() {
+            bucket.remove(&first);
+        }
+    }
+
+    /// Check if the store is empty.
+    pub fn is_empty(&self) -> bool {
+        self.success.is_empty() && self.unknown.is_empty() && self.failure.is_empty()
+    }
+
+    /// Return the available addresses from all buckets.
+    pub fn addresses(&self, limit: usize) -> impl Iterator<Item = &Multiaddr> {
+        self.success
+            .iter()
+            .chain(self.unknown.iter())
+            .chain(self.failure.iter())
+            .take(limit)
     }
 }
 
