@@ -58,10 +58,10 @@ use multiaddr::{Multiaddr, Protocol};
 use transport::Endpoint;
 use types::ConnectionId;
 
-use std::{collections::HashSet, sync::Arc};
 pub use bandwidth::BandwidthSink;
 pub use error::Error;
 pub use peer_id::PeerId;
+use std::{collections::HashSet, sync::Arc};
 pub use types::protocol::ProtocolName;
 
 pub(crate) mod peer_id;
@@ -330,7 +330,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with( Protocol::P2p(local_peer_id.as_ref().clone())));
+                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.as_ref().clone())));
             }
 
             transport_manager.register_transport(SupportedTransport::Tcp, Box::new(transport));
@@ -345,7 +345,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with( Protocol::P2p(local_peer_id.as_ref().clone())));
+                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.as_ref().clone())));
             }
 
             transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
@@ -360,7 +360,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with( Protocol::P2p(local_peer_id.as_ref().clone())));
+                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.as_ref().clone())));
             }
 
             transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
