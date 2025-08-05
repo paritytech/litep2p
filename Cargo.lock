@@ -4722,6 +4722,7 @@ dependencies = [
  "lazy_static",
  "nom",
  "oid-registry 0.8.1",
+ "ring 0.17.14",
  "rusticata-macros",
  "thiserror 2.0.12",
  "time",

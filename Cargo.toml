@@ -46,7 +46,7 @@ uint = "0.10.0"
 unsigned-varint = { version = "0.8.0", features = ["codec"] }
 url = "2.5.4"
 x25519-dalek = "2.0.1"
-x509-parser = "0.17.0"
+x509-parser = { version = "0.17.0", features = ["verify"] }
 yasna = "0.5.0"
 zeroize = "1.8.1"
 yamux = "0.13.5"
@@ -93,6 +93,7 @@ futures_ringbuf = "0.4.0"
 hex-literal = "1.0.0"
 
 [features]
+
 # Stable feature flags.
 websocket = ["dep:tokio-tungstenite"]
 
@@ -103,6 +104,7 @@ fuzz = ["serde/derive", "serde/rc", "bytes/serde", "dep:serde_millis", "cid/serd
 # They are not yet suitable for production use-cases and should be used with caution.
 quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring", "dep:rcgen"]
 webrtc = ["dep:str0m"]
+rsa = ["dep:ring", "dep:webpki"]
 
 [profile.release]
 debug = true
