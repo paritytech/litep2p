@@ -458,7 +458,7 @@ mod tests {
 
         assert!(parsed_cert.verify().is_ok());
         assert_eq!(
-            crate::crypto::PublicKey::Ed25519(keypair.public()),
+            crate::crypto::RemotePublicKey::Ed25519(keypair.public()),
             parsed_cert.extension.public_key
         );
     }
