@@ -161,9 +161,9 @@ impl NoiseContext {
         Self::assemble(noise, keypair, id_keys, Role::Dialer)
     }
 
-    /// Get remote public key from the received Noise payload.
+    /// Get remote peer ID from the received Noise payload.
     #[cfg(feature = "webrtc")]
-    pub fn get_remote_public_key(&mut self, reply: &[u8]) -> Result<PublicKey, NegotiationError> {
+    pub fn get_remote_peer_id(&mut self, reply: &[u8]) -> Result<PeerId, NegotiationError> {
         if reply.len() < 2 {
             tracing::error!(target: LOG_TARGET, "reply too short to contain length prefix");
             return Err(NegotiationError::ParseError(ParseError::InvalidReplyLength));
@@ -191,7 +191,7 @@ impl NoiseContext {
             .map_err(|err| NegotiationError::ParseError(err.into()))?;
 
         let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
-        PublicKey::from_protobuf_encoding(&identity).map_err(|err| err.into())
+        Ok(PeerId::from_public_key_protobuf(&identity))
     }
 
     /// Get first message.

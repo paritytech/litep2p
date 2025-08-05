@@ -23,7 +23,7 @@
 //! This module handles generation, signing, and verification of certificates.
 
 use crate::{
-    crypto::{ed25519::Keypair, PublicKey},
+    crypto::{ed25519::Keypair, RemotePublicKey},
     PeerId,
 };
 
@@ -102,10 +102,13 @@ pub struct P2pCertificate<'a> {
 /// The contents of the specific libp2p extension, containing the public host key
 /// and a signature performed using the private host key.
 pub struct P2pExtension {
-    public_key: PublicKey,
+    public_key: RemotePublicKey,
     /// This signature provides cryptographic proof that the peer was
     /// in possession of the private host key at the time the certificate was signed.
     signature: Vec<u8>,
+    /// PeerId derived from the public key. While not being part of the extension, we store it to
+    /// avoid the need to serialize the public key back to protobuf.
+    peer_id: PeerId,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -148,7 +151,7 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
             //    publicKey OCTET STRING,
             //    signature OCTET STRING
             // }
-            let (public_key, signature): (Vec<u8>, Vec<u8>) =
+            let (public_key_protobuf, signature): (Vec<u8>, Vec<u8>) =
                 yasna::decode_der(ext.value).map_err(|_| webpki::Error::ExtensionValueInvalid)?;
             // The publicKey field of SignedKey contains the public host key
             // of the endpoint, encoded using the following protobuf:
@@ -162,11 +165,13 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
             //    required KeyType Type = 1;
             //    required bytes Data = 2;
             // }
-            let public_key = PublicKey::from_protobuf_encoding(&public_key)
+            let public_key = RemotePublicKey::from_protobuf_encoding(&public_key_protobuf)
                 .map_err(|_| webpki::Error::UnknownIssuer)?;
+            let peer_id = PeerId::from_public_key_protobuf(&public_key_protobuf);
             let ext = P2pExtension {
                 public_key,
                 signature,
+                peer_id,
             };
             libp2p_extension = Some(ext);
             continue;
@@ -231,7 +236,7 @@ fn make_libp2p_extension(
 impl P2pCertificate<'_> {
     /// The [`PeerId`] of the remote peer.
     pub fn peer_id(&self) -> PeerId {
-        self.extension.public_key.to_peer_id()
+        self.extension.peer_id
     }
 
     /// Verify the `signature` of the `message` signed by the private key corresponding to the
