@@ -46,7 +46,7 @@ uint = "0.10.0"
 unsigned-varint = { version = "0.8.0", features = ["codec"] }
 url = "2.5.4"
 x25519-dalek = "2.0.1"
-x509-parser = { version = "0.17.0" }
+x509-parser = "0.17.0"
 yasna = "0.5.0"
 zeroize = "1.8.1"
 yamux = "0.13.5"
