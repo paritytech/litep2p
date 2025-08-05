@@ -21,7 +21,7 @@
 //! RSA public key.
 
 use crate::error::ParseError;
-use ring::signature::{self, RSA_PKCS1_2048_8192_SHA256};
+use ring::signature::{UnparsedPublicKey, RSA_PKCS1_2048_8192_SHA256};
 use x509_parser::{prelude::FromDer, x509::SubjectPublicKeyInfo};
 
 /// An RSA public key.
@@ -38,7 +38,7 @@ impl PublicKey {
 
     /// Verify the RSA signature on a message using the public key.
     pub fn verify(&self, msg: &[u8], sig: &[u8]) -> bool {
-        let key = signature::UnparsedPublicKey::new(&RSA_PKCS1_2048_8192_SHA256, &self.0);
+        let key = UnparsedPublicKey::new(&RSA_PKCS1_2048_8192_SHA256, &self.0);
         key.verify(msg, sig).is_ok()
     }
 }
