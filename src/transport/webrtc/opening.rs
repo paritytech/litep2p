@@ -30,8 +30,8 @@ use crate::{
 
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
-    change::Fingerprint,
     channel::ChannelId,
+    config::Fingerprint,
     net::{DatagramRecv, DatagramSend, Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
