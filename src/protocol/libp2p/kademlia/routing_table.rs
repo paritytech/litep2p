@@ -22,9 +22,12 @@
 //! Kademlia routing table implementation.
 
 use crate::{
-    protocol::libp2p::kademlia::{
-        bucket::{KBucket, KBucketEntry},
-        types::{ConnectionType, Distance, KademliaPeer, Key, U256},
+    protocol::{
+        ensure_address_with_peer,
+        libp2p::kademlia::{
+            bucket::{KBucket, KBucketEntry},
+            types::{ConnectionType, Distance, KademliaPeer, Key, U256},
+        },
     },
     transport::{
         manager::address::{scores, AddressRecord},
@@ -33,8 +36,7 @@ use crate::{
     PeerId,
 };
 
-use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
+use multiaddr::Multiaddr;
 
 /// Number of k-buckets.
 const NUM_BUCKETS: usize = 256;
@@ -187,18 +189,7 @@ impl RoutingTable {
             "add known peer"
         );
 
-        // TODO: https://github.com/paritytech/litep2p/issues/337 this has to be moved elsewhere at some point
-        let addresses: Vec<Multiaddr> = addresses
-            .into_iter()
-            .filter_map(|address| {
-                let last = address.iter().last();
-                if std::matches!(last, Some(Protocol::P2p(_))) {
-                    Some(address)
-                } else {
-                    Some(address.with(Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).ok()?)))
-                }
-            })
-            .collect();
+        let addresses: Vec<Multiaddr> = ensure_address_with_peer(addresses.into_iter(), peer);
 
         if addresses.is_empty() {
             tracing::debug!(

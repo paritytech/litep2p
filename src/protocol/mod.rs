@@ -29,7 +29,8 @@ use crate::{
     PeerId,
 };
 
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
+use multihash::Multihash;
 
 use std::fmt::Debug;
 
@@ -140,4 +141,22 @@ pub trait UserProtocol: Send {
 
     /// Start the the user protocol event loop.
     async fn run(self: Box<Self>, service: TransportService) -> crate::Result<()>;
+}
+
+pub fn ensure_address_with_peer(
+    addresses: impl Iterator<Item = Multiaddr>,
+    peer_id: PeerId,
+) -> Vec<Multiaddr> {
+    addresses
+        .filter_map(|address| {
+            let last = address.iter().last();
+            if std::matches!(last, Some(Protocol::P2p(_))) {
+                Some(address)
+            } else {
+                Some(address.with(Protocol::P2p(
+                    Multihash::from_bytes(&peer_id.to_bytes()).ok()?,
+                )))
+            }
+        })
+        .collect()
 }

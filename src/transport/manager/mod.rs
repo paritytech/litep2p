@@ -1381,6 +1381,7 @@ mod tests {
         rx: tokio::sync::mpsc::Receiver<TransportEvent>,
     }
 
+    #[allow(dead_code)]
     impl MockTransport {
         fn new(rx: tokio::sync::mpsc::Receiver<TransportEvent>) -> Self {
             Self { rx }
