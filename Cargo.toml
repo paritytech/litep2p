@@ -103,6 +103,7 @@ fuzz = ["serde/derive", "serde/rc", "bytes/serde", "dep:serde_millis", "cid/serd
 # They are not yet suitable for production use-cases and should be used with caution.
 quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring", "dep:rcgen"]
 webrtc = ["dep:str0m"]
+rsa = ["dep:ring"]
 
 [profile.release]
 debug = true
