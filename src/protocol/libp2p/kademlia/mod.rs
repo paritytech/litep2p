@@ -93,7 +93,7 @@ enum PeerAction {
     SendFindNode(QueryId),
 
     /// Send `PUT_VALUE` message to peer.
-    SendPutValue(Bytes),
+    SendPutValue(QueryId, Bytes),
 
     /// Send `ADD_PROVIDER` message to peer.
     SendAddProvider(Bytes),
@@ -368,10 +368,10 @@ impl Kademlia {
                     }
                 }
             }
-            Some(PeerAction::SendPutValue(message)) => {
+            Some(PeerAction::SendPutValue(query, message)) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, "send `PUT_VALUE` message");
 
-                self.executor.send_message(peer, message, substream);
+                self.executor.send_request_read_response(peer, Some(query), message, substream);
             }
             Some(PeerAction::SendAddProvider(message)) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, "send `ADD_PROVIDER` message");
@@ -472,20 +472,39 @@ impl Kademlia {
                     }
                 }
             }
-            KademliaMessage::PutValue { record } => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    record_key = ?record.key,
-                    "handle `PUT_VALUE` message",
-                );
+            KademliaMessage::PutValue { record } => match query_id {
+                Some(query_id) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        query = ?query_id,
+                        record_key = ?record.key,
+                        "handle `PUT_VALUE` response",
+                    );
 
-                if let IncomingRecordValidationMode::Automatic = self.validation_mode {
-                    self.store.put(record.clone());
+                    self.engine.register_response(
+                        query_id,
+                        peer,
+                        KademliaMessage::PutValue {
+                            record: record.clone(),
+                        },
+                    );
                 }
+                None => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        record_key = ?record.key,
+                        "handle `PUT_VALUE` request",
+                    );
 
-                let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
-            }
+                    if let IncomingRecordValidationMode::Automatic = self.validation_mode {
+                        self.store.put(record.clone());
+                    }
+
+                    let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
+                }
+            },
             KademliaMessage::GetRecord { key, record, peers } => {
                 match (query_id, key) {
                     (Some(query_id), key) => {
@@ -803,7 +822,12 @@ impl Kademlia {
                     .await;
                 Ok(())
             }
-            QueryAction::PutRecordToFoundNodes { query, record, peers } => {
+            QueryAction::PutRecordToFoundNodes {
+                query,
+                record,
+                peers,
+                quorum,
+            } => {
                 tracing::trace!(
                     target: LOG_TARGET,
                     ?query,
@@ -814,10 +838,10 @@ impl Kademlia {
                 let key = record.key.clone();
                 let message = KademliaMessage::put_value(record);
 
-                for peer in peers {
+                for peer in &peers {
                     if let Err(error) = self.open_substream_or_dial(
                         peer.peer,
-                        PeerAction::SendPutValue(message.clone()),
+                        PeerAction::SendPutValue(query, message.clone()),
                         None,
                     ) {
                         tracing::debug!(
@@ -830,6 +854,25 @@ impl Kademlia {
                     }
                 }
 
+                self.engine.start_put_record_to_found_nodes_requests_tracking(
+                    query,
+                    key,
+                    peers.into_iter().map(|peer| peer.peer).collect(),
+                    quorum,
+                );
+
+                Ok(())
+            }
+            QueryAction::PutRecordQuerySucceeded { query, key } => {
+                tracing::debug!(target: LOG_TARGET, ?query, "`PUT_VALUE` query succeeded");
+
+                let _ = self
+                    .event_tx
+                    .send(KademliaEvent::PutRecordSuccess {
+                        query_id: query,
+                        key,
+                    })
+                    .await;
                 Ok(())
             }
             QueryAction::AddProviderToFoundNodes {
@@ -1016,7 +1059,7 @@ impl Kademlia {
                                     .into()
                             );
                         }
-                        Some(KademliaCommand::PutRecord { mut record, query_id }) => {
+                        Some(KademliaCommand::PutRecord { mut record, quorum, query_id }) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 query = ?query_id,
@@ -1041,6 +1084,7 @@ impl Kademlia {
                                 query_id,
                                 record,
                                 self.routing_table.closest(&key, self.replication_factor).into(),
+                                quorum,
                             );
                         }
                         Some(KademliaCommand::PutRecordToPeers {
@@ -1048,6 +1092,7 @@ impl Kademlia {
                             query_id,
                             peers,
                             update_local_store,
+                            quorum,
                         }) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -1083,6 +1128,7 @@ impl Kademlia {
                                 query_id,
                                 record,
                                 peers,
+                                quorum,
                             );
                         }
                         Some(KademliaCommand::StartProviding {

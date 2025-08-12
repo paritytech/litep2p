@@ -67,6 +67,9 @@ enum QueryType {
         /// Record that needs to be stored.
         record: Record,
 
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
+
         /// Context for the `FIND_NODE` query.
         context: FindNodeContext<RecordKey>,
     },
@@ -75,6 +78,9 @@ enum QueryType {
     PutRecordToPeers {
         /// Record that needs to be stored.
         record: Record,
+
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
 
         /// Context for finding peers.
         context: FindManyNodesContext,
@@ -148,6 +154,18 @@ pub enum QueryAction {
 
         /// Peers for whom the `PUT_VALUE` must be sent to.
         peers: Vec<KademliaPeer>,
+
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
+    },
+
+    /// `PUT_VALUE` query succeeded.
+    PutRecordQuerySucceeded {
+        /// ID of the query that succeeded.
+        query: QueryId,
+
+        /// Record key of the stored record.
+        key: RecordKey,
     },
 
     /// Add the provider record to nodes closest to the target key.
@@ -274,6 +292,7 @@ impl QueryEngine {
         query_id: QueryId,
         record: Record,
         candidates: VecDeque<KademliaPeer>,
+        quorum: Quorum,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -296,6 +315,7 @@ impl QueryEngine {
             query_id,
             QueryType::PutRecord {
                 record,
+                quorum,
                 context: FindNodeContext::new(config, candidates),
             },
         );
@@ -309,6 +329,7 @@ impl QueryEngine {
         query_id: QueryId,
         record: Record,
         peers_to_report: Vec<KademliaPeer>,
+        quorum: Quorum,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -322,6 +343,7 @@ impl QueryEngine {
             query_id,
             QueryType::PutRecordToPeers {
                 record,
+                quorum,
                 context: FindManyNodesContext::new(query_id, peers_to_report),
             },
         );
@@ -439,9 +461,10 @@ impl QueryEngine {
     }
 
     /// Start `PUT_VALUE` requests tracking.
-    pub fn start_put_record_to_found_nodes_tracking(
+    pub fn start_put_record_to_found_nodes_requests_tracking(
         &mut self,
         query_id: QueryId,
+        key: RecordKey,
         peers: Vec<PeerId>,
         quorum: Quorum,
     ) {
@@ -455,7 +478,7 @@ impl QueryEngine {
         self.queries.insert(
             query_id,
             QueryType::PutRecordToFoundNodes {
-                context: PutRecordToFoundNodesContext::new(query_id, peers, quorum),
+                context: PutRecordToFoundNodesContext::new(query_id, key, peers, quorum),
             },
         );
     }
@@ -586,18 +609,29 @@ impl QueryEngine {
                 target: context.config.target.into_preimage(),
                 peers: context.responses.into_values().collect::<Vec<_>>(),
             },
-            QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
+            QueryType::PutRecord {
+                record,
+                quorum,
+                context,
+            } => QueryAction::PutRecordToFoundNodes {
                 query: context.config.query,
                 record,
                 peers: context.responses.into_values().collect::<Vec<_>>(),
+                quorum,
             },
-            QueryType::PutRecordToPeers { record, context } => QueryAction::PutRecordToFoundNodes {
+            QueryType::PutRecordToPeers {
+                record,
+                quorum,
+                context,
+            } => QueryAction::PutRecordToFoundNodes {
                 query: context.query,
                 record,
                 peers: context.peers_to_report,
+                quorum,
             },
-            QueryType::PutRecordToFoundNodes { context } => QueryAction::QuerySucceeded {
+            QueryType::PutRecordToFoundNodes { context } => QueryAction::PutRecordQuerySucceeded {
                 query: context.query,
+                key: context.key,
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.config.query,
@@ -869,6 +903,7 @@ mod tests {
                 ConnectionType::NotConnected,
             )]
             .into(),
+            Quorum::All,
         );
 
         let action = engine.next_action();
@@ -928,11 +963,13 @@ mod tests {
                 query,
                 peers,
                 record,
+                quorum,
             }) => {
                 assert_eq!(query, QueryId(1340));
                 assert_eq!(peers.len(), 4);
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);
+                assert!(matches!(quorum, Quorum::All));
                 peers
             }
             _ => panic!("invalid event received"),

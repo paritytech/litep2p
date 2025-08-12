@@ -164,7 +164,7 @@ async fn records_are_stored_automatically() {
 
     // Publish the record.
     let record = Record::new(vec![1, 2, 3], vec![0x01]);
-    kad_handle1.put_record(record.clone()).await;
+    kad_handle1.put_record(record.clone(), Quorum::All).await;
     let mut records = Vec::new();
 
     loop {
@@ -245,7 +245,7 @@ async fn records_are_stored_manually() {
 
     // Publish the record.
     let mut record = Record::new(vec![1, 2, 3], vec![0x01]);
-    kad_handle1.put_record(record.clone()).await;
+    kad_handle1.put_record(record.clone(), Quorum::All).await;
     let mut records = Vec::new();
 
     loop {
@@ -328,7 +328,7 @@ async fn not_validated_records_are_not_stored() {
 
     // Publish the record.
     let record = Record::new(vec![1, 2, 3], vec![0x01]);
-    kad_handle1.put_record(record.clone()).await;
+    kad_handle1.put_record(record.clone(), Quorum::All).await;
     let mut records = Vec::new();
     let mut get_record_query_id = None;
 
@@ -405,7 +405,7 @@ async fn get_record_retrieves_remote_records() {
 
     // Store the record on `litep2p1``.
     let original_record = Record::new(vec![1, 2, 3], vec![0x01]);
-    let query1 = kad_handle1.put_record(original_record.clone()).await;
+    let query1 = kad_handle1.put_record(original_record.clone(), Quorum::All).await;
 
     let mut records = Vec::new();
     let mut query2 = None;
@@ -501,7 +501,7 @@ async fn get_record_retrieves_local_and_remote_records() {
 
     // Store the record on `litep2p1``.
     let original_record = Record::new(vec![1, 2, 3], vec![0x01]);
-    let query1 = kad_handle1.put_record(original_record.clone()).await;
+    let query1 = kad_handle1.put_record(original_record.clone(), Quorum::All).await;
 
     let (mut peer1_stored, mut peer2_stored) = (false, false);
     let mut query3 = None;

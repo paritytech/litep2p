@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 use crate::{
-    protocol::libp2p::kademlia::{handle::Quorum, query::QueryAction, QueryId},
+    protocol::libp2p::kademlia::{handle::Quorum, query::QueryAction, QueryId, RecordKey},
     PeerId,
 };
 
@@ -32,6 +32,9 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::put_record";
 pub struct PutRecordToFoundNodesContext {
     /// Query ID.
     pub query: QueryId,
+
+    /// Record key.
+    pub key: RecordKey,
 
     /// Quorum that needs to be reached for the query to succeed.
     peers_to_succeed: NonZeroUsize,
@@ -48,9 +51,10 @@ pub struct PutRecordToFoundNodesContext {
 
 impl PutRecordToFoundNodesContext {
     /// Create new [`PutRecordToFoundNodesContext`].
-    pub fn new(query: QueryId, peers: Vec<PeerId>, quorum: Quorum) -> Self {
+    pub fn new(query: QueryId, key: RecordKey, peers: Vec<PeerId>, quorum: Quorum) -> Self {
         Self {
             query,
+            key,
             peers_to_succeed: match quorum {
                 Quorum::One => NonZeroUsize::new(1).expect("1 > 0; qed"),
                 Quorum::N(n) => n,
@@ -114,4 +118,3 @@ impl PutRecordToFoundNodesContext {
         }
     }
 }
-

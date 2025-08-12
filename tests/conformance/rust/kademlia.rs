@@ -284,7 +284,7 @@ async fn put_record() {
     let record_key = RecordKey::new(&vec![1, 2, 3, 4]);
     let record = Record::new(record_key, vec![1, 3, 3, 7, 1, 3, 3, 8]);
 
-    let _ = kad_handle.put_record(record).await;
+    let _ = kad_handle.put_record(record, Quorum::All).await;
 
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
