@@ -387,7 +387,7 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_unsupported() {
-        let (mut handle, _rx) = make_transport_manager_handle();
+        let (handle, _rx) = make_transport_manager_handle();
 
         let address =
             "/dns4/google.com/tcp/24928/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
