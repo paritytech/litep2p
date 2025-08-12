@@ -37,12 +37,13 @@ use bytes::Bytes;
 
 use std::collections::{HashMap, VecDeque};
 
-use self::find_many_nodes::FindManyNodesContext;
+use self::{find_many_nodes::FindManyNodesContext, put_record::PutRecordToFoundNodesContext};
 
 mod find_many_nodes;
 mod find_node;
 mod get_providers;
 mod get_record;
+mod put_record;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
@@ -77,6 +78,12 @@ enum QueryType {
 
         /// Context for finding peers.
         context: FindManyNodesContext,
+    },
+
+    /// `PUT_VALUE` message sending phase.
+    PutRecordToFoundNodes {
+        /// Context for tracking `PUT_VALUE` responses.
+        context: PutRecordToFoundNodesContext,
     },
 
     /// `GET_VALUE` query.
@@ -431,6 +438,28 @@ impl QueryEngine {
         query_id
     }
 
+    /// Start `PUT_VALUE` requests tracking.
+    pub fn start_put_record_to_found_nodes_tracking(
+        &mut self,
+        query_id: QueryId,
+        peers: Vec<PeerId>,
+        quorum: Quorum,
+    ) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            num_peers = ?peers.len(),
+            "start `PUT_VALUE` responses tracking"
+        );
+
+        self.queries.insert(
+            query_id,
+            QueryType::PutRecordToFoundNodes {
+                context: PutRecordToFoundNodesContext::new(query_id, peers, quorum),
+            },
+        );
+    }
+
     /// Register response failure from a queried peer.
     pub fn register_response_failure(&mut self, query: QueryId, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response failure");
@@ -446,6 +475,9 @@ impl QueryEngine {
                 context.register_response_failure(peer);
             }
             Some(QueryType::PutRecordToPeers { context, .. }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::PutRecordToFoundNodes { context, .. }) => {
                 context.register_response_failure(peer);
             }
             Some(QueryType::GetRecord { context }) => {
@@ -491,6 +523,12 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
+            Some(QueryType::PutRecordToFoundNodes { context, .. }) => match message {
+                KademliaMessage::PutValue { .. } => {
+                    context.register_response(peer);
+                }
+                _ => unreachable!(),
+            },
             Some(QueryType::GetRecord { context }) => match message {
                 KademliaMessage::GetRecord { record, peers, .. } =>
                     context.register_response(peer, record, peers),
@@ -532,6 +570,10 @@ impl QueryEngine {
             Some(QueryType::GetRecord { context }) => context.next_peer_action(peer),
             Some(QueryType::AddProvider { context, .. }) => context.next_peer_action(peer),
             Some(QueryType::GetProviders { context }) => context.next_peer_action(peer),
+            Some(QueryType::PutRecordToFoundNodes { .. }) => {
+                // All `PUT_VALUE` requests were sent when initiating this query type.
+                None
+            }
         }
     }
 
@@ -553,6 +595,9 @@ impl QueryEngine {
                 query: context.query,
                 record,
                 peers: context.peers_to_report,
+            },
+            QueryType::PutRecordToFoundNodes { context } => QueryAction::QuerySucceeded {
+                query: context.query,
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.config.query,
@@ -592,6 +637,7 @@ impl QueryEngine {
                 QueryType::GetRecord { context } => context.next_action(),
                 QueryType::AddProvider { context, .. } => context.next_action(),
                 QueryType::GetProviders { context } => context.next_action(),
+                QueryType::PutRecordToFoundNodes { context, .. } => context.next_action(),
             };
 
             match action {

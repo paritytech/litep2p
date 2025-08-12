@@ -50,7 +50,7 @@ pub enum Quorum {
     /// One peer must be successfully contacted.
     One,
 
-    /// `N` peer must be successfully contacted.
+    /// `N` peers must be successfully contacted.
     N(NonZeroUsize),
 }
 
