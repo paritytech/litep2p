@@ -133,7 +133,10 @@ pub enum QueryAction {
 
     /// Store the record to nodes closest to target key.
     PutRecordToFoundNodes {
-        /// Target peer.
+        /// Query ID of the original PUT_RECORD request.
+        query: QueryId,
+
+        /// Record to store.
         record: Record,
 
         /// Peers for whom the `PUT_VALUE` must be sent to.
@@ -542,10 +545,12 @@ impl QueryEngine {
                 peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
+                query: context.config.query,
                 record,
                 peers: context.responses.into_values().collect::<Vec<_>>(),
             },
             QueryType::PutRecordToPeers { record, context } => QueryAction::PutRecordToFoundNodes {
+                query: context.query,
                 record,
                 peers: context.peers_to_report,
             },
@@ -873,7 +878,12 @@ mod tests {
         }
 
         let peers = match engine.next_action() {
-            Some(QueryAction::PutRecordToFoundNodes { peers, record }) => {
+            Some(QueryAction::PutRecordToFoundNodes {
+                query,
+                peers,
+                record,
+            }) => {
+                assert_eq!(query, QueryId(1340));
                 assert_eq!(peers.len(), 4);
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);

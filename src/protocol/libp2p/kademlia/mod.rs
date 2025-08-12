@@ -749,7 +749,7 @@ impl Kademlia {
                                 Ok(())
                             }
                             Err(err) => {
-                                tracing::trace!(target: LOG_TARGET, ?query, ?peer, ?err, "Failed to open substream a second time");
+                                tracing::debug!(target: LOG_TARGET, ?query, ?peer, ?err, "Failed to open substream a second time");
                                 Err(err.into())
                             }
                         }
@@ -803,9 +803,10 @@ impl Kademlia {
                     .await;
                 Ok(())
             }
-            QueryAction::PutRecordToFoundNodes { record, peers } => {
+            QueryAction::PutRecordToFoundNodes { query, record, peers } => {
                 tracing::trace!(
                     target: LOG_TARGET,
+                    ?query,
                     record_key = ?record.key,
                     num_peers = ?peers.len(),
                     "store record to found peers",
