@@ -34,7 +34,8 @@ use std::{
     task::{Context, Poll},
 };
 
-/// Dummy transport.
+/// Dummy transport used for testing.
+#[allow(unused)]
 pub(crate) struct DummyTransport {
     /// Events.
     events: VecDeque<TransportEvent>,
