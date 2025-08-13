@@ -37,7 +37,9 @@ pub mod webrtc;
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
+#[cfg(test)]
 pub(crate) mod dummy;
+
 pub(crate) mod manager;
 
 pub use manager::limits::{ConnectionLimitsConfig, ConnectionLimitsError};
