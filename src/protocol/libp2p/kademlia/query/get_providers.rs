@@ -117,7 +117,10 @@ impl GetProvidersContext {
         // Merge addresses of different provider records of the same peer.
         let mut providers = HashMap::<PeerId, HashSet<Multiaddr>>::new();
         found_providers.into_iter().for_each(|provider| {
-            providers.entry(provider.peer).or_default().extend(provider.addresses())
+            providers
+                .entry(provider.peer)
+                .or_default()
+                .extend(provider.addresses().cloned())
         });
 
         // Convert into `Vec<KademliaPeer>`
