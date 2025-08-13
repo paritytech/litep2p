@@ -387,7 +387,7 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_unsupported() {
-        let (mut handle, _rx) = make_transport_manager_handle();
+        let (handle, _rx) = make_transport_manager_handle();
 
         let address =
             "/dns4/google.com/tcp/24928/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
@@ -424,7 +424,7 @@ mod tests {
     #[cfg(feature = "websocket")]
     #[tokio::test]
     async fn websocket_unsupported() {
-        let (mut handle, _rx) = make_transport_manager_handle();
+        let (handle, _rx) = make_transport_manager_handle();
 
         let address =
             "/dns4/google.com/tcp/24928/ws/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
@@ -462,7 +462,7 @@ mod tests {
     #[cfg(feature = "websocket")]
     #[tokio::test]
     async fn wss_unsupported() {
-        let (mut handle, _rx) = make_transport_manager_handle();
+        let (handle, _rx) = make_transport_manager_handle();
 
         let address =
             "/dns4/google.com/tcp/24928/wss/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
@@ -500,7 +500,7 @@ mod tests {
     #[cfg(feature = "quic")]
     #[tokio::test]
     async fn quic_unsupported() {
-        let (mut handle, _rx) = make_transport_manager_handle();
+        let (handle, _rx) = make_transport_manager_handle();
 
         let address =
             "/dns4/google.com/udp/24928/quic-v1/p2p/12D3KooWKrUnV42yDR7G6DewmgHtFaVCJWLjQRi2G9t5eJD3BvTy"
