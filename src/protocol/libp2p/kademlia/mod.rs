@@ -502,6 +502,11 @@ impl Kademlia {
                         self.store.put(record.clone());
                     }
 
+                    // Send ACK even if the record was/will be filtered out to not reveal any
+                    // internal state.
+                    let message = KademliaMessage::put_value(record.clone());
+                    self.executor.send_message(peer, message.into(), substream);
+
                     let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
                 }
             },
