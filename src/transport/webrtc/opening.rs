@@ -30,8 +30,8 @@ use crate::{
 
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use str0m::{
-    change::Fingerprint,
     channel::ChannelId,
+    config::Fingerprint,
     net::{DatagramRecv, DatagramSend, Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
@@ -254,8 +254,7 @@ impl OpeningWebRtcConnection {
         };
 
         let message = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
-        let public_key = context.get_remote_public_key(&message)?;
-        let remote_peer_id = PeerId::from_public_key(&public_key);
+        let remote_peer_id = context.get_remote_peer_id(&message)?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -282,7 +281,7 @@ impl OpeningWebRtcConnection {
             .with(Protocol::Udp(self.peer_address.port()))
             .with(Protocol::WebRTC)
             .with(Protocol::Certhash(certificate))
-            .with(Protocol::P2p(PeerId::from(public_key).into()));
+            .with(Protocol::P2p(remote_peer_id.into()));
 
         Ok(WebRtcEvent::ConnectionOpened {
             peer: remote_peer_id,

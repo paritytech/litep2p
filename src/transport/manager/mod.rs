@@ -1377,10 +1377,12 @@ mod tests {
         (dial_address, connection_id)
     }
 
+    #[cfg(feature = "websocket")]
     struct MockTransport {
         rx: tokio::sync::mpsc::Receiver<TransportEvent>,
     }
 
+    #[cfg(feature = "websocket")]
     impl MockTransport {
         #[cfg(feature = "websocket")]
         fn new(rx: tokio::sync::mpsc::Receiver<TransportEvent>) -> Self {
@@ -1388,6 +1390,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "websocket")]
     impl Transport for MockTransport {
         fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
             Ok(())
@@ -1423,6 +1426,8 @@ mod tests {
 
         fn cancel(&mut self, _connection_id: ConnectionId) {}
     }
+
+    #[cfg(feature = "websocket")]
     impl Stream for MockTransport {
         type Item = TransportEvent;
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

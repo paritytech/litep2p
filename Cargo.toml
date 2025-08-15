@@ -64,7 +64,7 @@ rcgen = { version = "0.10.0", optional = true }
 # End of Quic related dependencies.
 
 # WebRTC related dependencies. WebRTC is an experimental feature flag. The dependencies must be updated.
-str0m = { version = "0.6.2", optional = true }
+str0m = { version = "0.9.0", optional = true }
 # End of WebRTC related dependencies.
 
 # Fuzzing related dependencies.
@@ -103,6 +103,7 @@ fuzz = ["serde/derive", "serde/rc", "bytes/serde", "dep:serde_millis", "cid/serd
 # They are not yet suitable for production use-cases and should be used with caution.
 quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring", "dep:rcgen"]
 webrtc = ["dep:str0m"]
+rsa = ["dep:ring"]
 
 [profile.release]
 debug = true

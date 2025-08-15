@@ -23,7 +23,7 @@
 
 use crate::{
     config::Role,
-    crypto::{ed25519::Keypair, PublicKey},
+    crypto::{ed25519::Keypair, PublicKey, RemotePublicKey},
     error::{NegotiationError, ParseError},
     PeerId,
 };
@@ -161,9 +161,9 @@ impl NoiseContext {
         Self::assemble(noise, keypair, id_keys, Role::Dialer)
     }
 
-    /// Get remote public key from the received Noise payload.
+    /// Get remote peer ID from the received Noise payload.
     #[cfg(feature = "webrtc")]
-    pub fn get_remote_public_key(&mut self, reply: &[u8]) -> Result<PublicKey, NegotiationError> {
+    pub fn get_remote_peer_id(&mut self, reply: &[u8]) -> Result<PeerId, NegotiationError> {
         if reply.len() < 2 {
             tracing::error!(target: LOG_TARGET, "reply too short to contain length prefix");
             return Err(NegotiationError::ParseError(ParseError::InvalidReplyLength));
@@ -191,7 +191,7 @@ impl NoiseContext {
             .map_err(|err| NegotiationError::ParseError(err.into()))?;
 
         let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
-        PublicKey::from_protobuf_encoding(&identity).map_err(|err| err.into())
+        Ok(PeerId::from_public_key_protobuf(&identity))
     }
 
     /// Get first message.
@@ -745,13 +745,13 @@ fn parse_and_verify_peer_id(
     dh_remote_pubkey: &[u8],
 ) -> Result<PeerId, NegotiationError> {
     let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
-    let remote_public_key = PublicKey::from_protobuf_encoding(&identity)?;
+    let remote_public_key = RemotePublicKey::from_protobuf_encoding(&identity)?;
     let remote_key_signature =
         payload.identity_sig.ok_or(NegotiationError::BadSignature).inspect_err(|_err| {
             tracing::debug!(target: LOG_TARGET, "payload without signature");
         })?;
 
-    let peer_id = PeerId::from_public_key(&remote_public_key);
+    let peer_id = PeerId::from_public_key_protobuf(&identity);
 
     if !remote_public_key.verify(
         &[STATIC_KEY_DOMAIN.as_bytes(), dh_remote_pubkey].concat(),
