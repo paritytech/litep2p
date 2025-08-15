@@ -22,7 +22,7 @@ use crate::{
     PeerId,
 };
 
-use std::{collections::HashSet, num::NonZeroUsize};
+use std::{cmp, collections::HashSet};
 
 /// Logging target for this file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::put_record";
@@ -37,7 +37,7 @@ pub struct PutRecordToFoundNodesContext {
     pub key: RecordKey,
 
     /// Quorum that needs to be reached for the query to succeed.
-    peers_to_succeed: NonZeroUsize,
+    peers_to_succeed: usize,
 
     /// Peers we're waiting for responses from.
     pending_peers: HashSet<PeerId>,
@@ -56,10 +56,12 @@ impl PutRecordToFoundNodesContext {
             query,
             key,
             peers_to_succeed: match quorum {
-                Quorum::One => NonZeroUsize::new(1).expect("1 > 0; qed"),
-                Quorum::N(n) => n,
-                Quorum::All =>
-                    NonZeroUsize::new(std::cmp::max(peers.len(), 1)).expect("1 > 0; qed"),
+                Quorum::One => 1,
+                // Clamp by the number of discovered peers. This should ever be relevant on
+                // small netwarks with fewer peers that the replication factor. Without such
+                // clamping the query would always fail in small testnets.
+                Quorum::N(n) => cmp::min(n.get(), cmp::max(peers.len(), 1)),
+                Quorum::All => cmp::max(peers.len(), 1),
             },
             pending_peers: peers.into_iter().collect(),
             successful_peers: HashSet::new(),
@@ -102,7 +104,7 @@ impl PutRecordToFoundNodesContext {
 
     /// Check if all requests were successful.
     pub fn is_succeded(&self) -> bool {
-        self.successful_peers.len() >= self.peers_to_succeed.get()
+        self.successful_peers.len() >= self.peers_to_succeed
     }
 
     /// Get next action if the context is finished.
