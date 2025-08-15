@@ -894,8 +894,9 @@ mod tests {
         let mut iter = distances.iter();
 
         // start find node with one known peer
+        let original_query_id = QueryId(1340);
         let _query = engine.start_put_record(
-            QueryId(1340),
+            original_query_id,
             original_record.clone(),
             vec![KademliaPeer::new(
                 *iter.next().unwrap().1,
@@ -965,15 +966,42 @@ mod tests {
                 record,
                 quorum,
             }) => {
-                assert_eq!(query, QueryId(1340));
+                assert_eq!(query, original_query_id);
                 assert_eq!(peers.len(), 4);
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);
                 assert!(matches!(quorum, Quorum::All));
+
                 peers
             }
             _ => panic!("invalid event received"),
         };
+
+        engine.start_put_record_to_found_nodes_requests_tracking(
+            original_query_id,
+            record_key.clone(),
+            peers.iter().map(|p| p.peer).collect(),
+            Quorum::All,
+        );
+
+        // Receive ACKs for PUT_VALUE requests.
+        for peer in &peers {
+            engine.register_response(
+                original_query_id,
+                peer.peer,
+                KademliaMessage::PutValue {
+                    record: original_record.clone(),
+                },
+            );
+        }
+
+        match engine.next_action() {
+            Some(QueryAction::PutRecordQuerySucceeded { query, key }) => {
+                assert_eq!(query, original_query_id);
+                assert_eq!(key, record_key);
+            }
+            _ => panic!("invalid event received"),
+        }
 
         assert!(engine.next_action().is_none());
 
