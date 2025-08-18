@@ -1222,6 +1222,7 @@ impl Kademlia {
                         }
                         Some(KademliaCommand::StartProviding {
                             key,
+                            quorum,
                             query_id
                         }) => {
                             tracing::debug!(
@@ -1237,7 +1238,7 @@ impl Kademlia {
                                 addresses,
                             };
 
-                            self.store.put_provider(key.clone(), provider.clone());
+                            self.store.put_local_provider(key.clone(), quorum);
 
                             self.engine.start_add_provider(
                                 query_id,
@@ -1356,16 +1357,17 @@ impl Kademlia {
                     }
                 },
                 action = self.store.next_action() => match action {
-                    Some(MemoryStoreAction::RefreshProvider { provided_key, provider }) => {
+                    Some(MemoryStoreAction::RefreshProvider { provided_key, provider, quorum }) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             ?provided_key,
                             "republishing local provider",
                         );
 
-                        self.store.put_provider(provided_key.clone(), provider.clone());
-                        // We never update local provider addresses in the store when refresh
-                        // it, as this is done anyway when replying to `GET_PROVIDERS` request.
+                        self.store.put_local_provider(provided_key.clone(), quorum);
+
+                        // We never update local provider addresses in the store during refresh,
+                        // as this is done anyway when replying to `GET_PROVIDERS` request.
 
                         let query_id = self.next_query_id();
                         self.engine.start_add_provider(
