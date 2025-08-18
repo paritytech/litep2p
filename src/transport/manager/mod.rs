@@ -1384,7 +1384,6 @@ mod tests {
 
     #[cfg(feature = "websocket")]
     impl MockTransport {
-        #[cfg(feature = "websocket")]
         fn new(rx: tokio::sync::mpsc::Receiver<TransportEvent>) -> Self {
             Self { rx }
         }
