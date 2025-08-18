@@ -680,7 +680,7 @@ async fn provider_retrieved_by_remote_node() {
 
     // Store provider locally.
     let key = RecordKey::new(&vec![1, 2, 3]);
-    kad_handle1.start_providing(key.clone()).await;
+    kad_handle1.start_providing(key.clone(), Quorum::All).await;
 
     // This is the expected provider.
     let expected_provider = ContentProvider {
@@ -782,7 +782,7 @@ async fn provider_added_to_remote_node() {
 
     // Start provodong.
     let key = RecordKey::new(&vec![1, 2, 3]);
-    kad_handle1.start_providing(key.clone()).await;
+    kad_handle1.start_providing(key.clone(), Quorum::All).await;
 
     // This is the expected provider.
     let expected_provider = ContentProvider {
