@@ -58,7 +58,7 @@ impl PutRecordToFoundNodesContext {
             peers_to_succeed: match quorum {
                 Quorum::One => 1,
                 // Clamp by the number of discovered peers. This should ever be relevant on
-                // small netwarks with fewer peers that the replication factor. Without such
+                // small netwarks with fewer peers than the replication factor. Without such
                 // clamping the query would always fail in small testnets.
                 Quorum::N(n) => cmp::min(n.get(), cmp::max(peers.len(), 1)),
                 Quorum::All => cmp::max(peers.len(), 1),
