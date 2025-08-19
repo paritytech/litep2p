@@ -151,6 +151,26 @@ impl KademliaMessage {
     }
 
     /// Create `PUT_VALUE` response.
+    pub fn put_value_response(key: RecordKey, value: Vec<u8>) -> Bytes {
+        let message = schema::kademlia::Message {
+            key: key.to_vec(),
+            cluster_level_raw: 10,
+            r#type: schema::kademlia::MessageType::PutValue.into(),
+            record: Some(schema::kademlia::Record {
+                key: key.to_vec(),
+                value,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let mut buf = BytesMut::with_capacity(message.encoded_len());
+        message.encode(&mut buf).expect("BytesMut to provide needed capacity");
+
+        buf.freeze()
+    }
+
+    /// Create `GET_VALUE` response.
     pub fn get_value_response(
         key: RecordKey,
         peers: Vec<KademliaPeer>,
