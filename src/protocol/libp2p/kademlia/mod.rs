@@ -839,11 +839,12 @@ impl Kademlia {
                     "store record to found peers",
                 );
                 let key = record.key.clone();
-                let message = KademliaMessage::put_value(record);
+                let message: Bytes = KademliaMessage::put_value(record);
 
                 for peer in &peers {
                     if let Err(error) = self.open_substream_or_dial(
                         peer.peer,
+                        // `message` is cheaply clonable because of `Bytes` reference counting.
                         PeerAction::SendPutValue(query, message.clone()),
                         None,
                     ) {
