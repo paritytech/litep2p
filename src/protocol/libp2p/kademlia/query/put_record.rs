@@ -42,11 +42,8 @@ pub struct PutRecordToFoundNodesContext {
     /// Peers we're waiting for responses from.
     pending_peers: HashSet<PeerId>,
 
-    /// Successfully responded peers.
-    successful_peers: HashSet<PeerId>,
-
-    /// Failed peers.
-    failed_peers: HashSet<PeerId>,
+    /// Number of successfully responded peers.
+    n_succeeded: usize,
 }
 
 impl PutRecordToFoundNodesContext {
@@ -64,15 +61,21 @@ impl PutRecordToFoundNodesContext {
                 Quorum::All => cmp::max(peers.len(), 1),
             },
             pending_peers: peers.into_iter().collect(),
-            successful_peers: HashSet::new(),
-            failed_peers: HashSet::new(),
+            n_succeeded: 0,
         }
     }
 
     /// Register successful response from peer.
     pub fn register_response(&mut self, peer: PeerId) {
         if self.pending_peers.remove(&peer) {
-            self.successful_peers.insert(peer);
+            self.n_succeeded += 1;
+
+            tracing::trace!(
+                target: LOG_TARGET,
+                query = ?self.query,
+                ?peer,
+                "successful `PUT_VALUE` to peer",
+            );
         } else {
             tracing::debug!(
                 target: LOG_TARGET,
@@ -86,7 +89,12 @@ impl PutRecordToFoundNodesContext {
     /// Register failed response from peer.
     pub fn register_response_failure(&mut self, peer: PeerId) {
         if self.pending_peers.remove(&peer) {
-            self.failed_peers.insert(peer);
+            tracing::trace!(
+                target: LOG_TARGET,
+                query = ?self.query,
+                ?peer,
+                "failed `PUT_VALUE` to peer",
+            );
         } else {
             tracing::debug!(
                 target: LOG_TARGET,
@@ -104,7 +112,7 @@ impl PutRecordToFoundNodesContext {
 
     /// Check if all requests were successful.
     pub fn is_succeded(&self) -> bool {
-        self.successful_peers.len() >= self.peers_to_succeed
+        self.n_succeeded >= self.peers_to_succeed
     }
 
     /// Get next action if the context is finished.

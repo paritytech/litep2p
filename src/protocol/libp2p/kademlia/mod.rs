@@ -485,9 +485,7 @@ impl Kademlia {
                     self.engine.register_response(
                         query_id,
                         peer,
-                        KademliaMessage::PutValue {
-                            record: record.clone(),
-                        },
+                        KademliaMessage::PutValue { record },
                     );
                 }
                 None => {
