@@ -37,12 +37,13 @@ use bytes::Bytes;
 
 use std::collections::{HashMap, VecDeque};
 
-use self::find_many_nodes::FindManyNodesContext;
+use self::{find_many_nodes::FindManyNodesContext, put_record::PutRecordToFoundNodesContext};
 
 mod find_many_nodes;
 mod find_node;
 mod get_providers;
 mod get_record;
+mod put_record;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
@@ -66,6 +67,9 @@ enum QueryType {
         /// Record that needs to be stored.
         record: Record,
 
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
+
         /// Context for the `FIND_NODE` query.
         context: FindNodeContext<RecordKey>,
     },
@@ -75,8 +79,17 @@ enum QueryType {
         /// Record that needs to be stored.
         record: Record,
 
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
+
         /// Context for finding peers.
         context: FindManyNodesContext,
+    },
+
+    /// `PUT_VALUE` message sending phase.
+    PutRecordToFoundNodes {
+        /// Context for tracking `PUT_VALUE` responses.
+        context: PutRecordToFoundNodesContext,
     },
 
     /// `GET_VALUE` query.
@@ -133,11 +146,26 @@ pub enum QueryAction {
 
     /// Store the record to nodes closest to target key.
     PutRecordToFoundNodes {
-        /// Target peer.
+        /// Query ID of the original PUT_RECORD request.
+        query: QueryId,
+
+        /// Record to store.
         record: Record,
 
         /// Peers for whom the `PUT_VALUE` must be sent to.
         peers: Vec<KademliaPeer>,
+
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
+    },
+
+    /// `PUT_VALUE` query succeeded.
+    PutRecordQuerySucceeded {
+        /// ID of the query that succeeded.
+        query: QueryId,
+
+        /// Record key of the stored record.
+        key: RecordKey,
     },
 
     /// Add the provider record to nodes closest to the target key.
@@ -264,6 +292,7 @@ impl QueryEngine {
         query_id: QueryId,
         record: Record,
         candidates: VecDeque<KademliaPeer>,
+        quorum: Quorum,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -286,6 +315,7 @@ impl QueryEngine {
             query_id,
             QueryType::PutRecord {
                 record,
+                quorum,
                 context: FindNodeContext::new(config, candidates),
             },
         );
@@ -299,6 +329,7 @@ impl QueryEngine {
         query_id: QueryId,
         record: Record,
         peers_to_report: Vec<KademliaPeer>,
+        quorum: Quorum,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -312,6 +343,7 @@ impl QueryEngine {
             query_id,
             QueryType::PutRecordToPeers {
                 record,
+                quorum,
                 context: FindManyNodesContext::new(query_id, peers_to_report),
             },
         );
@@ -428,6 +460,29 @@ impl QueryEngine {
         query_id
     }
 
+    /// Start `PUT_VALUE` requests tracking.
+    pub fn start_put_record_to_found_nodes_requests_tracking(
+        &mut self,
+        query_id: QueryId,
+        key: RecordKey,
+        peers: Vec<PeerId>,
+        quorum: Quorum,
+    ) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            num_peers = ?peers.len(),
+            "start `PUT_VALUE` responses tracking"
+        );
+
+        self.queries.insert(
+            query_id,
+            QueryType::PutRecordToFoundNodes {
+                context: PutRecordToFoundNodesContext::new(query_id, key, peers, quorum),
+            },
+        );
+    }
+
     /// Register response failure from a queried peer.
     pub fn register_response_failure(&mut self, query: QueryId, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response failure");
@@ -443,6 +498,9 @@ impl QueryEngine {
                 context.register_response_failure(peer);
             }
             Some(QueryType::PutRecordToPeers { context, .. }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::PutRecordToFoundNodes { context, .. }) => {
                 context.register_response_failure(peer);
             }
             Some(QueryType::GetRecord { context }) => {
@@ -488,6 +546,12 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
+            Some(QueryType::PutRecordToFoundNodes { context, .. }) => match message {
+                KademliaMessage::PutValue { .. } => {
+                    context.register_response(peer);
+                }
+                _ => unreachable!(),
+            },
             Some(QueryType::GetRecord { context }) => match message {
                 KademliaMessage::GetRecord { record, peers, .. } =>
                     context.register_response(peer, record, peers),
@@ -529,6 +593,10 @@ impl QueryEngine {
             Some(QueryType::GetRecord { context }) => context.next_peer_action(peer),
             Some(QueryType::AddProvider { context, .. }) => context.next_peer_action(peer),
             Some(QueryType::GetProviders { context }) => context.next_peer_action(peer),
+            Some(QueryType::PutRecordToFoundNodes { .. }) => {
+                // All `PUT_VALUE` requests were sent when initiating this query type.
+                None
+            }
         }
     }
 
@@ -541,13 +609,29 @@ impl QueryEngine {
                 target: context.config.target.into_preimage(),
                 peers: context.responses.into_values().collect::<Vec<_>>(),
             },
-            QueryType::PutRecord { record, context } => QueryAction::PutRecordToFoundNodes {
+            QueryType::PutRecord {
+                record,
+                quorum,
+                context,
+            } => QueryAction::PutRecordToFoundNodes {
+                query: context.config.query,
                 record,
                 peers: context.responses.into_values().collect::<Vec<_>>(),
+                quorum,
             },
-            QueryType::PutRecordToPeers { record, context } => QueryAction::PutRecordToFoundNodes {
+            QueryType::PutRecordToPeers {
+                record,
+                quorum,
+                context,
+            } => QueryAction::PutRecordToFoundNodes {
+                query: context.query,
                 record,
                 peers: context.peers_to_report,
+                quorum,
+            },
+            QueryType::PutRecordToFoundNodes { context } => QueryAction::PutRecordQuerySucceeded {
+                query: context.query,
+                key: context.key,
             },
             QueryType::GetRecord { context } => QueryAction::GetRecordQueryDone {
                 query_id: context.config.query,
@@ -587,6 +671,7 @@ impl QueryEngine {
                 QueryType::GetRecord { context } => context.next_action(),
                 QueryType::AddProvider { context, .. } => context.next_action(),
                 QueryType::GetProviders { context } => context.next_action(),
+                QueryType::PutRecordToFoundNodes { context, .. } => context.next_action(),
             };
 
             match action {
@@ -809,8 +894,9 @@ mod tests {
         let mut iter = distances.iter();
 
         // start find node with one known peer
+        let original_query_id = QueryId(1340);
         let _query = engine.start_put_record(
-            QueryId(1340),
+            original_query_id,
             original_record.clone(),
             vec![KademliaPeer::new(
                 *iter.next().unwrap().1,
@@ -818,6 +904,7 @@ mod tests {
                 ConnectionType::NotConnected,
             )]
             .into(),
+            Quorum::All,
         );
 
         let action = engine.next_action();
@@ -873,14 +960,48 @@ mod tests {
         }
 
         let peers = match engine.next_action() {
-            Some(QueryAction::PutRecordToFoundNodes { peers, record }) => {
+            Some(QueryAction::PutRecordToFoundNodes {
+                query,
+                peers,
+                record,
+                quorum,
+            }) => {
+                assert_eq!(query, original_query_id);
                 assert_eq!(peers.len(), 4);
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);
+                assert!(matches!(quorum, Quorum::All));
+
                 peers
             }
             _ => panic!("invalid event received"),
         };
+
+        engine.start_put_record_to_found_nodes_requests_tracking(
+            original_query_id,
+            record_key.clone(),
+            peers.iter().map(|p| p.peer).collect(),
+            Quorum::All,
+        );
+
+        // Receive ACKs for PUT_VALUE requests.
+        for peer in &peers {
+            engine.register_response(
+                original_query_id,
+                peer.peer,
+                KademliaMessage::PutValue {
+                    record: original_record.clone(),
+                },
+            );
+        }
+
+        match engine.next_action() {
+            Some(QueryAction::PutRecordQuerySucceeded { query, key }) => {
+                assert_eq!(query, original_query_id);
+                assert_eq!(key, record_key);
+            }
+            _ => panic!("invalid event received"),
+        }
 
         assert!(engine.next_action().is_none());
 
