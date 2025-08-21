@@ -25,15 +25,15 @@ use crate::{
 use std::{cmp, collections::HashSet};
 
 /// Logging target for this file.
-const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::put_record";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::contact_found";
 
 /// Context for tracking `PUT_VALUE` responses from peers.
 #[derive(Debug)]
-pub struct PutRecordToFoundNodesContext {
+pub struct ContactFoundNodesContext {
     /// Query ID.
     pub query: QueryId,
 
-    /// Record key.
+    /// Record/provider key.
     pub key: RecordKey,
 
     /// Quorum that needs to be reached for the query to succeed.
@@ -46,7 +46,7 @@ pub struct PutRecordToFoundNodesContext {
     n_succeeded: usize,
 }
 
-impl PutRecordToFoundNodesContext {
+impl ContactFoundNodesContext {
     /// Create new [`PutRecordToFoundNodesContext`].
     pub fn new(query: QueryId, key: RecordKey, peers: Vec<PeerId>, quorum: Quorum) -> Self {
         Self {
@@ -74,14 +74,14 @@ impl PutRecordToFoundNodesContext {
                 target: LOG_TARGET,
                 query = ?self.query,
                 ?peer,
-                "successful `PUT_VALUE` to peer",
+                "successful `PUT_VALUE`/`ADD_PROVIDER` to peer",
             );
         } else {
             tracing::debug!(
                 target: LOG_TARGET,
                 query = ?self.query,
                 ?peer,
-                "`PutRecordToFoundNodesContext::register_response`: pending peer does not exist",
+                "`ContactFoundNodesContext::register_response`: pending peer does not exist",
             );
         }
     }
@@ -93,14 +93,14 @@ impl PutRecordToFoundNodesContext {
                 target: LOG_TARGET,
                 query = ?self.query,
                 ?peer,
-                "failed `PUT_VALUE` to peer",
+                "failed `PUT_VALUE`/`ADD_PROVIDER` to peer",
             );
         } else {
             tracing::debug!(
                 target: LOG_TARGET,
                 query = ?self.query,
                 ?peer,
-                "`PutRecordToFoundNodesContext::register_response_failure`: pending peer does not exist",
+                "`ContactFoundNodesContext::register_response_failure`: pending peer does not exist",
             );
         }
     }
