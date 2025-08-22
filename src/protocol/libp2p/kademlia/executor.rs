@@ -51,6 +51,8 @@ pub enum FailureReason {
 #[derive(Debug)]
 pub enum QueryResult {
     /// Message was sent to remote peer successfully.
+    /// This result is only reported for send-only queries. Queries that include reading a
+    /// response won't report it and will only yield a [`QueryResult::ReadSuccess`].
     SendSuccess {
         /// Substream.
         substream: Substream,

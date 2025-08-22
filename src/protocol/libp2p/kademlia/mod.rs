@@ -89,7 +89,8 @@ mod schema {
 #[derive(Debug, Clone)]
 #[allow(clippy::enum_variant_names)]
 enum PeerAction {
-    /// Send `FIND_NODE` message to peer.
+    /// Find nodes (and values/providers) as part of `FIND_NODE`/`GET_VALUE`/`GET_PROVIDERS` query.
+    // TODO: may be a better naming would be `SendFindRequest`?
     SendFindNode(QueryId),
 
     /// Send `PUT_VALUE` message to peer.
@@ -291,22 +292,33 @@ impl Kademlia {
         tracing::trace!(target: LOG_TARGET, ?peer, ?query, "disconnect peer");
 
         if let Some(query) = query {
+            // While not strictly correct to report send failure here (sending part might have
+            // already succeeded), it is a no-op for queries awaiting response (`FIND_NODE`,
+            // `GET_VALUE`, `GET_PROVIDERS`.
+            // Similarly, reporting response failure is a no-op for send-only queries like
+            // `PUT_VALUE` and `ADD_PROVIDER`.
+            self.engine.register_send_failure(query, peer);
             self.engine.register_response_failure(query, peer);
         }
 
+        // Apart from the failing query, we need to fail all other pending queries for the peer
+        // being disconnected.
         if let Some(PeerContext { pending_actions }) = self.peers.remove(&peer) {
             pending_actions.into_iter().for_each(|(_, action)| {
                 let query_id = match action {
+                    // `SendFindNode` includes `FIND_NODE`, `GET_VALUE` and `GET_PROVIDERS`
+                    // queries.
                     PeerAction::SendFindNode(query_id)
                     | PeerAction::SendPutValue(query_id, _)
                     | PeerAction::SendAddProvider(query_id, _) => query_id,
                 };
 
-                self.engine.register_send_failure(query_id, peer);
-
-                // Don't report response failure twice if it was already reported above.
-                // (We can still have other pending queries for the peer that need to be reported.)
+                // Don't report failure twice for the same `query_id` if it was already reported
+                // above. (We can still have other pending queries for the peer that
+                // need to be reported.)
                 if Some(query_id) != query {
+                    // See the comment above about why we report both send and response failures.
+                    self.engine.register_send_failure(query_id, peer);
                     self.engine.register_response_failure(query_id, peer);
                 }
             });
@@ -713,9 +725,8 @@ impl Kademlia {
         };
 
         if let Some(context) = self.peers.get_mut(&peer) {
-            // TODO: do we register response failurea for `GET_VALUE` and `GET_PROVIDERS` queries at
-            // all?
             let query = match context.pending_actions.remove(&substream_id) {
+                // `SendFindNode` includes `FIND_NODE`, `GET_VALUE` and `GET_PROVIDERS` queries.
                 Some(PeerAction::SendFindNode(query))
                 | Some(PeerAction::SendPutValue(query, _))
                 | Some(PeerAction::SendAddProvider(query, _)) => Some(query),
@@ -736,10 +747,9 @@ impl Kademlia {
             return;
         };
 
-        // TODO: do we register response failures for `GET_VALUE` and `GET_PROVIDERS` queries at
-        // all?
         for action in actions {
             let query = match action {
+                // `SendFindNode` includes `FIND_NODE`, `GET_VALUE` and `GET_PROVIDERS` messages.
                 PeerAction::SendFindNode(query_id)
                 | PeerAction::SendPutValue(query_id, _)
                 | PeerAction::SendAddProvider(query_id, _) => query_id,
@@ -753,6 +763,7 @@ impl Kademlia {
                 "report failure for pending query",
             );
 
+            // Fail both sending and receiving due to dial failure.
             self.engine.register_send_failure(query, peer);
             self.engine.register_response_failure(query, peer);
         }
@@ -814,11 +825,13 @@ impl Kademlia {
     async fn on_query_action(&mut self, action: QueryAction) -> Result<(), (QueryId, PeerId)> {
         match action {
             QueryAction::SendMessage { query, peer, .. } => {
+                // This action is used for `FIND_NODE`, `GET_VALUE` and `GET_PROVIDERS` queries.
                 if self
                     .open_substream_or_dial(peer, PeerAction::SendFindNode(query), Some(query))
                     .is_err()
                 {
                     // Announce the error to the query engine.
+                    self.engine.register_send_failure(query, peer);
                     self.engine.register_response_failure(query, peer);
                 }
                 Ok(())

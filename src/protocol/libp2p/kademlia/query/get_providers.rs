@@ -209,13 +209,20 @@ impl GetProvidersContext {
 
     /// Register a failure of sending a `GET_PROVIDERS` request to `peer`.
     pub fn register_send_failure(&mut self, _peer: PeerId) {
-        // In case of a send failure, `register_response_failure` is called as well, so nothing to
-        // do here.
+        // In case of a send failure, `register_response_failure` is called as well.
+        // Failure is handled there.
     }
 
     /// Register a success of sending a `GET_PROVIDERS` request to `peer`.
-    pub fn register_send_success(&mut self, _peer: PeerId) {
-        // Nothing to do here.
+    pub fn register_send_success(&mut self, peer: PeerId) {
+        // This result is not reported for queries awaiting response. Only successful response is
+        // reported.
+        tracing::warn!(
+            target: LOG_TARGET,
+            query = ?self.config.query,
+            ?peer,
+            "unexpected `register_send_success` call for `GET_PROVIDERS` query",
+        );
     }
 
     /// Get next action for `peer`.
