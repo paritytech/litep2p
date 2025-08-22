@@ -65,8 +65,8 @@ impl ContactFoundNodesContext {
         }
     }
 
-    /// Register successful response from peer.
-    pub fn register_response(&mut self, peer: PeerId) {
+    /// Register a success of sending a message to `peer`.
+    pub fn register_send_success(&mut self, peer: PeerId) {
         if self.pending_peers.remove(&peer) {
             self.n_succeeded += 1;
 
@@ -86,8 +86,8 @@ impl ContactFoundNodesContext {
         }
     }
 
-    /// Register failed response from peer.
-    pub fn register_response_failure(&mut self, peer: PeerId) {
+    /// Register a failure of sending a message to `peer`.
+    pub fn register_send_failure(&mut self, peer: PeerId) {
         if self.pending_peers.remove(&peer) {
             tracing::trace!(
                 target: LOG_TARGET,
@@ -103,6 +103,22 @@ impl ContactFoundNodesContext {
                 "`ContactFoundNodesContext::register_response_failure`: pending peer does not exist",
             );
         }
+    }
+
+    /// Register successful response from peer.
+    pub fn register_response(&mut self, peer: PeerId) {
+        // Currently we only track if we successfully sent the message to the peer both for
+        // `PUT_VALUE` and `ADD_PROVIDER`. While `PUT_VALUE` has a response message, due to litep2p
+        // not sending it in the past, tracking it would frequently result in reporting query
+        // failures. `ADD_PROVIDER` does not have a response message at all.
+
+        // TODO: once most of the network is on a litep2p version that sends `PUT_VALUE` responses,
+        // we should track them here.
+    }
+
+    /// Register failed response from peer.
+    pub fn register_response_failure(&mut self, peer: PeerId) {
+        // See a comment in `register_response`.
     }
 
     /// Check if all responses have been received.

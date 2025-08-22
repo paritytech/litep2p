@@ -194,6 +194,17 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
     }
 
+    /// Register a failure of sending `FIN_NODE` request to `peer`.
+    pub fn register_send_failure(&mut self, peer: PeerId) {
+        // In case of a send failure, `register_response_failure` is called as well, where we
+        // handle the failure.
+    }
+
+    /// Register a success of sending `FIND_NODE` request to `peer`.
+    pub fn register_send_success(&mut self, peer: PeerId) {
+        // Nothing to do here.
+    }
+
     /// Get next action for `peer`.
     pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
         self.pending.contains_key(peer).then_some(QueryAction::SendMessage {

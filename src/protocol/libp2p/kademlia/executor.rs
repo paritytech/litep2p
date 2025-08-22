@@ -37,6 +37,16 @@ const READ_TIMEOUT: Duration = Duration::from_secs(15);
 /// Write timeout for outbound messages.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Faulure reason.
+#[derive(Debug)]
+pub enum FailureReason {
+    /// Substream was closed while reading/writing message to remote peer.
+    SubstreamClosed,
+
+    /// Timeout while reading/writing to substream.
+    Timeout,
+}
+
 /// Query result.
 #[derive(Debug)]
 pub enum QueryResult {
@@ -44,6 +54,12 @@ pub enum QueryResult {
     SendSuccess {
         /// Substream.
         substream: Substream,
+    },
+
+    /// Failed to send message to remote peer.
+    SendFailure {
+        /// Failure reason.
+        reason: FailureReason,
     },
 
     /// Message was read from the remote peer successfully.
@@ -55,11 +71,11 @@ pub enum QueryResult {
         message: BytesMut,
     },
 
-    /// Timeout while reading a response from the substream.
-    Timeout,
-
-    /// Substream was closed wile reading/writing message to remote peer.
-    SubstreamClosed,
+    /// Failed to read message from remote peer.
+    ReadFailure {
+        /// Failure reason.
+        reason: FailureReason,
+    },
 }
 
 /// Query result.
@@ -90,24 +106,34 @@ impl QueryExecutor {
     }
 
     /// Send message to remote peer.
-    pub fn send_message(&mut self, peer: PeerId, message: Bytes, mut substream: Substream) {
+    pub fn send_message(
+        &mut self,
+        peer: PeerId,
+        query_id: Option<QueryId>,
+        message: Bytes,
+        mut substream: Substream,
+    ) {
         self.futures.push(Box::pin(async move {
             match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
                 // Timeout error.
                 Err(_) => QueryContext {
                     peer,
-                    query_id: None,
-                    result: QueryResult::Timeout,
+                    query_id,
+                    result: QueryResult::SendFailure {
+                        reason: FailureReason::Timeout,
+                    },
                 },
                 // Writing message to substream failed.
                 Ok(Err(_)) => QueryContext {
                     peer,
-                    query_id: None,
-                    result: QueryResult::SubstreamClosed,
+                    query_id,
+                    result: QueryResult::SendFailure {
+                        reason: FailureReason::SubstreamClosed,
+                    },
                 },
                 Ok(Ok(())) => QueryContext {
                     peer,
-                    query_id: None,
+                    query_id,
                     result: QueryResult::SendSuccess { substream },
                 },
             }
@@ -126,7 +152,9 @@ impl QueryExecutor {
                 Err(_) => QueryContext {
                     peer,
                     query_id,
-                    result: QueryResult::Timeout,
+                    result: QueryResult::ReadFailure {
+                        reason: FailureReason::Timeout,
+                    },
                 },
                 Ok(Some(Ok(message))) => QueryContext {
                     peer,
@@ -136,7 +164,9 @@ impl QueryExecutor {
                 Ok(None) | Ok(Some(Err(_))) => QueryContext {
                     peer,
                     query_id,
-                    result: QueryResult::SubstreamClosed,
+                    result: QueryResult::ReadFailure {
+                        reason: FailureReason::SubstreamClosed,
+                    },
                 },
             }
         }));
@@ -157,7 +187,9 @@ impl QueryExecutor {
                     return QueryContext {
                         peer,
                         query_id,
-                        result: QueryResult::Timeout,
+                        result: QueryResult::SendFailure {
+                            reason: FailureReason::Timeout,
+                        },
                     },
                 // Writing message to substream failed.
                 Ok(Err(_)) => {
@@ -165,7 +197,9 @@ impl QueryExecutor {
                     return QueryContext {
                         peer,
                         query_id,
-                        result: QueryResult::SubstreamClosed,
+                        result: QueryResult::SendFailure {
+                            reason: FailureReason::SubstreamClosed,
+                        },
                     };
                 }
                 Ok(Ok(())) => (),
@@ -175,7 +209,9 @@ impl QueryExecutor {
                 Err(_) => QueryContext {
                     peer,
                     query_id,
-                    result: QueryResult::Timeout,
+                    result: QueryResult::ReadFailure {
+                        reason: FailureReason::Timeout,
+                    },
                 },
                 Ok(Some(Ok(message))) => QueryContext {
                     peer,
@@ -185,7 +221,9 @@ impl QueryExecutor {
                 Ok(None) | Ok(Some(Err(_))) => QueryContext {
                     peer,
                     query_id,
-                    result: QueryResult::SubstreamClosed,
+                    result: QueryResult::ReadFailure {
+                        reason: FailureReason::SubstreamClosed,
+                    },
                 },
             }
         }));

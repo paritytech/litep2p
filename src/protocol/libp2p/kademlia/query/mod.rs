@@ -170,6 +170,9 @@ pub enum QueryAction {
 
     /// Add the provider record to nodes closest to the target key.
     AddProviderToFoundNodes {
+        /// Query ID of the original ADD_PROVIDER request.
+        query: QueryId,
+
         /// Provided key.
         provided_key: RecordKey,
 
@@ -526,7 +529,7 @@ impl QueryEngine {
 
         match self.queries.get_mut(&query) {
             None => {
-                tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response failure for a stale query");
+                tracing::trace!(target: LOG_TARGET, ?query, ?peer, "response for a stale query");
             }
             Some(QueryType::FindNode { context }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
@@ -576,6 +579,68 @@ impl QueryEngine {
         }
 
         None
+    }
+
+    pub fn register_send_failure(&mut self, query: QueryId, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register send failure");
+
+        match self.queries.get_mut(&query) {
+            None => {
+                tracing::trace!(target: LOG_TARGET, ?query, ?peer, "send failure for a stale query");
+            }
+            Some(QueryType::FindNode { context }) => {
+                context.register_send_failure(peer);
+            }
+            Some(QueryType::PutRecord { context, .. }) => {
+                context.register_send_failure(peer);
+            }
+            Some(QueryType::PutRecordToPeers { context, .. }) => {
+                context.register_send_failure(peer);
+            }
+            Some(QueryType::PutRecordToFoundNodes { context, .. }) => {
+                context.register_send_failure(peer);
+            }
+            Some(QueryType::GetRecord { context }) => {
+                context.register_send_failure(peer);
+            }
+            Some(QueryType::AddProvider { context, .. }) => {
+                context.register_send_failure(peer);
+            }
+            Some(QueryType::GetProviders { context }) => {
+                context.register_send_failure(peer);
+            }
+        }
+    }
+
+    pub fn register_send_success(&mut self, query: QueryId, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register send success");
+
+        match self.queries.get_mut(&query) {
+            None => {
+                tracing::trace!(target: LOG_TARGET, ?query, ?peer, "send success for a stale query");
+            }
+            Some(QueryType::FindNode { context }) => {
+                context.register_send_success(peer);
+            }
+            Some(QueryType::PutRecord { context, .. }) => {
+                context.register_send_success(peer);
+            }
+            Some(QueryType::PutRecordToPeers { context, .. }) => {
+                context.register_send_success(peer);
+            }
+            Some(QueryType::PutRecordToFoundNodes { context, .. }) => {
+                context.register_send_success(peer);
+            }
+            Some(QueryType::GetRecord { context }) => {
+                context.register_send_success(peer);
+            }
+            Some(QueryType::AddProvider { context, .. }) => {
+                context.register_send_success(peer);
+            }
+            Some(QueryType::GetProviders { context }) => {
+                context.register_send_success(peer);
+            }
+        }
     }
 
     /// Get next action for `peer` from the [`QueryEngine`].
@@ -641,6 +706,7 @@ impl QueryEngine {
                 provider,
                 context,
             } => QueryAction::AddProviderToFoundNodes {
+                query: context.config.query,
                 provided_key,
                 provider,
                 peers: context.responses.into_values().collect::<Vec<_>>(),
