@@ -37,13 +37,13 @@ use bytes::Bytes;
 
 use std::collections::{HashMap, VecDeque};
 
-use self::{contact_found::ContactFoundNodesContext, find_many_nodes::FindManyNodesContext};
+use self::{find_many_nodes::FindManyNodesContext, target_peers::PutToTargetPeersContext};
 
-mod contact_found;
 mod find_many_nodes;
 mod find_node;
 mod get_providers;
 mod get_record;
+mod target_peers;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query";
@@ -89,7 +89,7 @@ enum QueryType {
     /// `PUT_VALUE` message sending phase.
     PutRecordToFoundNodes {
         /// Context for tracking `PUT_VALUE` responses.
-        context: ContactFoundNodesContext,
+        context: PutToTargetPeersContext,
     },
 
     /// `GET_VALUE` query.
@@ -481,7 +481,7 @@ impl QueryEngine {
         self.queries.insert(
             query_id,
             QueryType::PutRecordToFoundNodes {
-                context: ContactFoundNodesContext::new(query_id, key, peers, quorum),
+                context: PutToTargetPeersContext::new(query_id, key, peers, quorum),
             },
         );
     }

@@ -208,13 +208,13 @@ impl GetProvidersContext {
     }
 
     /// Register a failure of sending a `GET_PROVIDERS` request to `peer`.
-    pub fn register_send_failure(&mut self, peer: PeerId) {
+    pub fn register_send_failure(&mut self, _peer: PeerId) {
         // In case of a send failure, `register_response_failure` is called as well, so nothing to
         // do here.
     }
 
     /// Register a success of sending a `GET_PROVIDERS` request to `peer`.
-    pub fn register_send_success(&mut self, peer: PeerId) {
+    pub fn register_send_success(&mut self, _peer: PeerId) {
         // Nothing to do here.
     }
 
