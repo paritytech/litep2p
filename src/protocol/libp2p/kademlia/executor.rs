@@ -78,6 +78,25 @@ pub enum QueryResult {
         /// Failure reason.
         reason: FailureReason,
     },
+
+    // The following results are needed to implement backward compatibility with older litep2p
+    // versions not sending / receiving `PUT_VALUE` ACK messages. Othen than that, we don't need
+    // to track the specifics of the request faulutre.
+    /// Succeeded to send message, but failed to read a response.
+    /// This will be always triggered when putting values to older litep2p nodes.
+    SendSuccessReadFailure {
+        /// Failure reason.
+        reason: FailureReason,
+    },
+
+    /// Request-response succeeded.
+    SendAndReadSuccess {
+        /// Substream.
+        substream: Substream,
+
+        /// Read message.
+        message: BytesMut,
+    },
 }
 
 /// Query result.
@@ -204,7 +223,7 @@ impl QueryExecutor {
                         },
                     };
                 }
-                // TODO: we must return `QueryResult::SendSuccess` here.
+                // This will result in either `SendAndReadSuccess` or `SendSuccessReadFailure`.
                 Ok(Ok(())) => (),
             };
 
@@ -212,19 +231,19 @@ impl QueryExecutor {
                 Err(_) => QueryContext {
                     peer,
                     query_id,
-                    result: QueryResult::ReadFailure {
+                    result: QueryResult::SendSuccessReadFailure {
                         reason: FailureReason::Timeout,
                     },
                 },
                 Ok(Some(Ok(message))) => QueryContext {
                     peer,
                     query_id,
-                    result: QueryResult::ReadSuccess { substream, message },
+                    result: QueryResult::SendAndReadSuccess { substream, message },
                 },
                 Ok(None) | Ok(Some(Err(_))) => QueryContext {
                     peer,
                     query_id,
-                    result: QueryResult::ReadFailure {
+                    result: QueryResult::SendSuccessReadFailure {
                         reason: FailureReason::SubstreamClosed,
                     },
                 },
@@ -340,7 +359,7 @@ mod tests {
                 assert_eq!(query_id, Some(QueryId(1337)));
                 assert!(std::matches!(
                     result,
-                    QueryResult::ReadFailure {
+                    QueryResult::SendSuccessReadFailure {
                         reason: FailureReason::SubstreamClosed
                     }
                 ));

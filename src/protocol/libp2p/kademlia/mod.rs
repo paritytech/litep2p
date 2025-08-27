@@ -477,6 +477,7 @@ impl Kademlia {
                             peer,
                             KademliaMessage::FindNode { target, peers },
                         );
+                        substream.close().await;
                     }
                     None => {
                         tracing::trace!(
@@ -510,6 +511,7 @@ impl Kademlia {
                         peer,
                         KademliaMessage::PutValue { record },
                     );
+                    substream.close().await;
                 }
                 None => {
                     tracing::trace!(
@@ -554,6 +556,8 @@ impl Kademlia {
                             peer,
                             KademliaMessage::GetRecord { key, record, peers },
                         );
+
+                        substream.close().await;
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -662,6 +666,8 @@ impl Kademlia {
                                 providers,
                             },
                         );
+
+                        substream.close().await;
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -1056,26 +1062,6 @@ impl Kademlia {
                                 self.engine.register_send_success(query_id, peer);
                             }
                         }
-                        QueryResult::ReadSuccess { substream, message } => {
-                            tracing::trace!(target: LOG_TARGET,
-                                ?peer,
-                                query = ?query_id,
-                                "message read from peer",
-                            );
-
-                            if let Err(error) = self.on_message_received(
-                                peer,
-                                query_id,
-                                message,
-                                substream
-                            ).await {
-                                tracing::debug!(target: LOG_TARGET,
-                                    ?peer,
-                                    ?error,
-                                    "failed to process message",
-                                );
-                            }
-                        }
                         QueryResult::SendFailure { reason } => {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -1094,6 +1080,28 @@ impl Kademlia {
                             // `PUT_VALUE`, we need to not disconnect peers here not accepting the ACKs.
                             self.disconnect_peer(peer, query_id).await;
                         }
+                        QueryResult::ReadSuccess { substream, message } => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                query = ?query_id,
+                                "message read from peer",
+                            );
+
+                            if let Err(error) = self.on_message_received(
+                                peer,
+                                query_id,
+                                message,
+                                substream
+                            ).await {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?error,
+                                    "failed to process message",
+                                );
+                            }
+                        }
                         QueryResult::ReadFailure { reason } => {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -1104,6 +1112,53 @@ impl Kademlia {
                             );
 
                             self.disconnect_peer(peer, query_id).await;
+                        }
+                        QueryResult::SendAndReadSuccess { substream, message } => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                query = ?query_id,
+                                "request to peer succeeded",
+                            );
+
+                            // `query_id` is always `Some` here as only locally originating queries
+                            // generate requests.
+                            if let Some(query_id) = query_id {
+                                self.engine.register_send_success(query_id, peer);
+                            }
+
+                            if let Err(error) = self.on_message_received(
+                                peer,
+                                query_id,
+                                message,
+                                substream
+                            ).await {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?error,
+                                    "failed to process message",
+                                );
+                            }
+                        }
+                        QueryResult::SendSuccessReadFailure { reason } => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                query = ?query_id,
+                                ?reason,
+                                "request to peer failed during reading response",
+                            );
+
+                            // `query_id` is always `Some` here as only locally originating Queries
+                            // generate requests.
+                            if let Some(query_id) = query_id {
+                                self.engine.register_send_success(query_id, peer);
+                                self.engine.register_response_failure(query_id, peer);
+                            }
+
+                            // TODO: we should disconnect all peers here except the ones not sending
+                            // `PUT_VALUE` ACKs.
                         }
                     }
                 },
