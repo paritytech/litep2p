@@ -296,7 +296,8 @@ impl Kademlia {
             // already succeeded), it is a no-op for queries awaiting response (`FIND_NODE`,
             // `GET_VALUE`, `GET_PROVIDERS`.
             // Similarly, reporting response failure is a no-op for send-only queries like
-            // `PUT_VALUE` and `ADD_PROVIDER`.
+            // `PUT_VALUE`* and `ADD_PROVIDER`.
+            // * `PUT_VALUE` does have a response message, but we do not currently track it.
             self.engine.register_send_failure(query, peer);
             self.engine.register_response_failure(query, peer);
         }
@@ -1050,7 +1051,7 @@ impl Kademlia {
                             );
                             let _ = substream.close().await;
 
-                            // Track messages sent as part of our own queries.
+                            // Track messages sent as part of locally originating queries.
                             if let Some(query_id) = query_id {
                                 self.engine.register_send_success(query_id, peer);
                             }
@@ -1089,6 +1090,8 @@ impl Kademlia {
                                 self.engine.register_send_failure(query_id, peer);
                             }
 
+                            // TODO: during litep2p transition period to sending ACKs for
+                            // `PUT_VALUE`, we need to not disconnect peers here not accepting the ACKs.
                             self.disconnect_peer(peer, query_id).await;
                         }
                         QueryResult::ReadFailure { reason } => {

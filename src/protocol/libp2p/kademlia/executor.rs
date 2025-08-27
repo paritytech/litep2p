@@ -204,6 +204,7 @@ impl QueryExecutor {
                         },
                     };
                 }
+                // TODO: we must return `QueryResult::SendSuccess` here.
                 Ok(Ok(())) => (),
             };
 
@@ -263,7 +264,12 @@ mod tests {
             })) => {
                 assert_eq!(peer, queried_peer);
                 assert!(query_id.is_none());
-                assert!(std::matches!(result, QueryResult::Timeout));
+                assert!(std::matches!(
+                    result,
+                    QueryResult::ReadFailure {
+                        reason: FailureReason::Timeout
+                    }
+                ));
             }
             result => panic!("invalid result received: {result:?}"),
         }
@@ -292,7 +298,12 @@ mod tests {
             })) => {
                 assert_eq!(peer, queried_peer);
                 assert_eq!(query_id, Some(QueryId(1338)));
-                assert!(std::matches!(result, QueryResult::SubstreamClosed));
+                assert!(std::matches!(
+                    result,
+                    QueryResult::ReadFailure {
+                        reason: FailureReason::SubstreamClosed
+                    }
+                ));
             }
             result => panic!("invalid result received: {result:?}"),
         }
@@ -327,7 +338,12 @@ mod tests {
             })) => {
                 assert_eq!(peer, queried_peer);
                 assert_eq!(query_id, Some(QueryId(1337)));
-                assert!(std::matches!(result, QueryResult::SubstreamClosed));
+                assert!(std::matches!(
+                    result,
+                    QueryResult::ReadFailure {
+                        reason: FailureReason::SubstreamClosed
+                    }
+                ));
             }
             result => panic!("invalid result received: {result:?}"),
         }
@@ -361,7 +377,12 @@ mod tests {
             })) => {
                 assert_eq!(peer, queried_peer);
                 assert_eq!(query_id, Some(QueryId(1337)));
-                assert!(std::matches!(result, QueryResult::SubstreamClosed));
+                assert!(std::matches!(
+                    result,
+                    QueryResult::SendFailure {
+                        reason: FailureReason::SubstreamClosed
+                    }
+                ));
             }
             result => panic!("invalid result received: {result:?}"),
         }
@@ -390,7 +411,12 @@ mod tests {
             })) => {
                 assert_eq!(peer, queried_peer);
                 assert_eq!(query_id, Some(QueryId(1336)));
-                assert!(std::matches!(result, QueryResult::Timeout));
+                assert!(std::matches!(
+                    result,
+                    QueryResult::ReadFailure {
+                        reason: FailureReason::Timeout
+                    }
+                ));
             }
             result => panic!("invalid result received: {result:?}"),
         }
@@ -422,7 +448,12 @@ mod tests {
             })) => {
                 assert_eq!(peer, queried_peer);
                 assert_eq!(query_id, Some(QueryId(1335)));
-                assert!(std::matches!(result, QueryResult::SubstreamClosed));
+                assert!(std::matches!(
+                    result,
+                    QueryResult::ReadFailure {
+                        reason: FailureReason::SubstreamClosed
+                    }
+                ));
             }
             result => panic!("invalid result received: {result:?}"),
         }
