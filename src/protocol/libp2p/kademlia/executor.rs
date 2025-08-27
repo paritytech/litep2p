@@ -250,6 +250,54 @@ impl QueryExecutor {
             }
         }));
     }
+
+    /// Send request to remote peer and read the response, ignoring it and any read errors.
+    ///
+    /// This is a hackish way of dealing with older litep2p nodes not sending `PUT_VALUE` ACK
+    /// messages. This should eventually be removed.
+    pub fn send_request_eat_response(
+        &mut self,
+        peer: PeerId,
+        query_id: Option<QueryId>,
+        message: Bytes,
+        mut substream: Substream,
+    ) {
+        self.futures.push(Box::pin(async move {
+            match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
+                // Timeout error.
+                Err(_) =>
+                    return QueryContext {
+                        peer,
+                        query_id,
+                        result: QueryResult::SendFailure {
+                            reason: FailureReason::Timeout,
+                        },
+                    },
+                // Writing message to substream failed.
+                Ok(Err(_)) => {
+                    let _ = substream.close().await;
+                    return QueryContext {
+                        peer,
+                        query_id,
+                        result: QueryResult::SendFailure {
+                            reason: FailureReason::SubstreamClosed,
+                        },
+                    };
+                }
+                // This will result in either `SendAndReadSuccess` or `SendSuccessReadFailure`.
+                Ok(Ok(())) => (),
+            };
+
+            // Ignore the read result (including errors).
+            let _ = tokio::time::timeout(READ_TIMEOUT, substream.next()).await;
+
+            QueryContext {
+                peer,
+                query_id,
+                result: QueryResult::SendSuccess { substream },
+            }
+        }));
+    }
 }
 
 impl Stream for QueryExecutor {

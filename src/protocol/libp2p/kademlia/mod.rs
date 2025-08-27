@@ -394,7 +394,7 @@ impl Kademlia {
             Some(PeerAction::SendPutValue(query, message)) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, "send `PUT_VALUE` message");
 
-                self.executor.send_request_read_response(peer, Some(query), message, substream);
+                self.executor.send_request_eat_response(peer, Some(query), message, substream);
             }
             Some(PeerAction::SendAddProvider(query, message)) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, "send `ADD_PROVIDER` message");
@@ -1076,8 +1076,6 @@ impl Kademlia {
                                 self.engine.register_send_failure(query_id, peer);
                             }
 
-                            // TODO: during litep2p transition period to sending ACKs for
-                            // `PUT_VALUE`, we need to not disconnect peers here not accepting the ACKs.
                             self.disconnect_peer(peer, query_id).await;
                         }
                         QueryResult::ReadSuccess { substream, message } => {
@@ -1154,11 +1152,9 @@ impl Kademlia {
                             // generate requests.
                             if let Some(query_id) = query_id {
                                 self.engine.register_send_success(query_id, peer);
-                                self.engine.register_response_failure(query_id, peer);
                             }
 
-                            // TODO: we should disconnect all peers here except the ones not sending
-                            // `PUT_VALUE` ACKs.
+                            self.disconnect_peer(peer, query_id).await;
                         }
                     }
                 },
