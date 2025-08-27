@@ -643,6 +643,19 @@ impl QueryEngine {
         }
     }
 
+    /// Register peer failure when it is not known whether sending or receiveiing failed.
+    /// This is called from [`Kademlia::disconnect_peer`].
+    pub fn register_peer_failure(&mut self, query: QueryId, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register peer failure");
+
+        // Because currently queries track either send success/failure (`PUT_VALUE`, `ADD_PROVIDER`)
+        // or response success/failure (`FIND_NODE`, `GET_VALUE`, `GET_PROVIDERS`),
+        // but not both, we can just call both here and not propagate this different type of
+        // failure to specific queries knowing this will result in the correct behaviour.
+        self.register_send_failure(query, peer);
+        self.register_response_failure(query, peer);
+    }
+
     /// Get next action for `peer` from the [`QueryEngine`].
     pub fn next_peer_action(&mut self, query: &QueryId, peer: &PeerId) -> Option<QueryAction> {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "get next peer action");

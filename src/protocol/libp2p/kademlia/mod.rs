@@ -292,14 +292,7 @@ impl Kademlia {
         tracing::trace!(target: LOG_TARGET, ?peer, ?query, "disconnect peer");
 
         if let Some(query) = query {
-            // While not strictly correct to report send failure here (sending part might have
-            // already succeeded), it is a no-op for queries awaiting response (`FIND_NODE`,
-            // `GET_VALUE`, `GET_PROVIDERS`.
-            // Similarly, reporting response failure is a no-op for send-only queries like
-            // `PUT_VALUE`* and `ADD_PROVIDER`.
-            // * `PUT_VALUE` does have a response message, but we do not currently track it.
-            self.engine.register_send_failure(query, peer);
-            self.engine.register_response_failure(query, peer);
+            self.engine.register_peer_failure(query, peer);
         }
 
         // Apart from the failing query, we need to fail all other pending queries for the peer
@@ -318,9 +311,7 @@ impl Kademlia {
                 // above. (We can still have other pending queries for the peer that
                 // need to be reported.)
                 if Some(query_id) != query {
-                    // See the comment above about why we report both send and response failures.
-                    self.engine.register_send_failure(query_id, peer);
-                    self.engine.register_response_failure(query_id, peer);
+                    self.engine.register_peer_failure(query_id, peer);
                 }
             });
         }
@@ -1071,11 +1062,6 @@ impl Kademlia {
                                 "failed to send message to peer",
                             );
 
-                            // Track messages sent as part of our own queries.
-                            if let Some(query_id) = query_id {
-                                self.engine.register_send_failure(query_id, peer);
-                            }
-
                             self.disconnect_peer(peer, query_id).await;
                         }
                         QueryResult::ReadSuccess { substream, message } => {
@@ -1108,51 +1094,6 @@ impl Kademlia {
                                 ?reason,
                                 "failed to read message from substream",
                             );
-
-                            self.disconnect_peer(peer, query_id).await;
-                        }
-                        QueryResult::SendAndReadSuccess { substream, message } => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                query = ?query_id,
-                                "request to peer succeeded",
-                            );
-
-                            // `query_id` is always `Some` here as only locally originating queries
-                            // generate requests.
-                            if let Some(query_id) = query_id {
-                                self.engine.register_send_success(query_id, peer);
-                            }
-
-                            if let Err(error) = self.on_message_received(
-                                peer,
-                                query_id,
-                                message,
-                                substream
-                            ).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?error,
-                                    "failed to process message",
-                                );
-                            }
-                        }
-                        QueryResult::SendSuccessReadFailure { reason } => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                query = ?query_id,
-                                ?reason,
-                                "request to peer failed during reading response",
-                            );
-
-                            // `query_id` is always `Some` here as only locally originating Queries
-                            // generate requests.
-                            if let Some(query_id) = query_id {
-                                self.engine.register_send_success(query_id, peer);
-                            }
 
                             self.disconnect_peer(peer, query_id).await;
                         }

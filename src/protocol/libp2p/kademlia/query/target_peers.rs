@@ -119,6 +119,9 @@ impl PutToTargetPeersContext {
     /// Register failed response from peer.
     pub fn register_response_failure(&mut self, _peer: PeerId) {
         // See a comment in `register_response`.
+
+        // Also note that due to the implementation of [`QueryEngine::register_peer_failure`], only
+        // one of `register_response_failure` or `register_send_failure` must be implemented.
     }
 
     /// Check if all responses have been received.
