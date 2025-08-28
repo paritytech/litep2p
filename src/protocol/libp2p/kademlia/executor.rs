@@ -78,6 +78,10 @@ pub enum QueryResult {
         /// Failure reason.
         reason: FailureReason,
     },
+
+    /// Result that must be treated as send success. This is needed as a workaround to support
+    /// older litep2p nodes not sending `PUT_VALUE` ACK messages and not reading them.
+    AssumeSendSuccess,
 }
 
 /// Query result.
@@ -132,6 +136,40 @@ impl QueryExecutor {
                     result: QueryResult::SendFailure {
                         reason: FailureReason::SubstreamClosed,
                     },
+                },
+                Ok(Ok(())) => QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::SendSuccess { substream },
+                },
+            }
+        }));
+    }
+
+    /// Send message and ignore sending errors.
+    ///
+    /// This is a hackish way of dealing with older litep2p nodes not exppecting receiving
+    /// `PUT_VALUE` ACK messages. This should eventually be removed.
+    pub fn send_message_eat_failure(
+        &mut self,
+        peer: PeerId,
+        query_id: Option<QueryId>,
+        message: Bytes,
+        mut substream: Substream,
+    ) {
+        self.futures.push(Box::pin(async move {
+            match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
+                // Timeout error.
+                Err(_) => QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::AssumeSendSuccess,
+                },
+                // Writing message to substream failed.
+                Ok(Err(_)) => QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::AssumeSendSuccess,
                 },
                 Ok(Ok(())) => QueryContext {
                     peer,
@@ -270,12 +308,20 @@ impl QueryExecutor {
             };
 
             // Ignore the read result (including errors).
-            let _ = tokio::time::timeout(READ_TIMEOUT, substream.next()).await;
-
-            QueryContext {
-                peer,
-                query_id,
-                result: QueryResult::SendSuccess { substream },
+            if let Ok(Some(Ok(message))) =
+                tokio::time::timeout(READ_TIMEOUT, substream.next()).await
+            {
+                QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::ReadSuccess { substream, message },
+                }
+            } else {
+                QueryContext {
+                    peer,
+                    query_id,
+                    result: QueryResult::AssumeSendSuccess,
+                }
             }
         }));
     }

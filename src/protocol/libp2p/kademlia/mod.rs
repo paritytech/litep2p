@@ -522,7 +522,7 @@ impl Kademlia {
                         record.key.clone(),
                         record.value.clone(),
                     );
-                    self.executor.send_message(peer, None, message, substream);
+                    self.executor.send_message_eat_failure(peer, None, message, substream);
 
                     let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
                 }
@@ -764,6 +764,7 @@ impl Kademlia {
             // Fail both sending and receiving due to dial failure.
             self.engine.register_send_failure(query, peer);
             self.engine.register_response_failure(query, peer);
+            // TODO: register_peer_failure here and in other places?
         }
     }
 
@@ -1048,7 +1049,20 @@ impl Kademlia {
                             );
                             let _ = substream.close().await;
 
-                            // Track messages sent as part of locally originating queries.
+                            if let Some(query_id) = query_id {
+                                self.engine.register_send_success(query_id, peer);
+                            }
+                        }
+                        // This is a workaround to gracefully handle older litep2p nodes not
+                        // sending/receiving `PUT_VALUE` ACKs. This should eventually be removed.
+                        QueryResult::AssumeSendSuccess => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                query = ?query_id,
+                                "treating message as sent to peer",
+                            );
+
                             if let Some(query_id) = query_id {
                                 self.engine.register_send_success(query_id, peer);
                             }
@@ -1071,6 +1085,12 @@ impl Kademlia {
                                 query = ?query_id,
                                 "message read from peer",
                             );
+
+                            if let Some(query_id) = query_id {
+                                // Read success for locally originating requests implies send
+                                // success.
+                                self.engine.register_send_success(query_id, peer);
+                            }
 
                             if let Err(error) = self.on_message_received(
                                 peer,
