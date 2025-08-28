@@ -81,6 +81,7 @@ pub enum QueryResult {
 
     /// Result that must be treated as send success. This is needed as a workaround to support
     /// older litep2p nodes not sending `PUT_VALUE` ACK messages and not reading them.
+    // TODO: remove this as part of https://github.com/paritytech/litep2p/issues/429.
     AssumeSendSuccess,
 }
 
@@ -150,6 +151,7 @@ impl QueryExecutor {
     ///
     /// This is a hackish way of dealing with older litep2p nodes not exppecting receiving
     /// `PUT_VALUE` ACK messages. This should eventually be removed.
+    // TODO: remove this as part of https://github.com/paritytech/litep2p/issues/429.
     pub fn send_message_eat_failure(
         &mut self,
         peer: PeerId,
@@ -274,7 +276,8 @@ impl QueryExecutor {
     ///
     /// This is a hackish way of dealing with older litep2p nodes not sending `PUT_VALUE` ACK
     /// messages. This should eventually be removed.
-    pub fn send_request_eat_response(
+    // TODO: remove this as part of https://github.com/paritytech/litep2p/issues/429.
+    pub fn send_request_eat_response_failure(
         &mut self,
         peer: PeerId,
         query_id: Option<QueryId>,

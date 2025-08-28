@@ -253,6 +253,7 @@ impl Kademlia {
                             );
 
                             if let PeerAction::SendFindNode(query_id) = action {
+                                self.engine.register_send_failure(query_id, peer);
                                 self.engine.register_response_failure(query_id, peer);
                             }
                         }
@@ -385,7 +386,14 @@ impl Kademlia {
             Some(PeerAction::SendPutValue(query, message)) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, "send `PUT_VALUE` message");
 
-                self.executor.send_request_eat_response(peer, Some(query), message, substream);
+                self.executor.send_request_eat_response_failure(
+                    peer,
+                    Some(query),
+                    message,
+                    substream,
+                );
+                // TODO: replace this with `send_request_read_response` as part of
+                // https://github.com/paritytech/litep2p/issues/429.
             }
             Some(PeerAction::SendAddProvider(query, message)) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, "send `ADD_PROVIDER` message");
@@ -523,6 +531,8 @@ impl Kademlia {
                         record.value.clone(),
                     );
                     self.executor.send_message_eat_failure(peer, None, message, substream);
+                    // TODO: replace this with `send_message` as part of
+                    // https://github.com/paritytech/litep2p/issues/429.
 
                     let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
                 }
@@ -764,7 +774,6 @@ impl Kademlia {
             // Fail both sending and receiving due to dial failure.
             self.engine.register_send_failure(query, peer);
             self.engine.register_response_failure(query, peer);
-            // TODO: register_peer_failure here and in other places?
         }
     }
 
@@ -1055,6 +1064,8 @@ impl Kademlia {
                         }
                         // This is a workaround to gracefully handle older litep2p nodes not
                         // sending/receiving `PUT_VALUE` ACKs. This should eventually be removed.
+                        // TODO: remove this as part of
+                        // https://github.com/paritytech/litep2p/issues/429.
                         QueryResult::AssumeSendSuccess => {
                             tracing::trace!(
                                 target: LOG_TARGET,
