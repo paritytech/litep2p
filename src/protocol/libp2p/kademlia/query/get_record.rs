@@ -216,6 +216,24 @@ impl GetRecordContext {
         }
     }
 
+    /// Register a failure of sending a `GET_VALUE` request to `peer`.
+    pub fn register_send_failure(&mut self, _peer: PeerId) {
+        // In case of a send failure, `register_response_failure` is called as well.
+        // Failure is handled there.
+    }
+
+    /// Register a success of sending a `GET_VALUE` request to `peer`.
+    pub fn register_send_success(&mut self, peer: PeerId) {
+        // This result is not reported for queries awaiting response. Only successful response is
+        // reported.
+        tracing::warn!(
+            target: LOG_TARGET,
+            query = ?self.config.query,
+            ?peer,
+            "unexpected `register_send_success` call for `GET_VALUE` query",
+        );
+    }
+
     /// Get next action for `peer`.
     // TODO: https://github.com/paritytech/litep2p/issues/40 remove this and store the next action to `PeerAction`
     pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {
