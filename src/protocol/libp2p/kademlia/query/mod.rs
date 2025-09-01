@@ -88,7 +88,7 @@ enum QueryType {
 
     /// `PUT_VALUE` message sending phase.
     PutRecordToFoundNodes {
-        /// Context for tracking `PUT_VALUE` responses.
+        /// Context for tracking `PUT_VALUE` requests.
         context: PutToTargetPeersContext,
     },
 
@@ -106,8 +106,17 @@ enum QueryType {
         /// Provider record that need to be stored.
         provider: ContentProvider,
 
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
+
         /// Context for the `FIND_NODE` query.
         context: FindNodeContext<RecordKey>,
+    },
+
+    /// `ADD_PROVIDER` message sending phase.
+    AddProviderToFoundNodes {
+        /// Context for tracking `ADD_PROVIDER` requests.
+        context: PutToTargetPeersContext,
     },
 
     /// `GET_PROVIDERS` query.
@@ -181,6 +190,18 @@ pub enum QueryAction {
 
         /// Peers for whom the `ADD_PROVIDER` must be sent to.
         peers: Vec<KademliaPeer>,
+
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
+    },
+
+    /// `ADD_PROVIDER` query succeeded.
+    AddProviderQuerySucceeded {
+        /// ID of the query that succeeded.
+        query: QueryId,
+
+        /// Provided key.
+        provided_key: RecordKey,
     },
 
     /// `GET_VALUE` query succeeded.
@@ -399,6 +420,7 @@ impl QueryEngine {
         provided_key: RecordKey,
         provider: ContentProvider,
         candidates: VecDeque<KademliaPeer>,
+        quorum: Quorum,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -421,6 +443,7 @@ impl QueryEngine {
             QueryType::AddProvider {
                 provided_key,
                 provider,
+                quorum,
                 context: FindNodeContext::new(config, candidates),
             },
         );
@@ -475,13 +498,36 @@ impl QueryEngine {
             target: LOG_TARGET,
             ?query_id,
             num_peers = ?peers.len(),
-            "start `PUT_VALUE` responses tracking"
+            "start `PUT_VALUE` progress tracking"
         );
 
         self.queries.insert(
             query_id,
             QueryType::PutRecordToFoundNodes {
                 context: PutToTargetPeersContext::new(query_id, key, peers, quorum),
+            },
+        );
+    }
+
+    /// Start `ADD_PROVIDER` requests tracking.
+    pub fn start_add_provider_to_found_nodes_requests_tracking(
+        &mut self,
+        query_id: QueryId,
+        provided_key: RecordKey,
+        peers: Vec<PeerId>,
+        quorum: Quorum,
+    ) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            num_peers = ?peers.len(),
+            "start `ADD_PROVIDER` progress tracking"
+        );
+
+        self.queries.insert(
+            query_id,
+            QueryType::AddProviderToFoundNodes {
+                context: PutToTargetPeersContext::new(query_id, provided_key, peers, quorum),
             },
         );
     }
@@ -503,13 +549,16 @@ impl QueryEngine {
             Some(QueryType::PutRecordToPeers { context, .. }) => {
                 context.register_response_failure(peer);
             }
-            Some(QueryType::PutRecordToFoundNodes { context, .. }) => {
+            Some(QueryType::PutRecordToFoundNodes { context }) => {
                 context.register_response_failure(peer);
             }
             Some(QueryType::GetRecord { context }) => {
                 context.register_response_failure(peer);
             }
             Some(QueryType::AddProvider { context, .. }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::AddProviderToFoundNodes { context }) => {
                 context.register_response_failure(peer);
             }
             Some(QueryType::GetProviders { context }) => {
@@ -549,7 +598,7 @@ impl QueryEngine {
                 }
                 _ => unreachable!(),
             },
-            Some(QueryType::PutRecordToFoundNodes { context, .. }) => match message {
+            Some(QueryType::PutRecordToFoundNodes { context }) => match message {
                 KademliaMessage::PutValue { .. } => {
                     context.register_response(peer);
                 }
@@ -563,6 +612,12 @@ impl QueryEngine {
             Some(QueryType::AddProvider { context, .. }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
+                }
+                _ => unreachable!(),
+            },
+            Some(QueryType::AddProviderToFoundNodes { context, .. }) => match message {
+                KademliaMessage::AddProvider { .. } => {
+                    context.register_response(peer);
                 }
                 _ => unreachable!(),
             },
@@ -597,13 +652,16 @@ impl QueryEngine {
             Some(QueryType::PutRecordToPeers { context, .. }) => {
                 context.register_send_failure(peer);
             }
-            Some(QueryType::PutRecordToFoundNodes { context, .. }) => {
+            Some(QueryType::PutRecordToFoundNodes { context }) => {
                 context.register_send_failure(peer);
             }
             Some(QueryType::GetRecord { context }) => {
                 context.register_send_failure(peer);
             }
             Some(QueryType::AddProvider { context, .. }) => {
+                context.register_send_failure(peer);
+            }
+            Some(QueryType::AddProviderToFoundNodes { context }) => {
                 context.register_send_failure(peer);
             }
             Some(QueryType::GetProviders { context }) => {
@@ -635,6 +693,9 @@ impl QueryEngine {
                 context.register_send_success(peer);
             }
             Some(QueryType::AddProvider { context, .. }) => {
+                context.register_send_success(peer);
+            }
+            Some(QueryType::AddProviderToFoundNodes { context, .. }) => {
                 context.register_send_success(peer);
             }
             Some(QueryType::GetProviders { context }) => {
@@ -673,6 +734,10 @@ impl QueryEngine {
             Some(QueryType::GetProviders { context }) => context.next_peer_action(peer),
             Some(QueryType::PutRecordToFoundNodes { .. }) => {
                 // All `PUT_VALUE` requests were sent when initiating this query type.
+                None
+            }
+            Some(QueryType::AddProviderToFoundNodes { .. }) => {
+                // All `ADD_PROVIDER` requests were sent when initiating this query type.
                 None
             }
         }
@@ -717,13 +782,20 @@ impl QueryEngine {
             QueryType::AddProvider {
                 provided_key,
                 provider,
+                quorum,
                 context,
             } => QueryAction::AddProviderToFoundNodes {
                 query: context.config.query,
                 provided_key,
                 provider,
                 peers: context.responses.into_values().collect::<Vec<_>>(),
+                quorum,
             },
+            QueryType::AddProviderToFoundNodes { context } =>
+                QueryAction::AddProviderQuerySucceeded {
+                    query: context.query,
+                    provided_key: context.key,
+                },
             QueryType::GetProviders { context } => QueryAction::GetProvidersQueryDone {
                 query_id: context.config.query,
                 provided_key: context.config.target.clone().into_preimage(),
@@ -751,6 +823,7 @@ impl QueryEngine {
                 QueryType::AddProvider { context, .. } => context.next_action(),
                 QueryType::GetProviders { context } => context.next_action(),
                 QueryType::PutRecordToFoundNodes { context, .. } => context.next_action(),
+                QueryType::AddProviderToFoundNodes { context, .. } => context.next_action(),
             };
 
             match action {

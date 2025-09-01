@@ -929,6 +929,7 @@ impl Kademlia {
                 provided_key,
                 provider,
                 peers,
+                quorum,
             } => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -939,7 +940,7 @@ impl Kademlia {
 
                 let message = KademliaMessage::add_provider(provided_key.clone(), provider);
 
-                for peer in peers {
+                for peer in &peers {
                     if let Err(error) = self.open_substream_or_dial(
                         peer.peer,
                         PeerAction::SendAddProvider(query, message.clone()),
@@ -955,6 +956,28 @@ impl Kademlia {
                     }
                 }
 
+                self.engine.start_add_provider_to_found_nodes_requests_tracking(
+                    query,
+                    provided_key,
+                    peers.into_iter().map(|peer| peer.peer).collect(),
+                    quorum,
+                );
+
+                Ok(())
+            }
+            QueryAction::AddProviderQuerySucceeded {
+                query,
+                provided_key,
+            } => {
+                tracing::debug!(target: LOG_TARGET, ?query, "`ADD_PROVIDER` query succeeded");
+
+                let _ = self
+                    .event_tx
+                    .send(KademliaEvent::AddProviderSuccess {
+                        query_id: query,
+                        provided_key,
+                    })
+                    .await;
                 Ok(())
             }
             QueryAction::GetRecordQueryDone { query_id } => {
@@ -1247,6 +1270,7 @@ impl Kademlia {
                                 self.routing_table
                                     .closest(&Key::new(key), self.replication_factor)
                                     .into(),
+                                quorum,
                             );
                         }
                         Some(KademliaCommand::StopProviding {
@@ -1377,6 +1401,7 @@ impl Kademlia {
                             self.routing_table
                                 .closest(&Key::new(provided_key), self.replication_factor)
                                 .into(),
+                            quorum,
                         );
                     }
                     None => {}
