@@ -680,7 +680,7 @@ async fn provider_retrieved_by_remote_node() {
 
     // Store provider locally.
     let key = RecordKey::new(&vec![1, 2, 3]);
-    kad_handle1.start_providing(key.clone(), Quorum::All).await;
+    let query0 = kad_handle1.start_providing(key.clone(), Quorum::All).await;
 
     // This is the expected provider.
     let expected_provider = ContentProvider {
@@ -688,8 +688,7 @@ async fn provider_retrieved_by_remote_node() {
         addresses: vec![peer1_public_address],
     };
 
-    // This request to get rpovider should fail because the nodes are not connected.
-    let query1 = kad_handle2.get_providers(key.clone()).await;
+    let mut query1 = None;
     let mut query2 = None;
 
     loop {
@@ -699,12 +698,20 @@ async fn provider_retrieved_by_remote_node() {
             }
             event = litep2p1.next_event() => {}
             event = litep2p2.next_event() => {}
-            event = kad_handle1.next() => {}
+            event = kad_handle1.next() => {
+                if let Some(KademliaEvent::QueryFailed { query_id }) = event {
+                    // Publishing the provider failed, because the nodes are not connected.
+                    assert_eq!(query_id, query0);
+                    // This request to get provider should fail because the nodes are still
+                    // not connected.
+                    query1 = Some(kad_handle2.get_providers(key.clone()).await);
+                }
+            }
             event = kad_handle2.next() => {
                 match event {
                     Some(KademliaEvent::QueryFailed { query_id }) => {
                         // Query failed, because the nodes don't know about each other yet.
-                        assert_eq!(query_id, query1);
+                        assert_eq!(Some(query_id), query1);
 
                         // Let the node know about `litep2p1`.
                         kad_handle2
@@ -782,7 +789,9 @@ async fn provider_added_to_remote_node() {
 
     // Start provodong.
     let key = RecordKey::new(&vec![1, 2, 3]);
-    kad_handle1.start_providing(key.clone(), Quorum::All).await;
+    let query = kad_handle1.start_providing(key.clone(), Quorum::All).await;
+    let mut add_provider_success = false;
+    let mut incoming_provider = false;
 
     // This is the expected provider.
     let expected_provider = ContentProvider {
@@ -797,12 +806,24 @@ async fn provider_added_to_remote_node() {
             }
             event = litep2p1.next_event() => {}
             event = litep2p2.next_event() => {}
-            event = kad_handle1.next() => {}
+            event = kad_handle1.next() => {
+                if let Some(KademliaEvent::AddProviderSuccess { query_id, provided_key }) = event {
+                    assert_eq!(query_id, query);
+                    assert_eq!(provided_key, key);
+                    add_provider_success = true;
+                    if incoming_provider {
+                        break
+                    }
+                }
+            }
             event = kad_handle2.next() => {
                 if let Some(KademliaEvent::IncomingProvider { provided_key, provider }) = event {
                     assert_eq!(provided_key, key);
                     assert_eq!(provider, expected_provider);
-                    break
+                    incoming_provider = true;
+                    if add_provider_success {
+                        break
+                    }
                 }
             }
         }
