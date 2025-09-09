@@ -94,7 +94,7 @@ impl From<ed25519::PublicKey> for PublicKey {
 
 /// The public key of a remote node's identity keypair. Supports RSA keys additionally to ed25519.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RemotePublicKey {
+pub enum RemotePublicKey {
     /// A public Ed25519 key.
     Ed25519(ed25519::PublicKey),
     /// A public RSA key.
