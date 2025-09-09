@@ -25,15 +25,15 @@ use crate::{
 use std::{cmp, collections::HashSet};
 
 /// Logging target for this file.
-const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::put_record";
+const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::target_peers";
 
-/// Context for tracking `PUT_VALUE` responses from peers.
+/// Context for tracking `PUT_VALUE`/`ADD_PROVIDER` requests to peers.
 #[derive(Debug)]
-pub struct PutRecordToFoundNodesContext {
+pub struct PutToTargetPeersContext {
     /// Query ID.
     pub query: QueryId,
 
-    /// Record key.
+    /// Record/provider key.
     pub key: RecordKey,
 
     /// Quorum that needs to be reached for the query to succeed.
@@ -46,8 +46,8 @@ pub struct PutRecordToFoundNodesContext {
     n_succeeded: usize,
 }
 
-impl PutRecordToFoundNodesContext {
-    /// Create new [`PutRecordToFoundNodesContext`].
+impl PutToTargetPeersContext {
+    /// Create new [`PutToTargetPeersContext`].
     pub fn new(query: QueryId, key: RecordKey, peers: Vec<PeerId>, quorum: Quorum) -> Self {
         Self {
             query,
@@ -65,8 +65,8 @@ impl PutRecordToFoundNodesContext {
         }
     }
 
-    /// Register successful response from peer.
-    pub fn register_response(&mut self, peer: PeerId) {
+    /// Register a success of sending a message to `peer`.
+    pub fn register_send_success(&mut self, peer: PeerId) {
         if self.pending_peers.remove(&peer) {
             self.n_succeeded += 1;
 
@@ -74,35 +74,54 @@ impl PutRecordToFoundNodesContext {
                 target: LOG_TARGET,
                 query = ?self.query,
                 ?peer,
-                "successful `PUT_VALUE` to peer",
+                "successful `PUT_VALUE`/`ADD_PROVIDER` to peer",
             );
         } else {
             tracing::debug!(
                 target: LOG_TARGET,
                 query = ?self.query,
                 ?peer,
-                "`PutRecordToFoundNodesContext::register_response`: pending peer does not exist",
+                "`PutToTargetPeersContext::register_response`: pending peer does not exist",
             );
         }
     }
 
-    /// Register failed response from peer.
-    pub fn register_response_failure(&mut self, peer: PeerId) {
+    /// Register a failure of sending a message to `peer`.
+    pub fn register_send_failure(&mut self, peer: PeerId) {
         if self.pending_peers.remove(&peer) {
             tracing::trace!(
                 target: LOG_TARGET,
                 query = ?self.query,
                 ?peer,
-                "failed `PUT_VALUE` to peer",
+                "failed `PUT_VALUE`/`ADD_PROVIDER` to peer",
             );
         } else {
             tracing::debug!(
                 target: LOG_TARGET,
                 query = ?self.query,
                 ?peer,
-                "`PutRecordToFoundNodesContext::register_response_failure`: pending peer does not exist",
+                "`PutToTargetPeersContext::register_response_failure`: pending peer does not exist",
             );
         }
+    }
+
+    /// Register successful response from peer.
+    pub fn register_response(&mut self, _peer: PeerId) {
+        // Currently we only track if we successfully sent the message to the peer both for
+        // `PUT_VALUE` and `ADD_PROVIDER`. While `PUT_VALUE` has a response message, due to litep2p
+        // not sending it in the past, tracking it would frequently result in reporting query
+        // failures. `ADD_PROVIDER` does not have a response message at all.
+
+        // TODO: once most of the network is on a litep2p version that sends `PUT_VALUE` responses,
+        // we should track them.
+    }
+
+    /// Register failed response from peer.
+    pub fn register_response_failure(&mut self, _peer: PeerId) {
+        // See a comment in `register_response`.
+
+        // Also note that due to the implementation of [`QueryEngine::register_peer_failure`], only
+        // one of `register_response_failure` or `register_send_failure` must be implemented.
     }
 
     /// Check if all responses have been received.
