@@ -223,15 +223,9 @@ impl GetRecordContext {
     }
 
     /// Register a success of sending a `GET_VALUE` request to `peer`.
-    pub fn register_send_success(&mut self, peer: PeerId) {
-        // This result is not reported for queries awaiting response. Only successful response is
-        // reported.
-        tracing::warn!(
-            target: LOG_TARGET,
-            query = ?self.config.query,
-            ?peer,
-            "unexpected `register_send_success` call for `GET_VALUE` query",
-        );
+    pub fn register_send_success(&mut self, _peer: PeerId) {
+        // `GET_VALUE` requests are compound request-response pairs of messages,
+        // so we handle final success/failure in `register_response`/`register_response_failure`.
     }
 
     /// Get next action for `peer`.
