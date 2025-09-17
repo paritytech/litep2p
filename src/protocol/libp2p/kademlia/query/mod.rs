@@ -568,12 +568,7 @@ impl QueryEngine {
     }
 
     /// Register that `response` received from `peer`.
-    pub fn register_response(
-        &mut self,
-        query: QueryId,
-        peer: PeerId,
-        message: KademliaMessage,
-    ) -> Option<QueryAction> {
+    pub fn register_response(&mut self, query: QueryId, peer: PeerId, message: KademliaMessage) {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response");
 
         match self.queries.get_mut(&query) {
@@ -584,42 +579,98 @@ impl QueryEngine {
                 KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `FIND_NODE`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::PutRecord { context, .. }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `FIND_NODE` during `PUT_VALUE` query: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::PutRecordToPeers { context, .. }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `FIND_NODE` during `PUT_VALUE` (to peers): {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::PutRecordToFoundNodes { context }) => match message {
                 KademliaMessage::PutValue { .. } => {
                     context.register_response(peer);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `PUT_VALUE`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::GetRecord { context }) => match message {
                 KademliaMessage::GetRecord { record, peers, .. } =>
                     context.register_response(peer, record, peers),
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `GET_VALUE`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::AddProvider { context, .. }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `FIND_NODE` during `ADD_PROVIDER` query: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::AddProviderToFoundNodes { context, .. }) => match message {
                 KademliaMessage::AddProvider { .. } => {
                     context.register_response(peer);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `ADD_PROVIDER`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::GetProviders { context }) => match message {
                 KademliaMessage::GetProviders {
@@ -629,11 +680,17 @@ impl QueryEngine {
                 } => {
                     context.register_response(peer, providers, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `GET_PROVIDERS`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
         }
-
-        None
     }
 
     pub fn register_send_failure(&mut self, query: QueryId, peer: PeerId) {
