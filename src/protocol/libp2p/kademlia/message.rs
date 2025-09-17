@@ -28,6 +28,7 @@ use crate::{
 };
 
 use bytes::{Bytes, BytesMut};
+use enum_display::EnumDisplay;
 use prost::Message;
 use std::time::{Duration, Instant};
 
@@ -35,7 +36,7 @@ use std::time::{Duration, Instant};
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::message";
 
 /// Kademlia message.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, EnumDisplay)]
 pub enum KademliaMessage {
     /// `FIND_NODE` message.
     FindNode {
