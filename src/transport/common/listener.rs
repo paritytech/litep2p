@@ -33,7 +33,7 @@ use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
 use std::{
-    io,
+    io::{self, ErrorKind},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -457,15 +457,30 @@ impl Stream for SocketListener {
             let current = (self.poll_index + index) % len;
             let listener = &mut self.listeners[current];
 
-            match listener.poll_accept(cx) {
-                Poll::Pending => {}
-                Poll::Ready(Err(error)) => {
-                    self.poll_index = (self.poll_index + 1) % len;
-                    return Poll::Ready(Some(Err(error)));
-                }
-                Poll::Ready(Ok((stream, address))) => {
-                    self.poll_index = (self.poll_index + 1) % len;
-                    return Poll::Ready(Some(Ok((stream, address))));
+            loop {
+                match listener.poll_accept(cx) {
+                    Poll::Pending => {
+                        break;
+                    }
+                    Poll::Ready(Ok((stream, address))) => {
+                        self.poll_index = (self.poll_index + 1) % len;
+                        return Poll::Ready(Some(Ok((stream, address))));
+                    }
+                    Poll::Ready(Err(error)) => match error.kind() {
+                        ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "Recoverable error for listener, continuing",
+                            );
+                            // Poll again the listener on recoverable errors.
+                            continue;
+                        }
+                        _ => {
+                            self.poll_index = (self.poll_index + 1) % len;
+                            return Poll::Ready(Some(Err(error)));
+                        }
+                    },
                 }
             }
         }
