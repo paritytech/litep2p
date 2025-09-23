@@ -157,7 +157,7 @@ impl DialAddresses {
 /// Socket listening to zero or more addresses.
 pub struct SocketListener {
     /// Listeners.
-    listeners: Vec<TokioTcpListener>,
+    listeners: Vec<Option<TokioTcpListener>>,
     /// The index in the listeners from which the polling is resumed.
     poll_index: usize,
 }
@@ -308,7 +308,7 @@ impl SocketListener {
                     vec![local_address]
                 };
 
-                Some((listener, listen_addresses))
+                Some((Some(listener), listen_addresses))
             })
             .unzip();
 
@@ -455,7 +455,10 @@ impl Stream for SocketListener {
         let len = self.listeners.len();
         for index in 0..len {
             let current = (self.poll_index + index) % len;
-            let listener = &mut self.listeners[current];
+
+            let Some(listener) = &mut self.listeners[current] else {
+                continue;
+            };
 
             loop {
                 match listener.poll_accept(cx) {
@@ -478,6 +481,14 @@ impl Stream for SocketListener {
                         }
                         _ => {
                             self.poll_index = (self.poll_index + 1) % len;
+
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "Fatal error for listener",
+                            );
+                            self.listeners[current] = None;
+
                             return Poll::Ready(Some(Err(error)));
                         }
                     },
