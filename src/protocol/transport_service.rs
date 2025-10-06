@@ -287,6 +287,8 @@ pub struct TransportService {
 
     /// Close the connection if no substreams are open within this time frame.
     keep_alive_tracker: KeepAliveTracker,
+
+    counts_towards_keep_alive: bool,
 }
 
 impl TransportService {
@@ -298,6 +300,7 @@ impl TransportService {
         next_substream_id: Arc<AtomicUsize>,
         transport_handle: TransportManagerHandle,
         keep_alive_timeout: Duration,
+        counts_towards_keep_alive: bool,
     ) -> (Self, Sender<InnerTransportEvent>) {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -313,6 +316,7 @@ impl TransportService {
                 next_substream_id,
                 connections: HashMap::new(),
                 keep_alive_tracker,
+                counts_towards_keep_alive
             },
             tx,
         )
@@ -507,8 +511,11 @@ impl TransportService {
             "open substream",
         );
 
-        self.keep_alive_tracker.substream_activity(peer, connection_id);
-        connection.try_upgrade();
+        if self.counts_towards_keep_alive {
+            self.keep_alive_tracker.substream_activity(peer, connection_id);
+            connection.try_upgrade();
+        }
+
 
         connection
             .open_substream(
@@ -592,7 +599,7 @@ impl Stream for TransportService {
                     substream,
                     connection_id,
                 }) => {
-                    if protocol == self.protocol {
+                    if protocol == self.protocol && self.counts_towards_keep_alive {
                         self.keep_alive_tracker.substream_activity(peer, connection_id);
                         if let Some(context) = self.connections.get_mut(&peer) {
                             context.try_upgrade(&connection_id);
